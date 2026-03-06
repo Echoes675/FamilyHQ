@@ -367,3 +367,12 @@ FodyWeavers.xsd
 *input*.txt
 .idea/
 **/.env
+
+# AI Agent State & Cache
+.agent/state/
+.agent/index/
+.claude/
+!CLAUDE.md
+!AGENTS.md
+!.agent/rules/
+!.agent/skills/
