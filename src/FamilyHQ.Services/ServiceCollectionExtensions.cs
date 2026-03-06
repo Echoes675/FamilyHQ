@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Calendar;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace FamilyHQ.Services;
@@ -11,6 +12,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITokenStore, FileTokenStore>();
         
         services.AddHttpClient<GoogleAuthService>();
+        services.AddHttpClient<IGoogleCalendarClient, GoogleCalendarClient>();
+        
+        services.AddScoped<ICalendarSyncService, CalendarSyncService>();
+        services.AddHostedService<SyncOrchestrator>();
         
         return services;
     }
