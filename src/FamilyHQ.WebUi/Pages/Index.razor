@@ -10,7 +10,10 @@
 
 <div class="dashboard-container">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Family HQ Dashboard</h1>
+        <div class="d-flex align-items-center gap-3">
+            <h1>Family HQ Dashboard</h1>
+            <button class="btn btn-sm btn-success" @onclick="SimulateLogin">Login to Google (Simulator)</button>
+        </div>
         
         <!-- Navigation Controls -->
         <div class="btn-group">
@@ -163,7 +166,7 @@
                 var dateKey = currentDay.ToString("yyyy-MM-dd");
                 var eventsForDay = new List<CalendarEventViewModel>();
                 
-                if (_monthView != null && _monthView.Days.ContainsKey(dateKey))
+                if (_monthView != null && _monthView.Days != null && _monthView.Days.ContainsKey(dateKey))
                 {
                     eventsForDay = _monthView.Days[dateKey]
                         .OrderByDescending(e => e.IsAllDay)
@@ -195,6 +198,17 @@
     {
         CurrentMonth = CurrentMonth.AddMonths(1);
         await LoadMonthDataAsync();
+    }
+
+    private async Task SimulateLogin()
+    {
+        IsLoading = true;
+        StateHasChanged();
+        
+        // This hits the new WebApi endpoint we made, which exchanges the dummy code with the Simulator
+        await CalendarApi.SimulateLoginAsync();
+        
+        // Let the backend process the sync, and SignalR will automatically refresh us in a moment
     }
 
     public async ValueTask DisposeAsync()

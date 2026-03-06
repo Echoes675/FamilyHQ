@@ -32,4 +32,9 @@ public class CalendarApiService
             
         return await response.Content.ReadFromJsonAsync<MonthViewDto>(cancellationToken: ct);
     }
+    
+    public async Task SimulateLoginAsync(CancellationToken ct = default)
+    {
+        await _httpClient.PostAsync("api/auth/login", null, ct);
+    }
 }

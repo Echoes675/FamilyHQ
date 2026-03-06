@@ -7,7 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
 // Dummy OAuth Token Exchange / Refresh
-app.MapPost("/oauth2/v4/token", async context =>
+app.MapPost("/token", async context =>
 {
     var response = new
     {

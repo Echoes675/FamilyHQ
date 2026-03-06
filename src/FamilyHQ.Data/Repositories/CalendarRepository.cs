@@ -27,6 +27,15 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(c => c.Id == id, ct);
     }
 
+    public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .AsNoTracking()
+            .Where(e => e.CalendarInfoId == calendarInfoId && e.Start < end && e.End > start)
+            .OrderBy(e => e.Start)
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
         return await _context.Events
@@ -79,10 +88,17 @@ public class CalendarRepository : ICalendarRepository
 
     public Task SaveSyncStateAsync(SyncState syncState, CancellationToken ct = default)
     {
-        if (_context.Entry(syncState).State == EntityState.Detached)
+        var entry = _context.Entry(syncState);
+        if (entry.State == EntityState.Detached)
         {
             _context.SyncStates.Update(syncState);
         }
+        return Task.CompletedTask;
+    }
+
+    public Task AddSyncStateAsync(SyncState syncState, CancellationToken ct = default)
+    {
+        _context.SyncStates.Add(syncState);
         return Task.CompletedTask;
     }
 

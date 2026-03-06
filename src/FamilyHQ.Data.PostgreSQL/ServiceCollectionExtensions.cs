@@ -1,4 +1,6 @@
 using FamilyHQ.Data;
+using FamilyHQ.Data.Repositories;
+using FamilyHQ.Core.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +18,8 @@ public static class ServiceCollectionExtensions
         
         services.AddDbContext<FamilyHqDbContext>(options =>
             options.UseNpgsql(connectionString, x => x.MigrationsAssembly(typeof(ServiceCollectionExtensions).Assembly.FullName)));
+
+        services.AddScoped<ICalendarRepository, CalendarRepository>();
 
         return services;
     }

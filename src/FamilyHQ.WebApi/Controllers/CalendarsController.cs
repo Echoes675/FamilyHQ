@@ -45,9 +45,9 @@ public class CalendarsController : ControllerBase
         
         // Add robust padding (roughly 2 months window total to be safe)
         var events = await _calendarRepository.GetEventsAsync(
-            startDay, 
-            endDay.AddDays(14), // Cover 6 grid rows
-            ct);
+            start: startDay, 
+            end: endDay.AddDays(14), // Cover 6 grid rows
+            ct: ct);
 
         var calendars = await _calendarRepository.GetCalendarsAsync(ct);
         var calendarDict = calendars.ToDictionary(c => c.Id, c => c);

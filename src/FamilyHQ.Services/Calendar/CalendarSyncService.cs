@@ -62,8 +62,13 @@ public class CalendarSyncService : ICalendarSyncService
             return;
         }
 
-        var syncState = await _calendarRepository.GetSyncStateAsync(calendarInfoId, ct)
-                        ?? new SyncState { CalendarInfoId = calendarInfoId };
+        bool isNewSyncState = false;
+        var syncState = await _calendarRepository.GetSyncStateAsync(calendarInfoId, ct);
+        if (syncState == null)
+        {
+            syncState = new SyncState { CalendarInfoId = calendarInfoId };
+            isNewSyncState = true;
+        }
 
         string? currentSyncToken = syncState.SyncToken;
         bool isFullSync = string.IsNullOrEmpty(currentSyncToken);
@@ -79,29 +84,34 @@ public class CalendarSyncService : ICalendarSyncService
                 currentSyncToken,
                 ct);
 
+            var existingEvents = await _calendarRepository.GetEventsAsync(calendarInfoId, startDate, endDate, ct);
+
             foreach (var evt in events)
             {
                 if (evt.Title == "CANCELLED_TOMBSTONE")
                 {
-                    // This was a deleted event in Google
-                    var existing = await _calendarRepository.GetEventByIdAsync(evt.Id, ct); 
-                    // Actually we need to find by GoogleEventId
-                    // For efficiency, we assume repository has a way or we just let it handle it.
-                    // Given our repo Interface, let's adjust this logic: we need to find existing
-                    // event by GoogleEventId. This might require a small repo addition, but let's simplify for MVF1.
-                    // If it's a full sync we wouldn't get tombstones. Incremental we do.
                     continue; 
                 }
 
                 evt.CalendarInfoId = calendarInfoId;
 
-                // For MVF1 we just upsert (Add or Update)
-                // In a robust implementation, we check if it already exists by GoogleEventId
-                // Since EF Core will trace, we must be careful with duplicate keys. Let's assume we are adding them.
-                
-                // Let's add it (assuming a fresh sync for now or we just let the DB throw if it's already there)
-                // A better approach would be upsert, but for brevity we'll just add.
-                await _calendarRepository.AddEventAsync(evt, ct);
+                var existing = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
+                if (existing != null)
+                {
+                    // Update existing event properties
+                    existing.Title = evt.Title;
+                    existing.Start = evt.Start;
+                    existing.End = evt.End;
+                    existing.IsAllDay = evt.IsAllDay;
+                    existing.Location = evt.Location;
+                    existing.Description = evt.Description;
+                    
+                    await _calendarRepository.UpdateEventAsync(existing, ct);
+                }
+                else
+                {
+                    await _calendarRepository.AddEventAsync(evt, ct);
+                }
             }
 
             // Update sync state
@@ -113,7 +123,14 @@ public class CalendarSyncService : ICalendarSyncService
                 syncState.SyncWindowEnd = endDate;
             }
 
-            await _calendarRepository.SaveSyncStateAsync(syncState, ct);
+            if (isNewSyncState)
+            {
+                await _calendarRepository.AddSyncStateAsync(syncState, ct);
+            }
+            else
+            {
+                await _calendarRepository.SaveSyncStateAsync(syncState, ct);
+            }
 
             // Commit transaction
             await _calendarRepository.SaveChangesAsync(ct);
@@ -125,7 +142,14 @@ public class CalendarSyncService : ICalendarSyncService
             
             // Clear token and retry
             syncState.SyncToken = null;
-            await _calendarRepository.SaveSyncStateAsync(syncState, ct);
+            if (isNewSyncState)
+            {
+                await _calendarRepository.AddSyncStateAsync(syncState, ct);
+            }
+            else
+            {
+                await _calendarRepository.SaveSyncStateAsync(syncState, ct);
+            }
             await _calendarRepository.SaveChangesAsync(ct);
             
             await SyncAsync(calendarInfoId, startDate, endDate, ct);
