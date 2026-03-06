@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FamilyHQ.Core/FamilyHQ.Core.csproj" />
+    <Project Path="src/FamilyHQ.Data.PostgreSQL/FamilyHQ.Data.PostgreSQL.csproj" />
+    <Project Path="src/FamilyHQ.Data/FamilyHQ.Data.csproj" />
+    <Project Path="src/FamilyHQ.Services/FamilyHQ.Services.csproj" />
+    <Project Path="src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj" />
+    <Project Path="src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FamilyHQ.Core.Tests/FamilyHQ.Core.Tests.csproj" />
+    <Project Path="tests/FamilyHQ.Services.Tests/FamilyHQ.Services.Tests.csproj" />
+    <Project Path="tests/FamilyHQ.WebApi.Tests/FamilyHQ.WebApi.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj" />
+  </Folder>
+</Solution>
