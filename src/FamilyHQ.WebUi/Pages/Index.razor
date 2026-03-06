@@ -1,0 +1,210 @@
+@page "/"
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.Core.ViewModels
+@implements IAsyncDisposable
+@inject CalendarApiService CalendarApi
+@inject SignalRService SignalR
+
+<PageTitle>FamilyHQ Dashboard</PageTitle>
+
+<div class="dashboard-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Family HQ Dashboard</h1>
+        
+        <!-- Navigation Controls -->
+        <div class="btn-group">
+            <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
+            <span class="btn btn-light disabled" style="min-width: 150px; font-weight: 600;">
+                @CurrentMonth.ToString("MMMM yyyy")
+            </span>
+            <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
+        </div>
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Synchronizing Calendar...</p>
+        </div>
+    }
+    else if (_monthView == null)
+    {
+        <div class="alert alert-warning">
+            Failed to load calendar data. Please ensure the backend is running and authenticated.
+        </div>
+    }
+    else
+    {
+        <table class="month-table">
+            <thead>
+                <tr>
+                    <th style="width: 14.28%">Sun</th>
+                    <th style="width: 14.28%">Mon</th>
+                    <th style="width: 14.28%">Tue</th>
+                    <th style="width: 14.28%">Wed</th>
+                    <th style="width: 14.28%">Thu</th>
+                    <th style="width: 14.28%">Fri</th>
+                    <th style="width: 14.28%">Sat</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var week in _weeks)
+                {
+                    <tr>
+                        @foreach (var day in week)
+                        {
+                            var isCurrentMonth = day.Date.Month == CurrentMonth.Month;
+                            var isToday = day.Date.Date == DateTime.Today;
+                            var isWeekend = day.Date.DayOfWeek == DayOfWeek.Saturday || day.Date.DayOfWeek == DayOfWeek.Sunday;
+                            
+                            var cssClass = "calendar-cell";
+                            if (!isCurrentMonth) cssClass += " text-muted bg-light";
+                            if (isToday) cssClass += " today-cell";
+                            else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
+
+                            <td class="@cssClass">
+                                <div class="d-flex justify-content-between">
+                                    <span style="font-weight: @(isToday ? "700" : "400")">
+                                        @day.Date.Day
+                                    </span>
+                                </div>
+                                
+                                <div class="mt-2">
+                                    @* Display up to 3 events *@
+                                    @foreach (var evt in day.Events.Take(3))
+                                    {
+                                        <div class="event-capsule" 
+                                             style="background-color: @(evt.CalendarColor ?? "var(--primary)")"
+                                             title="@evt.Title (@evt.StartTime.ToString("t")) - @evt.Location">
+                                            @if (evt.IsAllDay)
+                                            {
+                                                <span>@evt.Title</span>
+                                            }
+                                            else
+                                            {
+                                                <span><b>@evt.StartTime.ToString("h:mm tt")</b> @evt.Title</span>
+                                            }
+                                        </div>
+                                    }
+                                    
+                                    @if(day.Events.Count() > 3)
+                                    {
+                                        <div class="overflow-indicator mt-1 text-center">
+                                            +@(day.Events.Count() - 3) more
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private bool IsLoading = true;
+    private MonthViewDto? _monthView;
+    private List<List<DayItem>> _weeks = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        SignalR.OnEventsUpdated += RefreshDataFromSignalR;
+        await SignalR.StartAsync();
+        
+        await LoadMonthDataAsync();
+    }
+
+    private void RefreshDataFromSignalR()
+    {
+        // Must be invoked on the UI thread
+        InvokeAsync(async () =>
+        {
+            await LoadMonthDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task LoadMonthDataAsync()
+    {
+        IsLoading = true;
+        StateHasChanged();
+
+        _monthView = await CalendarApi.GetEventsForMonthAsync(CurrentMonth.Year, CurrentMonth.Month);
+        
+        BuildCalendarGrid();
+        
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private void BuildCalendarGrid()
+    {
+        _weeks.Clear();
+        
+        // Get start of the first week (could be late previous month)
+        var firstDayOfMonth = new DateTime(CurrentMonth.Year, CurrentMonth.Month, 1);
+        var startDay = firstDayOfMonth.AddDays(-(int)firstDayOfMonth.DayOfWeek);
+        
+        var currentDay = startDay;
+        
+        // Build 6 weeks to ensure we cover all days cleanly formatted
+        for (int row = 0; row < 6; row++)
+        {
+            var week = new List<DayItem>();
+            for (int col = 0; col < 7; col++)
+            {
+                var dateKey = currentDay.ToString("yyyy-MM-dd");
+                var eventsForDay = new List<CalendarEventViewModel>();
+                
+                if (_monthView != null && _monthView.Days.ContainsKey(dateKey))
+                {
+                    eventsForDay = _monthView.Days[dateKey]
+                        .OrderByDescending(e => e.IsAllDay)
+                        .ThenBy(e => e.StartTime)
+                        .ToList();
+                }
+
+                week.Add(new DayItem { Date = currentDay, Events = eventsForDay });
+                currentDay = currentDay.AddDays(1);
+            }
+            _weeks.Add(week);
+            
+            // If we've passed the end of the month and completed the row, stop
+            if (currentDay.Month > CurrentMonth.Month || 
+               (currentDay.Year > CurrentMonth.Year && currentDay.Month == 1))
+            {
+                break;
+            }
+        }
+    }
+
+    private async Task GoToPreviousMonth()
+    {
+        CurrentMonth = CurrentMonth.AddMonths(-1);
+        await LoadMonthDataAsync();
+    }
+
+    private async Task GoToNextMonth()
+    {
+        CurrentMonth = CurrentMonth.AddMonths(1);
+        await LoadMonthDataAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
+    }
+
+    private class DayItem
+    {
+        public DateTime Date { get; set; }
+        public List<CalendarEventViewModel> Events { get; set; } = new();
+    }
+}
