@@ -213,45 +213,4 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         }
     }
 
-    #region Google API Models
-    
-    private class CalendarListResponse
-    {
-        [JsonPropertyName("items")]
-        public List<CalendarListItem> Items { get; set; } = new();
-    }
-
-    private class CalendarListItem
-    {
-        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
-        [JsonPropertyName("summary")] public string Summary { get; set; } = string.Empty;
-        [JsonPropertyName("summaryOverride")] public string? SummaryOverride { get; set; }
-        [JsonPropertyName("backgroundColor")] public string? BackgroundColor { get; set; }
-    }
-
-    private class EventsResponse
-    {
-        [JsonPropertyName("items")] public List<GoogleEventItem> Items { get; set; } = new();
-        [JsonPropertyName("nextPageToken")] public string? NextPageToken { get; set; }
-        [JsonPropertyName("nextSyncToken")] public string? NextSyncToken { get; set; }
-    }
-
-    private class GoogleEventItem
-    {
-        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
-        [JsonPropertyName("status")] public string Status { get; set; } = string.Empty;
-        [JsonPropertyName("summary")] public string? Summary { get; set; }
-        [JsonPropertyName("description")] public string? Description { get; set; }
-        [JsonPropertyName("location")] public string? Location { get; set; }
-        [JsonPropertyName("start")] public EventDateTime? Start { get; set; }
-        [JsonPropertyName("end")] public EventDateTime? End { get; set; }
-    }
-
-    private class EventDateTime
-    {
-        [JsonPropertyName("dateTime")] public DateTimeOffset? DateTime { get; set; }
-        [JsonPropertyName("date")] public DateTimeOffset? Date { get; set; }
-    }
-
-    #endregion
 }

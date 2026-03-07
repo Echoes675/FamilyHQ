@@ -13,30 +13,11 @@ namespace FamilyHQ.Services.Tests.Auth;
 
 public class GoogleAuthServiceTests
 {
-    private readonly Mock<HttpMessageHandler> _httpMessageHandlerMock;
-    private readonly GoogleAuthService _sut;
-
-    public GoogleAuthServiceTests()
-    {
-        _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
-        var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
-        
-        var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
-        {
-            ClientId = "test-client-id",
-            ClientSecret = "test-client-secret",
-            AuthBaseUrl = "https://test.oauth.com"
-        });
-
-        var loggerMock = new Mock<ILogger<GoogleAuthService>>();
-        
-        _sut = new GoogleAuthService(httpClient, options, loggerMock.Object);
-    }
-
     [Fact]
     public async Task ExchangeCodeForTokenAsync_WhenSuccessful_ReturnsTokens()
     {
         // Arrange
+        var (httpMock, systemUnderTest) = CreateSut();
         var responseJson = JsonSerializer.Serialize(new
         {
             access_token = "access-123",
@@ -45,8 +26,7 @@ public class GoogleAuthServiceTests
             token_type = "Bearer"
         });
 
-        _httpMessageHandlerMock
-            .Protected()
+        httpMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -58,7 +38,7 @@ public class GoogleAuthServiceTests
             });
 
         // Act
-        var result = await _sut.ExchangeCodeForTokenAsync("auth-code-789", "https://localhost/callback");
+        var result = await systemUnderTest.ExchangeCodeForTokenAsync("auth-code-789", "https://localhost/callback");
 
         // Assert
         result.AccessToken.Should().Be("access-123");
@@ -69,6 +49,7 @@ public class GoogleAuthServiceTests
     public async Task RefreshAccessTokenAsync_WhenSuccessful_ReturnsNewAccessToken()
     {
         // Arrange
+        var (httpMock, systemUnderTest) = CreateSut();
         var responseJson = JsonSerializer.Serialize(new
         {
             access_token = "new-access-123",
@@ -76,8 +57,7 @@ public class GoogleAuthServiceTests
             token_type = "Bearer"
         });
 
-        _httpMessageHandlerMock
-            .Protected()
+        httpMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -89,7 +69,7 @@ public class GoogleAuthServiceTests
             });
 
         // Act
-        var result = await _sut.RefreshAccessTokenAsync("old-refresh-token");
+        var result = await systemUnderTest.RefreshAccessTokenAsync("old-refresh-token");
 
         // Assert
         result.Should().Be("new-access-123");
@@ -99,8 +79,8 @@ public class GoogleAuthServiceTests
     public async Task RefreshAccessTokenAsync_WhenFails_ThrowsException()
     {
         // Arrange
-        _httpMessageHandlerMock
-            .Protected()
+        var (httpMock, systemUnderTest) = CreateSut();
+        httpMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
@@ -112,8 +92,26 @@ public class GoogleAuthServiceTests
             });
 
         // Act & Assert
-        await _sut.Invoking(s => s.RefreshAccessTokenAsync("bad-token"))
+        await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("bad-token"))
             .Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*Failed to refresh token*");
+    }
+
+    private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService SystemUnderTest) CreateSut()
+    {
+        var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
+        var httpClient = new HttpClient(httpMessageHandlerMock.Object);
+        
+        var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
+        {
+            ClientId = "test-client-id",
+            ClientSecret = "test-client-secret",
+            AuthBaseUrl = "https://test.oauth.com"
+        });
+
+        var loggerMock = new Mock<ILogger<GoogleAuthService>>();
+        
+        var systemUnderTest = new GoogleAuthService(httpClient, options, loggerMock.Object);
+        return (httpMessageHandlerMock, systemUnderTest);
     }
 }

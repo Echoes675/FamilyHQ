@@ -3,7 +3,7 @@
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.Core.ViewModels
 @implements IAsyncDisposable
-@inject CalendarApiService CalendarApi
+@inject ICalendarApiService CalendarApi
 @inject SignalRService SignalR
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
@@ -18,9 +18,9 @@
         <!-- Navigation Controls -->
         <div class="btn-group">
             <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
-            <span class="btn btn-light disabled" style="min-width: 150px; font-weight: 600;">
+            <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
                 @CurrentMonth.ToString("MMMM yyyy")
-            </span>
+            </button>
             <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
         </div>
     </div>
@@ -110,11 +110,52 @@
     }
 </div>
 
+@if (_showQuickJumpModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title w-100 text-center">Jump to Date</h5>
+                    <button type="button" class="btn-close" @onclick="CloseQuickJumpModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _jumpYear--">&lt;</button>
+                        <span class="fs-5 fw-bold">@_jumpYear</span>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _jumpYear++">&gt;</button>
+                    </div>
+                    
+                    <div class="row g-2">
+                        @for (int i = 1; i <= 12; i++)
+                        {
+                            var month = i; // local capture for lambda
+                            <div class="col-4">
+                                <button class="btn w-100 @(IsSelectedJumpMonth(month) ? "btn-primary" : "btn-outline-primary")"
+                                        @onclick="() => JumpToDate(month)">
+                                    @(new DateTime(2000, month, 1).ToString("MMM"))
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0 justify-content-center">
+                    <button class="btn btn-link text-decoration-none" @onclick="JumpToToday">Go to Today</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private bool IsLoading = true;
     private MonthViewDto? _monthView;
     private List<List<DayItem>> _weeks = new();
+
+    // Quick Jump Modal State
+    private bool _showQuickJumpModal = false;
+    private int _jumpYear;
 
     protected override async Task OnInitializedAsync()
     {
@@ -199,6 +240,35 @@
         CurrentMonth = CurrentMonth.AddMonths(1);
         await LoadMonthDataAsync();
     }
+    
+    // Quick Jump Modal Logic
+    private void OpenQuickJumpModal()
+    {
+        _jumpYear = CurrentMonth.Year;
+        _showQuickJumpModal = true;
+    }
+
+    private void CloseQuickJumpModal()
+    {
+        _showQuickJumpModal = false;
+    }
+
+    private bool IsSelectedJumpMonth(int month) => 
+        month == CurrentMonth.Month && _jumpYear == CurrentMonth.Year;
+
+    private async Task JumpToDate(int month)
+    {
+        CurrentMonth = new DateTime(_jumpYear, month, 1);
+        CloseQuickJumpModal();
+        await LoadMonthDataAsync();
+    }
+
+    private async Task JumpToToday()
+    {
+        CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        CloseQuickJumpModal();
+        await LoadMonthDataAsync();
+    }
 
     private async Task SimulateLogin()
     {
@@ -211,9 +281,10 @@
         // Let the backend process the sync, and SignalR will automatically refresh us in a moment
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
+        return ValueTask.CompletedTask;
     }
 
     private class DayItem

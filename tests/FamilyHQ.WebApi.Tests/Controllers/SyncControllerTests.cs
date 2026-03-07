@@ -13,64 +13,61 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 
 public class SyncControllerTests
 {
-    private readonly Mock<ICalendarSyncService> _syncServiceMock;
-    private readonly Mock<IHubContext<CalendarHub>> _hubContextMock;
-    private readonly Mock<IClientProxy> _clientProxyMock;
-    private readonly Mock<ILogger<SyncController>> _loggerMock;
-    private readonly SyncController _sut;
-
-    public SyncControllerTests()
-    {
-        _syncServiceMock = new Mock<ICalendarSyncService>();
-        _hubContextMock = new Mock<IHubContext<CalendarHub>>();
-        _clientProxyMock = new Mock<IClientProxy>();
-        _loggerMock = new Mock<ILogger<SyncController>>();
-
-        // Setup SignalR HubContext mock
-        var clientsMock = new Mock<IHubClients>();
-        clientsMock.Setup(c => c.All).Returns(_clientProxyMock.Object);
-        _hubContextMock.Setup(h => h.Clients).Returns(clientsMock.Object);
-
-        _sut = new SyncController(
-            _syncServiceMock.Object,
-            _hubContextMock.Object,
-            _loggerMock.Object)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = new DefaultHttpContext()
-            }
-        };
-    }
-
     [Fact]
     public async Task TriggerSync_ShouldCallSyncAndNotifyClients()
     {
+        // Arrange
+        var (sync, proxy, systemUnderTest) = CreateSut();
+
         // Act
-        var result = await _sut.TriggerSync(CancellationToken.None);
+        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkObjectResult>();
         
-        _syncServiceMock.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
-        
-        _clientProxyMock.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        sync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task GooglePushWebhook_ShouldAcknowledgeGoogleThenSyncAndNotify()
     {
         // Arrange
-        _sut.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
+        var (sync, proxy, systemUnderTest) = CreateSut();
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
-        var result = await _sut.GooglePushWebhook(CancellationToken.None);
+        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
         
-        _syncServiceMock.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
-        
-        _clientProxyMock.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        sync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private static (Mock<ICalendarSyncService> Sync, Mock<IClientProxy> Proxy, SyncController SystemUnderTest) CreateSut()
+    {
+        var syncServiceMock = new Mock<ICalendarSyncService>();
+        var hubContextMock = new Mock<IHubContext<CalendarHub>>();
+        var clientProxyMock = new Mock<IClientProxy>();
+        var loggerMock = new Mock<ILogger<SyncController>>();
+
+        var clientsMock = new Mock<IHubClients>();
+        clientsMock.Setup(c => c.All).Returns(clientProxyMock.Object);
+        hubContextMock.Setup(h => h.Clients).Returns(clientsMock.Object);
+
+        var systemUnderTest = new SyncController(
+            syncServiceMock.Object,
+            hubContextMock.Object,
+            loggerMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        return (syncServiceMock, clientProxyMock, systemUnderTest);
     }
 }

@@ -4,11 +4,13 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.EntityFrameworkCore;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddOpenApi();
 
 // Configure Services
 builder.Services.Configure<GoogleCalendarOptions>(builder.Configuration.GetSection(GoogleCalendarOptions.SectionName));
@@ -47,7 +49,12 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    // Minimal API setup or Swagger could be here
+    app.MapOpenApi();
+    app.MapScalarApiReference(options => 
+    {
+        options.WithTitle("FamilyHQ Backend API");
+        options.WithTheme(Scalar.AspNetCore.ScalarTheme.DeepSpace);
+    });
 }
 
 app.UseHttpsRedirection();

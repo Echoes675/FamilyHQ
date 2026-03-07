@@ -30,7 +30,6 @@ description: A set of rules and best practices that guide on how to write, struc
 - Avoid abbreviations unless universally understood (e.g., Id, Url).
 
 ## Implementation Patterns
-- One class per file — the file name must match the class name exactly.
 - Async/Await: Use Async suffix for all asynchronous methods. Never use .Result or .Wait().
 - Dependency Injection: Use constructor injection exclusively. Avoid IServiceProvider (Service Locator pattern).
 - Member Order:
@@ -45,6 +44,8 @@ description: A set of rules and best practices that guide on how to write, struc
 -- Views in the UI should make use of specific ViewModels and not core models to populate views or send data.
 - Error Handling: Implement a Global Exception Filter or Middleware to catch unhandled exceptions. Never return stack traces or internal exception details to the client.
 - Web Safety: Ensure CORS policies are restricted to known origins. Implement Anti-Forgery tokens for any state-changing operations (POST/PUT/DELETE) if not using pure JWT.
+- Only one class/enum/interface etc per file - the file name must match the class name exactly.
+- Use Test driven development. See skill test-driven-development
 
 ## Logging
 - Use structured logging (e.g., _logger.LogInformation("Processing event {EventId}", eventId)).

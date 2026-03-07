@@ -19,6 +19,11 @@ public class CalendarsController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Retrieves all synced calendars associated with the authenticated user.
+    /// </summary>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A list of CalendarInfo items.</returns>
     [HttpGet]
     public async Task<IActionResult> GetCalendars(CancellationToken ct)
     {
@@ -26,6 +31,13 @@ public class CalendarsController : ControllerBase
         return Ok(calendars);
     }
 
+    /// <summary>
+    /// Retrieves mapped calendar events for a specific month and year grid view.
+    /// </summary>
+    /// <param name="year">The target year.</param>
+    /// <param name="month">The target month (1-12).</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A MonthViewDto organizing events by days.</returns>
     [HttpGet("events")]
     public async Task<IActionResult> GetEventsForMonth([FromQuery] int year, [FromQuery] int month, CancellationToken ct)
     {

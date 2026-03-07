@@ -26,6 +26,7 @@ public class SyncOrchestrator : BackgroundService
             using var scope = _serviceProvider.CreateScope();
             var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
             
+            // TODO: These should be configurable via a settings page in the UI
             var startDate = DateTimeOffset.UtcNow.AddDays(-30);
             var endDate = DateTimeOffset.UtcNow.AddDays(365);
             
@@ -49,6 +50,7 @@ public class SyncOrchestrator : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
                 
+                // TODO: These should be configurable via a settings page in the UI
                 var startDate = DateTimeOffset.UtcNow.AddDays(-30);
                 var endDate = DateTimeOffset.UtcNow.AddDays(365);
                 

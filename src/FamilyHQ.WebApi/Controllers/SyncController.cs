@@ -24,6 +24,11 @@ public class SyncController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Manually triggers a full synchronization of all connected Google Calendars.
+    /// </summary>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A status response.</returns>
     [HttpPost("trigger")]
     public async Task<IActionResult> TriggerSync(CancellationToken ct)
     {
@@ -40,6 +45,11 @@ public class SyncController : ControllerBase
         return Ok(new { Message = "Sync completed successfully." });
     }
 
+    /// <summary>
+    /// Webhook endpoint intended for Google Calendar push notifications to trigger an incremental sync.
+    /// </summary>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A 200 OK status.</returns>
     [HttpPost("webhook")]
     public async Task<IActionResult> GooglePushWebhook(CancellationToken ct)
     {

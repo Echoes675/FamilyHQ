@@ -16,7 +16,7 @@ public class Program
 
         builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(backendUrl) });
         
-        builder.Services.AddScoped<CalendarApiService>();
+        builder.Services.AddScoped<ICalendarApiService, CalendarApiService>();
         
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
 

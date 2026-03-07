@@ -21,6 +21,10 @@ public class AuthController : ControllerBase
         _scopeFactory = scopeFactory;
     }
 
+    /// <summary>
+    /// Authenticates with Google OAuth2 and initiates an initial calendar sync.
+    /// </summary>
+    /// <returns>A status message.</returns>
     [HttpPost("login")]
     public async Task<IActionResult> Login()
     {

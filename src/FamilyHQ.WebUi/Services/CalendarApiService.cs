@@ -5,7 +5,7 @@ using FamilyHQ.Core.ViewModels;
 
 namespace FamilyHQ.WebUi.Services;
 
-public class CalendarApiService
+public class CalendarApiService : ICalendarApiService
 {
     private readonly HttpClient _httpClient;
 

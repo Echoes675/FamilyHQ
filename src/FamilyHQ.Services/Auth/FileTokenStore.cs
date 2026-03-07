@@ -11,10 +11,10 @@ public class FileTokenStore : ITokenStore
 {
     private readonly string _tokenFilePath;
 
-    public FileTokenStore()
+    public FileTokenStore(string? tokenFilePath = null)
     {
         // For development, store token alongside the application relative path
-        _tokenFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FamilyHQ", "google_refresh_token.txt");
+        _tokenFilePath = tokenFilePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FamilyHQ", "google_refresh_token.txt");
         
         var dir = Path.GetDirectoryName(_tokenFilePath);
         if (!Directory.Exists(dir))
