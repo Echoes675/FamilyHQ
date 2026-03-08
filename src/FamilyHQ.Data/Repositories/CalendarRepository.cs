@@ -46,6 +46,13 @@ public class CalendarRepository : ICalendarRepository
             .ToListAsync(ct);
     }
 
+    public async Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .Include(e => e.CalendarInfo)
+            .FirstOrDefaultAsync(e => e.Id == id, ct);
+    }
+
     public async Task<CalendarEvent?> GetEventByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Events

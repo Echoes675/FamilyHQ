@@ -34,8 +34,8 @@ public class SyncOrchestrator : BackgroundService
         }
         catch (Exception ex)
         {
-            // It's possible the user hasn't authenticated yet or DB isn't ready.
-            _logger.LogWarning(ex, "Failed to perform initial startup sync. This is normal if OAuth is not complete.");
+                // It's possible the user hasn't authenticated yet or DB isn't ready.
+                _logger.LogWarning(ex, "Failed to perform initial startup sync. This is normal if OAuth is not complete.");
         }
 
         while (!stoppingToken.IsCancellationRequested)

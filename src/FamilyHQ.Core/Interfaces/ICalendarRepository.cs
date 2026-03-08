@@ -8,6 +8,7 @@ public interface ICalendarRepository
     Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default);
     Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
     Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
+    Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default);
     Task<CalendarEvent?> GetEventByIdAsync(Guid id, CancellationToken ct = default);
     Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default);
     

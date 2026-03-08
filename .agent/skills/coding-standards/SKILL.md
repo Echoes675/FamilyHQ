@@ -32,6 +32,7 @@ description: A set of rules and best practices that guide on how to write, struc
 ## Implementation Patterns
 - Async/Await: Use Async suffix for all asynchronous methods. Never use .Result or .Wait().
 - Dependency Injection: Use constructor injection exclusively. Avoid IServiceProvider (Service Locator pattern).
+- Do not write logic in Controllers/Presentation Layer: Always push logic down to a Service in `FamilyHQ.Services`.
 - Member Order:
 1. Constants
 2. Fields 
@@ -46,6 +47,7 @@ description: A set of rules and best practices that guide on how to write, struc
 - Web Safety: Ensure CORS policies are restricted to known origins. Implement Anti-Forgery tokens for any state-changing operations (POST/PUT/DELETE) if not using pure JWT.
 - Only one class/enum/interface etc per file - the file name must match the class name exactly.
 - Use Test driven development. See skill test-driven-development
+- Database Changes: All schema changes must go through EF Core Migrations
 
 ## Logging
 - Use structured logging (e.g., _logger.LogInformation("Processing event {EventId}", eventId)).

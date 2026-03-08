@@ -11,11 +11,16 @@ namespace FamilyHQ.WebApi.Controllers;
 public class CalendarsController : ControllerBase
 {
     private readonly ICalendarRepository _calendarRepository;
+    private readonly IGoogleCalendarClient _googleCalendarClient;
     private readonly ILogger<CalendarsController> _logger;
 
-    public CalendarsController(ICalendarRepository calendarRepository, ILogger<CalendarsController> logger)
+    public CalendarsController(
+        ICalendarRepository calendarRepository, 
+        IGoogleCalendarClient googleCalendarClient,
+        ILogger<CalendarsController> logger)
     {
         _calendarRepository = calendarRepository;
+        _googleCalendarClient = googleCalendarClient;
         _logger = logger;
     }
 
@@ -79,7 +84,8 @@ public class CalendarsController : ControllerBase
                 StartTime = evt.Start.LocalDateTime,
                 EndTime = evt.End.LocalDateTime,
                 IsAllDay = evt.IsAllDay,
-                Location = evt.Location
+                Location = evt.Location,
+                CalendarId = evt.CalendarInfoId
             };
 
             if (calendarDict.TryGetValue(evt.CalendarInfoId, out var cal))
@@ -101,5 +107,126 @@ public class CalendarsController : ControllerBase
         }
 
         return Ok(monthView);
+    }
+
+    /// <summary>
+    /// Creates a new calendar event.
+    /// </summary>
+    /// <param name="calendarId">The target calendar internal Guid.</param>
+    /// <param name="request">The creation payload.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The created event ViewModel.</returns>
+    [HttpPost("{calendarId:guid}/events")]
+    public async Task<IActionResult> CreateEvent(Guid calendarId, [FromBody] CreateEventRequest request, CancellationToken ct)
+    {
+        var calendars = await _calendarRepository.GetCalendarsAsync(ct);
+        var calendar = calendars.FirstOrDefault(c => c.Id == calendarId);
+        if (calendar == null) return NotFound("Calendar not found.");
+
+        var newEvent = new FamilyHQ.Core.Models.CalendarEvent
+        {
+            CalendarInfoId = calendarId,
+            Title = request.Title,
+            Start = request.Start,
+            End = request.End,
+            IsAllDay = request.IsAllDay,
+            Location = request.Location,
+            Description = request.Description
+        };
+
+        try
+        {
+            var createdEvent = await _googleCalendarClient.CreateEventAsync(calendar.GoogleCalendarId, newEvent, ct);
+            createdEvent.CalendarInfoId = calendarId;
+            await _calendarRepository.AddEventAsync(createdEvent, ct);
+            await _calendarRepository.SaveChangesAsync(ct);
+            
+            return Ok(new CalendarEventViewModel
+            {
+                Id = createdEvent.Id.ToString(),
+                Title = createdEvent.Title,
+                StartTime = createdEvent.Start.LocalDateTime,
+                EndTime = createdEvent.End.LocalDateTime,
+                IsAllDay = createdEvent.IsAllDay,
+                Location = createdEvent.Location,
+                CalendarName = calendar.DisplayName,
+                CalendarColor = calendar.Color,
+                CalendarId = calendarId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating event");
+            return StatusCode(500, "Error communicating with Google Calendar");
+        }
+    }
+
+    /// <summary>
+    /// Updates an existing calendar event.
+    /// </summary>
+    [HttpPut("{calendarId:guid}/events/{eventId:guid}")]
+    public async Task<IActionResult> UpdateEvent(Guid calendarId, Guid eventId, [FromBody] UpdateEventRequest request, CancellationToken ct)
+    {
+        var existing = await _calendarRepository.GetEventAsync(eventId, ct);
+        if (existing == null || existing.CalendarInfoId != calendarId) return NotFound("Event not found.");
+
+        existing.Title = request.Title;
+        existing.Start = request.Start;
+        existing.End = request.End;
+        existing.IsAllDay = request.IsAllDay;
+        existing.Location = request.Location;
+        existing.Description = request.Description;
+
+        try
+        {
+            var updatedGoogleEvent = await _googleCalendarClient.UpdateEventAsync(existing.CalendarInfo.GoogleCalendarId, existing, ct);
+            
+            // Sync up any potential Google-side changes (like updated tokens or IDs if any, although unlikely for an update)
+            existing.GoogleEventId = updatedGoogleEvent.GoogleEventId; 
+            await _calendarRepository.UpdateEventAsync(existing, ct);
+            await _calendarRepository.SaveChangesAsync(ct);
+            
+            return Ok(new CalendarEventViewModel
+            {
+                Id = existing.Id.ToString(),
+                Title = existing.Title,
+                StartTime = existing.Start.LocalDateTime,
+                EndTime = existing.End.LocalDateTime,
+                IsAllDay = existing.IsAllDay,
+                Location = existing.Location,
+                CalendarName = existing.CalendarInfo.DisplayName,
+                CalendarColor = existing.CalendarInfo.Color,
+                CalendarId = existing.CalendarInfoId
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating event");
+            return StatusCode(500, "Error communicating with Google Calendar");
+        }
+    }
+
+    /// <summary>
+    /// Deletes an existing calendar event.
+    /// </summary>
+    [HttpDelete("{calendarId:guid}/events/{eventId:guid}")]
+    public async Task<IActionResult> DeleteEvent(Guid calendarId, Guid eventId, CancellationToken ct)
+    {
+        var existing = await _calendarRepository.GetEventAsync(eventId, ct);
+        if (existing == null || existing.CalendarInfoId != calendarId) return NotFound("Event not found.");
+
+        try
+        {
+            await _googleCalendarClient.DeleteEventAsync(existing.CalendarInfo.GoogleCalendarId, existing.GoogleEventId, ct);
+            await _calendarRepository.DeleteEventAsync(eventId, ct);
+            await _calendarRepository.SaveChangesAsync(ct);
+            
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting event");
+            return StatusCode(500, "Error communicating with Google Calendar");
+        }
     }
 }

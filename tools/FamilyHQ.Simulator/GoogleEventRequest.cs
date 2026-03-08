@@ -1,0 +1,15 @@
+﻿using System.Text.Json.Serialization;
+
+public class GoogleEventRequest
+{
+    [JsonPropertyName("summary")]
+    public string? Summary { get; set; }
+    [JsonPropertyName("location")]
+    public string? Location { get; set; }
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+    [JsonPropertyName("start")]
+    public GoogleDateTime Start { get; set; } = new();
+    [JsonPropertyName("end")]
+    public GoogleDateTime End { get; set; } = new();
+}

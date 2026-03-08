@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <UserSecretsId>7575a571-fe8d-4fb7-a2b5-1d202e0ecad2</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

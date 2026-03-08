@@ -10,4 +10,5 @@ public class CalendarEventViewModel
     public string? Location { get; set; }
     public string? CalendarName { get; set; }
     public string? CalendarColor { get; set; }
+    public Guid CalendarId { get; set; }
 }

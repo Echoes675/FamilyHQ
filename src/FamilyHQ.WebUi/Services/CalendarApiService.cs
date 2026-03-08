@@ -32,6 +32,25 @@ public class CalendarApiService : ICalendarApiService
             
         return await response.Content.ReadFromJsonAsync<MonthViewDto>(cancellationToken: ct);
     }
+    public async Task<CalendarEventViewModel?> CreateEventAsync(Guid calendarId, CreateEventRequest request, CancellationToken ct = default)
+    {
+        var response = await _httpClient.PostAsJsonAsync($"api/calendars/{calendarId}/events", request, ct);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<CalendarEventViewModel>(cancellationToken: ct);
+    }
+
+    public async Task<CalendarEventViewModel?> UpdateEventAsync(Guid calendarId, Guid eventId, UpdateEventRequest request, CancellationToken ct = default)
+    {
+        var response = await _httpClient.PutAsJsonAsync($"api/calendars/{calendarId}/events/{eventId}", request, ct);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<CalendarEventViewModel>(cancellationToken: ct);
+    }
+
+    public async Task<bool> DeleteEventAsync(Guid calendarId, Guid eventId, CancellationToken ct = default)
+    {
+        var response = await _httpClient.DeleteAsync($"api/calendars/{calendarId}/events/{eventId}", ct);
+        return response.IsSuccessStatusCode;
+    }
     
     public async Task SimulateLoginAsync(CancellationToken ct = default)
     {

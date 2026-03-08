@@ -18,6 +18,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly ITokenStore _tokenStore;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new JsonSerializerOptions
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
 
     public GoogleCalendarClient(
         HttpClient httpClient,
@@ -156,7 +160,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
         
         var requestBody = MapToGoogleEvent(calendarEvent);
-        var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, ct);
+        var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GoogleEventItem>(cancellationToken: ct);
@@ -172,7 +176,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
         
         var requestBody = MapToGoogleEvent(calendarEvent);
-        var response = await _httpClient.PutAsJsonAsync(endpoint, requestBody, ct);
+        var response = await _httpClient.PutAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
         response.EnsureSuccessStatusCode();
 
         return calendarEvent;
