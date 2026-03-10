@@ -1,3 +1,4 @@
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
 using FamilyHQ.Services.Options;
@@ -22,11 +23,44 @@ builder.Services.Configure<GoogleCalendarOptions>(builder.Configuration.GetSecti
 // Add database
 builder.Services.AddPostgreSqlDataAccess(builder.Configuration);
 
+// Add auth context access
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.CurrentUserService>();
+
 // Add our core business logic
 builder.Services.AddFamilyHqServices();
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();
+
+// Add Authentication for the Simulator
+builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = false,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes("SuperSecretDummyKeyForFamilyHqSimulatorMVF1"))
+        };
+        
+        // SignalR Authentication
+        options.Events = new Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/calendar"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
+    });
 
 // CORS is required because Blazor WASM might run on a different port in dev
 builder.Services.AddCors(options =>
@@ -64,6 +98,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors("AllowBlazorApp");
 
+app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 

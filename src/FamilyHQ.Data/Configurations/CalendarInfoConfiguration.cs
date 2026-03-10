@@ -23,7 +23,11 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
         builder.Property(c => c.Color)
             .HasMaxLength(50);
             
-        builder.HasIndex(c => c.GoogleCalendarId).IsUnique();
+        builder.Property(c => c.UserId)
+            .IsRequired()
+            .HasMaxLength(255);
+
+        builder.HasIndex(c => new { c.GoogleCalendarId, c.UserId }).IsUnique();
 
         builder.HasOne(c => c.SyncState)
             .WithOne(s => s.CalendarInfo)

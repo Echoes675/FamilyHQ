@@ -94,9 +94,14 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.Property<bool>("IsVisible")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("GoogleCalendarId")
+                    b.HasIndex("GoogleCalendarId", "UserId")
                         .IsUnique();
 
                     b.ToTable("Calendars", (string)null);

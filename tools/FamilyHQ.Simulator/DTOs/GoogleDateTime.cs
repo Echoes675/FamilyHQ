@@ -1,5 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 
+namespace FamilyHQ.Simulator.DTOs;
+
 public class GoogleDateTime
 {
     [JsonPropertyName("dateTime")]

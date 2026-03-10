@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using FamilyHQ.WebUi.Services;
+using FamilyHQ.WebUi.Services.Auth;
 
 namespace FamilyHQ.WebUi;
 
@@ -14,9 +15,13 @@ public class Program
 
         var backendUrl = builder.Configuration["BackendUrl"] ?? "https://localhost:5001";
 
-        builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(backendUrl) });
-        
-        builder.Services.AddScoped<ICalendarApiService, CalendarApiService>();
+        builder.Services.AddScoped<IAuthTokenStore, LocalStorageAuthTokenStore>();
+        builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
+
+        builder.Services.AddHttpClient<ICalendarApiService, CalendarApiService>(client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        }).AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
         
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
 

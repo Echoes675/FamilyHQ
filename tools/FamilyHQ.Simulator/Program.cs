@@ -1,8 +1,7 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
+using FamilyHQ.Simulator.Data;
+using FamilyHQ.Simulator.DTOs;
+using FamilyHQ.Simulator.Models;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,12 +21,22 @@ using (var scope = app.Services.CreateScope())
 // Dummy OAuth Token Exchange / Refresh
 app.MapPost("/token", async context =>
 {
+    var form = await context.Request.ReadFormAsync();
+    var code = form["code"].ToString();
+    
+    var userId = "default_simulator_user";
+    if (code.StartsWith("dummy_code_for_"))
+    {
+        userId = code.Substring("dummy_code_for_".Length);
+    }
+    
     var response = new
     {
         access_token = "simulated_access_token_" + Guid.NewGuid().ToString("N"),
         refresh_token = "simulated_refresh_token",
         expires_in = 3600,
-        token_type = "Bearer"
+        token_type = "Bearer",
+        user_id = userId
     };
     
     await context.Response.WriteAsJsonAsync(response);
@@ -38,24 +47,47 @@ app.MapGet("/users/me/calendarList", async context =>
 {
     var response = new
     {
-        items = new[]
-        {
-            new
-            {
-                id = "simulated_calendar_family",
-                summary = "Family Calendar",
-                backgroundColor = "#b39ddb"
-            },
-            new
-            {
-                id = "simulated_calendar_work",
-                summary = "Work Calendar",
-                backgroundColor = "#9e9e9e"
-            }
-        }
+        items = FamilyHQ.Simulator.Program.ActiveCalendars
     };
     
     await context.Response.WriteAsJsonAsync(response);
+});
+
+// Configure Endpoint for E2E tests
+app.MapPost("/api/simulator/configure", async (HttpRequest request, SimContext db) =>
+{
+    var config = await request.ReadFromJsonAsync<SimulatorConfigurationModel>();
+    if (config != null)
+    {
+        // Update Calendars
+        FamilyHQ.Simulator.Program.ActiveCalendars.Clear();
+        foreach (var c in config.Calendars)
+        {
+            FamilyHQ.Simulator.Program.ActiveCalendars.Add(new { id = c.Id, summary = c.Summary, backgroundColor = c.BackgroundColor ?? "#9e9e9e" });
+        }
+
+        // Clear and seed Events
+        var existingEvents = await db.Events.ToListAsync();
+        db.Events.RemoveRange(existingEvents);
+        
+        foreach (var e in config.Events)
+        {
+            db.Events.Add(new SimulatedEvent
+            {
+                Id = e.Id,
+                CalendarId = e.CalendarId,
+                Summary = e.Summary,
+                StartTime = e.StartTime,
+                EndTime = e.EndTime,
+                IsAllDay = e.IsAllDay
+            });
+        }
+        
+        await db.SaveChangesAsync();
+        Console.WriteLine($"[SIM] Configured Simulator with {config.Calendars.Count} calendars and {config.Events.Count} events from template.");
+    }
+    
+    return Results.Ok();
 });
 
 // Persistent Events List
@@ -284,4 +316,16 @@ void SeedData(SimContext db)
 
     db.SaveChanges();
     Console.WriteLine("[SIM] Data seeded.");
+}
+
+namespace FamilyHQ.Simulator
+{
+    public partial class Program
+    {
+        public static List<object> ActiveCalendars = new()
+        {
+            new { id = "simulated_calendar_family", summary = "Family Calendar", backgroundColor = "#b39ddb" },
+            new { id = "simulated_calendar_work", summary = "Work Calendar", backgroundColor = "#9e9e9e" }
+        };
+    }
 }

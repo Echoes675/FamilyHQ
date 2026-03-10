@@ -7,6 +7,12 @@
     <Project Path="src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj" />
     <Project Path="src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj" />
   </Folder>
+  <Folder Name="/tests-e2e/">
+    <Project Path="tests-e2e/FamilyHQ.E2E.Common/FamilyHQ.E2E.Common.csproj" />
+    <Project Path="tests-e2e/FamilyHQ.E2E.Data/FamilyHQ.E2E.Data.csproj" />
+    <Project Path="tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj" />
+    <Project Path="tests-e2e/FamilyHQ.E2E.Steps/FamilyHQ.E2E.Steps.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FamilyHQ.Core.Tests/FamilyHQ.Core.Tests.csproj" />
     <Project Path="tests/FamilyHQ.Services.Tests/FamilyHQ.Services.Tests.csproj" />

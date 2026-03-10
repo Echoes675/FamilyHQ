@@ -1,0 +1,12 @@
+{
+    "Test Family Member": {
+        "Calendars": [
+            {
+                "Id": "template_family",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    }
+}

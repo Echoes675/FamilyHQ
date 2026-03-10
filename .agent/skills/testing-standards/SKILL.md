@@ -4,6 +4,7 @@ description: A set of rules and best practices that guide on how to write, struc
 ---
 
 # Testing Guidelines
+
 ## Stack
 - Framework: xUnit
 - Mocking: Moq

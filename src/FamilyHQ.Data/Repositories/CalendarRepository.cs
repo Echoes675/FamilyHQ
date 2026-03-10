@@ -7,16 +7,21 @@ namespace FamilyHQ.Data.Repositories;
 public class CalendarRepository : ICalendarRepository
 {
     private readonly FamilyHqDbContext _context;
+    private readonly ICurrentUserService _currentUserService;
 
-    public CalendarRepository(FamilyHqDbContext context)
+    public CalendarRepository(FamilyHqDbContext context, ICurrentUserService currentUserService)
     {
         _context = context;
+        _currentUserService = currentUserService;
     }
 
     public async Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
     {
+        var currentUserId = _currentUserService.UserId ?? "default_simulator_user";
+
         return await _context.Calendars
             .AsNoTracking()
+            .Where(c => c.UserId == currentUserId)
             .ToListAsync(ct);
     }
 
@@ -68,6 +73,7 @@ public class CalendarRepository : ICalendarRepository
 
     public Task AddCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default)
     {
+        calendarInfo.UserId = _currentUserService.UserId ?? "default_simulator_user";
         _context.Calendars.Add(calendarInfo);
         return Task.CompletedTask;
     }

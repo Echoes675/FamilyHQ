@@ -1,4 +1,6 @@
-﻿public class SimulatedEvent
+﻿namespace FamilyHQ.Simulator.Models;
+
+public class SimulatedEvent
 {
     public string Id { get; set; } = string.Empty;
     public string CalendarId { get; set; } = string.Empty;

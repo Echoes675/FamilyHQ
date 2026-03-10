@@ -1,4 +1,7 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿namespace FamilyHQ.Simulator.Data;
+
+using FamilyHQ.Simulator.Models;
+using Microsoft.EntityFrameworkCore;
 
 public class SimContext : DbContext
 {

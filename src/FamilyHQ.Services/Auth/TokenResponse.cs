@@ -15,4 +15,7 @@ internal class TokenResponse
 
     [JsonPropertyName("token_type")]
     public string TokenType { get; set; } = string.Empty;
+
+    [JsonPropertyName("user_id")]
+    public string? UserId { get; set; }
 }

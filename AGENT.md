@@ -28,6 +28,17 @@ Dashboard app that displays a family calendar events
 -- Changing environment variables
 
 ## Progressive Disclosure Links
-Refer to these files in the .agents/ directory for specific implementation details:
+Refer to these files in the .agent/ directory for specific implementation details:
 - Project Architecture & Structure: .agent/architecture.md
-- Skills: .agent/skills
+
+## Skills
+Read the relevant skill file before starting any task of that type:
+
+- **Git commits**: Read `.agent/skills/git-commit-formatter/SKILL.md`
+- **Git workflow (branching, PRs)**: Read `.agent/skills/git-workflow/SKILL.md`
+- **Writing/modifying backend C# code**: Read `.agent/skills/dotnet-backend-patterns/SKILL.md`
+- **Writing or modifying tests**: Read `.agent/skills/testing-standards/SKILL.md` and `.agent/skills/test-driven-development/SKILL.md`
+- **BDD/acceptance tests**: Read `.agent/skills/bdd-testing/SKILL.md`
+- **Security-sensitive code**: Read `.agent/skills/security/SKILL.md`
+- **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
+- **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`

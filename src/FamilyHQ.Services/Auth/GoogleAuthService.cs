@@ -22,7 +22,7 @@ public class GoogleAuthService
         _logger = logger;
     }
 
-    public async Task<(string AccessToken, string? RefreshToken)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
+    public async Task<(string AccessToken, string? RefreshToken, string? UserId)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
     {
         var request = new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -44,7 +44,7 @@ public class GoogleAuthService
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
-        return (result!.AccessToken, result.RefreshToken);
+        return (result!.AccessToken, result.RefreshToken, result.UserId);
     }
 
     public async Task<string> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)

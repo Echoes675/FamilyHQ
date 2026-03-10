@@ -18,26 +18,10 @@ public class SyncOrchestrator : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SyncOrchestrator background service is starting.");
+        _logger.LogInformation("SyncOrchestrator background service is starting. Sync will be triggered by login or webhook.");
 
-        // Do a full sync on startup (window: -30 days to +365 days)
-        try
-        {
-            using var scope = _serviceProvider.CreateScope();
-            var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-            
-            // TODO: These should be configurable via a settings page in the UI
-            var startDate = DateTimeOffset.UtcNow.AddDays(-30);
-            var endDate = DateTimeOffset.UtcNow.AddDays(365);
-            
-            await syncService.SyncAllAsync(startDate, endDate, stoppingToken);
-        }
-        catch (Exception ex)
-        {
-                // It's possible the user hasn't authenticated yet or DB isn't ready.
-                _logger.LogWarning(ex, "Failed to perform initial startup sync. This is normal if OAuth is not complete.");
-        }
-
+        // No startup sync - we have no user context at startup.
+        // Sync is triggered by the AuthController after login or by the SyncController on webhook.
         while (!stoppingToken.IsCancellationRequested)
         {
             // In a real app we might await a channel/queue for on-demand sync triggers,

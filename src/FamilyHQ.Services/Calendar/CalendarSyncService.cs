@@ -86,10 +86,25 @@ public class CalendarSyncService : ICalendarSyncService
 
             var existingEvents = await _calendarRepository.GetEventsAsync(calendarInfoId, startDate, endDate, ct);
 
+            if (isFullSync)
+            {
+                var fetchedGoogleEventIds = events.Select(e => e.GoogleEventId).ToHashSet();
+                var obsoleteEvents = existingEvents.Where(e => !fetchedGoogleEventIds.Contains(e.GoogleEventId));
+                foreach (var obsolete in obsoleteEvents)
+                {
+                    await _calendarRepository.DeleteEventAsync(obsolete.Id, ct);
+                }
+            }
+
             foreach (var evt in events)
             {
                 if (evt.Title == "CANCELLED_TOMBSTONE")
                 {
+                    var existingToCancel = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
+                    if (existingToCancel != null)
+                    {
+                        await _calendarRepository.DeleteEventAsync(existingToCancel.Id, ct);
+                    }
                     continue; 
                 }
 
