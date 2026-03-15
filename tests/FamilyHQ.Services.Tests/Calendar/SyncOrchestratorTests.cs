@@ -1,7 +1,9 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using Xunit;
 
@@ -70,7 +72,8 @@ public class SyncOrchestratorTests
 
         scopeMock.Setup(x => x.ServiceProvider).Returns(scopeServiceProviderMock.Object);
 
-        var systemUnderTest = new TestableSyncOrchestrator(serviceProviderMock.Object, loggerMock.Object);
+        var options = Microsoft.Extensions.Options.Options.Create(new SyncOptions { PeriodicSyncInterval = TimeSpan.FromSeconds(1) });
+        var systemUnderTest = new TestableSyncOrchestrator(serviceProviderMock.Object, loggerMock.Object, options);
 
         return (syncServiceMock, systemUnderTest);
     }

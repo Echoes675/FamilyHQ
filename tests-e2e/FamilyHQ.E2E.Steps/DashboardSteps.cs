@@ -23,10 +23,7 @@ public class DashboardSteps
     [When(@"I view the dashboard")]
     public async Task WhenIViewTheDashboard()
     {
-        var userName = _scenarioContext.TryGetValue("UserName", out string? name) ? name : "Test Family Member";
-        await _dashboardPage.NavigateAsync();
-        await _dashboardPage.SimulateLoginAsync(userName!);
-        await _dashboardPage.WaitForCalendarToLoadAsync();
+        await _dashboardPage.NavigateAndWaitAsync();
     }
 
     [Then(@"I see the event ""([^""]*)"" displayed on the calendar")]
@@ -69,5 +66,25 @@ public class DashboardSteps
     public void GivenILoginAsTheUser()
     {
         
+    }
+
+    [When(@"I click on the event ""([^""]*)""")]
+    public async Task WhenIClickOnTheEvent(string eventName)
+    {
+        await _dashboardPage.ClickEventAsync(eventName);
+    }
+
+    [Then(@"I see the event details for ""([^""]*)""")]
+    public async Task ThenISeeTheEventDetailsFor(string eventName)
+    {
+        var eventDetails = await _dashboardPage.GetEventDetailsAsync();
+        eventDetails.Should().Contain(eventName, 
+            $"The event details should contain '{eventName}'.");
+    }
+
+    [When(@"I navigate to the next month")]
+    public async Task WhenINavigateToTheNextMonth()
+    {
+        await _dashboardPage.NavigateToNextMonthAsync();
     }
 }

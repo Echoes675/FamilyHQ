@@ -28,12 +28,15 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.CurrentUserService>();
 
 // Add our core business logic
-builder.Services.AddFamilyHqServices();
+builder.Services.AddFamilyHqServices(builder.Configuration);
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();
 
 // Add Authentication for the Simulator
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
+    ?? throw new InvalidOperationException("JWT signing key is not configured.");
+
 builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -43,7 +46,7 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer
             ValidateAudience = false,
             ValidateLifetime = false,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes("SuperSecretDummyKeyForFamilyHqSimulatorMVF1"))
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSigningKey))
         };
         
         // SignalR Authentication

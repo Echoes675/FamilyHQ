@@ -8,5 +8,45 @@
             }
         ],
         "Events": []
+    },
+    "Multi Calendar User": {
+        "Calendars": [
+            {
+                "Id": "template_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_personal",
+                "Summary": "Personal Calendar",
+                "BackgroundColor": "#34a853"
+            },
+            {
+                "Id": "template_school",
+                "Summary": "School Calendar",
+                "BackgroundColor": "#fbbc04"
+            }
+        ],
+        "Events": []
+    },
+    "All Day Events User": {
+        "Calendars": [
+            {
+                "Id": "template_holidays",
+                "Summary": "Holidays",
+                "BackgroundColor": "#9c27b0"
+            }
+        ],
+        "Events": []
+    },
+    "Timed Events User": {
+        "Calendars": [
+            {
+                "Id": "template_appointments",
+                "Summary": "Appointments",
+                "BackgroundColor": "#00acc1"
+            }
+        ],
+        "Events": []
     }
 }

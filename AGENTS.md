@@ -7,6 +7,7 @@ Dashboard app that displays a family calendar events
 - **Framework**: .NET 10 (Blazor WASM Frontend, ASP.NET Core Backend)
 - **Database**: PostgreSQL / EF Core
 - **Primary Tooling**: dotnet CLI (build, test, run)
+- **E2E Acceptance testing**: Read `.agent\docs\e2e-testing-maintenance.md`
 
 ## Rules of Engagement (Safety)
 
@@ -42,3 +43,4 @@ Read the relevant skill file before starting any task of that type:
 - **Security-sensitive code**: Read `.agent/skills/security/SKILL.md`
 - **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
 - **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`
+- **Frontend UI development**: Read `.agent/skills/frontend-design/SKILL.md`

@@ -22,13 +22,25 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("CalendarEventCalendarInfo", b =>
+                {
+                    b.Property<Guid>("CalendarsId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("EventsId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("CalendarsId", "EventsId");
+
+                    b.HasIndex("EventsId");
+
+                    b.ToTable("CalendarEventCalendar", (string)null);
+                });
+
             modelBuilder.Entity("FamilyHQ.Core.Models.CalendarEvent", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("CalendarInfoId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Description")
@@ -59,14 +71,12 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CalendarInfoId");
-
                     b.HasIndex("End");
 
-                    b.HasIndex("Start");
-
-                    b.HasIndex("GoogleEventId", "CalendarInfoId")
+                    b.HasIndex("GoogleEventId")
                         .IsUnique();
+
+                    b.HasIndex("Start");
 
                     b.ToTable("Events", (string)null);
                 });
@@ -137,15 +147,19 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("SyncStates", (string)null);
                 });
 
-            modelBuilder.Entity("FamilyHQ.Core.Models.CalendarEvent", b =>
+            modelBuilder.Entity("CalendarEventCalendarInfo", b =>
                 {
-                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", "CalendarInfo")
-                        .WithMany("Events")
-                        .HasForeignKey("CalendarInfoId")
+                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", null)
+                        .WithMany()
+                        .HasForeignKey("CalendarsId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("CalendarInfo");
+                    b.HasOne("FamilyHQ.Core.Models.CalendarEvent", null)
+                        .WithMany()
+                        .HasForeignKey("EventsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncState", b =>
@@ -161,8 +175,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
             modelBuilder.Entity("FamilyHQ.Core.Models.CalendarInfo", b =>
                 {
-                    b.Navigation("Events");
-
                     b.Navigation("SyncState");
                 });
 #pragma warning restore 612, 618

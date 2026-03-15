@@ -17,7 +17,13 @@ public class CalendarRepository : ICalendarRepository
 
     public async Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
     {
-        var currentUserId = _currentUserService.UserId ?? "default_simulator_user";
+        var currentUserId = _currentUserService.UserId;
+        
+        // Return empty list if no user is authenticated (safer than using fallback)
+        if (string.IsNullOrEmpty(currentUserId))
+        {
+            return Array.Empty<CalendarInfo>();
+        }
 
         return await _context.Calendars
             .AsNoTracking()
@@ -36,17 +42,23 @@ public class CalendarRepository : ICalendarRepository
     {
         return await _context.Events
             .AsNoTracking()
-            .Where(e => e.CalendarInfoId == calendarInfoId && e.Start < end && e.End > start)
+            .Include(e => e.Calendars)
+            .Where(e => e.Calendars.Any(c => c.Id == calendarInfoId) && e.Start < end && e.End > start)
             .OrderBy(e => e.Start)
             .ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
+        var currentUserId = _currentUserService.UserId;
+        if (string.IsNullOrEmpty(currentUserId))
+            return Array.Empty<CalendarEvent>();
+
         return await _context.Events
             .AsNoTracking()
-            .Include(e => e.CalendarInfo)
-            .Where(e => e.Start < end && e.End > start)
+            .Include(e => e.Calendars)
+            .Where(e => e.Start < end && e.End > start
+                        && e.Calendars.Any(c => c.UserId == currentUserId))
             .OrderBy(e => e.Start)
             .ToListAsync(ct);
     }
@@ -54,15 +66,22 @@ public class CalendarRepository : ICalendarRepository
     public async Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Events
-            .Include(e => e.CalendarInfo)
+            .Include(e => e.Calendars)
             .FirstOrDefaultAsync(e => e.Id == id, ct);
     }
 
     public async Task<CalendarEvent?> GetEventByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Events
-            .Include(e => e.CalendarInfo)
+            .Include(e => e.Calendars)
             .FirstOrDefaultAsync(e => e.Id == id, ct);
+    }
+
+    public async Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .Include(e => e.Calendars)
+            .FirstOrDefaultAsync(e => e.GoogleEventId == googleEventId, ct);
     }
 
     public async Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default)
@@ -71,9 +90,38 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(s => s.CalendarInfoId == calendarInfoId, ct);
     }
 
+    public async Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default)
+    {
+        var calendar = await _context.Calendars
+            .Include(c => c.SyncState)
+            .FirstOrDefaultAsync(c => c.Id == calendarInfoId, ct);
+
+        if (calendar == null) return;
+
+        // Unlink this calendar from all events; delete events that have no remaining links
+        var linkedEvents = await _context.Events
+            .Include(e => e.Calendars)
+            .Where(e => e.Calendars.Any(c => c.Id == calendarInfoId))
+            .ToListAsync(ct);
+
+        foreach (var evt in linkedEvents)
+        {
+            var link = evt.Calendars.FirstOrDefault(c => c.Id == calendarInfoId);
+            if (link != null) evt.Calendars.Remove(link);
+            if (!evt.Calendars.Any())
+                _context.Events.Remove(evt);
+        }
+
+        if (calendar.SyncState != null)
+            _context.SyncStates.Remove(calendar.SyncState);
+
+        _context.Calendars.Remove(calendar);
+    }
+
     public Task AddCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default)
     {
-        calendarInfo.UserId = _currentUserService.UserId ?? "default_simulator_user";
+        calendarInfo.UserId = _currentUserService.UserId
+            ?? throw new InvalidOperationException("Cannot add calendar: no authenticated user.");
         _context.Calendars.Add(calendarInfo);
         return Task.CompletedTask;
     }
@@ -92,7 +140,7 @@ public class CalendarRepository : ICalendarRepository
 
     public async Task DeleteEventAsync(Guid id, CancellationToken ct = default)
     {
-        var calendarEvent = await _context.Events.FindAsync(new object[] { id }, ct);
+        var calendarEvent = await _context.Events.FindAsync([id], ct);
         if (calendarEvent != null)
         {
             _context.Events.Remove(calendarEvent);

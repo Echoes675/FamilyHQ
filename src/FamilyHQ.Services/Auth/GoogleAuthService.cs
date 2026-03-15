@@ -22,6 +22,16 @@ public class GoogleAuthService
         _logger = logger;
     }
 
+    public string GetAuthorizationUrl(string redirectUri)
+    {
+        var query = "?client_id=" + Uri.EscapeDataString(_options.ClientId)
+            + "&redirect_uri=" + Uri.EscapeDataString(redirectUri)
+            + "&response_type=code"
+            + "&scope=" + Uri.EscapeDataString("https://www.googleapis.com/auth/calendar")
+            + "&access_type=offline";
+        return _options.AuthPromptUrl + query;
+    }
+
     public async Task<(string AccessToken, string? RefreshToken, string? UserId)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
     {
         var request = new FormUrlEncodedContent(new Dictionary<string, string>

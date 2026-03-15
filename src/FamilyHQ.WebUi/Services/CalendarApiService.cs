@@ -2,19 +2,16 @@ using System.Net.Http.Json;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Core.ViewModels;
-using FamilyHQ.WebUi.Services.Auth;
 
 namespace FamilyHQ.WebUi.Services;
 
 public class CalendarApiService : ICalendarApiService
 {
     private readonly HttpClient _httpClient;
-    private readonly IAuthTokenStore _tokenStore;
 
-    public CalendarApiService(HttpClient httpClient, IAuthTokenStore tokenStore)
+    public CalendarApiService(HttpClient httpClient)
     {
         _httpClient = httpClient;
-        _tokenStore = tokenStore;
     }
 
     public async Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
@@ -54,23 +51,11 @@ public class CalendarApiService : ICalendarApiService
         var response = await _httpClient.DeleteAsync($"api/calendars/{calendarId}/events/{eventId}", ct);
         return response.IsSuccessStatusCode;
     }
-    
-    public async Task SimulateLoginAsync(string? userName = null)
+
+    public async Task<CalendarEventViewModel?> ReassignEventAsync(Guid fromCalendarId, Guid eventId, ReassignEventRequest request, CancellationToken ct = default)
     {
-        var request = new { SimulatedUserId = userName };
-        var response = await _httpClient.PostAsJsonAsync("api/auth/login", request);
-        response.EnsureSuccessStatusCode();
-        
-        var content = await response.Content.ReadFromJsonAsync<LoginResponse>();
-        if (content?.Token != null)
-        {
-            await _tokenStore.SetTokenAsync(content.Token);
-        }
-    }
-    
-    private class LoginResponse
-    {
-        public string? Token { get; set; }
-        public string? UserId { get; set; }
+        var response = await _httpClient.PostAsJsonAsync($"api/calendars/{fromCalendarId}/events/{eventId}/reassign", request, ct);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<CalendarEventViewModel>(cancellationToken: ct);
     }
 }

@@ -10,9 +10,11 @@ public interface ICalendarRepository
     Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
     Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default);
     Task<CalendarEvent?> GetEventByIdAsync(Guid id, CancellationToken ct = default);
+    Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default);
     Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default);
     
     Task AddCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
+    Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default);
     Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
     Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
     Task DeleteEventAsync(Guid id, CancellationToken ct = default);

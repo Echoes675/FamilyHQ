@@ -6,6 +6,8 @@
 @implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
 @inject SignalRService SignalR
+@inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
 
@@ -13,7 +15,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div class="d-flex align-items-center gap-3">
             <h1>Family HQ Dashboard</h1>
-            <button class="btn btn-sm btn-success" @onclick="OpenLoginModal">Login to Google (Simulator)</button>
+            <button class="btn btn-sm btn-success" @onclick="OnLoginClicked">Login to Google</button>
         </div>
         
         <!-- Navigation Controls -->
@@ -176,7 +178,23 @@
                             }
                         </select>
                     </div>
-                    
+
+                    @if (_isEditingEvent && _eventModel.LinkedCalendars.Count > 1)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label text-muted" style="font-size: 0.85rem;">Also on</label>
+                            <div class="d-flex flex-wrap gap-1">
+                                @foreach (var cal in _eventModel.LinkedCalendars.Where(c => c.Id != _selectedCalendarId))
+                                {
+                                    <span class="badge rounded-pill"
+                                          style="background-color: @(cal.Color ?? "#6c757d"); font-size: 0.8rem;">
+                                        @cal.DisplayName
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+
                     <div class="mb-3">
                         <label class="form-label">Event Title</label>
                         <input type="text" class="form-control" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
@@ -249,31 +267,6 @@
     </div>
 }
 
-@if (_showLoginModal)
-{
-    <div class="modal fade show d-block login-modal-content" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Simulate OAuth Login</h5>
-                    <button type="button" class="btn-close" @onclick="CloseLoginModal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <p class="text-muted small mb-3">For End-to-End testing. Enter the name of the simulated user.</p>
-                    <div class="mb-3">
-                        <label class="form-label">Simulated User ID / Name</label>
-                        <input type="text" class="form-control" @bind="_simulatedUserId" placeholder="e.g. Test Family Member" />
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" @onclick="CloseLoginModal">Cancel</button>
-                    <button type="button" class="btn btn-primary" @onclick="ConfirmSimulateLogin">Simulate OAuth &amp; Proceed</button>
-                </div>
-            </div>
-        </div>
-    </div>
-}
-
 @code {
     private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private bool IsLoading = true;
@@ -284,15 +277,12 @@
     private bool _showQuickJumpModal = false;
     private int _jumpYear;
 
-    // Simulated Login Modal State
-    private bool _showLoginModal = false;
-    private string _simulatedUserId = "Test Family Member";
-
     // Event Modal State
     private bool _showEventModal = false;
     private bool _isEditingEvent = false;
     private CalendarEventViewModel _eventModel = new();
     private Guid _selectedCalendarId;
+    private Guid _originalCalendarId;
     private IReadOnlyList<CalendarInfo> _calendars = Array.Empty<CalendarInfo>();
     private string? _modalError;
     private bool _isSaving = false;
@@ -324,6 +314,7 @@
         // Must be invoked on the UI thread
         InvokeAsync(async () =>
         {
+            _calendars = await CalendarApi.GetCalendarsAsync();
             await LoadMonthDataAsync();
             StateHasChanged();
         });
@@ -424,25 +415,11 @@
         await LoadMonthDataAsync();
     }
 
-    private void OpenLoginModal()
+    private void OnLoginClicked()
     {
-        _showLoginModal = true;
-    }
-
-    private void CloseLoginModal()
-    {
-        _showLoginModal = false;
-    }
-
-    private async Task ConfirmSimulateLogin()
-    {
-        _showLoginModal = false;
-        IsLoading = true;
-        StateHasChanged();
-        
-        await CalendarApi.SimulateLoginAsync(_simulatedUserId);
-        
-        _calendars = await CalendarApi.GetCalendarsAsync();
+        var backendUrl = Configuration["BackendUrl"]
+            ?? throw new InvalidOperationException("BackendUrl is not configured.");
+        NavigationManager.NavigateTo($"{backendUrl}/api/auth/login", forceLoad: true);
     }
 
     // Event Modal Logic
@@ -464,7 +441,7 @@
     private void OpenEditEventModal(CalendarEventViewModel evt)
     {
         _isEditingEvent = true;
-        
+
         // Clone to avoid mutating grid before save
         _eventModel = new CalendarEventViewModel
         {
@@ -474,11 +451,13 @@
             EndTime = evt.EndTime,
             IsAllDay = evt.IsAllDay,
             Location = evt.Location,
-            CalendarId = evt.CalendarId
+            CalendarId = evt.CalendarId,
+            LinkedCalendars = evt.LinkedCalendars
         };
-        
+
         _selectedCalendarId = evt.CalendarId;
-        
+        _originalCalendarId = evt.CalendarId;
+
         _modalError = null;
         _showEventModal = true;
     }
@@ -521,17 +500,31 @@
                     _modalError = "Invalid Event ID format.";
                     return;
                 }
-                
-                var updateReq = new UpdateEventRequest(
-                    _selectedCalendarId,
-                    _eventModel.Title,
-                    _eventModel.StartTime,
-                    _eventModel.EndTime,
-                    _eventModel.IsAllDay,
-                    _eventModel.Location,
-                    null
-                );
-                await CalendarApi.UpdateEventAsync(_selectedCalendarId, eventId, updateReq);
+
+                if (_selectedCalendarId != _originalCalendarId)
+                {
+                    var reassignReq = new ReassignEventRequest(
+                        _selectedCalendarId,
+                        _eventModel.Title,
+                        _eventModel.StartTime,
+                        _eventModel.EndTime,
+                        _eventModel.IsAllDay,
+                        _eventModel.Location,
+                        null);
+                    await CalendarApi.ReassignEventAsync(_originalCalendarId, eventId, reassignReq);
+                }
+                else
+                {
+                    var updateReq = new UpdateEventRequest(
+                        _selectedCalendarId,
+                        _eventModel.Title,
+                        _eventModel.StartTime,
+                        _eventModel.EndTime,
+                        _eventModel.IsAllDay,
+                        _eventModel.Location,
+                        null);
+                    await CalendarApi.UpdateEventAsync(_selectedCalendarId, eventId, updateReq);
+                }
             }
             else
             {

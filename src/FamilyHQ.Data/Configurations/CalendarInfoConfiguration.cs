@@ -35,8 +35,7 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
             .OnDelete(DeleteBehavior.Cascade);
             
         builder.HasMany(c => c.Events)
-            .WithOne(e => e.CalendarInfo)
-            .HasForeignKey(e => e.CalendarInfoId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .WithMany(e => e.Calendars)
+            .UsingEntity(j => j.ToTable("CalendarEventCalendar"));
     }
 }

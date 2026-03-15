@@ -23,7 +23,7 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.Property(e => e.Location)
             .HasMaxLength(1000);
             
-        builder.HasIndex(e => new { e.GoogleEventId, e.CalendarInfoId }).IsUnique();
+        builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
         builder.HasIndex(e => e.End);
     }

@@ -1,0 +1,26 @@
+@page "/login-success"
+@inject FamilyHQ.WebUi.Services.Auth.IAuthTokenStore TokenStore
+@inject NavigationManager NavigationManager
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        var token = ParseTokenFromQuery(NavigationManager.Uri);
+        if (!string.IsNullOrEmpty(token))
+            await TokenStore.SetTokenAsync(token);
+
+        NavigationManager.NavigateTo("/", forceLoad: true);
+    }
+
+    private static string? ParseTokenFromQuery(string absoluteUri)
+    {
+        var query = new Uri(absoluteUri).Query.TrimStart('?');
+        foreach (var pair in query.Split('&'))
+        {
+            var parts = pair.Split('=', 2);
+            if (parts.Length == 2 && parts[0] == "token")
+                return Uri.UnescapeDataString(parts[1]);
+        }
+        return null;
+    }
+}

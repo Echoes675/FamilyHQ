@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
@@ -15,9 +16,15 @@ public class ServiceCollectionExtensionsTests
     {
         // Arrange
         var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("Sync:PeriodicSyncInterval", "01:00:00")
+            })
+            .Build();
 
         // Act
-        services.AddFamilyHqServices();
+        services.AddFamilyHqServices(configuration);
 
         // Assert
         // Token Store

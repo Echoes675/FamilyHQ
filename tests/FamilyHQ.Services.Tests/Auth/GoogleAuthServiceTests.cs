@@ -97,20 +97,54 @@ public class GoogleAuthServiceTests
             .WithMessage("*Failed to refresh token*");
     }
 
+    [Fact]
+    public void GetAuthorizationUrl_WithAllParameters_ReturnsUrlWithRequiredQueryParams()
+    {
+        // Arrange
+        var (_, systemUnderTest) = CreateSut();
+        var redirectUri = "https://myapp.com/api/auth/callback";
+
+        // Act
+        var result = systemUnderTest.GetAuthorizationUrl(redirectUri);
+
+        // Assert
+        var uri = new Uri(result);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        query["client_id"].Should().Be("test-client-id");
+        query["redirect_uri"].Should().Be(redirectUri);
+        query["response_type"].Should().Be("code");
+        query["scope"].Should().Be("https://www.googleapis.com/auth/calendar");
+        query["access_type"].Should().Be("offline");
+    }
+
+    [Fact]
+    public void GetAuthorizationUrl_UsesAuthPromptUrlAsBase()
+    {
+        // Arrange
+        var (_, systemUnderTest) = CreateSut();
+
+        // Act
+        var result = systemUnderTest.GetAuthorizationUrl("https://myapp.com/callback");
+
+        // Assert
+        result.Should().StartWith("https://accounts.test.com/o/oauth2/auth");
+    }
+
     private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService SystemUnderTest) CreateSut()
     {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(httpMessageHandlerMock.Object);
-        
+
         var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
         {
             ClientId = "test-client-id",
             ClientSecret = "test-client-secret",
+            AuthPromptUrl = "https://accounts.test.com/o/oauth2/auth",
             AuthBaseUrl = "https://test.oauth.com"
         });
 
         var loggerMock = new Mock<ILogger<GoogleAuthService>>();
-        
+
         var systemUnderTest = new GoogleAuthService(httpClient, options, loggerMock.Object);
         return (httpMessageHandlerMock, systemUnderTest);
     }

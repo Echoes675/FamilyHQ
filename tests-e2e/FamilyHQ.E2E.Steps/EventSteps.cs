@@ -38,4 +38,86 @@ public class EventSteps
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
+
+    [Given(@"the user has an all-day event ""([^""]*)"" in (\d+) days")]
+    public async Task GivenTheUserHasAnAllDayEventInDays(string eventName, int days)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+        
+        var eventDate = DateTime.Today.AddDays(days);
+        
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendarId,
+            Summary = eventName,
+            StartTime = eventDate,
+            EndTime = eventDate.AddDays(1),
+            IsAllDay = true
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has an all-day event ""([^""]*)"" tomorrow in ""([^""]*)""")]
+    public async Task GivenTheUserHasAnAllDayEventTomorrowInCalendar(string eventName, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        
+        // Find the calendar ID by name
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
+        if (calendar == null)
+        {
+            throw new Exception($"Calendar '{calendarName}' not found in template.");
+        }
+        
+        var tomorrow = DateTime.Today.AddDays(1);
+        
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = tomorrow,
+            EndTime = tomorrow.AddDays(1),
+            IsAllDay = true
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has a timed event ""([^""]*)"" tomorrow at ""([^""]*)"" for (\d+) hour")]
+    public Task GivenTheUserHasATimedEventTomorrowAtForHour(string eventName, string timeStr, int durationHours)
+        => AddTimedEvent(eventName, timeStr, durationHours * 60);
+
+    [Given(@"the user has a timed event ""([^""]*)"" tomorrow at ""([^""]*)"" for (\d+) minutes")]
+    public Task GivenTheUserHasATimedEventTomorrowAtForMinutes(string eventName, string timeStr, int durationMinutes)
+        => AddTimedEvent(eventName, timeStr, durationMinutes);
+
+    private async Task AddTimedEvent(string eventName, string timeStr, int durationMinutes)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+
+        var tomorrow = DateTime.Today.AddDays(1);
+        var timeParts = timeStr.Split(':');
+        var hour = int.Parse(timeParts[0]);
+        var minute = int.Parse(timeParts[1]);
+
+        var startTime = tomorrow.AddHours(hour).AddMinutes(minute);
+        var endTime = startTime.AddMinutes(durationMinutes);
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendarId,
+            Summary = eventName,
+            StartTime = startTime,
+            EndTime = endTime,
+            IsAllDay = false
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
 }

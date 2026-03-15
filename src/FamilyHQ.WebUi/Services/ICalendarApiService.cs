@@ -11,5 +11,5 @@ public interface ICalendarApiService
     Task<CalendarEventViewModel?> CreateEventAsync(Guid calendarId, CreateEventRequest request, CancellationToken ct = default);
     Task<CalendarEventViewModel?> UpdateEventAsync(Guid calendarId, Guid eventId, UpdateEventRequest request, CancellationToken ct = default);
     Task<bool> DeleteEventAsync(Guid calendarId, Guid eventId, CancellationToken ct = default);
-    Task SimulateLoginAsync(string? simulatedUserId = null);
+    Task<CalendarEventViewModel?> ReassignEventAsync(Guid fromCalendarId, Guid eventId, ReassignEventRequest request, CancellationToken ct = default);
 }

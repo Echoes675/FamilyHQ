@@ -48,6 +48,9 @@ description: A set of rules and best practices that guide on how to write, struc
 - Only one class/enum/interface etc per file - the file name must match the class name exactly.
 - Use Test driven development. See skill test-driven-development
 - Database Changes: All schema changes must go through EF Core Migrations
+- No magic strings.
+- Urls and other settings (eg: number of retries, number of days to sync etc...) should be delivered via configuration
+- Passwords and secrets should be delivered by environment variables in deployed environments and via user secrets when working locally
 
 ## Logging
 - Use structured logging (e.g., _logger.LogInformation("Processing event {EventId}", eventId)).

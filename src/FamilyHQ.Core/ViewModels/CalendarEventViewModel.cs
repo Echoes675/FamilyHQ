@@ -1,3 +1,5 @@
+using FamilyHQ.Core.DTOs;
+
 namespace FamilyHQ.Core.ViewModels;
 
 public class CalendarEventViewModel
@@ -11,4 +13,5 @@ public class CalendarEventViewModel
     public string? CalendarName { get; set; }
     public string? CalendarColor { get; set; }
     public Guid CalendarId { get; set; }
+    public IReadOnlyList<EventCalendarDto> LinkedCalendars { get; init; } = Array.Empty<EventCalendarDto>();
 }

@@ -24,29 +24,33 @@ public class CalendarSyncService : ICalendarSyncService
     {
         _logger.LogInformation("Starting full sync of all calendars from {Start} to {End}", startDate, endDate);
 
-        // 1. Fetch the user's calendars from Google
-        var googleCalendars = await _googleCalendarClient.GetCalendarsAsync(ct);
+        var googleCalendars = (await _googleCalendarClient.GetCalendarsAsync(ct)).ToList();
         var localCalendars = await _calendarRepository.GetCalendarsAsync(ct);
 
-        // 2. Add or update calendars in our DB
+        // Remove local calendars that no longer exist in the user's Google Calendar list
+        var obsoleteCalendars = localCalendars
+            .Where(local => !googleCalendars.Any(g => g.GoogleCalendarId == local.GoogleCalendarId))
+            .ToList();
+
+        foreach (var obsolete in obsoleteCalendars)
+        {
+            _logger.LogInformation("Removing obsolete calendar {CalendarId} ({Name})", obsolete.Id, obsolete.DisplayName);
+            await _calendarRepository.RemoveCalendarAsync(obsolete.Id, ct);
+        }
+
+        if (obsoleteCalendars.Count > 0)
+            await _calendarRepository.SaveChangesAsync(ct);
+
         foreach (var googleCal in googleCalendars)
         {
             var localCal = localCalendars.FirstOrDefault(c => c.GoogleCalendarId == googleCal.GoogleCalendarId);
             if (localCal == null)
             {
                 await _calendarRepository.AddCalendarAsync(googleCal, ct);
-                
-                // Save changes immediately so we get a DB ID for the CalendarInfo
                 await _calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
             }
-            else
-            {
-                // Update properties but let EF track it (since it's AsNoTracking in GetCalendarsAsync, we fetch properly later, but in a real app we'd attach or use tracked query)
-                // For now, we will just sync the events.
-            }
 
-            // 3. Sync events for each calendar
             await SyncAsync(localCal.Id, startDate, endDate, ct);
         }
 
@@ -55,12 +59,15 @@ public class CalendarSyncService : ICalendarSyncService
 
     public async Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
+        Console.WriteLine($"[DEBUG] SyncAsync called for calendarInfoId={calendarInfoId}");
         var calendar = await _calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
         {
+            Console.WriteLine($"[DEBUG] Calendar {calendarInfoId} not found in DB. Skipping.");
             _logger.LogWarning("Calendar {CalendarId} not found in DB. Skipping sync.", calendarInfoId);
             return;
         }
+        Console.WriteLine($"[DEBUG] Calendar found: {calendar.DisplayName} (GoogleId={calendar.GoogleCalendarId})");
 
         bool isNewSyncState = false;
         var syncState = await _calendarRepository.GetSyncStateAsync(calendarInfoId, ct);
@@ -77,12 +84,14 @@ public class CalendarSyncService : ICalendarSyncService
 
         try
         {
+            Console.WriteLine($"[DEBUG] Fetching events for {calendar.GoogleCalendarId}. IsFullSync={isFullSync}");
             var (events, nextSyncToken) = await _googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
                 currentSyncToken,
                 ct);
+            Console.WriteLine($"[DEBUG] Fetched {events.Count()} events from Google for {calendar.DisplayName}");
 
             var existingEvents = await _calendarRepository.GetEventsAsync(calendarInfoId, startDate, endDate, ct);
 
@@ -92,44 +101,81 @@ public class CalendarSyncService : ICalendarSyncService
                 var obsoleteEvents = existingEvents.Where(e => !fetchedGoogleEventIds.Contains(e.GoogleEventId));
                 foreach (var obsolete in obsoleteEvents)
                 {
-                    await _calendarRepository.DeleteEventAsync(obsolete.Id, ct);
+                    var tracked = await _calendarRepository.GetEventByGoogleEventIdAsync(obsolete.GoogleEventId, ct);
+                    if (tracked == null) continue;
+
+                    var calToRemove = tracked.Calendars.FirstOrDefault(c => c.Id == calendarInfoId);
+                    if (calToRemove != null) tracked.Calendars.Remove(calToRemove);
+
+                    if (!tracked.Calendars.Any())
+                        await _calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                    else
+                        await _calendarRepository.UpdateEventAsync(tracked, ct);
                 }
             }
 
+            Console.WriteLine($"[DEBUG] Processing {events.Count()} events for {calendar.DisplayName}.");
             foreach (var evt in events)
             {
+                Console.WriteLine($"[DEBUG] Processing event: '{evt.Title}' (GoogleId={evt.GoogleEventId}, Start={evt.Start})");
                 if (evt.Title == "CANCELLED_TOMBSTONE")
                 {
-                    var existingToCancel = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
-                    if (existingToCancel != null)
+                    var tracked = await _calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                    if (tracked != null)
                     {
-                        await _calendarRepository.DeleteEventAsync(existingToCancel.Id, ct);
+                        var calToRemove = tracked.Calendars.FirstOrDefault(c => c.Id == calendarInfoId);
+                        if (calToRemove != null) tracked.Calendars.Remove(calToRemove);
+
+                        if (!tracked.Calendars.Any())
+                            await _calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                        else
+                            await _calendarRepository.UpdateEventAsync(tracked, ct);
                     }
-                    continue; 
+                    continue;
                 }
 
-                evt.CalendarInfoId = calendarInfoId;
-
-                var existing = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
-                if (existing != null)
+                var existingLinked = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
+                if (existingLinked != null)
                 {
-                    // Update existing event properties
-                    existing.Title = evt.Title;
-                    existing.Start = evt.Start;
-                    existing.End = evt.End;
-                    existing.IsAllDay = evt.IsAllDay;
-                    existing.Location = evt.Location;
-                    existing.Description = evt.Description;
-                    
-                    await _calendarRepository.UpdateEventAsync(existing, ct);
+                    // Already linked to this calendar — update properties only
+                    existingLinked.Title = evt.Title;
+                    existingLinked.Start = evt.Start;
+                    existingLinked.End = evt.End;
+                    existingLinked.IsAllDay = evt.IsAllDay;
+                    existingLinked.Location = evt.Location;
+                    existingLinked.Description = evt.Description;
+                    await _calendarRepository.UpdateEventAsync(existingLinked, ct);
                 }
                 else
                 {
-                    await _calendarRepository.AddEventAsync(evt, ct);
+                    // Not yet linked to this calendar — check if it exists in any other calendar
+                    var existingInDb = await _calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                    if (existingInDb != null)
+                    {
+                        // Get a tracked instance to ensure navigation property changes are persisted
+                        var tracked = await _calendarRepository.GetEventByIdAsync(existingInDb.Id, ct);
+                        if (tracked != null)
+                        {
+                            // Update properties and add this calendar link
+                            tracked.Title = evt.Title;
+                            tracked.Start = evt.Start;
+                            tracked.End = evt.End;
+                            tracked.IsAllDay = evt.IsAllDay;
+                            tracked.Location = evt.Location;
+                            tracked.Description = evt.Description;
+                            tracked.Calendars.Add(calendar);
+                            await _calendarRepository.UpdateEventAsync(tracked, ct);
+                        }
+                    }
+                    else
+                    {
+                        // Brand new event
+                        evt.Calendars.Add(calendar);
+                        await _calendarRepository.AddEventAsync(evt, ct);
+                    }
                 }
             }
 
-            // Update sync state
             syncState.SyncToken = nextSyncToken;
             syncState.LastSyncedAt = DateTimeOffset.UtcNow;
             if (isFullSync)
@@ -139,34 +185,25 @@ public class CalendarSyncService : ICalendarSyncService
             }
 
             if (isNewSyncState)
-            {
                 await _calendarRepository.AddSyncStateAsync(syncState, ct);
-            }
             else
-            {
                 await _calendarRepository.SaveSyncStateAsync(syncState, ct);
-            }
 
-            // Commit transaction
             await _calendarRepository.SaveChangesAsync(ct);
+            Console.WriteLine($"[DEBUG] SaveChangesAsync completed for {calendar.DisplayName}.");
             _logger.LogInformation("Successfully synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("no longer valid"))
         {
             _logger.LogWarning("Sync token expired for {CalendarName}. Clearing and restarting full sync.", calendar.DisplayName);
-            
-            // Clear token and retry
+
             syncState.SyncToken = null;
             if (isNewSyncState)
-            {
                 await _calendarRepository.AddSyncStateAsync(syncState, ct);
-            }
             else
-            {
                 await _calendarRepository.SaveSyncStateAsync(syncState, ct);
-            }
+
             await _calendarRepository.SaveChangesAsync(ct);
-            
             await SyncAsync(calendarInfoId, startDate, endDate, ct);
         }
     }

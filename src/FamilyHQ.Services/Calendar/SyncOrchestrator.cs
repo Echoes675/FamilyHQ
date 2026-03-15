@@ -1,7 +1,9 @@
+using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using FamilyHQ.Core.Interfaces;
+using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.Services.Calendar;
 
@@ -9,11 +11,13 @@ public class SyncOrchestrator : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<SyncOrchestrator> _logger;
+    private readonly TimeSpan _periodicSyncInterval;
 
-    public SyncOrchestrator(IServiceProvider serviceProvider, ILogger<SyncOrchestrator> logger)
+    public SyncOrchestrator(IServiceProvider serviceProvider, ILogger<SyncOrchestrator> logger, IOptions<SyncOptions> options)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _periodicSyncInterval = options.Value.PeriodicSyncInterval;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -26,7 +30,7 @@ public class SyncOrchestrator : BackgroundService
         {
             // In a real app we might await a channel/queue for on-demand sync triggers,
             // or poll every X hours. We'll just sleep for 1 hour.
-            await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+            await Task.Delay(_periodicSyncInterval, stoppingToken);
             
             // Periodically sync again (incremental)
             try

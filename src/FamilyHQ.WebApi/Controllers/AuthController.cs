@@ -1,5 +1,6 @@
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.SignalR;
@@ -16,42 +17,83 @@ public class AuthController : ControllerBase
     private readonly GoogleAuthService _authService;
     private readonly ITokenStore _tokenStore;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IConfiguration _configuration;
 
-    public AuthController(GoogleAuthService authService, ITokenStore tokenStore, IServiceScopeFactory scopeFactory)
+    public AuthController(
+        GoogleAuthService authService,
+        ITokenStore tokenStore,
+        IServiceScopeFactory scopeFactory,
+        IConfiguration configuration)
     {
         _authService = authService;
         _tokenStore = tokenStore;
         _scopeFactory = scopeFactory;
+        _configuration = configuration;
     }
 
     /// <summary>
-    /// Authenticates with Google OAuth2 and initiates an initial calendar sync.
+    /// Initiates the OAuth2 authorization code flow by redirecting to the consent screen.
     /// </summary>
-    /// <returns>A status message.</returns>
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest? req = null)
+    [HttpGet("login")]
+    public IActionResult Login()
     {
-        // For MVF integration with Simulator, we pass the simulated user id to the exchange request if present
-        var authCode = !string.IsNullOrWhiteSpace(req?.SimulatedUserId) 
-            ? $"dummy_code_for_{req.SimulatedUserId}" 
-            : "dummy_code_123";
+        var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
+        var url = _authService.GetAuthorizationUrl(callbackUrl);
+        return Redirect(url);
+    }
 
-        var (access, refresh, userId) = await _authService.ExchangeCodeForTokenAsync(authCode, "https://localhost/callback");
-        
-        if (!string.IsNullOrEmpty(refresh))
+    /// <summary>
+    /// Receives the OAuth2 authorization code, exchanges it for tokens, issues a local JWT,
+    /// and redirects the browser to the frontend /login-success page.
+    /// </summary>
+    [HttpGet("callback")]
+    public async Task<IActionResult> Callback([FromQuery] string code)
+    {
+        var frontendBaseUrl = _configuration["FrontendBaseUrl"]
+            ?? throw new InvalidOperationException("FrontendBaseUrl is not configured.");
+
+        var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
+        var (accessToken, refreshToken, userId) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
+
+        if (!string.IsNullOrEmpty(refreshToken))
+            await _tokenStore.SaveRefreshTokenAsync(refreshToken);
+
+        if (string.IsNullOrEmpty(userId))
+            return BadRequest("Authentication failed: user identity could not be determined.");
+
+        var apiToken = GenerateJwt(userId);
+
+        // Propagate userId into the ExecutionContext so ICurrentUserService can
+        // resolve it without an active HttpContext during the sync.
+        BackgroundUserContext.Current = userId;
+        try
         {
-            await _tokenStore.SaveRefreshTokenAsync(refresh);
+            await SyncCalendarEventsAsync(userId, accessToken);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Sync Error during login: {ex.Message}");
+        }
+        finally
+        {
+            BackgroundUserContext.Current = null;
         }
 
-        userId ??= "default_simulator_user";
+        return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
+    }
 
-        // Generate a local API token for the WebUI
+    private string GenerateJwt(string userId)
+    {
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, userId),
             new Claim(ClaimTypes.Name, userId)
         };
-        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes("SuperSecretDummyKeyForFamilyHqSimulatorMVF1"));
+        
+        var jwtKey = _configuration["Jwt:SigningKey"]
+            ?? throw new InvalidOperationException("JWT signing key is not configured.");
+        
+        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
             issuer: "FamilyHQ",
@@ -60,34 +102,26 @@ public class AuthController : ControllerBase
             expires: DateTime.Now.AddDays(1),
             signingCredentials: creds
         );
-        var apiToken = new JwtSecurityTokenHandler().WriteToken(token);
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
 
-        // Trigger an immediate background sync so the UI updates via SignalR
-        _ = Task.Run(async () => 
+    private async Task SyncCalendarEventsAsync(string userId, string accessToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
+
+        try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-            
-            try 
-            {
-                // Sync window: -30 to +365 days
-                await syncService.SyncAllAsync(DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365), CancellationToken.None);
-                
-                // Notify connected Blazor clients to refresh the UI
-                var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
-                await hubContext.Clients.All.SendAsync("EventsUpdated");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Mock Sync Error: {ex.Message}");
-            }
-        });
+            // Sync window: -30 to +365 days
+            await syncService.SyncAllAsync(DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365), CancellationToken.None);
 
-        return Ok(new 
-        { 
-            Message = "Successfully authenticated. Refresh token saved to store.",
-            Token = apiToken,
-            UserId = userId
-        });
+            // Notify connected Blazor clients to refresh the UI
+            var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
+            await hubContext.Clients.All.SendAsync("EventsUpdated");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Sync Error: {ex.Message}");
+        }
     }
 }
