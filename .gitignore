@@ -374,6 +374,8 @@ FodyWeavers.xsd
 
 TestResults/
 
+plans/*
+
 # AI Agent State & Cache
 .agent/state/
 .agent/index/

@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data;
 using FamilyHQ.Data.PostgreSQL;
@@ -33,9 +34,23 @@ builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.Current
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
-// Add Data Protection with database key storage
-builder.Services.AddDataProtection()
+// Add Data Protection with database key storage and certificate-based key encryption
+var dataProtectionBuilder = builder.Services.AddDataProtection()
     .PersistKeysToDbContext<FamilyHqDbContext>();
+
+var dpCertPath = builder.Configuration["DataProtection:CertificatePath"];
+var dpCertPassword = builder.Configuration["DataProtection:CertificatePassword"];
+
+if (!string.IsNullOrEmpty(dpCertPath) && !string.IsNullOrEmpty(dpCertPassword))
+{
+    var certificate = X509CertificateLoader.LoadPkcs12FromFile(dpCertPath, dpCertPassword);
+    dataProtectionBuilder.ProtectKeysWithCertificate(certificate);
+}
+else if (!builder.Environment.IsDevelopment())
+{
+    throw new InvalidOperationException(
+        "DataProtection:CertificatePath and DataProtection:CertificatePassword must be configured in non-development environments.");
+}
 
 // Register DatabaseTokenStore (overrides the FileTokenStore from AddFamilyHqServices)
 // DatabaseTokenStore is scoped because it depends on DbContext which is scoped
