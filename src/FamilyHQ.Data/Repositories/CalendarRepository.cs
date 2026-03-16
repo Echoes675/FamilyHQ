@@ -41,7 +41,6 @@ public class CalendarRepository : ICalendarRepository
     public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
         return await _context.Events
-            .AsNoTracking()
             .Include(e => e.Calendars)
             .Where(e => e.Calendars.Any(c => c.Id == calendarInfoId) && e.Start < end && e.End > start)
             .OrderBy(e => e.Start)

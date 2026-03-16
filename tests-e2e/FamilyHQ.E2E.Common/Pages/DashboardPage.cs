@@ -14,9 +14,11 @@ public class DashboardPage : BasePage
     }
 
     // Locators
-    private ILocator MonthTable => Page.Locator("table.month-table");
-    private ILocator EventCapsules => Page.Locator(".event-capsule");
-    private ILocator LoginSimulatorBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google (Simulator)" });
+    public ILocator MonthTable => Page.Locator("table.month-table");
+    public ILocator EventCapsules => Page.Locator(".event-capsule");
+    public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
+    public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
+    public ILocator UserInfo => Page.GetByText("Signed in as:");
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
     private ILocator AddEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Add Event" });
 
@@ -57,7 +59,7 @@ public class DashboardPage : BasePage
 
     public async Task SimulateLoginAsync(string userName = "Test Family Member")
     {
-        await LoginSimulatorBtn.ClickAsync();
+        await LoginBtn.ClickAsync();
 
         var loginModal = Page.Locator(".login-modal-content");
         await loginModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
@@ -68,6 +70,23 @@ public class DashboardPage : BasePage
         await Page.GetByRole(AriaRole.Button, new() { Name = "Simulate OAuth & Proceed" }).ClickAsync();
 
         await WaitForCalendarToLoadAsync();
+    }
+
+    public async Task SignOutAsync()
+    {
+        // Check if sign-out button exists (user is authenticated)
+        if (await SignOutBtn.CountAsync() > 0)
+        {
+            await SignOutBtn.ClickAsync();
+            // Wait for the login button to appear, confirming sign-out is complete
+            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        }
+    }
+
+    public async Task<bool> IsSignedInAsync()
+    {
+        // Check if sign-out button or user info is visible
+        return await SignOutBtn.CountAsync() > 0 || await UserInfo.CountAsync() > 0;
     }
 
     public async Task CreateEventAsync(string title)

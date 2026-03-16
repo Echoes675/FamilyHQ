@@ -16,6 +16,7 @@ public class Program
         var backendUrl = builder.Configuration["BackendUrl"] ?? "https://localhost:5001";
 
         builder.Services.AddScoped<IAuthTokenStore, LocalStorageAuthTokenStore>();
+        builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
         builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
 
         builder.Services.AddHttpClient<ICalendarApiService, CalendarApiService>(client =>

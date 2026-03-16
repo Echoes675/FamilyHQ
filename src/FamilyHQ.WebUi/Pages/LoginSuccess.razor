@@ -7,7 +7,13 @@
     {
         var token = ParseTokenFromQuery(NavigationManager.Uri);
         if (!string.IsNullOrEmpty(token))
+        {
             await TokenStore.SetTokenAsync(token);
+            // Small delay to ensure JS interop completes before navigation
+            // This prevents the race condition where the token isn't saved
+            // before the page unloads with forceLoad: true
+            await Task.Delay(100);
+        }
 
         NavigationManager.NavigateTo("/", forceLoad: true);
     }

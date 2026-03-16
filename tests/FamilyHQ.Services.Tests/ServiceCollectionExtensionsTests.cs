@@ -27,11 +27,8 @@ public class ServiceCollectionExtensionsTests
         services.AddFamilyHqServices(configuration);
 
         // Assert
-        // Token Store
-        services.Should().Contain(sd => 
-            sd.ServiceType == typeof(ITokenStore) && 
-            sd.ImplementationType == typeof(FileTokenStore) && 
-            sd.Lifetime == ServiceLifetime.Singleton);
+        // Token Store - No longer registered here (DatabaseTokenStore is registered in WebApi/Program.cs)
+        services.Should().NotContain(sd => sd.ServiceType == typeof(ITokenStore));
 
         // HttpClients use a typed client factory which registers the type itself as Transient
         services.Should().Contain(sd => 

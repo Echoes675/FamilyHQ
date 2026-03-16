@@ -13,6 +13,11 @@ description: A set of rules and best practices that guide on how to write, struc
 - Use ? for optional data.
 - Use null! for properties initialized via EF Core or DI containers where you are certain they won't be null at runtime.
 - See skill @dotnet-backend-patterns
+- Framework settings are centrally managed in the `Directory.Build.props` files. Do not add TargetFramework to any project.
+-- ❌ DO NOT add <TargetFramework> to individual projects
+-- ❌ DO NOT hardcode net10.0 in .csproj
+-- ✅ Allow inheritance from Directory.Build.props
+-- ✅ Use lock files (RestorePackagesWithLockFile=true)
 
 ## Naming Conventions
 |    Construct   |        Convention        |        Example       |

@@ -304,11 +304,13 @@ public class GoogleCalendarClientTests
         var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
+        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
 
         var systemUnderTest = new GoogleCalendarClient(
             httpClient,
             authService,
             tokenStoreMock.Object,
+            accessTokenProviderMock.Object,
             options,
             loggerMock.Object);
 

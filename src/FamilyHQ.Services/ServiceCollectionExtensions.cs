@@ -12,11 +12,11 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddFamilyHqServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));
-        services.AddSingleton<ITokenStore, FileTokenStore>();
         
         services.AddHttpClient<GoogleAuthService>();
         services.AddHttpClient<IGoogleCalendarClient, GoogleCalendarClient>();
-        
+
+        services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
         services.AddScoped<ICalendarSyncService, CalendarSyncService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddHostedService<SyncOrchestrator>();

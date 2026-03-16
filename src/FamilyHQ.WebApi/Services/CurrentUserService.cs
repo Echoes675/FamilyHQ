@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using FamilyHQ.Core.Interfaces;
 using Microsoft.AspNetCore.Http;
@@ -14,6 +15,6 @@ public class CurrentUserService : ICurrentUserService
     }
 
     public string? UserId =>
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+        _httpContextAccessor.HttpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
         ?? BackgroundUserContext.Current;
 }

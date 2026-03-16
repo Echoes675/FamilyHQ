@@ -16,6 +16,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly HttpClient _httpClient;
     private readonly GoogleAuthService _authService;
     private readonly ITokenStore _tokenStore;
+    private readonly IAccessTokenProvider _accessTokenProvider;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new JsonSerializerOptions
@@ -27,18 +28,28 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         HttpClient httpClient,
         GoogleAuthService authService,
         ITokenStore tokenStore,
+        IAccessTokenProvider accessTokenProvider,
         IOptions<GoogleCalendarOptions> options,
         ILogger<GoogleCalendarClient> logger)
     {
         _httpClient = httpClient;
         _authService = authService;
         _tokenStore = tokenStore;
+        _accessTokenProvider = accessTokenProvider;
         _options = options.Value;
         _logger = logger;
     }
 
     private async Task SetAuthorizationHeaderAsync(CancellationToken ct)
     {
+        // Use pre-obtained access token if available (e.g., during initial login sync)
+        if (!string.IsNullOrEmpty(_accessTokenProvider.AccessToken))
+        {
+            _logger.LogDebug("Using pre-obtained access token from provider");
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessTokenProvider.AccessToken);
+            return;
+        }
+
         var refreshToken = await _tokenStore.GetRefreshTokenAsync(ct);
         if (string.IsNullOrEmpty(refreshToken))
         {

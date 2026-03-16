@@ -1,9 +1,10 @@
 using FamilyHQ.Core.Models;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Data;
 
-public class FamilyHqDbContext : DbContext
+public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
 {
     public FamilyHqDbContext(DbContextOptions<FamilyHqDbContext> options)
         : base(options)
@@ -13,6 +14,12 @@ public class FamilyHqDbContext : DbContext
     public DbSet<CalendarInfo> Calendars => Set<CalendarInfo>();
     public DbSet<CalendarEvent> Events => Set<CalendarEvent>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
+    public DbSet<UserToken> UserTokens => Set<UserToken>();
+
+    /// <summary>
+    /// Required for ASP.NET Core Data Protection key storage in the database.
+    /// </summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

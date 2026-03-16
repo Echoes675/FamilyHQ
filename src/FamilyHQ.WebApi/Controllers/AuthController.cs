@@ -55,8 +55,8 @@ public class AuthController : ControllerBase
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
         var (accessToken, refreshToken, userId) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
 
-        if (!string.IsNullOrEmpty(refreshToken))
-            await _tokenStore.SaveRefreshTokenAsync(refreshToken);
+        if (!string.IsNullOrEmpty(refreshToken) && !string.IsNullOrEmpty(userId))
+            await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
 
         if (string.IsNullOrEmpty(userId))
             return BadRequest("Authentication failed: user identity could not be determined.");
@@ -86,8 +86,8 @@ public class AuthController : ControllerBase
     {
         var claims = new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, userId),
-            new Claim(ClaimTypes.Name, userId)
+            new Claim(JwtRegisteredClaimNames.Sub, userId),
+            new Claim(JwtRegisteredClaimNames.UniqueName, userId)
         };
         
         var jwtKey = _configuration["Jwt:SigningKey"]
@@ -108,6 +108,12 @@ public class AuthController : ControllerBase
     private async Task SyncCalendarEventsAsync(string userId, string accessToken)
     {
         using var scope = _scopeFactory.CreateScope();
+
+        // Provide the fresh access token so the sync can use it directly
+        // instead of going through the refresh token flow
+        var tokenProvider = scope.ServiceProvider.GetRequiredService<IAccessTokenProvider>();
+        tokenProvider.AccessToken = accessToken;
+
         var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
 
         try

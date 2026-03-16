@@ -48,7 +48,7 @@ public class AuthControllerTests
         await sut.Callback("dummy_code_for_user1");
 
         // Assert
-        tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync("simulated_refresh_token"), Times.Once);
+        tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync("simulated_refresh_token", "user1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class AuthControllerTests
         await sut.Callback("dummy_code_for_user1");
 
         // Assert
-        tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>()), Times.Never);
+        tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static AuthController CreateSut(
@@ -152,8 +152,11 @@ public class AuthControllerTests
         var hubContextMock = new Mock<IHubContext<CalendarHub>>();
         hubContextMock.Setup(h => h.Clients).Returns(clientsMock.Object);
 
+        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+
         var scopeMock = new Mock<IServiceScope>();
         var providerMock = new Mock<IServiceProvider>();
+        providerMock.Setup(p => p.GetService(typeof(IAccessTokenProvider))).Returns(accessTokenProviderMock.Object);
         providerMock.Setup(p => p.GetService(typeof(ICalendarSyncService))).Returns(syncServiceMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IHubContext<CalendarHub>))).Returns(hubContextMock.Object);
         scopeMock.Setup(s => s.ServiceProvider).Returns(providerMock.Object);

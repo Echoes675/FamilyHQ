@@ -1,5 +1,6 @@
 @page "/"
 @using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Services.Auth
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.Core.ViewModels
 @using FamilyHQ.Core.Models
@@ -8,30 +9,53 @@
 @inject SignalRService SignalR
 @inject NavigationManager NavigationManager
 @inject IConfiguration Configuration
+@inject IAuthenticationService AuthService
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
 
 <div class="dashboard-container">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div class="d-flex align-items-center gap-3">
-            <h1>Family HQ Dashboard</h1>
-            <button class="btn btn-sm btn-success" @onclick="OnLoginClicked">Login to Google</button>
+    @if (!_isAuthenticated)
+    {
+        <!-- Not Authenticated - Show centered login button -->
+        <div class="d-flex flex-column align-items-center justify-content-center" style="min-height: 60vh;">
+            <h1 class="mb-4">Family HQ Dashboard</h1>
+            <p class="text-muted mb-4">Please sign in to view your calendar</p>
+            <button class="btn btn-success btn-lg" @onclick="OnLoginClicked">Login to Google</button>
         </div>
-        
-        <!-- Navigation Controls -->
-        <div class="btn-group">
-            <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
-            <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
-                @CurrentMonth.ToString("MMMM yyyy")
-            </button>
-            <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
+    }
+    else
+    {
+        <!-- Authenticated - Show full dashboard with header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="d-flex align-items-center gap-3">
+                <h1>Family HQ Dashboard</h1>
+            </div>
+            
+            <!-- User Info and Sign Out (Top Right) -->
+            <div class="d-flex align-items-center gap-3">
+                <span class="text-muted">Signed in as: <strong>@(_username ?? _userId ?? "Unknown")</strong></span>
+                <button class="btn btn-outline-danger btn-sm" @onclick="OnSignOutClicked">Sign Out</button>
+            </div>
         </div>
-        
-        <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)">
-            <i class="bi bi-plus-circle"></i> Add Event
-        </button>
-    </div>
 
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <!-- Navigation Controls -->
+            <div class="btn-group">
+                <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
+                <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
+                    @CurrentMonth.ToString("MMMM yyyy")
+                </button>
+                <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
+            </div>
+            
+            <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)">
+                <i class="bi bi-plus-circle"></i> Add Event
+            </button>
+        </div>
+    }
+
+    @if (_isAuthenticated)
+    {
     @if (IsLoading)
     {
         <div class="text-center py-5">
@@ -118,6 +142,7 @@
                 }
             </tbody>
         </table>
+    }
     }
 </div>
 
@@ -268,6 +293,11 @@
 }
 
 @code {
+    // Authentication State
+    private bool _isAuthenticated;
+    private string? _username;
+    private string? _userId;
+
     private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private bool IsLoading = true;
     private MonthViewDto? _monthView;
@@ -301,6 +331,18 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // Check authentication state
+        _isAuthenticated = await AuthService.IsAuthenticatedAsync();
+        _username = await AuthService.GetUsernameAsync();
+        _userId = await AuthService.GetUserIdAsync();
+        
+        if (!_isAuthenticated)
+        {
+            // Not authenticated - show login prompt only
+            return;
+        }
+
+        // Authenticated - load calendar data
         _calendars = await CalendarApi.GetCalendarsAsync();
         
         SignalR.OnEventsUpdated += RefreshDataFromSignalR;
@@ -420,6 +462,15 @@
         var backendUrl = Configuration["BackendUrl"]
             ?? throw new InvalidOperationException("BackendUrl is not configured.");
         NavigationManager.NavigateTo($"{backendUrl}/api/auth/login", forceLoad: true);
+    }
+
+    private async Task OnSignOutClicked()
+    {
+        await AuthService.SignOutAsync();
+        _isAuthenticated = false;
+        _username = null;
+        _userId = null;
+        StateHasChanged();
     }
 
     // Event Modal Logic

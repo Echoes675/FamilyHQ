@@ -85,6 +85,16 @@ public class UserSteps
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
 
+        // Navigate to the dashboard first
+        await page.GotoAsync(config.BaseUrl + "/");
+
+        // Check if user is already signed in, and if so, sign out first
+        var dashboardPage = new Common.Pages.DashboardPage(page);
+        if (await dashboardPage.IsSignedInAsync())
+        {
+            await dashboardPage.SignOutAsync();
+        }
+
         // Navigate to the OAuth consent screen
         await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
 

@@ -1,9 +1,12 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Data;
 using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -30,6 +33,14 @@ builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.Current
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
+// Add Data Protection with database key storage
+builder.Services.AddDataProtection()
+    .PersistKeysToDbContext<FamilyHqDbContext>();
+
+// Register DatabaseTokenStore (overrides the FileTokenStore from AddFamilyHqServices)
+// DatabaseTokenStore is scoped because it depends on DbContext which is scoped
+builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
+
 // Add SignalR Configuration
 builder.Services.AddSignalR();
 
@@ -40,6 +51,10 @@ var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
 builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // Prevent the middleware from remapping JWT claim names (e.g. "sub" → ClaimTypes.NameIdentifier).
+        // CurrentUserService reads the "sub" claim directly via JwtRegisteredClaimNames.Sub.
+        options.MapInboundClaims = false;
+
         options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
         {
             ValidateIssuer = false,
