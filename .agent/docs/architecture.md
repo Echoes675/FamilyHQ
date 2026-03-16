@@ -19,7 +19,7 @@
 - Infrastructure Isolation: External integrations (e.g., Google Calendar) must be abstracted behind interfaces.
 - Shared Validation: Use FluentValidation in FamilyHQ.Core so it can be executed on both the Blazor client and the ASP.NET server.
 
-##Performance Targets
+## Performance Targets
 - Responsiveness: API endpoints should target < 200ms response time.
 - EF Core Efficiency:
 -- Use AsNoTracking() for read-only queries.
