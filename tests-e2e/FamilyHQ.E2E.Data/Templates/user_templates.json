@@ -1,5 +1,5 @@
 {
-    "Test Family Member": {
+    "TestFamilyMember": {
         "Calendars": [
             {
                 "Id": "template_family",
@@ -9,7 +9,7 @@
         ],
         "Events": []
     },
-    "Multi Calendar User": {
+    "MultiCalendarUser": {
         "Calendars": [
             {
                 "Id": "template_work",
@@ -29,7 +29,7 @@
         ],
         "Events": []
     },
-    "All Day Events User": {
+    "AllDayEventsUser": {
         "Calendars": [
             {
                 "Id": "template_holidays",
@@ -39,7 +39,7 @@
         ],
         "Events": []
     },
-    "Timed Events User": {
+    "TimedEventsUser": {
         "Calendars": [
             {
                 "Id": "template_appointments",
