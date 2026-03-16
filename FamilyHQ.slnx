@@ -14,6 +14,8 @@
     <Project Path="tests-e2e/FamilyHQ.E2E.Steps/FamilyHQ.E2E.Steps.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/FamilyHQ.Simulator.Tests/FamilyHQ.Simulator.Tests.csproj" />
+    <Project Path="tests/FamilyHQ.WebUi.Tests/FamilyHQ.WebUi.Tests.csproj" />
     <Project Path="tests/FamilyHQ.Core.Tests/FamilyHQ.Core.Tests.csproj" />
     <Project Path="tests/FamilyHQ.Services.Tests/FamilyHQ.Services.Tests.csproj" />
     <Project Path="tests/FamilyHQ.WebApi.Tests/FamilyHQ.WebApi.Tests.csproj" />
