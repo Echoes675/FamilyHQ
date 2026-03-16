@@ -30,7 +30,7 @@ Dashboard app that displays a family calendar events
 
 ## Progressive Disclosure Links
 Refer to these files in the .agent/ directory for specific implementation details:
-- Project Architecture & Structure: .agent/architecture.md
+- Project Architecture & Structure: `.agent/docs/architecture.md`
 
 ## Skills
 Read the relevant skill file before starting any task of that type:
@@ -38,6 +38,7 @@ Read the relevant skill file before starting any task of that type:
 - **Git commits**: Read `.agent/skills/git-commit-formatter/SKILL.md`
 - **Git workflow (branching, PRs)**: Read `.agent/skills/git-workflow/SKILL.md`
 - **Writing/modifying backend C# code**: Read `.agent/skills/dotnet-backend-patterns/SKILL.md`
+- **Working with DateTimeOffset and PostgreSQL**: Read `.agent/skills/datetimeoffset-postgresql/SKILL.md`
 - **Writing or modifying tests**: Read `.agent/skills/testing-standards/SKILL.md` and `.agent/skills/test-driven-development/SKILL.md`
 - **BDD/acceptance tests**: Read `.agent/skills/bdd-testing/SKILL.md`
 - **Security-sensitive code**: Read `.agent/skills/security/SKILL.md`

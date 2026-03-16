@@ -133,16 +133,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
                     var isAllDay = item.Start?.Date != null;
 
-                    // Convert to UTC to ensure PostgreSQL compatibility (timestamp with time zone requires UTC)
-                    var startUtc = startParam.Value.ToUniversalTime();
-                    var endUtc = endParam.Value.ToUniversalTime();
-
                     events.Add(new CalendarEvent
                     {
                         GoogleEventId = item.Id,
                         Title = item.Summary ?? "Untitled Event",
-                        Start = startUtc,
-                        End = endUtc,
+                        Start = startParam.Value,
+                        End = endParam.Value,
                         IsAllDay = isAllDay,
                         Location = item.Location,
                         Description = item.Description

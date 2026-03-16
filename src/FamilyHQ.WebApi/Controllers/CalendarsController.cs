@@ -119,8 +119,8 @@ public class CalendarsController : ControllerBase
         var newEvent = new Core.Models.CalendarEvent
         {
             Title = request.Title,
-            Start = request.Start.ToUniversalTime(),
-            End = request.End.ToUniversalTime(),
+            Start = request.Start,
+            End = request.End,
             IsAllDay = request.IsAllDay,
             Location = request.Location,
             Description = request.Description
@@ -181,8 +181,8 @@ public class CalendarsController : ControllerBase
         var targetCalendar = existing.Calendars.First(c => c.Id == calendarId);
 
         existing.Title = request.Title;
-        existing.Start = request.Start.ToUniversalTime();
-        existing.End = request.End.ToUniversalTime();
+        existing.Start = request.Start;
+        existing.End = request.End;
         existing.IsAllDay = request.IsAllDay;
         existing.Location = request.Location;
         existing.Description = request.Description;

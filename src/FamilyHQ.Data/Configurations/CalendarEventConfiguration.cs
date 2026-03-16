@@ -22,6 +22,17 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
             
         builder.Property(e => e.Location)
             .HasMaxLength(1000);
+        
+        // Value Converters for UTC conversion
+        builder.Property(e => e.Start)
+            .HasConversion(
+                v => v.ToUniversalTime(),
+                v => v);
+                
+        builder.Property(e => e.End)
+            .HasConversion(
+                v => v.ToUniversalTime(),
+                v => v);
             
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
