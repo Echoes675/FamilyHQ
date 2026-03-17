@@ -1,0 +1,120 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: '', description: 'Branch name to deploy (e.g. dev, feature/my-feature). Leave empty to use current branch.')
+    }
+
+    environment {
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+        DEPLOY_HOST = 'omv'
+        DEPLOY_PATH = '/Docker/deployed_apps/dev/familyhq'
+        DB_NAME = 'FamilyHQ-Dev'
+        SIMULATOR_DB_NAME = 'FamilyHQ-Simulator-Dev'
+    }
+
+    stages {
+        stage('Resolve Image') {
+            steps {
+                echo '======= Resolve Image ======='
+                script {
+                    def branch = params.BRANCH?.trim() ?: env.BRANCH_NAME ?: 'dev'
+                    def branchSanitized = branch.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
+                    echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
+
+                    def tagsJson = sh(
+                        script: "curl -s ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                        returnStdout: true
+                    ).trim()
+
+                    def tags = readJSON(text: tagsJson).tags ?: []
+                    def branchTags = tags.findAll { it.startsWith("${branchSanitized}-") }.sort()
+
+                    if (branchTags.isEmpty()) {
+                        error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
+                    }
+
+                    env.RESOLVED_IMAGE_TAG = branchTags.last()
+                    echo "Resolved image tag: ${env.RESOLVED_IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Prepare') {
+            steps {
+                echo '======= Prepare ======='
+                checkout scm
+
+                withCredentials([
+                    file(credentialsId: 'familyhq-dev-env', variable: 'ENV_FILE'),
+                    file(credentialsId: 'familyhq-dev-dp-cert', variable: 'DP_CERT')
+                ]) {
+                    sshagent(credentials: ['jenkins_docker_dev']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                            scp docker-compose.yml docker-compose.dev.yml ${DEPLOY_HOST}:${DEPLOY_PATH}/
+                            scp \$ENV_FILE ${DEPLOY_HOST}:${DEPLOY_PATH}/.env
+                            scp \$DP_CERT ${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Drop DBs') {
+            steps {
+                echo '======= Drop DBs ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            docker compose -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans || true
+
+                            docker exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
+                            docker exec postgres psql -U postgres -c "CREATE DATABASE \\"${DB_NAME}\\";"
+                            docker exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS \\"${SIMULATOR_DB_NAME}\\";"
+                            docker exec postgres psql -U postgres -c "CREATE DATABASE \\"${SIMULATOR_DB_NAME}\\";"
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo '======= Deploy ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
+                            docker compose -f docker-compose.yml -f docker-compose.dev.yml pull &&
+                            docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --remove-orphans
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('E2E Tests') {
+            steps {
+                echo '======= E2E Tests ======='
+                echo 'E2E test execution to be configured'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Dev deployment successful: ${env.RESOLVED_IMAGE_TAG}"
+        }
+        failure {
+            echo "Dev deployment failed: ${env.RESOLVED_IMAGE_TAG}"
+        }
+    }
+}

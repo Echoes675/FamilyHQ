@@ -1,0 +1,153 @@
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+        BRANCH_SANITIZED = "${env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()}"
+        GIT_COMMIT_SHORT = "${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+        IMAGE_TAG = "${BRANCH_SANITIZED}-${BUILD_NUMBER}-${GIT_COMMIT_SHORT}"
+        WEBAPI_IMAGE = "${REGISTRY}/familyhq-webapi"
+        WEBUI_IMAGE = "${REGISTRY}/familyhq-webui"
+        SIMULATOR_IMAGE = "${REGISTRY}/familyhq-simulator"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '======= Checkout ======='
+                checkout scm
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                echo '======= Unit Tests ======='
+                sh 'dotnet test FamilyHQ.slnx -c Release --logger "trx;LogFileName=test-results.trx"'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: '**/test-results.trx', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Build Images') {
+            steps {
+                echo '======= Build Images ======='
+                script {
+                    parallel(
+                        'WebApi': {
+                            sh "docker build -f docker/webapi/Dockerfile -t ${WEBAPI_IMAGE}:${IMAGE_TAG} ."
+                        },
+                        'WebUi': {
+                            sh "docker build -f docker/webui/Dockerfile -t ${WEBUI_IMAGE}:${IMAGE_TAG} ."
+                        },
+                        'Simulator': {
+                            sh "docker build -f docker/simulator/Dockerfile -t ${SIMULATOR_IMAGE}:${IMAGE_TAG} ."
+                        }
+                    )
+                }
+            }
+        }
+
+        stage('Push to Registry') {
+            steps {
+                echo '======= Push to Registry ======='
+                withDockerRegistry(credentialsId: 'alphaepsilon-docker-registry', url: "${REGISTRY_URL}") {
+                    sh "docker push ${WEBAPI_IMAGE}:${IMAGE_TAG}"
+                    sh "docker push ${WEBUI_IMAGE}:${IMAGE_TAG}"
+                    sh "docker push ${SIMULATOR_IMAGE}:${IMAGE_TAG}"
+
+                    script {
+                        if (env.BRANCH_NAME == 'master') {
+                            sh "docker tag ${WEBAPI_IMAGE}:${IMAGE_TAG} ${WEBAPI_IMAGE}:latest"
+                            sh "docker tag ${WEBUI_IMAGE}:${IMAGE_TAG} ${WEBUI_IMAGE}:latest"
+                            sh "docker tag ${SIMULATOR_IMAGE}:${IMAGE_TAG} ${SIMULATOR_IMAGE}:latest"
+                            sh "docker push ${WEBAPI_IMAGE}:latest"
+                            sh "docker push ${WEBUI_IMAGE}:latest"
+                            sh "docker push ${SIMULATOR_IMAGE}:latest"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Prune Old Images') {
+            steps {
+                echo '======= Prune Old Images ======='
+                script {
+                    def images = [
+                        'familyhq-webapi',
+                        'familyhq-webui',
+                        'familyhq-simulator'
+                    ]
+
+                    for (imageName in images) {
+                        def tagsJson = sh(
+                            script: "curl -s ${REGISTRY_URL}/v2/${imageName}/tags/list",
+                            returnStdout: true
+                        ).trim()
+
+                        def tags = readJSON(text: tagsJson).tags ?: []
+                        def branchTags = tags.findAll { it.startsWith("${BRANCH_SANITIZED}-") && it != IMAGE_TAG }
+
+                        if (env.BRANCH_NAME == 'master') {
+                            // Keep current + previous build, remove older ones
+                            def masterTags = tags.findAll { it.startsWith('master-') && it != IMAGE_TAG }
+                                .sort()
+                            if (masterTags.size() > 1) {
+                                def tagsToDelete = masterTags.dropRight(1)
+                                for (tag in tagsToDelete) {
+                                    deleteRegistryTag(imageName, tag)
+                                }
+                            }
+                        } else {
+                            // Non-main branches: delete all previous tags for this branch
+                            for (tag in branchTags) {
+                                deleteRegistryTag(imageName, tag)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                echo '======= Cleanup ======='
+                sh "docker rmi ${WEBAPI_IMAGE}:${IMAGE_TAG} || true"
+                sh "docker rmi ${WEBUI_IMAGE}:${IMAGE_TAG} || true"
+                sh "docker rmi ${SIMULATOR_IMAGE}:${IMAGE_TAG} || true"
+                script {
+                    if (env.BRANCH_NAME == 'master') {
+                        sh "docker rmi ${WEBAPI_IMAGE}:latest || true"
+                        sh "docker rmi ${WEBUI_IMAGE}:latest || true"
+                        sh "docker rmi ${SIMULATOR_IMAGE}:latest || true"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Build successful: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "Build failed: ${IMAGE_TAG}"
+        }
+    }
+}
+
+def deleteRegistryTag(String imageName, String tag) {
+    def digest = sh(
+        script: "curl -s -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
+        returnStdout: true
+    ).trim()
+
+    if (digest) {
+        sh "curl -s -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
+        echo "Deleted ${imageName}:${tag} (${digest})"
+    }
+}

@@ -1,0 +1,97 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+        DEPLOY_HOST = 'alphaepsilon.co.uk'
+        DEPLOY_PATH = '/home/docker_user/apps/familyhq'
+        IMAGE_TAG = 'latest'
+    }
+
+    stages {
+        stage('Confirm') {
+            steps {
+                echo '======= Confirm ======='
+                input message: 'Deploy to PRODUCTION using the latest master build?', ok: 'Deploy'
+            }
+        }
+
+        stage('Prepare') {
+            steps {
+                echo '======= Prepare ======='
+                checkout scm
+
+                withCredentials([
+                    file(credentialsId: 'familyhq-prod-env', variable: 'ENV_FILE'),
+                    file(credentialsId: 'familyhq-prod-dp-cert', variable: 'DP_CERT')
+                ]) {
+                    sshagent(credentials: ['docker_user']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                            scp docker-compose.yml docker-compose.prod.yml docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/
+                            scp \$ENV_FILE docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/.env
+                            scp \$DP_CERT docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo '======= Deploy ======='
+                sshagent(credentials: ['docker_user']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            export IMAGE_TAG=latest &&
+                            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull &&
+                            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                echo '======= Verify ======='
+                sshagent(credentials: ['docker_user']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
+                            sleep 10 &&
+                            docker ps --filter name=familyhq --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                        '
+                    """
+                }
+
+                script {
+                    def response = sh(
+                        script: "curl -s -o /dev/null -w '%{http_code}' https://familyhq.api.alphaepsilon.co.uk/api/health || echo '000'",
+                        returnStdout: true
+                    ).trim()
+
+                    if (response != '200') {
+                        echo "WARNING: Health check returned ${response} — verify manually"
+                    } else {
+                        echo "Health check passed (HTTP 200)"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Production deployment successful'
+        }
+        failure {
+            echo 'Production deployment failed'
+        }
+    }
+}
