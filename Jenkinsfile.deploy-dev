@@ -63,6 +63,7 @@ pipeline {
                             scp docker-compose.yml docker-compose.dev.yml ${DEPLOY_HOST}:${DEPLOY_PATH}/
                             scp \$ENV_FILE ${DEPLOY_HOST}:${DEPLOY_PATH}/.env
                             scp \$DP_CERT ${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'chmod 600 ${DEPLOY_PATH}/.env ${DEPLOY_PATH}/dataprotection.pfx'
                         """
                     }
                 }
