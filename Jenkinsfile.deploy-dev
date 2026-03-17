@@ -79,8 +79,10 @@ pipeline {
                             cd ${DEPLOY_PATH} &&
                             docker compose -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans || true
 
+                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${DB_NAME}'"'"' AND pid <> pg_backend_pid();"
                             docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
                             docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${SIMULATOR_DB_NAME}'"'"' AND pid <> pg_backend_pid();"
                             docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${SIMULATOR_DB_NAME}\\";"
                             docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${SIMULATOR_DB_NAME}\\";"
                         '
