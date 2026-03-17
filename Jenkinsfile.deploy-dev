@@ -5,6 +5,10 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    tools {
+        dotnetsdk '.Net_10.0_SDK'
+    }
+
     parameters {
         string(name: 'BRANCH', defaultValue: '', description: 'Branch name to deploy (e.g. dev, feature/my-feature). Leave empty to use current branch.')
     }
@@ -14,6 +18,7 @@ pipeline {
         REGISTRY_URL = "https://${REGISTRY}"
         DEPLOY_HOST = 'jenkins_docker@192.168.86.23'
         DEPLOY_PATH = '/Docker/deployed_apps/dev/familyhq'
+        APP_BASE_URL = 'http://192.168.86.23:8200'
         DB_NAME = 'FamilyHQ-Dev'
         SIMULATOR_DB_NAME = 'FamilyHQ-Simulator-Dev'
     }
@@ -107,10 +112,62 @@ pipeline {
             }
         }
 
+        stage('Wait for Services') {
+            steps {
+                echo '======= Wait for Services ======='
+                script {
+                    def endpoints = [
+                        [name: 'WebUI',     url: "${APP_BASE_URL}/health"],
+                        [name: 'WebAPI',    url: "${APP_BASE_URL}/api/health"],
+                        [name: 'Simulator', url: "${APP_BASE_URL}/simulator/health"]
+                    ]
+
+                    def branches = [:]
+                    for (ep in endpoints) {
+                        def name = ep.name
+                        def url = ep.url
+                        branches[name] = {
+                            def maxRetries = 18
+                            for (int i = 0; i < maxRetries; i++) {
+                                def status = sh(
+                                    script: "curl -s -o /dev/null -w '%{http_code}' ${url} || echo '000'",
+                                    returnStdout: true
+                                ).trim()
+
+                                if (status == '200') {
+                                    echo "${name} ready (HTTP ${status})"
+                                    return
+                                }
+                                echo "${name} not ready... attempt ${i + 1}/${maxRetries} (HTTP ${status})"
+                                sleep(time: 10, unit: 'SECONDS')
+                            }
+                            error "${name} not ready after 3 minutes"
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
         stage('E2E Tests') {
             steps {
                 echo '======= E2E Tests ======='
-                echo 'E2E test execution to be configured'
+                sh 'dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release'
+                sh 'pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps'
+                sh """
+                    TestConfiguration__BaseUrl=${APP_BASE_URL} \
+                    TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
+                    TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator \
+                    TestConfiguration__Headless=true \
+                    dotnet test tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj \
+                        -c Release --no-build \
+                        --logger "trx;LogFileName=e2e-results.trx"
+                """
+            }
+            post {
+                always {
+                    mstest testResultsFile: '**/e2e-results.trx', failOnError: false
+                }
             }
         }
     }
