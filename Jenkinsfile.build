@@ -27,7 +27,7 @@ pipeline {
         stage('Unit Tests') {
             steps {
                 echo '======= Unit Tests ======='
-                sh 'DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 dotnet test FamilyHQ.slnx -c Release --logger "trx;LogFileName=test-results.trx"'
+                sh 'for proj in tests/*/*.csproj; do dotnet test "$proj" -c Release --logger "trx;LogFileName=test-results.trx"; done'
             }
             post {
                 always {
