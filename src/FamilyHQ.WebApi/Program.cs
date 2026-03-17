@@ -95,12 +95,15 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer
         };
     });
 
-// CORS is required because Blazor WASM might run on a different port in dev
+// CORS — use FrontendBaseUrl from configuration
+var frontendBaseUrl = builder.Configuration["FrontendBaseUrl"]
+    ?? throw new InvalidOperationException("FrontendBaseUrl must be configured.");
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowBlazorApp", policy =>
     {
-        policy.WithOrigins("https://localhost:7154", "http://localhost:5154")
+        policy.WithOrigins(frontendBaseUrl)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials(); // SignalR requires credentials
@@ -128,7 +131,10 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseHttpsRedirection();
+if (!app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
+{
+    app.UseHttpsRedirection();
+}
 app.UseCors("AllowBlazorApp");
 
 app.UseAuthentication();
