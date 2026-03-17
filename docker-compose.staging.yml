@@ -52,12 +52,11 @@ services:
     image: traefik:v3.4
     container_name: familyhq-staging-traefik
     restart: unless-stopped
-    environment:
-      - DOCKER_API_VERSION=1.44
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=familyhq-staging"
+      - "--providers.docker.apiVersion=1.44"
       - "--entrypoints.web.address=:80"
     ports:
       - "8300:80"
