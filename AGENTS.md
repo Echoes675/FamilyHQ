@@ -27,6 +27,7 @@ Dashboard app that displays a family calendar events
 -- Deleting files or directories
 -- Modifying database schemas
 -- Changing environment variables
+-- Making commits directly on the 'dev' or 'main' branches
 
 ## Progressive Disclosure Links
 Refer to these files in the .agent/ directory for specific implementation details:

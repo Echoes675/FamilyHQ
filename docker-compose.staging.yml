@@ -44,6 +44,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Staging
       - ConnectionStrings__DefaultConnection=${Simulator__ConnectionStrings__DefaultConnection}
+      - PathBase=/simulator
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.simulator.rule=PathPrefix(`/simulator`)"
