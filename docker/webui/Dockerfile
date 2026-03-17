@@ -23,6 +23,7 @@ COPY docker/webui/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 COPY --from=build /app/publish/wwwroot /usr/share/nginx/html
+RUN chmod -R o+r /usr/share/nginx/html && find /usr/share/nginx/html -type d -exec chmod o+x {} +
 
 EXPOSE 80
 ENTRYPOINT ["/docker-entrypoint.sh"]
