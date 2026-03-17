@@ -78,10 +78,10 @@ pipeline {
                             cd ${DEPLOY_PATH} &&
                             docker compose -f docker-compose.yml -f docker-compose.staging.yml down --remove-orphans || true
 
-                            docker exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
-                            docker exec postgres psql -U postgres -c "CREATE DATABASE \\"${DB_NAME}\\";"
-                            docker exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS \\"${SIMULATOR_DB_NAME}\\";"
-                            docker exec postgres psql -U postgres -c "CREATE DATABASE \\"${SIMULATOR_DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U postgres -c "CREATE DATABASE \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS \\"${SIMULATOR_DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U postgres -c "CREATE DATABASE \\"${SIMULATOR_DB_NAME}\\";"
                         '
                     """
                 }
