@@ -80,18 +80,19 @@ pipeline {
         stage('Prune Old Images') {
             steps {
                 echo '======= Prune Old Images ======='
-                script {
-                    def images = [
-                        'familyhq-webapi',
-                        'familyhq-webui',
-                        'familyhq-simulator'
-                    ]
+                withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                    script {
+                        def images = [
+                            'familyhq-webapi',
+                            'familyhq-webui',
+                            'familyhq-simulator'
+                        ]
 
-                    for (imageName in images) {
-                        def tagsJson = sh(
-                            script: "curl -sk ${REGISTRY_URL}/v2/${imageName}/tags/list",
-                            returnStdout: true
-                        ).trim()
+                        for (imageName in images) {
+                            def tagsJson = sh(
+                                script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/${imageName}/tags/list",
+                                returnStdout: true
+                            ).trim()
 
                         def tags = readJSON(text: tagsJson).tags ?: []
                         def branchTags = tags.findAll { it.startsWith("${BRANCH_SANITIZED}-") && it != IMAGE_TAG }
@@ -112,6 +113,7 @@ pipeline {
                                 deleteRegistryTag(imageName, tag)
                             }
                         }
+                    }
                     }
                 }
             }
@@ -146,12 +148,12 @@ pipeline {
 
 def deleteRegistryTag(String imageName, String tag) {
     def digest = sh(
-        script: "curl -sk -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
+        script: "curl -sk -u \$REGISTRY_CREDS -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
         returnStdout: true
     ).trim()
 
     if (digest) {
-        sh "curl -sk -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
+        sh "curl -sk -u \$REGISTRY_CREDS -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
         echo "Deleted ${imageName}:${tag} (${digest})"
     }
 }

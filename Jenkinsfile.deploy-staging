@@ -27,10 +27,13 @@ pipeline {
                     def branchSanitized = branch.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
                     echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
 
-                    def tagsJson = sh(
-                        script: "curl -sk ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
-                        returnStdout: true
-                    ).trim()
+                    def tagsJson = ''
+                    withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                        tagsJson = sh(
+                            script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                            returnStdout: true
+                        ).trim()
+                    }
 
                     def tags = readJSON(text: tagsJson).tags ?: []
                     def branchTags = tags.findAll { it.startsWith("${branchSanitized}-") }.sort()
