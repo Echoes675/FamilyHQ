@@ -28,7 +28,7 @@ pipeline {
                     echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
 
                     def tagsJson = sh(
-                        script: "curl -s ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                        script: "curl -sk ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
                         returnStdout: true
                     ).trim()
 

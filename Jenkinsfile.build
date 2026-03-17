@@ -89,7 +89,7 @@ pipeline {
 
                     for (imageName in images) {
                         def tagsJson = sh(
-                            script: "curl -s ${REGISTRY_URL}/v2/${imageName}/tags/list",
+                            script: "curl -sk ${REGISTRY_URL}/v2/${imageName}/tags/list",
                             returnStdout: true
                         ).trim()
 
@@ -146,12 +146,12 @@ pipeline {
 
 def deleteRegistryTag(String imageName, String tag) {
     def digest = sh(
-        script: "curl -s -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
+        script: "curl -sk -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
         returnStdout: true
     ).trim()
 
     if (digest) {
-        sh "curl -s -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
+        sh "curl -sk -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
         echo "Deleted ${imageName}:${tag} (${digest})"
     }
 }
