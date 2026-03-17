@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+        dotnetsdk '.Net_10.0_SDK'
+    }
+
     environment {
         REGISTRY = 'registry.alphaepsilon.co.uk'
         REGISTRY_URL = "https://${REGISTRY}"
@@ -23,7 +27,7 @@ pipeline {
         stage('Unit Tests') {
             steps {
                 echo '======= Unit Tests ======='
-                sh "docker run --rm -v '${WORKSPACE}:/src' -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test FamilyHQ.slnx -c Release --logger 'trx;LogFileName=test-results.trx'"
+                sh 'dotnet test FamilyHQ.slnx -c Release --logger "trx;LogFileName=test-results.trx"'
             }
             post {
                 always {
