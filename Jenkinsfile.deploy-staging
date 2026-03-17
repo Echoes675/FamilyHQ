@@ -54,7 +54,7 @@ pipeline {
                     file(credentialsId: 'familyhq-staging-env', variable: 'ENV_FILE'),
                     file(credentialsId: 'familyhq-staging-dp-cert', variable: 'DP_CERT')
                 ]) {
-                    sshagent(credentials: ['jenkins_docker_dev']) {
+                    sshagent(credentials: ['familyhq_omv_ssh']) {
                         sh """
                             ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
                             scp docker-compose.yml docker-compose.staging.yml ${DEPLOY_HOST}:${DEPLOY_PATH}/
@@ -69,7 +69,7 @@ pipeline {
         stage('Drop DBs') {
             steps {
                 echo '======= Drop DBs ======='
-                sshagent(credentials: ['jenkins_docker_dev']) {
+                sshagent(credentials: ['familyhq_omv_ssh']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
@@ -88,7 +88,7 @@ pipeline {
         stage('Deploy') {
             steps {
                 echo '======= Deploy ======='
-                sshagent(credentials: ['jenkins_docker_dev']) {
+                sshagent(credentials: ['familyhq_omv_ssh']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
