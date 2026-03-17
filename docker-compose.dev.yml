@@ -49,14 +49,13 @@ services:
       - postgres
 
   traefik:
-    image: traefik:v3.4
+    image: traefik:v2.11
     container_name: familyhq-dev-traefik
     restart: unless-stopped
     command:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=familyhq-dev"
-      - "--providers.docker.apiVersion=1.44"
       - "--entrypoints.web.address=:80"
     ports:
       - "8200:80"
