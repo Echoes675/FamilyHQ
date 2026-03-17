@@ -44,6 +44,13 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=${Simulator__ConnectionStrings__DefaultConnection}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.simulator.rule=PathPrefix(`/simulator`)"
+      - "traefik.http.routers.simulator.priority=10"
+      - "traefik.http.middlewares.simulator-strip.stripprefix.prefixes=/simulator"
+      - "traefik.http.routers.simulator.middlewares=simulator-strip"
+      - "traefik.http.services.simulator.loadbalancer.server.port=8080"
     networks:
       - familyhq-dev
       - postgres
