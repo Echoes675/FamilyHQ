@@ -42,7 +42,8 @@ pipeline {
 
                     echo "Registry response: ${tagsJson}"
                     def parsed = readJSON(text: tagsJson)
-                    def tags = parsed.tags ?: []
+                    def rawTags = parsed.tags
+                    def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
                     echo "Tags found: ${tags.size()}, looking for prefix: ${branchSanitized}-"
                     def branchTags = []
                     for (int i = 0; i < tags.size(); i++) {

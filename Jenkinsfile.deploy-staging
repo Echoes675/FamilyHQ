@@ -40,11 +40,13 @@ pipeline {
                         ).trim()
                     }
 
-                    def tags = readJSON(text: tagsJson).tags ?: []
+                    def rawTags = readJSON(text: tagsJson).tags
+                    def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
                     def branchTags = []
-                    for (t in tags) {
-                        if (t != null && t instanceof String && t.startsWith("${branchSanitized}-")) {
-                            branchTags.add(t)
+                    for (int i = 0; i < tags.size(); i++) {
+                        def t = tags[i]
+                        if (t != null && "${t}".startsWith("${branchSanitized}-")) {
+                            branchTags.add("${t}")
                         }
                     }
                     branchTags.sort()
