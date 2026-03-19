@@ -160,19 +160,33 @@ pipeline {
         stage('E2E Tests') {
             steps {
                 echo '======= E2E Tests ======='
-                withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true']) {
-                    sh 'dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release'
-                    sh 'pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps'
-                    sh """
-                        TestConfiguration__BaseUrl=${APP_BASE_URL} \
-                        TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
-                        TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator \
-                        TestConfiguration__Headless=true \
+                sh """
+                    docker run --rm --network host \
+                        -v '${WORKSPACE}:/src' -w /src \
+                        -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+                        mcr.microsoft.com/dotnet/sdk:10.0 \
+                        dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release
+                """
+                sh """
+                    docker run --rm --network host \
+                        -v '${WORKSPACE}:/src' -w /src \
+                        -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+                        mcr.microsoft.com/dotnet/sdk:10.0 \
+                        pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps
+                """
+                sh """
+                    docker run --rm --network host \
+                        -v '${WORKSPACE}:/src' -w /src \
+                        -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+                        -e TestConfiguration__BaseUrl=${APP_BASE_URL} \
+                        -e TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
+                        -e TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator \
+                        -e TestConfiguration__Headless=true \
+                        mcr.microsoft.com/dotnet/sdk:10.0 \
                         dotnet test tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj \
                             -c Release --no-build \
-                            --logger "trx;LogFileName=e2e-results.trx"
-                    """
-                }
+                            --logger 'trx;LogFileName=e2e-results.trx'
+                """
             }
             post {
                 always {
