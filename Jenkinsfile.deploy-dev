@@ -164,6 +164,17 @@ pipeline {
         stage('E2E Tests') {
             steps {
                 echo '======= E2E Tests ======='
+                sh '''
+                    if [ ! -f /tmp/icu-extracted ]; then
+                        CID=$(docker create mcr.microsoft.com/dotnet/sdk:10.0)
+                        docker cp $CID:/usr/lib/libicu*.so* /usr/lib/ 2>/dev/null || \
+                        docker cp $CID:/usr/lib/x86_64-linux-gnu/libicu*.so* /usr/lib/ 2>/dev/null || \
+                        docker cp $CID:/usr/lib/aarch64-linux-gnu/libicu*.so* /usr/lib/ 2>/dev/null || true
+                        docker rm $CID
+                        ldconfig 2>/dev/null || true
+                        touch /tmp/icu-extracted
+                    fi
+                '''
                 withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
                     sh 'dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release'
                     sh 'pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps'
