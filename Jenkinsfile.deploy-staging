@@ -178,7 +178,7 @@ pipeline {
                 '''
                 withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
                     sh 'dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release'
-                    sh 'pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps'
+                    sh 'cd tests-e2e/FamilyHQ.E2E.Features && dotnet playwright install chromium --with-deps'
                     sh """
                         TestConfiguration__BaseUrl=${APP_BASE_URL} \
                         TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
