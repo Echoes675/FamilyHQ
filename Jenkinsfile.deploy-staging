@@ -43,7 +43,7 @@ pipeline {
                     def tags = readJSON(text: tagsJson).tags ?: []
                     def branchTags = []
                     for (t in tags) {
-                        if (t.startsWith("${branchSanitized}-")) {
+                        if (t != null && t instanceof String && t.startsWith("${branchSanitized}-")) {
                             branchTags.add(t)
                         }
                     }
