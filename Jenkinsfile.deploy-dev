@@ -41,7 +41,13 @@ pipeline {
                     }
 
                     def tags = readJSON(text: tagsJson).tags ?: []
-                    def branchTags = tags.findAll { it.startsWith("${branchSanitized}-") }.sort()
+                    def branchTags = []
+                    for (t in tags) {
+                        if (t.startsWith("${branchSanitized}-")) {
+                            branchTags.add(t)
+                        }
+                    }
+                    branchTags.sort()
 
                     if (branchTags.isEmpty()) {
                         error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
