@@ -40,14 +40,19 @@ pipeline {
                         ).trim()
                     }
 
-                    def tags = readJSON(text: tagsJson).tags ?: []
+                    echo "Registry response: ${tagsJson}"
+                    def parsed = readJSON(text: tagsJson)
+                    def tags = parsed.tags ?: []
+                    echo "Tags found: ${tags.size()}, looking for prefix: ${branchSanitized}-"
                     def branchTags = []
-                    for (t in tags) {
-                        if (t != null && t instanceof String && t.startsWith("${branchSanitized}-")) {
-                            branchTags.add(t)
+                    for (int i = 0; i < tags.size(); i++) {
+                        def t = tags[i]
+                        if (t != null && "${t}".startsWith("${branchSanitized}-")) {
+                            branchTags.add("${t}")
                         }
                     }
                     branchTags.sort()
+                    echo "Matching tags: ${branchTags}"
 
                     if (branchTags.isEmpty()) {
                         error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
