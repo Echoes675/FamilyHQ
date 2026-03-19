@@ -165,7 +165,10 @@ pipeline {
             steps {
                 echo '======= E2E Tests ======='
                 sh '''
-                    if [ ! -f /tmp/icu-extracted ]; then
+                    echo "Checking for ICU libraries..."
+                    if ! ldconfig -p 2>/dev/null | grep -q libicu; then
+                        echo "ICU not found, extracting from SDK image..."
+                        rm -f /tmp/icu-extracted
                         CID=$(docker create mcr.microsoft.com/dotnet/sdk:10.0)
                         mkdir -p /tmp/icu-libs
                         docker cp $CID:/usr/lib/ /tmp/icu-libs/
@@ -173,7 +176,9 @@ pipeline {
                         find /tmp/icu-libs -name "libicu*.so*" -exec cp {} /usr/lib/ \\;
                         ldconfig 2>/dev/null || true
                         rm -rf /tmp/icu-libs
-                        touch /tmp/icu-extracted
+                        echo "ICU extraction complete"
+                    else
+                        echo "ICU libraries already present"
                     fi
                 '''
                 withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
