@@ -167,11 +167,12 @@ pipeline {
                 sh '''
                     if [ ! -f /tmp/icu-extracted ]; then
                         CID=$(docker create mcr.microsoft.com/dotnet/sdk:10.0)
-                        docker cp $CID:/usr/lib/libicu*.so* /usr/lib/ 2>/dev/null || \
-                        docker cp $CID:/usr/lib/x86_64-linux-gnu/libicu*.so* /usr/lib/ 2>/dev/null || \
-                        docker cp $CID:/usr/lib/aarch64-linux-gnu/libicu*.so* /usr/lib/ 2>/dev/null || true
+                        mkdir -p /tmp/icu-libs
+                        docker cp $CID:/usr/lib/ /tmp/icu-libs/
                         docker rm $CID
+                        find /tmp/icu-libs -name "libicu*.so*" -exec cp {} /usr/lib/ \\;
                         ldconfig 2>/dev/null || true
+                        rm -rf /tmp/icu-libs
                         touch /tmp/icu-extracted
                     fi
                 '''
