@@ -95,17 +95,17 @@ public class UserSteps
             await dashboardPage.SignOutAsync();
         }
 
-        // Navigate to the OAuth consent screen
-        await page.GotoAsync(config.SimulatorApiUrl.TrimEnd('/') + "/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+        // Click Login to Google and follow the full OAuth redirect chain:
+        // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
+        await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
 
-        // Select the user from the dropdown
+        // Select the user on the simulator consent screen
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
-
-        // Click the Continue button
         await page.Locator("button[type='submit']").ClickAsync();
 
-        // Wait for navigation to complete
+        // Wait for navigation to complete back to dashboard
         await page.WaitForURLAsync(config.BaseUrl + "/");
     }
 }

@@ -57,18 +57,14 @@ public class DashboardPage : BasePage
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
-    public async Task SimulateLoginAsync(string userName = "Test Family Member")
+    public async Task LoginAsync(string userName)
     {
+        // Follow the full OAuth redirect chain:
+        // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await LoginBtn.ClickAsync();
-
-        var loginModal = Page.Locator(".login-modal-content");
-        await loginModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-
-        var inputList = loginModal.GetByPlaceholder("e.g. Test Family Member");
-        await inputList.FillAsync(userName);
-
-        await Page.GetByRole(AriaRole.Button, new() { Name = "Simulate OAuth & Proceed" }).ClickAsync();
-
+        await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await Page.Locator("select#selectedUserId").SelectOptionAsync(new SelectOptionValue { Label = userName });
+        await Page.Locator("button[type='submit']").ClickAsync();
         await WaitForCalendarToLoadAsync();
     }
 
