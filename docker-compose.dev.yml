@@ -1,5 +1,6 @@
 services:
   webui:
+    container_name: familyhq-webui-dev
     env_file: .env
     environment:
       - BACKEND_URL=${BACKEND_URL}
@@ -12,6 +13,7 @@ services:
       - familyhq-dev
 
   webapi:
+    container_name: familyhq-webapi-dev
     env_file: .env
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
@@ -38,7 +40,7 @@ services:
 
   simulator:
     image: registry.alphaepsilon.co.uk/familyhq-simulator:${IMAGE_TAG:-latest}
-    container_name: familyhq-simulator
+    container_name: familyhq-simulator-dev
     restart: unless-stopped
     env_file: .env
     environment:

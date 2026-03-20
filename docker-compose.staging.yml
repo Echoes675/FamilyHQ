@@ -1,5 +1,6 @@
 services:
   webui:
+    container_name: familyhq-webui-staging
     env_file: .env
     environment:
       - BACKEND_URL=${BACKEND_URL}
@@ -12,6 +13,7 @@ services:
       - familyhq-staging
 
   webapi:
+    container_name: familyhq-webapi-staging
     env_file: .env
     environment:
       - ASPNETCORE_ENVIRONMENT=Staging
