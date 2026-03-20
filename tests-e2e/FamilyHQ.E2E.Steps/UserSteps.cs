@@ -96,7 +96,7 @@ public class UserSteps
         }
 
         // Navigate to the OAuth consent screen
-        await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+        await page.GotoAsync(config.SimulatorApiUrl.TrimEnd('/') + "/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
 
         // Select the user from the dropdown
         var userSelect = page.Locator("select#selectedUserId");

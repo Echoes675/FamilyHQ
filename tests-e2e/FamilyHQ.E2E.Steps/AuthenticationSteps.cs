@@ -57,7 +57,7 @@ public class AuthenticationSteps
         }
 
         // Need to sign in
-        await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+        await page.GotoAsync(config.SimulatorApiUrl.TrimEnd('/') + "/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
@@ -97,7 +97,7 @@ public class AuthenticationSteps
         else
         {
             // Navigate directly to OAuth
-            await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+            await page.GotoAsync(config.SimulatorApiUrl.TrimEnd('/') + "/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
             var userSelect = page.Locator("select#selectedUserId");
             await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
             await page.Locator("button[type='submit']").ClickAsync();
