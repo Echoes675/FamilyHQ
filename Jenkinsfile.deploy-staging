@@ -186,7 +186,7 @@ pipeline {
                     sh """
                         TestConfiguration__BaseUrl=${APP_BASE_URL} \
                         TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
-                        TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator \
+                        TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator/ \
                         TestConfiguration__Headless=true \
                         dotnet test tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj \
                             -c Release --no-build \
