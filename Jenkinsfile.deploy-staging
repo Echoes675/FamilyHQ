@@ -181,7 +181,7 @@ pipeline {
                     sh '''
                         dotnet tool install --global PowerShell 2>/dev/null || true
                         export PATH="$PATH:$HOME/.dotnet/tools"
-                        pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium --with-deps
+                        pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium
                     '''
                     sh """
                         TestConfiguration__BaseUrl=${APP_BASE_URL} \
