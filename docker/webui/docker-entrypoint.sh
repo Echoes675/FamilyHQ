@@ -9,5 +9,6 @@ if [ -n "$BACKEND_URL" ]; then
 fi
 
 printf '{"status":"healthy","service":"webui","startedAt":"%s"}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$HEALTH_FILE"
+chmod 644 "$HEALTH_FILE"
 
 exec nginx -g "daemon off;"
