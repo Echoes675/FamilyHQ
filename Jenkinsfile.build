@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()
+    }
+
     tools {
         dotnetsdk '.Net_10.0_SDK'
     }
