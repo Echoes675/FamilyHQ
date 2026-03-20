@@ -119,14 +119,24 @@ public class UserSteps
 
         // Obtain the button's screen position. BoundingBoxAsync may throw or return null if
         // the element is momentarily detached during a Blazor render; retry until stable.
-        BoundingBox? box = null;
+        // Use var for the box to avoid naming the BoundingBox type (not directly accessible
+        // in this project — Microsoft.Playwright is referenced transitively via E2E.Common).
+        float? clickX = null, clickY = null;
         var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (box == null && DateTime.UtcNow < deadline)
+        while (clickX == null && DateTime.UtcNow < deadline)
         {
             try
             {
-                box = await loginBtn.BoundingBoxAsync();
-                if (box == null) await Task.Delay(50);
+                var box = await loginBtn.BoundingBoxAsync();
+                if (box != null)
+                {
+                    clickX = box.X + box.Width / 2;
+                    clickY = box.Y + box.Height / 2;
+                }
+                else
+                {
+                    await Task.Delay(50);
+                }
             }
             catch (PlaywrightException)
             {
@@ -134,10 +144,10 @@ public class UserSteps
             }
         }
 
-        if (box == null)
+        if (clickX == null || clickY == null)
             throw new InvalidOperationException("Login button bounding box unavailable after 10 seconds");
 
-        await page.Mouse.ClickAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
+        await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
         await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
 
         // Select the user on the simulator consent screen
