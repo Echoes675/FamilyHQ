@@ -129,24 +129,35 @@ pipeline {
                 echo '======= Wait for Services ======='
                 script {
                     def endpoints = [
-                        [name: 'WebUI',     url: "${APP_BASE_URL}/health"],
-                        [name: 'WebAPI',    url: "${APP_BASE_URL}/api/health"],
-                        [name: 'Simulator', url: "${APP_BASE_URL}/simulator/health"]
+                        [name: 'WebUI',     url: "${APP_BASE_URL}/health",                              isPost: false],
+                        [name: 'WebAPI',    url: "${APP_BASE_URL}/api/health",                          isPost: false],
+                        [name: 'Simulator', url: "${APP_BASE_URL}/simulator/api/simulator/configure",   isPost: true]
                     ]
 
                     def branches = [:]
                     for (ep in endpoints) {
                         def name = ep.name
                         def url = ep.url
+                        def isPost = ep.isPost
                         branches[name] = {
                             def maxRetries = 18
                             for (int i = 0; i < maxRetries; i++) {
-                                def body = sh(
-                                    script: "curl -s '${url}' || true",
-                                    returnStdout: true
-                                ).trim()
+                                def response
+                                if (isPost) {
+                                    // POST to the configure endpoint to verify DB connectivity is ready
+                                    response = sh(
+                                        script: """curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"userName":"health-check","calendars":[],"events":[]}' '${url}' || echo '0'""",
+                                        returnStdout: true
+                                    ).trim()
+                                } else {
+                                    response = sh(
+                                        script: "curl -s '${url}' || true",
+                                        returnStdout: true
+                                    ).trim()
+                                }
 
-                                if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                def isReady = isPost ? (response == '200') : (response =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+                                if (isReady) {
                                     echo "${name} ready"
                                     return
                                 }
