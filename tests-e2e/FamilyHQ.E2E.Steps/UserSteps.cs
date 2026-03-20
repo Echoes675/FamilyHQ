@@ -85,20 +85,21 @@ public class UserSteps
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
 
-        // Navigate to the dashboard first
+        // Navigate to the dashboard and wait for Blazor's auth check to complete
         await page.GotoAsync(config.BaseUrl + "/");
+        await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
         // Check if user is already signed in, and if so, sign out first
         var dashboardPage = new Common.Pages.DashboardPage(page);
         if (await dashboardPage.IsSignedInAsync())
         {
             await dashboardPage.SignOutAsync();
-            // Clear cookies AND localStorage: Blazor reads stale auth state from localStorage on
-            // reload, briefly re-authenticates via the session cookie, then flip-flops back —
-            // causing the Login button to toggle in/out for 30 s. Wiping both breaks the loop.
+            // Wipe cookies and storage so Blazor cannot re-authenticate on the next load.
             await page.Context.ClearCookiesAsync();
             await page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
+            // Reload to a clean unauthenticated state and wait for Blazor auth check to settle.
             await page.GotoAsync(config.BaseUrl + "/");
+            await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
         }
 
         // Click Login to Google and follow the full OAuth redirect chain:
