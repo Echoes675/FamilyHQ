@@ -93,8 +93,10 @@ public class UserSteps
         if (await dashboardPage.IsSignedInAsync())
         {
             await dashboardPage.SignOutAsync();
-            // Navigate to a clean page state after sign-out — Blazor re-renders and detaches
-            // the Login button during the re-render cycle, causing a DOM detachment error on click.
+            // Clear all cookies to ensure the server-side session is invalidated. Without this,
+            // Blazor polls the auth endpoint and re-authenticates from the still-valid session
+            // cookie, causing the Login button to toggle in and out for up to 30 seconds.
+            await page.Context.ClearCookiesAsync();
             await page.GotoAsync(config.BaseUrl + "/");
         }
 
