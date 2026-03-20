@@ -24,7 +24,7 @@ public class SimulatorApiClient : IDisposable
     /// </summary>
     public async Task ConfigureUserTemplateAsync(object userTemplateConfig)
     {
-        var response = await _httpClient.PostAsJsonAsync("/api/simulator/configure", userTemplateConfig);
+        var response = await _httpClient.PostAsJsonAsync("api/simulator/configure", userTemplateConfig);
         response.EnsureSuccessStatusCode(); 
     }
 

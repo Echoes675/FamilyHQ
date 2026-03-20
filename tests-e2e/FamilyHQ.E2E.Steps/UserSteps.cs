@@ -84,28 +84,85 @@ public class UserSteps
 
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
-
-        // Navigate to the dashboard first
-        await page.GotoAsync(config.BaseUrl + "/");
-
-        // Check if user is already signed in, and if so, sign out first
         var dashboardPage = new Common.Pages.DashboardPage(page);
-        if (await dashboardPage.IsSignedInAsync())
+
+        // Navigate to the dashboard and wait for Blazor's auth check to complete
+        await page.GotoAsync(config.BaseUrl + "/");
+        await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
+
+        // Click Login to Google and follow the full OAuth redirect chain:
+        // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
+        //
+        // Clicking via page.Mouse.ClickAsync(x, y) dispatches events at screen coordinates
+        // rather than tracking a specific element handle. Even if the button is briefly
+        // recreated by a Blazor render, the new element sits at the same screen position and
+        // receives the click — avoiding the element-tracking race entirely.
+        //
+        // If Blazor re-authenticates from a stale localStorage token that survives across the
+        // sign-out cycle, the Login button appears briefly (first render) then disappears when
+        // OnInitializedAsync completes with _isAuthenticated=true. We detect this case by
+        // checking whether the Sign Out button appeared, then sign out and retry.
+        float? clickX = null, clickY = null;
+        for (var attempt = 0; attempt < 3 && clickX == null; attempt++)
         {
-            await dashboardPage.SignOutAsync();
+            // If signed in (from Background login or stale re-auth), sign out first
+            if (await dashboardPage.IsSignedInAsync())
+            {
+                await dashboardPage.SignOutAsync();
+                // Wipe cookies and storage so Blazor cannot re-authenticate on the next load.
+                await page.Context.ClearCookiesAsync();
+                await page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
+                // Reload to a clean unauthenticated state and wait for Blazor auth check to settle.
+                await page.GotoAsync(config.BaseUrl + "/");
+                await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
+            }
+
+            var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
+
+            // Wait for Login button to appear. If it times out, Blazor may have rendered into
+            // authenticated state immediately — loop back to sign-out and retry.
+            try
+            {
+                await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            }
+            catch (Exception)
+            {
+                continue; // sign-out check at top of loop will handle Sign Out state
+            }
+
+            // Obtain the button's screen position.
+            // BoundingBoxAsync on a Locator internally waits for the element to be present.
+            // Catch Exception (not PlaywrightException) because the Playwright timeout maps to
+            // System.TimeoutException which does not derive from PlaywrightException.
+            // Use var to avoid naming the BoundingBox type (referenced only transitively here).
+            try
+            {
+                var box = await loginBtn.BoundingBoxAsync(new() { Timeout = 3000 });
+                if (box != null)
+                {
+                    clickX = box.X + box.Width / 2;
+                    clickY = box.Y + box.Height / 2;
+                }
+            }
+            catch (Exception)
+            {
+                // Button disappeared before we could measure it (Blazor re-auth race).
+                // Loop back; the IsSignedInAsync check will detect Sign Out state.
+            }
         }
 
-        // Navigate to the OAuth consent screen
-        await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+        if (clickX == null || clickY == null)
+            throw new InvalidOperationException("Login button unavailable after 3 sign-in attempts");
 
-        // Select the user from the dropdown
+        await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+
+        // Select the user on the simulator consent screen
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
-
-        // Click the Continue button
         await page.Locator("button[type='submit']").ClickAsync();
 
-        // Wait for navigation to complete
+        // Wait for navigation to complete back to dashboard
         await page.WaitForURLAsync(config.BaseUrl + "/");
     }
 }

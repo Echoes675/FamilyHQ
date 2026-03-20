@@ -1,0 +1,39 @@
+services:
+  webui:
+    env_file: .env
+    environment:
+      - BACKEND_URL=${BACKEND_URL}
+      - VIRTUAL_HOST=${VIRTUAL_HOST_UI}
+      - VIRTUAL_PORT=80
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_UI}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    networks:
+      - nginx-proxy-ssl
+
+  webapi:
+    env_file: .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=${ConnectionStrings__DefaultConnection}
+      - Jwt__SigningKey=${Jwt__SigningKey}
+      - GoogleCalendar__ClientId=${GoogleCalendar__ClientId}
+      - GoogleCalendar__ClientSecret=${GoogleCalendar__ClientSecret}
+      - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
+      - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
+      - FrontendBaseUrl=${FrontendBaseUrl}
+      - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
+      - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
+      - ReverseProxy__Enabled=true
+      - VIRTUAL_HOST=${VIRTUAL_HOST_API}
+      - VIRTUAL_PORT=8080
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_API}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      - ./dataprotection.pfx:/app/certs/dataprotection.pfx:ro
+    networks:
+      - nginx-proxy-ssl
+
+networks:
+  nginx-proxy-ssl:
+    external: true
+    name: ${APP_NETWORK_NAME:-nginx-proxy-ssl_default}

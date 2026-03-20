@@ -1,0 +1,10 @@
+services:
+  webui:
+    image: registry.alphaepsilon.co.uk/familyhq-webui:${IMAGE_TAG:-latest}
+    container_name: familyhq-webui
+    restart: unless-stopped
+
+  webapi:
+    image: registry.alphaepsilon.co.uk/familyhq-webapi:${IMAGE_TAG:-latest}
+    container_name: familyhq-webapi
+    restart: unless-stopped

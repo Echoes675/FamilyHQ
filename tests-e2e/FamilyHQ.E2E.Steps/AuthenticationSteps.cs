@@ -56,8 +56,10 @@ public class AuthenticationSteps
             return;
         }
 
-        // Need to sign in
-        await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
+        // Need to sign in - click Login to Google and follow the full OAuth redirect chain:
+        // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
+        await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
@@ -80,30 +82,13 @@ public class AuthenticationSteps
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
 
-        // Click the login button if visible
-        if (await _dashboardPage.LoginBtn.CountAsync() > 0)
-        {
-            await _dashboardPage.LoginBtn.ClickAsync();
-            
-            // Wait for the login modal
-            var loginModal = page.Locator(".login-modal-content");
-            await loginModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-            
-            var inputList = loginModal.GetByPlaceholder("e.g. Test Family Member");
-            await inputList.FillAsync(uniqueUsername);
-            
-            await page.GetByRole(AriaRole.Button, new() { Name = "Simulate OAuth & Proceed" }).ClickAsync();
-        }
-        else
-        {
-            // Navigate directly to OAuth
-            await page.GotoAsync("https://localhost:7199/oauth2/auth?redirect_uri=" + config.ApiBaseUrl + "/api/auth/callback&client_id=test");
-            var userSelect = page.Locator("select#selectedUserId");
-            await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
-            await page.Locator("button[type='submit']").ClickAsync();
-        }
-
-        // Wait for navigation back to dashboard
+        // Click Login to Google and follow the full OAuth redirect chain:
+        // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
+        await _dashboardPage.LoginBtn.ClickAsync();
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        var userSelect = page.Locator("select#selectedUserId");
+        await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
+        await page.Locator("button[type='submit']").ClickAsync();
         await page.WaitForURLAsync(config.BaseUrl + "/");
     }
 

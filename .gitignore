@@ -369,6 +369,8 @@ FodyWeavers.xsd
 *input*.txt
 .idea/
 **/.env
+**/.env.*
+!**/.env.example
 
 *.err
 

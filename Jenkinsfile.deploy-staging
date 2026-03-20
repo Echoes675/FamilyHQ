@@ -1,0 +1,227 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    tools {
+        dotnetsdk '.Net_10.0_SDK'
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'dev', description: 'Branch name to deploy (default: dev)')
+    }
+
+    environment {
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+        DEPLOY_HOST = 'jenkins_docker@192.168.86.23'
+        DEPLOY_PATH = '/Docker/deployed_apps/staging/familyhq'
+        APP_BASE_URL = 'http://192.168.86.23:8300'
+        DB_NAME = 'FamilyHQ-Staging'
+        SIMULATOR_DB_NAME = 'FamilyHQ-Simulator-Staging'
+    }
+
+    stages {
+        stage('Resolve Image') {
+            steps {
+                echo '======= Resolve Image ======='
+                script {
+                    def branch = params.BRANCH?.trim() ?: 'dev'
+                    def branchSanitized = branch.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
+                    echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
+
+                    def tagsJson = ''
+                    withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                        tagsJson = sh(
+                            script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                            returnStdout: true
+                        ).trim()
+                    }
+
+                    def rawTags = readJSON(text: tagsJson).tags
+                    def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
+                    def branchTags = []
+                    for (int i = 0; i < tags.size(); i++) {
+                        def t = tags[i]
+                        if (t != null && "${t}".startsWith("${branchSanitized}-")) {
+                            branchTags.add("${t}")
+                        }
+                    }
+                    branchTags.sort()
+
+                    if (branchTags.isEmpty()) {
+                        error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
+                    }
+
+                    env.RESOLVED_IMAGE_TAG = branchTags.last()
+                    echo "Resolved image tag: ${env.RESOLVED_IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Prepare') {
+            steps {
+                echo '======= Prepare ======='
+                checkout scm
+
+                withCredentials([
+                    file(credentialsId: 'familyhq-staging-env', variable: 'ENV_FILE'),
+                    file(credentialsId: 'familyhq-staging-dp-cert', variable: 'DP_CERT')
+                ]) {
+                    sshagent(credentials: ['jenkins_docker_dev']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                            scp docker-compose.yml docker-compose.staging.yml ${DEPLOY_HOST}:${DEPLOY_PATH}/
+                            scp \$ENV_FILE ${DEPLOY_HOST}:${DEPLOY_PATH}/.env
+                            scp \$DP_CERT ${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'chmod 640 ${DEPLOY_PATH}/.env && chmod 640 ${DEPLOY_PATH}/dataprotection.pfx'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Drop DBs') {
+            steps {
+                echo '======= Drop DBs ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml down --remove-orphans || true
+                            docker stop familyhq-webui-staging familyhq-webapi-staging familyhq-simulator-staging familyhq-staging-traefik 2>/dev/null || true
+                            docker rm familyhq-webui-staging familyhq-webapi-staging familyhq-simulator-staging familyhq-staging-traefik 2>/dev/null || true
+
+                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${DB_NAME}'"'"' AND pid <> pg_backend_pid();"
+                            docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${SIMULATOR_DB_NAME}'"'"' AND pid <> pg_backend_pid();"
+                            docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${SIMULATOR_DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${SIMULATOR_DB_NAME}\\";"
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo '======= Deploy ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml pull &&
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Wait for Services') {
+            steps {
+                echo '======= Wait for Services ======='
+                script {
+                    def endpoints = [
+                        [name: 'WebUI',     url: "${APP_BASE_URL}/health",                              isPost: false],
+                        [name: 'WebAPI',    url: "${APP_BASE_URL}/api/health",                          isPost: false],
+                        [name: 'Simulator', url: "${APP_BASE_URL}/simulator/api/simulator/configure",   isPost: true]
+                    ]
+
+                    def branches = [:]
+                    for (ep in endpoints) {
+                        def name = ep.name
+                        def url = ep.url
+                        def isPost = ep.isPost
+                        branches[name] = {
+                            def maxRetries = 18
+                            for (int i = 0; i < maxRetries; i++) {
+                                if (isPost) {
+                                    // POST to the configure endpoint to verify DB connectivity is ready
+                                    def code = sh(
+                                        script: """curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"userName":"health-check","calendars":[],"events":[]}' '${url}' || echo '0'""",
+                                        returnStdout: true
+                                    ).trim()
+                                    if (code == '200') {
+                                        echo "${name} ready"
+                                        return
+                                    }
+                                } else {
+                                    def body = sh(
+                                        script: "curl -s '${url}' || true",
+                                        returnStdout: true
+                                    ).trim()
+                                    if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                        echo "${name} ready"
+                                        return
+                                    }
+                                }
+                                echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
+                                sleep(time: 10, unit: 'SECONDS')
+                            }
+                            error "${name} not ready after 3 minutes"
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+
+        stage('E2E Tests') {
+            steps {
+                echo '======= E2E Tests ======='
+                sh '''
+                    echo "Checking for browser + ICU libraries..."
+                    if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
+                        echo "Missing libs, extracting from playwright/dotnet image..."
+                        CID=$(docker create mcr.microsoft.com/playwright/dotnet:v1.50.0-noble)
+                        mkdir -p /tmp/pw-libs
+                        docker cp $CID:/usr/lib/x86_64-linux-gnu/ /tmp/pw-libs/
+                        docker rm $CID
+                        cp -n /tmp/pw-libs/x86_64-linux-gnu/*.so* /usr/lib/ 2>/dev/null || true
+                        ldconfig 2>/dev/null || true
+                        rm -rf /tmp/pw-libs
+                        echo "Library extraction complete"
+                    else
+                        echo "All required libraries already present"
+                    fi
+                '''
+                withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
+                    sh 'dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj -c Release'
+                    sh '''
+                        dotnet tool install --global PowerShell 2>/dev/null || true
+                        export PATH="$PATH:$HOME/.dotnet/tools"
+                        pwsh tests-e2e/FamilyHQ.E2E.Features/bin/Release/net10.0/playwright.ps1 install chromium
+                    '''
+                    sh """
+                        TestConfiguration__BaseUrl=${APP_BASE_URL} \
+                        TestConfiguration__ApiBaseUrl=${APP_BASE_URL} \
+                        TestConfiguration__SimulatorApiUrl=${APP_BASE_URL}/simulator/ \
+                        TestConfiguration__Headless=true \
+                        dotnet test tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj \
+                            -c Release --no-build \
+                            --logger "trx;LogFileName=e2e-results.trx"
+                    """
+                }
+            }
+            post {
+                always {
+                    mstest testResultsFile: '**/e2e-results.trx', failOnError: false
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Staging deployment successful: ${env.RESOLVED_IMAGE_TAG}"
+        }
+        failure {
+            echo "Staging deployment failed: ${env.RESOLVED_IMAGE_TAG}"
+        }
+    }
+}

@@ -5,14 +5,9 @@ using Microsoft.EntityFrameworkCore;
 namespace FamilyHQ.Simulator.Controllers;
 
 [ApiController]
-public class OAuthController : ControllerBase
+public class OAuthController(SimContext db, IConfiguration configuration) : ControllerBase
 {
-    private readonly SimContext _db;
-
-    public OAuthController(SimContext db)
-    {
-        _db = db;
-    }
+    private readonly string _pathBase = (configuration["PathBase"] ?? string.Empty).TrimEnd('/');
 
     /// <summary>
     /// Renders an HTML consent screen listing all SimulatedUsers.
@@ -21,8 +16,9 @@ public class OAuthController : ControllerBase
     [HttpGet("/oauth2/auth")]
     public async Task<IActionResult> AuthPrompt([FromQuery] string redirect_uri, [FromQuery] string client_id)
     {
-        var users = await _db.Users.OrderBy(u => u.Username).ToListAsync();
+        var users = await db.Users.OrderBy(u => u.Username).ToListAsync();
         var options = string.Join("", users.Select(u => $"<option value=\"{u.Id}\">{u.Username}</option>"));
+        var consentUrl = $"{_pathBase}/oauth2/auth/consent";
         var html = $"""
             <!DOCTYPE html>
             <html>
@@ -30,7 +26,7 @@ public class OAuthController : ControllerBase
             <body style="font-family:sans-serif;max-width:400px;margin:80px auto;padding:20px">
                 <h2>FamilyHQ Simulator</h2>
                 <p>Choose an account to continue</p>
-                <form method="post" action="/oauth2/auth/consent">
+                <form method="post" action="{consentUrl}">
                     <input type="hidden" name="redirect_uri" value="{redirect_uri}" />
                     <div style="margin-bottom:16px">
                         <label for="selectedUserId">Account:</label><br/>
@@ -50,7 +46,7 @@ public class OAuthController : ControllerBase
     [HttpPost("/oauth2/auth/consent")]
     public async Task<IActionResult> Consent([FromForm] string selectedUserId, [FromForm] string redirect_uri)
     {
-        var user = await _db.Users.FindAsync(selectedUserId);
+        var user = await db.Users.FindAsync(selectedUserId);
         if (user == null)
             return BadRequest("Unknown user.");
 

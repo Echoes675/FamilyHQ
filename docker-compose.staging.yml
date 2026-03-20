@@ -1,0 +1,86 @@
+services:
+  webui:
+    container_name: familyhq-webui-staging
+    env_file: .env
+    environment:
+      - BACKEND_URL=${BACKEND_URL}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-staging"
+      - "traefik.http.routers.webui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.webui.priority=1"
+      - "traefik.http.services.webui.loadbalancer.server.port=80"
+    networks:
+      - familyhq-staging
+
+  webapi:
+    container_name: familyhq-webapi-staging
+    env_file: .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Staging
+      - ConnectionStrings__DefaultConnection=${ConnectionStrings__DefaultConnection}
+      - Jwt__SigningKey=${Jwt__SigningKey}
+      - GoogleCalendar__ClientId=${GoogleCalendar__ClientId}
+      - GoogleCalendar__ClientSecret=${GoogleCalendar__ClientSecret}
+      - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
+      - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
+      - FrontendBaseUrl=${FrontendBaseUrl}
+      - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
+      - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
+      - ReverseProxy__Enabled=true
+    volumes:
+      - ./dataprotection.pfx:/app/certs/dataprotection.pfx:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-staging"
+      - "traefik.http.routers.webapi.rule=PathPrefix(`/api`) || PathPrefix(`/hubs`) || PathPrefix(`/openapi`) || PathPrefix(`/scalar`)"
+      - "traefik.http.routers.webapi.priority=10"
+      - "traefik.http.services.webapi.loadbalancer.server.port=8080"
+    networks:
+      - familyhq-staging
+      - postgres
+
+  simulator:
+    image: registry.alphaepsilon.co.uk/familyhq-simulator:${IMAGE_TAG:-latest}
+    container_name: familyhq-simulator-staging
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Staging
+      - ConnectionStrings__DefaultConnection=${Simulator__ConnectionStrings__DefaultConnection}
+      - PathBase=/simulator
+    labels:
+      - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-staging"
+      - "traefik.http.routers.simulator.rule=PathPrefix(`/simulator`)"
+      - "traefik.http.routers.simulator.priority=10"
+      - "traefik.http.middlewares.simulator-strip.stripprefix.prefixes=/simulator"
+      - "traefik.http.routers.simulator.middlewares=simulator-strip"
+      - "traefik.http.services.simulator.loadbalancer.server.port=8080"
+    networks:
+      - familyhq-staging
+      - postgres
+
+  traefik:
+    image: traefik:v2.11
+    container_name: familyhq-staging-traefik
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=familyhq-staging"
+      - "--providers.docker.constraints=Label(`traefik.constraint-label`, `familyhq-staging`)"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "8300:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - familyhq-staging
+
+networks:
+  familyhq-staging:
+    name: familyhq-staging
+  postgres:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:-postgres_default}

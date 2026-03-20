@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace FamilyHQ.Simulator.Tests.Controllers;
@@ -50,6 +51,24 @@ public class OAuthControllerTests
         var content = result.Should().BeOfType<ContentResult>().Subject;
         content.ContentType.Should().Be("text/html");
         content.Content.Should().Contain("<select");
+    }
+
+    [Fact]
+    public async Task AuthPrompt_WithPathBase_IncludesPathBaseInFormAction()
+    {
+        // Arrange
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, pathBase: "/simulator");
+
+        // Act
+        var result = await sut.AuthPrompt("https://api/callback", "client-id");
+
+        // Assert
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("action=\"/simulator/oauth2/auth/consent\"");
     }
 
     // ── POST /oauth2/auth/consent ─────────────────────────────────────────────
@@ -138,9 +157,20 @@ public class OAuthControllerTests
         return new SimContext(options);
     }
 
-    private static OAuthController CreateSut(SimContext db)
+    private static IConfiguration CreateConfiguration(string pathBase = "")
     {
-        var controller = new OAuthController(db);
+        var settings = new Dictionary<string, string?>();
+        if (!string.IsNullOrEmpty(pathBase))
+            settings["PathBase"] = pathBase;
+
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(settings)
+            .Build();
+    }
+
+    private static OAuthController CreateSut(SimContext db, string pathBase = "")
+    {
+        var controller = new OAuthController(db, CreateConfiguration(pathBase));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext()
@@ -148,9 +178,9 @@ public class OAuthControllerTests
         return controller;
     }
 
-    private static OAuthController CreateSutWithFormData(SimContext db, Dictionary<string, string> formData)
+    private static OAuthController CreateSutWithFormData(SimContext db, Dictionary<string, string> formData, string pathBase = "")
     {
-        var controller = new OAuthController(db);
+        var controller = new OAuthController(db, CreateConfiguration(pathBase));
 
         var formCollection = new FormCollection(
             formData.ToDictionary(kv => kv.Key, kv => new Microsoft.Extensions.Primitives.StringValues(kv.Value)));
