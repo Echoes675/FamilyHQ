@@ -84,72 +84,75 @@ public class UserSteps
 
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
+        var dashboardPage = new Common.Pages.DashboardPage(page);
 
         // Navigate to the dashboard and wait for Blazor's auth check to complete
         await page.GotoAsync(config.BaseUrl + "/");
         await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
 
-        // Check if user is already signed in, and if so, sign out first
-        var dashboardPage = new Common.Pages.DashboardPage(page);
-        if (await dashboardPage.IsSignedInAsync())
-        {
-            await dashboardPage.SignOutAsync();
-            // Wipe cookies and storage so Blazor cannot re-authenticate on the next load.
-            await page.Context.ClearCookiesAsync();
-            await page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
-            // Reload to a clean unauthenticated state and wait for Blazor auth check to settle.
-            await page.GotoAsync(config.BaseUrl + "/");
-            await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
-        }
-
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
-        //
-        // ClickAsync tracks the element handle and performs "scroll into view if needed"
-        // before clicking. If Blazor's post-initialisation render cycle recreates the button
-        // element between the scroll step and the click dispatch, Playwright detects the
-        // detachment and retries indefinitely until the 30-second default timeout expires.
         //
         // Clicking via page.Mouse.ClickAsync(x, y) dispatches events at screen coordinates
         // rather than tracking a specific element handle. Even if the button is briefly
         // recreated by a Blazor render, the new element sits at the same screen position and
         // receives the click — avoiding the element-tracking race entirely.
-        var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
-        await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-
-        // Obtain the button's screen position. BoundingBoxAsync on a Locator internally
-        // waits for the element to be present — if the button disappears after WaitForAsync
-        // returns (Blazor render cycle), BoundingBoxAsync blocks up to its default 30-second
-        // timeout. Use a short per-call timeout so the retry loop can react quickly.
-        // Catch Exception (not PlaywrightException) because the Playwright timeout maps to
-        // System.TimeoutException which does not derive from PlaywrightException.
-        // Use var for the box to avoid naming the BoundingBox type (not directly accessible
-        // in this project — Microsoft.Playwright is referenced transitively via E2E.Common).
+        //
+        // If Blazor re-authenticates from a stale localStorage token that survives across the
+        // sign-out cycle, the Login button appears briefly (first render) then disappears when
+        // OnInitializedAsync completes with _isAuthenticated=true. We detect this case by
+        // checking whether the Sign Out button appeared, then sign out and retry.
         float? clickX = null, clickY = null;
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (clickX == null && DateTime.UtcNow < deadline)
+        for (var attempt = 0; attempt < 3 && clickX == null; attempt++)
         {
+            // If signed in (from Background login or stale re-auth), sign out first
+            if (await dashboardPage.IsSignedInAsync())
+            {
+                await dashboardPage.SignOutAsync();
+                // Wipe cookies and storage so Blazor cannot re-authenticate on the next load.
+                await page.Context.ClearCookiesAsync();
+                await page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
+                // Reload to a clean unauthenticated state and wait for Blazor auth check to settle.
+                await page.GotoAsync(config.BaseUrl + "/");
+                await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
+            }
+
+            var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
+
+            // Wait for Login button to appear. If it times out, Blazor may have rendered into
+            // authenticated state immediately — loop back to sign-out and retry.
             try
             {
-                var box = await loginBtn.BoundingBoxAsync(new() { Timeout = 500 });
+                await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            }
+            catch (Exception)
+            {
+                continue; // sign-out check at top of loop will handle Sign Out state
+            }
+
+            // Obtain the button's screen position.
+            // BoundingBoxAsync on a Locator internally waits for the element to be present.
+            // Catch Exception (not PlaywrightException) because the Playwright timeout maps to
+            // System.TimeoutException which does not derive from PlaywrightException.
+            // Use var to avoid naming the BoundingBox type (referenced only transitively here).
+            try
+            {
+                var box = await loginBtn.BoundingBoxAsync(new() { Timeout = 3000 });
                 if (box != null)
                 {
                     clickX = box.X + box.Width / 2;
                     clickY = box.Y + box.Height / 2;
                 }
-                else
-                {
-                    await Task.Delay(50);
-                }
             }
             catch (Exception)
             {
-                await Task.Delay(50);
+                // Button disappeared before we could measure it (Blazor re-auth race).
+                // Loop back; the IsSignedInAsync check will detect Sign Out state.
             }
         }
 
         if (clickX == null || clickY == null)
-            throw new InvalidOperationException("Login button bounding box unavailable after 15 seconds");
+            throw new InvalidOperationException("Login button unavailable after 3 sign-in attempts");
 
         await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
         await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
