@@ -137,16 +137,16 @@ pipeline {
                         branches[name] = {
                             def maxRetries = 18
                             for (int i = 0; i < maxRetries; i++) {
-                                def status = sh(
-                                    script: "curl -s -o /dev/null -w '%{http_code}' ${url} || echo '000'",
+                                def body = sh(
+                                    script: "curl -s '${url}' || true",
                                     returnStdout: true
                                 ).trim()
 
-                                if (status == '200') {
-                                    echo "${name} ready (HTTP ${status})"
+                                if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                    echo "${name} ready"
                                     return
                                 }
-                                echo "${name} not ready... attempt ${i + 1}/${maxRetries} (HTTP ${status})"
+                                echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
                                 sleep(time: 10, unit: 'SECONDS')
                             }
                             error "${name} not ready after 3 minutes"

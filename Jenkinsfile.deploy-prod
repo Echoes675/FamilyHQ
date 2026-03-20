@@ -11,6 +11,8 @@ pipeline {
         DEPLOY_HOST = 'alphaepsilon.co.uk'
         DEPLOY_PATH = '/home/docker_user/apps/familyhq'
         IMAGE_TAG = 'latest'
+        WEBUI_BASE_URL = 'https://familyhq.alphaepsilon.co.uk'
+        WEBAPI_BASE_URL = 'https://familyhq.api.alphaepsilon.co.uk'
     }
 
     stages {
@@ -58,29 +60,38 @@ pipeline {
             }
         }
 
-        stage('Verify') {
+        stage('Wait for Services') {
             steps {
-                echo '======= Verify ======='
-                sshagent(credentials: ['docker_user']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
-                            sleep 10 &&
-                            docker ps --filter name=familyhq --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-                        '
-                    """
-                }
-
+                echo '======= Wait for Services ======='
                 script {
-                    def response = sh(
-                        script: "curl -s -o /dev/null -w '%{http_code}' https://familyhq.api.alphaepsilon.co.uk/api/health || echo '000'",
-                        returnStdout: true
-                    ).trim()
+                    def endpoints = [
+                        [name: 'WebUI',  url: "${WEBUI_BASE_URL}/health"],
+                        [name: 'WebAPI', url: "${WEBAPI_BASE_URL}/api/health"]
+                    ]
 
-                    if (response != '200') {
-                        echo "WARNING: Health check returned ${response} — verify manually"
-                    } else {
-                        echo "Health check passed (HTTP 200)"
+                    def branches = [:]
+                    for (ep in endpoints) {
+                        def name = ep.name
+                        def url = ep.url
+                        branches[name] = {
+                            def maxRetries = 18
+                            for (int i = 0; i < maxRetries; i++) {
+                                def body = sh(
+                                    script: "curl -s '${url}' || true",
+                                    returnStdout: true
+                                ).trim()
+
+                                if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                    echo "${name} ready"
+                                    return
+                                }
+                                echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
+                                sleep(time: 10, unit: 'SECONDS')
+                            }
+                            error "${name} not ready after 3 minutes"
+                        }
                     }
+                    parallel branches
                 }
             }
         }
