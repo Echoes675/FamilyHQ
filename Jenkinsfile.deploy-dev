@@ -165,20 +165,19 @@ pipeline {
             steps {
                 echo '======= E2E Tests ======='
                 sh '''
-                    echo "Checking for ICU libraries..."
-                    if ! ldconfig -p 2>/dev/null | grep -q libicu; then
-                        echo "ICU not found, extracting from SDK image..."
-                        rm -f /tmp/icu-extracted
-                        CID=$(docker create mcr.microsoft.com/dotnet/sdk:10.0)
-                        mkdir -p /tmp/icu-libs
-                        docker cp $CID:/usr/lib/ /tmp/icu-libs/
+                    echo "Checking for browser + ICU libraries..."
+                    if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
+                        echo "Missing libs, extracting from playwright/dotnet image..."
+                        CID=$(docker create mcr.microsoft.com/playwright/dotnet:v1.50.0-noble)
+                        mkdir -p /tmp/pw-libs
+                        docker cp $CID:/usr/lib/x86_64-linux-gnu/ /tmp/pw-libs/
                         docker rm $CID
-                        find /tmp/icu-libs -name "libicu*.so*" -exec cp {} /usr/lib/ \\;
+                        cp -n /tmp/pw-libs/x86_64-linux-gnu/*.so* /usr/lib/ 2>/dev/null || true
                         ldconfig 2>/dev/null || true
-                        rm -rf /tmp/icu-libs
-                        echo "ICU extraction complete"
+                        rm -rf /tmp/pw-libs
+                        echo "Library extraction complete"
                     else
-                        echo "ICU libraries already present"
+                        echo "All required libraries already present"
                     fi
                 '''
                 withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
