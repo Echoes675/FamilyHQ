@@ -93,6 +93,9 @@ public class UserSteps
         if (await dashboardPage.IsSignedInAsync())
         {
             await dashboardPage.SignOutAsync();
+            // Navigate to a clean page state after sign-out — Blazor re-renders and detaches
+            // the Login button during the re-render cycle, causing a DOM detachment error on click.
+            await page.GotoAsync(config.BaseUrl + "/");
         }
 
         // Click Login to Google and follow the full OAuth redirect chain:
