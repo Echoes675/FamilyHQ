@@ -104,7 +104,12 @@ public class UserSteps
 
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
-        await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
+        // Force=true dispatches the click immediately without a further stability check.
+        // Blazor WASM re-renders during auth checks cause the button to briefly detach between
+        // Playwright's stability check and the actual click dispatch; Force skips that window.
+        var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
+        await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await loginBtn.ClickAsync(new() { Force = true });
         await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
 
         // Select the user on the simulator consent screen
