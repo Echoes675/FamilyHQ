@@ -117,17 +117,21 @@ public class UserSteps
         var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
         await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
 
-        // Obtain the button's screen position. BoundingBoxAsync may throw or return null if
-        // the element is momentarily detached during a Blazor render; retry until stable.
+        // Obtain the button's screen position. BoundingBoxAsync on a Locator internally
+        // waits for the element to be present — if the button disappears after WaitForAsync
+        // returns (Blazor render cycle), BoundingBoxAsync blocks up to its default 30-second
+        // timeout. Use a short per-call timeout so the retry loop can react quickly.
+        // Catch Exception (not PlaywrightException) because the Playwright timeout maps to
+        // System.TimeoutException which does not derive from PlaywrightException.
         // Use var for the box to avoid naming the BoundingBox type (not directly accessible
         // in this project — Microsoft.Playwright is referenced transitively via E2E.Common).
         float? clickX = null, clickY = null;
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (clickX == null && DateTime.UtcNow < deadline)
         {
             try
             {
-                var box = await loginBtn.BoundingBoxAsync();
+                var box = await loginBtn.BoundingBoxAsync(new() { Timeout = 500 });
                 if (box != null)
                 {
                     clickX = box.X + box.Width / 2;
@@ -138,14 +142,14 @@ public class UserSteps
                     await Task.Delay(50);
                 }
             }
-            catch (PlaywrightException)
+            catch (Exception)
             {
                 await Task.Delay(50);
             }
         }
 
         if (clickX == null || clickY == null)
-            throw new InvalidOperationException("Login button bounding box unavailable after 10 seconds");
+            throw new InvalidOperationException("Login button bounding box unavailable after 15 seconds");
 
         await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
         await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
