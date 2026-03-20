@@ -90,7 +90,7 @@ pipeline {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
-                            docker compose -f docker-compose.yml -f docker-compose.staging.yml down --remove-orphans || true
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml down --remove-orphans || true
 
                             docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${DB_NAME}'"'"' AND pid <> pg_backend_pid();"
                             docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
@@ -112,8 +112,8 @@ pipeline {
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
                             export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
-                            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull &&
-                            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml pull &&
+                            docker compose -p familyhq-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
                         '
                     """
                 }
