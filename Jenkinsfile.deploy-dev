@@ -142,24 +142,25 @@ pipeline {
                         branches[name] = {
                             def maxRetries = 18
                             for (int i = 0; i < maxRetries; i++) {
-                                def response
                                 if (isPost) {
                                     // POST to the configure endpoint to verify DB connectivity is ready
-                                    response = sh(
+                                    def code = sh(
                                         script: """curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"userName":"health-check","calendars":[],"events":[]}' '${url}' || echo '0'""",
                                         returnStdout: true
                                     ).trim()
+                                    if (code == '200') {
+                                        echo "${name} ready"
+                                        return
+                                    }
                                 } else {
-                                    response = sh(
+                                    def body = sh(
                                         script: "curl -s '${url}' || true",
                                         returnStdout: true
                                     ).trim()
-                                }
-
-                                def isReady = isPost ? (response == '200') : (response =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
-                                if (isReady) {
-                                    echo "${name} ready"
-                                    return
+                                    if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                        echo "${name} ready"
+                                        return
+                                    }
                                 }
                                 echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
                                 sleep(time: 10, unit: 'SECONDS')
