@@ -93,10 +93,11 @@ public class UserSteps
         if (await dashboardPage.IsSignedInAsync())
         {
             await dashboardPage.SignOutAsync();
-            // Clear all cookies to ensure the server-side session is invalidated. Without this,
-            // Blazor polls the auth endpoint and re-authenticates from the still-valid session
-            // cookie, causing the Login button to toggle in and out for up to 30 seconds.
+            // Clear cookies AND localStorage: Blazor reads stale auth state from localStorage on
+            // reload, briefly re-authenticates via the session cookie, then flip-flops back —
+            // causing the Login button to toggle in/out for 30 s. Wiping both breaks the loop.
             await page.Context.ClearCookiesAsync();
+            await page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
             await page.GotoAsync(config.BaseUrl + "/");
         }
 
