@@ -6,6 +6,7 @@ services:
       - BACKEND_URL=${BACKEND_URL}
     labels:
       - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-dev"
       - "traefik.http.routers.webui.rule=PathPrefix(`/`)"
       - "traefik.http.routers.webui.priority=1"
       - "traefik.http.services.webui.loadbalancer.server.port=80"
@@ -31,6 +32,7 @@ services:
       - ./dataprotection.pfx:/app/certs/dataprotection.pfx:ro
     labels:
       - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-dev"
       - "traefik.http.routers.webapi.rule=PathPrefix(`/api`) || PathPrefix(`/hubs`) || PathPrefix(`/openapi`) || PathPrefix(`/scalar`)"
       - "traefik.http.routers.webapi.priority=10"
       - "traefik.http.services.webapi.loadbalancer.server.port=8080"
@@ -49,6 +51,7 @@ services:
       - PathBase=/simulator
     labels:
       - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-dev"
       - "traefik.http.routers.simulator.rule=PathPrefix(`/simulator`)"
       - "traefik.http.routers.simulator.priority=10"
       - "traefik.http.middlewares.simulator-strip.stripprefix.prefixes=/simulator"
@@ -66,6 +69,7 @@ services:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=familyhq-dev"
+      - "--providers.docker.constraints=Label(`traefik.constraint-label`, `familyhq-dev`)"
       - "--entrypoints.web.address=:80"
     ports:
       - "8200:80"
