@@ -104,12 +104,40 @@ public class UserSteps
 
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
-        // Force=true dispatches the click immediately without a further stability check.
-        // Blazor WASM re-renders during auth checks cause the button to briefly detach between
-        // Playwright's stability check and the actual click dispatch; Force skips that window.
+        //
+        // ClickAsync tracks the element handle and performs "scroll into view if needed"
+        // before clicking. If Blazor's post-initialisation render cycle recreates the button
+        // element between the scroll step and the click dispatch, Playwright detects the
+        // detachment and retries indefinitely until the 30-second default timeout expires.
+        //
+        // Clicking via page.Mouse.ClickAsync(x, y) dispatches events at screen coordinates
+        // rather than tracking a specific element handle. Even if the button is briefly
+        // recreated by a Blazor render, the new element sits at the same screen position and
+        // receives the click — avoiding the element-tracking race entirely.
         var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
         await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        await loginBtn.ClickAsync(new() { Force = true });
+
+        // Obtain the button's screen position. BoundingBoxAsync may throw or return null if
+        // the element is momentarily detached during a Blazor render; retry until stable.
+        BoundingBox? box = null;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (box == null && DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                box = await loginBtn.BoundingBoxAsync();
+                if (box == null) await Task.Delay(50);
+            }
+            catch (PlaywrightException)
+            {
+                await Task.Delay(50);
+            }
+        }
+
+        if (box == null)
+            throw new InvalidOperationException("Login button bounding box unavailable after 10 seconds");
+
+        await page.Mouse.ClickAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
         await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
 
         // Select the user on the simulator consent screen
