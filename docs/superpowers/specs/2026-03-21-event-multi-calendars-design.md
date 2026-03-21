@@ -252,10 +252,12 @@ record UpdateEventRequest(
 
 `CalendarInfoId` (formerly the "primary calendar" concept) is replaced by `Calendars` — a list of all linked calendars. Controllers map domain models to this type; it is the only event type that crosses the API boundary.
 
+`GoogleEventId` is intentionally retained in the DTO for future deep-link and diagnostic use (e.g., linking to the event in Google Calendar). The Blazor layer must not use it to interact with Google directly — it is read-only context.
+
 ```csharp
 record CalendarEventDto(
     Guid Id,
-    string GoogleEventId,
+    string GoogleEventId,      // read-only; retained for diagnostics/deep-link
     string Title,
     DateTimeOffset Start,
     DateTimeOffset End,
@@ -267,9 +269,9 @@ record CalendarEventDto(
 
 `EventCalendarDto` is unchanged: `record EventCalendarDto(Guid Id, string DisplayName, string? Color)`.
 
-#### `MonthViewDto` (updated)
+#### `MonthViewDto` (updated — also a pre-existing violation fix)
 
-`Days` changes from `Dictionary<string, List<CalendarEventViewModel>>` to `Dictionary<string, List<CalendarEventDto>>`. ViewModels do not appear in API responses.
+`Days` currently contains `Dictionary<string, List<CalendarEventViewModel>>` — a pre-existing violation where a ViewModel type leaks into an API response DTO in `FamilyHQ.Core`. This feature corrects that: `Days` becomes `Dictionary<string, List<CalendarEventDto>>`. ViewModels do not appear in API responses.
 
 ### Layer 4 — ViewModels (`FamilyHQ.WebUi`)
 
@@ -279,7 +281,7 @@ The edit modal holds a reference to the originating `CalendarEventDto` (not the 
 
 #### `GoogleEventDetail` — inbound result type for external-attendee check
 
-This type is returned by `IGoogleCalendarClient.GetEventAsync`. It lives in `FamilyHQ.Core/DTOs` because it is part of the interface contract (Core contains all interfaces). It is **not** a Google API response type — it is a domain-level extraction of only the fields the service needs:
+This type is returned by `IGoogleCalendarClient.GetEventAsync`. It lives in **`FamilyHQ.Core/Models`** (alongside `CalendarEvent`, `CalendarInfo`) because it is a domain-level data carrier between the Google client and the service layer — it is not an API-boundary type and must not be accessible to the Blazor WASM project via the shared `FamilyHQ.Core` assembly alongside the HTTP DTOs. `FamilyHQ.Core/DTOs` is reserved for types that cross the HTTP boundary (request/response contracts), which `GoogleEventDetail` does not.
 
 ```csharp
 public record GoogleEventDetail(
@@ -351,7 +353,10 @@ The interface returns domain models. Mapping from Google API response types to d
 ### Additions
 
 ```csharp
-// Full replacement of the attendees array on the event
+// Full replacement of the attendees array on the event.
+// attendeeGoogleCalendarIds must contain ALL calendars EXCEPT the organiser —
+// Google Calendar keeps organiser and attendees as separate fields,
+// and including the organiser in the attendees list is ignored or rejected by the API.
 Task PatchEventAttendeesAsync(
     string organizerCalendarId,
     string googleEventId,
@@ -365,7 +370,7 @@ Task<GoogleEventDetail?> GetEventAsync(
     CancellationToken ct);
 ```
 
-`MoveEventAsync` is retained. `GoogleCalendarClient` maps the Google API response for `GetEventAsync` into `GoogleEventDetail` before returning; `GoogleApiEvent` stays internal.
+`MoveEventAsync` is retained. `events.move` preserves the `GoogleEventId` — the event ID does not change after a move. The return value of `MoveEventAsync` is informational and may be discarded. `GoogleCalendarClient` maps the Google API response for `GetEventAsync` into `GoogleEventDetail` before returning; `GoogleApiEvent` stays internal.
 
 ---
 
@@ -387,6 +392,15 @@ Call `IGoogleCalendarClient.GetEventAsync`. Form union of `OrganizerEmail` + `At
 
 Google API calls are made **before** opening a DB transaction. DB failure after Google success: log reconciliation error (operation, event ID, calendar IDs) and rethrow. No automatic Google rollback.
 
+### Sync service (`CalendarSyncService`)
+
+`CalendarSyncService.SyncAsync` creates `CalendarEvent` objects from Google responses. With the new columns:
+
+- **`OwnerCalendarInfoId`**: set to the `CalendarInfo.Id` of the calendar currently being synced **when** `GoogleApiOrganizer.Self = true`. When `Self = false` (the event was created by another calendar/user), `OwnerCalendarInfoId` is set to the synced calendar's `CalendarInfo.Id` as a provisional owner (the closest we have without a cross-calendar lookup at sync time). The correct owner is the one that actually calls `events.update` — determined by `OwnerCalendarInfoId` at write time.
+- **`IsExternallyOwned`**: set to `true` when `GoogleApiOrganizer.Self = false`; `false` otherwise.
+
+`GoogleApiEvent.Organizer` and `GoogleApiEvent.Attendees` fields (defined in the Google API Response Types section above) are used for this mapping. The `CalendarSyncService` must be updated to pass the `GoogleApiEvent` organiser and attendees through to the `CalendarEvent` construction path.
+
 ### `CreateAsync`
 
 1. `GetCalendarsAsync()` → validate all `CalendarInfoIds` exist in set. Throw `ValidationException` for unknowns. Deduplicate; retain matched `CalendarInfo` objects.
@@ -398,7 +412,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 
 ### `UpdateAsync`
 
-1. Load event + `OwnerCalendarInfo`. Verify ownership via `GetCalendarsAsync()`. Throw `NotFoundException` if absent.
+1. Load event from repository (which includes `OwnerCalendarInfoId`). Call `GetCalendarsAsync()` to retrieve the user's calendars. Verify that `OwnerCalendarInfoId` is present in that set — do not call `GetCalendarByIdAsync` (not user-scoped). Throw `NotFoundException` if the event is missing or the owner calendar is not in the user's set.
 2. Call `UpdateEventAsync(ownerGoogleCalendarId, event)`.
 3. DB transaction: update fields, `SaveChangesAsync`.
 4. DB failure: log reconciliation error, rethrow.
@@ -410,7 +424,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 3. If already in `event.Calendars`: return event (idempotent, no Google call).
 4. Updated attendees = existing attendees + `targetCalendarInfo.GoogleCalendarId`.
 5. Call `PatchEventAttendeesAsync`.
-6. DB transaction: insert join table entry. Catch unique-constraint violation → re-fetch and return (concurrent idempotent). Other DB failure: log reconciliation error, rethrow.
+6. DB transaction: insert join table entry. Catch unique-constraint violation on `PK_CalendarEventCalendar` specifically → re-fetch and return (concurrent idempotent). Do not catch other DB exceptions — other constraint violations must surface. Log reconciliation error and rethrow on other DB failure after Google success.
 7. Return updated event.
 
 ### `RemoveCalendarAsync`
@@ -435,9 +449,40 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 
 ## Grid Query Change
 
-`GetEventsForMonthAsync` expands multi-calendar events: for an event with N linked calendars, return N `CalendarEventDto` entries in `MonthViewDto`, each with a single-entry `Calendars` list populated with that calendar's colour and display name, and the full `Calendars` list also included so the client can render chips correctly.
+`GetEventsForMonthAsync` (on the service or repository layer) is responsible for expanding multi-calendar events: for an event with N linked calendars, it returns N `CalendarEventDto` entries, each with a single-entry `Calendars` list populated with that calendar's colour and display name (plus the full `Calendars` list so the edit modal can render all chips).
 
-`CalendarApiService` maps each `CalendarEventDto` to one `CalendarEventViewModel` per entry. No ViewModel expansion logic exists in the controller or service.
+The controller calls this method and places the expanded list directly into `MonthViewDto.Days` — it performs no expansion logic of its own. The mapping from domain model to `CalendarEventDto` happens at this layer boundary.
+
+`CalendarApiService` maps each received `CalendarEventDto` to one `CalendarEventViewModel`. No ViewModel expansion logic exists anywhere — the expansion is entirely at the service/repository query boundary.
+
+---
+
+## `ICalendarApiService` Changes (Blazor UI service layer)
+
+The Blazor-side service interface gains new method signatures to match the event-centric routes. The old calendar-scoped create/update/delete methods are removed.
+
+```csharp
+// Create event in one or more calendars
+Task<CalendarEventDto> CreateEventAsync(CreateEventRequest request, CancellationToken ct);
+
+// Update event fields (title, times, etc.) — not calendar membership
+Task<CalendarEventDto> UpdateEventAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct);
+
+// Delete event entirely (backend handles external-attendee check)
+Task DeleteEventAsync(Guid eventId, CancellationToken ct);
+
+// Add a calendar to an event
+Task<CalendarEventDto> AddCalendarToEventAsync(Guid eventId, Guid calendarId, CancellationToken ct);
+
+// Remove a calendar from an event
+Task RemoveCalendarFromEventAsync(Guid eventId, Guid calendarId, CancellationToken ct);
+
+// Existing — unchanged
+Task<MonthViewDto> GetEventsForMonthAsync(int year, int month, CancellationToken ct);
+Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct);
+```
+
+> Note: `GetCalendarsAsync` currently returns `IReadOnlyList<CalendarInfo>` (a domain model), which is a pre-existing layer violation. Correcting this is deferred — it is not in scope for this feature.
 
 ---
 
@@ -496,9 +541,9 @@ No structural changes. Expanded `MonthViewDto` naturally produces one capsule pe
 - `NotFoundException` when `targetCalendarInfoId` not in user's set.
 
 **Service — RemoveCalendarAsync**
-- Non-owner, non-last: `PatchEventAttendeesAsync` without removed calendar; join entry removed.
-- Owner, non-last: `MoveEventAsync` then `PatchEventAttendeesAsync`; `OwnerCalendarInfoId` updated.
-- Last calendar: delegates to `DeleteAsync`.
+- Non-owner, non-last: `PatchEventAttendeesAsync` without removed calendar; join entry removed; `MoveEventAsync` not called.
+- Owner, non-last: `MoveEventAsync` called first; `PatchEventAttendeesAsync` called with new owner and remaining attendees; `OwnerCalendarInfoId` updated in DB.
+- Last calendar: delegates to `DeleteAsync` (no `PatchEventAttendeesAsync` call).
 - `NotFoundException` when calendar not in event's linked set.
 
 **Service — DeleteAsync**
@@ -527,7 +572,8 @@ No structural changes. Expanded `MonthViewDto` naturally produces one capsule pe
 - Edit event → remove non-last calendar chip → event removed from that calendar, remains on other.
 - Last chip protection → tapping last active chip does nothing; Delete is the only exit.
 - Delete event, no external attendees → deleted from Google and FamilyHQ.
-- Edit event fields (title) → change visible on all capsules for that event.
+- Edit event fields (title) → call `GET /api/calendars/events` after the `PUT /api/events/{eventId}` → both `CalendarEventDto` entries in `MonthViewDto.Days` for that event carry the updated title.
+- **Edge case**: remove owner calendar chip when other calendars remain → `events.move` promotes a new owner; event is still visible on both remaining and removed calendar views as expected; `OwnerCalendarInfoId` is updated in DB.
 - **Edge case**: externally created event, internal calendar invited, external removes itself → user deletes → full Google delete, no zombie.
 - **Edge case**: external still attendee → user deletes → local delete only; Google event persists.
 - **Simulator**: `events.list(calendarId=B)` returns event where B is attendee not organiser, confirming simulator routes by attendee membership correctly.
