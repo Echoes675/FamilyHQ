@@ -482,7 +482,7 @@ git commit -m "feat(google-client): add internal GoogleApi response types"
 **Files:**
 - Modify: `src/FamilyHQ.Core/Models/CalendarEvent.cs`
 - Create: `src/FamilyHQ.Core/Models/GoogleEventDetail.cs`
-- Modify: `src/FamilyHQ.Data.PostgreSQL/Configurations/CalendarEventConfiguration.cs`
+- Modify: `src/FamilyHQ.Data/Configurations/CalendarEventConfiguration.cs`
 - New migration in `src/FamilyHQ.Data.PostgreSQL/Migrations/`
 
 ### Step 3.1 — Update `CalendarEvent`
@@ -541,7 +541,7 @@ public record GoogleEventDetail(
 
 ### Step 3.3 — Update `CalendarEventConfiguration`
 
-Modify `src/FamilyHQ.Data.PostgreSQL/Configurations/CalendarEventConfiguration.cs` — add inside the `Configure` method, after the existing index config:
+Modify `src/FamilyHQ.Data/Configurations/CalendarEventConfiguration.cs` — add inside the `Configure` method, after the existing index config:
 
 ```csharp
 builder.Property(e => e.OwnerCalendarInfoId)

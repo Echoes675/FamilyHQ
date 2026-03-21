@@ -11,13 +11,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<bool>(
-                name: "IsExternallyOwned",
-                table: "Events",
-                type: "boolean",
-                nullable: false,
-                defaultValue: false);
-
             migrationBuilder.AddColumn<Guid>(
                 name: "OwnerCalendarInfoId",
                 table: "Events",
@@ -52,6 +45,13 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
             migrationBuilder.Sql("""
                 ALTER TABLE "Events" ALTER COLUMN "OwnerCalendarInfoId" DROP DEFAULT;
                 """);
+
+            migrationBuilder.AddColumn<bool>(
+                name: "IsExternallyOwned",
+                table: "Events",
+                type: "boolean",
+                nullable: false,
+                defaultValue: false);
         }
 
         /// <inheritdoc />
