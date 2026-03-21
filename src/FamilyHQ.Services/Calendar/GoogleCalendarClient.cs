@@ -212,6 +212,18 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(sourceCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}/move?destination={Uri.EscapeDataString(destinationCalendarId)}";
+        var response = await _httpClient.PostAsync(endpoint, null, ct);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<GoogleEventItem>(cancellationToken: ct);
+        return result!.Id;
+    }
+
     private static object MapToGoogleEvent(CalendarEvent calendarEvent)
     {
         if (calendarEvent.IsAllDay)

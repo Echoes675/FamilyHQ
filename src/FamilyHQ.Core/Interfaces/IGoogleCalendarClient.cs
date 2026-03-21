@@ -9,4 +9,5 @@ public interface IGoogleCalendarClient
     Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, CancellationToken ct = default);
     Task<CalendarEvent> UpdateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, CancellationToken ct = default);
     Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
+    Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default);
 }

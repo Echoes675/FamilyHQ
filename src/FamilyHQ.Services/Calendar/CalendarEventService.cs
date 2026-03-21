@@ -45,25 +45,11 @@ public class CalendarEventService(
         existing.Location = request.Location;
         existing.Description = request.Description;
 
-        // Capture the old Google Event ID before CreateEventAsync mutates existing.GoogleEventId
-        var oldGoogleEventId = existing.GoogleEventId;
+        // Move atomically — Google preserves the event ID, no rollback logic needed
+        await googleCalendarClient.MoveEventAsync(fromCalendar.GoogleCalendarId, existing.GoogleEventId, toCalendar.GoogleCalendarId, ct);
 
-        // Create on new calendar FIRST
-        var created = await googleCalendarClient.CreateEventAsync(toCalendar.GoogleCalendarId, existing, ct);
-
-        try
-        {
-            // Then delete from old calendar using the saved original event ID
-            await googleCalendarClient.DeleteEventAsync(fromCalendar.GoogleCalendarId, oldGoogleEventId, ct);
-        }
-        catch (Exception)
-        {
-            // Rollback: delete the newly created event if the delete failed
-            await googleCalendarClient.DeleteEventAsync(toCalendar.GoogleCalendarId, created.GoogleEventId, ct);
-            throw;
-        }
-
-        existing.GoogleEventId = created.GoogleEventId;
+        // Update the event fields on Google after the move
+        await googleCalendarClient.UpdateEventAsync(toCalendar.GoogleCalendarId, existing, ct);
 
         existing.Calendars.Remove(fromCalendar);
         existing.Calendars.Add(toCalendar);

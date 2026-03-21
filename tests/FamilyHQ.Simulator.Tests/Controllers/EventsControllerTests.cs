@@ -203,6 +203,62 @@ public class EventsControllerTests
         db.Events.Should().Contain(e => e.Id == "evt-bob");
     }
 
+    // ── MoveEvent ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MoveEvent_WhenEventBelongsToUser_UpdatesCalendarId()
+    {
+        // Arrange
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-alice",
+            CalendarId = "cal-source",
+            Summary = "Alice Event",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var result = await sut.MoveEvent("cal-source", "evt-alice", "cal-destination");
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        var moved = await db.Events.FindAsync("evt-alice");
+        moved!.CalendarId.Should().Be("cal-destination");
+    }
+
+    [Fact]
+    public async Task MoveEvent_WhenEventBelongsToDifferentUser_ReturnsNotFound()
+    {
+        // Arrange
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-bob",
+            CalendarId = "cal-bob",
+            Summary = "Bob Event",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "bob"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var result = await sut.MoveEvent("cal-bob", "evt-bob", "cal-alice");
+
+        // Assert
+        result.Should().BeOfType<NotFoundObjectResult>();
+        var unchanged = await db.Events.FindAsync("evt-bob");
+        unchanged!.CalendarId.Should().Be("cal-bob");
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()

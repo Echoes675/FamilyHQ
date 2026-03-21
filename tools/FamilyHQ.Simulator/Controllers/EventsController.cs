@@ -136,6 +136,47 @@ public class EventsController : ControllerBase
         });
     }
 
+    [HttpPost("{eventId}/move")]
+    public async Task<IActionResult> MoveEvent(string calendarId, string eventId, [FromQuery] string destination)
+    {
+        Console.WriteLine($"[SIM] POST move event: {eventId} from calendar: {calendarId} to: {destination}");
+        var userId = ExtractUserId(Request);
+
+        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
+
+        if (existing == null)
+        {
+            Console.WriteLine($"[SIM] Error: Event {eventId} not found for move.");
+            return NotFound(new
+            {
+                error = new
+                {
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
+                    {
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                    }
+                }
+            });
+        }
+
+        existing.CalendarId = destination;
+        await _db.SaveChangesAsync();
+        Console.WriteLine($"[SIM] Moved event: {existing.Id} to calendar: {destination}");
+
+        return Ok(new
+        {
+            id = existing.Id,
+            status = "confirmed",
+            summary = existing.Summary,
+            location = existing.Location,
+            description = existing.Description,
+            start = existing.IsAllDay ? (object)new { date = existing.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.StartTime.ToString("O") },
+            end = existing.IsAllDay ? (object)new { date = existing.EndTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.EndTime.ToString("O") }
+        });
+    }
+
     [HttpDelete("{eventId}")]
     public async Task<IActionResult> DeleteEvent(string calendarId, string eventId)
     {
