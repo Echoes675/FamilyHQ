@@ -37,5 +37,17 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
         builder.HasIndex(e => e.End);
+
+        builder.Property(e => e.OwnerCalendarInfoId)
+            .IsRequired();
+
+        builder.HasOne<CalendarInfo>()
+            .WithMany()
+            .HasForeignKey(e => e.OwnerCalendarInfoId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Property(e => e.IsExternallyOwned)
+            .IsRequired()
+            .HasDefaultValue(false);
     }
 }

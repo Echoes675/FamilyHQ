@@ -13,6 +13,13 @@ public class CalendarEvent
     public string? Location { get; set; }
     public string? Description { get; set; }
 
+    // FK to the CalendarInfo that is the Google organiser for this event.
+    // Used to select the correct calendarId for events.update, events.move, events.delete.
+    public Guid OwnerCalendarInfoId { get; set; }
+
+    // True when Google's organizer.Self = false at sync time. Informational only.
+    public bool IsExternallyOwned { get; set; }
+
     // Navigation properties
     public ICollection<CalendarInfo> Calendars { get; set; } = new List<CalendarInfo>();
 }
