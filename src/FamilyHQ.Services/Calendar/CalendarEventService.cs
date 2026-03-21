@@ -156,23 +156,25 @@ public class CalendarEventService(
         calendarEvent.Calendars.Remove(calendarToRemove);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
+        var calendarDict = allCalendars.ToDictionary(c => c.Id);
 
         if (calendarInfoId == calendarEvent.OwnerCalendarInfoId)
         {
-            var newOwner = calendarEvent.Calendars.First();
-            var newOwnerCalendar = allCalendars.First(c => c.Id == newOwner.Id);
+            var newOwnerInfo = calendarEvent.Calendars.First();
+            var newOwnerCalendar = calendarDict[newOwnerInfo.Id];
+            var removedOwnerGoogleId = calendarDict[calendarInfoId].GoogleCalendarId;
 
             await googleCalendarClient.MoveEventAsync(
-                calendarToRemove.GoogleCalendarId,
+                removedOwnerGoogleId,
                 calendarEvent.GoogleEventId,
                 newOwnerCalendar.GoogleCalendarId,
                 ct);
 
-            calendarEvent.OwnerCalendarInfoId = newOwner.Id;
+            calendarEvent.OwnerCalendarInfoId = newOwnerInfo.Id;
 
             var attendeeIds = calendarEvent.Calendars
-                .Where(c => c.Id != newOwner.Id)
-                .Select(c => c.GoogleCalendarId);
+                .Where(c => c.Id != newOwnerInfo.Id)
+                .Select(c => calendarDict[c.Id].GoogleCalendarId);
 
             await googleCalendarClient.PatchEventAttendeesAsync(
                 newOwnerCalendar.GoogleCalendarId,
@@ -182,11 +184,11 @@ public class CalendarEventService(
         }
         else
         {
-            var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
+            var ownerCalendar = calendarDict[calendarEvent.OwnerCalendarInfoId];
 
             var attendeeIds = calendarEvent.Calendars
                 .Where(c => c.Id != calendarEvent.OwnerCalendarInfoId)
-                .Select(c => c.GoogleCalendarId);
+                .Select(c => calendarDict[c.Id].GoogleCalendarId);
 
             await googleCalendarClient.PatchEventAttendeesAsync(
                 ownerCalendar.GoogleCalendarId,
