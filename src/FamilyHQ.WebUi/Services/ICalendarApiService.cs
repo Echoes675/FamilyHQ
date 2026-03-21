@@ -1,6 +1,6 @@
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Models;
-using FamilyHQ.Core.ViewModels;
+using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Services;
 
