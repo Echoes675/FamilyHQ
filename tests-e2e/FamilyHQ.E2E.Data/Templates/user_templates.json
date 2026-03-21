@@ -48,5 +48,20 @@
             }
         ],
         "Events": []
+    },
+    "MultiCalUser": {
+        "Calendars": [
+            {
+                "Id": "template_multical_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_multical_personal",
+                "Summary": "Personal Calendar",
+                "BackgroundColor": "#34a853"
+            }
+        ],
+        "Events": []
     }
 }

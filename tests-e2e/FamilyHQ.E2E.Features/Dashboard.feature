@@ -89,3 +89,49 @@ Feature: Dashboard Calendar Viewer
     And I view the dashboard
     When I navigate to the next month
     Then I see the event "Next Month Event" displayed on the calendar
+
+  Scenario: Create event in two calendars appears twice on grid
+    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I create an event "Standup" in calendars "Work Calendar" and "Personal Calendar"
+    Then I see the event "Standup" displayed on the calendar in "Work Calendar" colour
+    And I see the event "Standup" displayed on the calendar in "Personal Calendar" colour
+
+  Scenario: Add calendar to existing event via chip
+    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I open the event "Team Meeting" for editing
+    And I add the calendar "Personal Calendar" chip to the event
+    Then I see the event "Team Meeting" displayed on the calendar in "Work Calendar" colour
+    And I see the event "Team Meeting" displayed on the calendar in "Personal Calendar" colour
+
+  Scenario: Remove calendar chip from event
+    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
+    And the user has the event "Team Meeting" also in "Personal Calendar"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I open the event "Team Meeting" for editing
+    And I remove the calendar "Personal Calendar" chip from the event
+    Then I see the event "Team Meeting" displayed on the calendar in "Work Calendar" colour
+    And I do not see a "Personal Calendar" capsule for "Team Meeting" on the calendar
+
+  Scenario: Last chip is protected — cannot remove final calendar
+    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    And the user has an all-day event "Solo Event" tomorrow in "Work Calendar"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I open the event "Solo Event" for editing
+    Then the last active calendar chip has no remove button
+
+  Scenario: Delete event removes it from all calendars
+    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
+    And the user has the event "Team Meeting" also in "Personal Calendar"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I delete the event "Team Meeting"
+    Then I do not see the event "Team Meeting" displayed on the calendar
