@@ -1,7 +1,7 @@
 namespace FamilyHQ.Core.DTOs;
 
 public record CreateEventRequest(
-    Guid CalendarInfoId,
+    IReadOnlyList<Guid> CalendarInfoIds,   // min 1, no duplicates; CalendarInfoIds[0] is the organiser
     string Title,
     DateTimeOffset Start,
     DateTimeOffset End,
