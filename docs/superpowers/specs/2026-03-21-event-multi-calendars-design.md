@@ -180,7 +180,7 @@ builder.Property(e => e.IsExternallyOwned)
        .HasDefaultValue(false);
 ```
 
-The existing many-to-many configuration is **unchanged**.
+The existing many-to-many configuration is **unchanged**. The existing `IX_Events_GoogleEventId` unique index is also **retained unchanged** — under the attendee model, one `GoogleEventId` maps to exactly one `CalendarEvent` row; multi-calendar membership is expressed via the join table, not duplicate rows.
 
 ### Migration
 
@@ -275,13 +275,32 @@ record CalendarEventDto(
 
 ### Layer 4 — ViewModels (`FamilyHQ.WebUi`)
 
-`CalendarEventViewModel.LinkedCalendars` is **removed** — this data now comes from `CalendarEventDto.Calendars` and is used by `CalendarApiService` during mapping. The `CalendarApiService` creates one `CalendarEventViewModel` per entry in `Calendars`, each carrying that calendar's colour and ID. Blazor components never receive DTOs directly.
+`CalendarEventViewModel` gains an `AllCalendars` property — the full list of calendars the event belongs to — so the edit modal can render chips without holding a DTO reference. `CalendarApiService` populates this from `CalendarEventDto.Calendars` during mapping.
 
-The edit modal holds a reference to the originating `CalendarEventDto` (not the view model) for chip rendering — this is the only place a DTO exists inside the UI layer, as a local variable within `CalendarApiService` before mapping is complete.
+```csharp
+record CalendarEventViewModel(
+    Guid Id,
+    string Title,
+    DateTimeOffset Start,
+    DateTimeOffset End,
+    bool IsAllDay,
+    string? Location,
+    string? Description,
+    // The calendar this capsule represents (one ViewModel per calendar on the grid)
+    Guid CalendarInfoId,
+    string CalendarDisplayName,
+    string? CalendarColor,
+    // All calendars this event belongs to — used by edit modal for chip rendering
+    IReadOnlyList<EventCalendarDto> AllCalendars);
+```
+
+`CalendarApiService` creates one `CalendarEventViewModel` per `CalendarEventDto` entry received from the API. Blazor components bind to `CalendarEventViewModel` only — DTOs do not appear in component code.
 
 #### `GoogleEventDetail` — inbound result type for external-attendee check
 
-This type is returned by `IGoogleCalendarClient.GetEventAsync`. It lives in **`FamilyHQ.Core/Models`** (alongside `CalendarEvent`, `CalendarInfo`) because it is a domain-level data carrier between the Google client and the service layer — it is not an API-boundary type and must not be accessible to the Blazor WASM project via the shared `FamilyHQ.Core` assembly alongside the HTTP DTOs. `FamilyHQ.Core/DTOs` is reserved for types that cross the HTTP boundary (request/response contracts), which `GoogleEventDetail` does not.
+This type is returned by `IGoogleCalendarClient.GetEventAsync`. It lives in **`FamilyHQ.Core/Models`** alongside `CalendarEvent` and `CalendarInfo`.
+
+**Architectural note:** `FamilyHQ.Core` is a shared assembly consumed by both `FamilyHQ.WebApi` and `FamilyHQ.WebUi`. Placing `GoogleEventDetail` in `FamilyHQ.Core/Models` makes it technically visible to the Blazor WASM project. This is an accepted limitation of the current two-project architecture — there is no server-only shared assembly. However, `GoogleEventDetail` contains no Google-specific or server-specific operational data, and Blazor components must not use it (convention and code review enforce this). A future refactor may introduce a `FamilyHQ.Server.Core` assembly to house backend-only shared types; that is out of scope here.
 
 ```csharp
 public record GoogleEventDetail(
@@ -335,11 +354,11 @@ A new `EventsController` handles the five event-centric routes. `CalendarsContro
 Services operate on domain models. They return domain models to controllers, which map to DTOs.
 
 ```csharp
-Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct);
-Task<CalendarEvent> UpdateAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct);
-Task<CalendarEvent> AddCalendarAsync(Guid eventId, Guid targetCalendarInfoId, CancellationToken ct);
-Task RemoveCalendarAsync(Guid eventId, Guid calendarInfoId, CancellationToken ct);
-Task DeleteAsync(Guid eventId, CancellationToken ct);
+Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct = default);
+Task<CalendarEvent> UpdateAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct = default);
+Task<CalendarEvent> AddCalendarAsync(Guid eventId, Guid targetCalendarInfoId, CancellationToken ct = default);
+Task RemoveCalendarAsync(Guid eventId, Guid calendarInfoId, CancellationToken ct = default);
+Task DeleteAsync(Guid eventId, CancellationToken ct = default);
 ```
 
 `ReassignAsync` removed.
@@ -433,7 +452,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 2. Find `CalendarInfo` matching `calendarInfoId` in `event.Calendars`. Throw `NotFoundException` if absent.
 3. If last linked calendar: delegate to `DeleteAsync(eventId)`.
 4. If owner calendar and others remain: call `MoveEventAsync` to promote a remaining calendar as new owner; note new `OwnerCalendarInfoId` for DB step.
-5. Updated attendees = all linked `GoogleCalendarId` values except removed one.
+5. Updated attendees = all linked `GoogleCalendarId` values, minus the removed calendar, minus the new owner calendar. The new owner becomes the organiser and must not appear in the attendees list (Google keeps organiser and attendees as separate fields).
 6. Call `PatchEventAttendeesAsync(newOrExistingOwnerGoogleCalendarId, googleEventId, updatedAttendees)`.
 7. DB transaction: remove join table entry; update `OwnerCalendarInfoId` if changed.
 8. DB failure: log reconciliation error, rethrow.
@@ -459,30 +478,34 @@ The controller calls this method and places the expanded list directly into `Mon
 
 ## `ICalendarApiService` Changes (Blazor UI service layer)
 
-The Blazor-side service interface gains new method signatures to match the event-centric routes. The old calendar-scoped create/update/delete methods are removed.
+The Blazor-side service interface gains new method signatures to match the event-centric routes. All methods return ViewModels — DTOs are an internal mapping intermediate inside `CalendarApiService` and never surfaced through this interface. The old calendar-scoped create/update/delete methods are removed.
 
 ```csharp
-// Create event in one or more calendars
-Task<CalendarEventDto> CreateEventAsync(CreateEventRequest request, CancellationToken ct);
+// Create event in one or more calendars → returns the new event ViewModel (single calendar view)
+Task<CalendarEventViewModel> CreateEventAsync(CreateEventRequest request, CancellationToken ct);
 
-// Update event fields (title, times, etc.) — not calendar membership
-Task<CalendarEventDto> UpdateEventAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct);
+// Update event fields (title, times, etc.) → returns updated event ViewModel
+Task<CalendarEventViewModel> UpdateEventAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct);
 
 // Delete event entirely (backend handles external-attendee check)
 Task DeleteEventAsync(Guid eventId, CancellationToken ct);
 
-// Add a calendar to an event
-Task<CalendarEventDto> AddCalendarToEventAsync(Guid eventId, Guid calendarId, CancellationToken ct);
+// Add a calendar to an event → returns updated event ViewModel (AllCalendars reflects new state)
+Task<CalendarEventViewModel> AddCalendarToEventAsync(Guid eventId, Guid calendarId, CancellationToken ct);
 
 // Remove a calendar from an event
 Task RemoveCalendarFromEventAsync(Guid eventId, Guid calendarId, CancellationToken ct);
 
-// Existing — unchanged
+// Existing — returns a lightweight calendar summary ViewModel for chip rendering
+Task<IReadOnlyList<CalendarSummaryViewModel>> GetCalendarsAsync(CancellationToken ct);
+
+// Existing — unchanged return type
 Task<MonthViewDto> GetEventsForMonthAsync(int year, int month, CancellationToken ct);
-Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct);
 ```
 
-> Note: `GetCalendarsAsync` currently returns `IReadOnlyList<CalendarInfo>` (a domain model), which is a pre-existing layer violation. Correcting this is deferred — it is not in scope for this feature.
+`CalendarSummaryViewModel` is a new lightweight ViewModel: `record CalendarSummaryViewModel(Guid Id, string DisplayName, string? Color)`. This also resolves the pre-existing `CalendarInfo` domain model leakage in `GetCalendarsAsync`. The chip selector in the edit modal binds to `CalendarSummaryViewModel` — no domain model or DTO appears in component code.
+
+> Note: `GetEventsForMonthAsync` still returns `MonthViewDto` — this is the one remaining DTO in the interface. It is the grid data payload and its structure does not need a separate ViewModel wrapper. This is an acknowledged exception: the `MonthViewDto` is effectively a ViewModel-shaped structure (a date-keyed dictionary) and treating it as a DTO in the UI layer is acceptable for this shape. Future cleanup can introduce a `MonthViewModel` wrapper if needed.
 
 ---
 
@@ -490,7 +513,7 @@ Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct);
 
 ### Chip selector (replaces calendar dropdown)
 
-All in-scope calendars rendered as chips (colour dot + display name).
+All in-scope calendars rendered as chips (colour dot + display name). The modal binds to `IReadOnlyList<CalendarSummaryViewModel>` returned by `ICalendarApiService.GetCalendarsAsync`. No `CalendarInfo` domain model or `CalendarEventDto` appears in component code.
 
 **Create mode**: chips start deselected. Accumulate client-side; single `POST /api/events` on Save carrying all selected `CalendarInfoIds`.
 
@@ -542,8 +565,9 @@ No structural changes. Expanded `MonthViewDto` naturally produces one capsule pe
 
 **Service — RemoveCalendarAsync**
 - Non-owner, non-last: `PatchEventAttendeesAsync` without removed calendar; join entry removed; `MoveEventAsync` not called.
-- Owner, non-last: `MoveEventAsync` called first; `PatchEventAttendeesAsync` called with new owner and remaining attendees; `OwnerCalendarInfoId` updated in DB.
-- Last calendar: delegates to `DeleteAsync` (no `PatchEventAttendeesAsync` call).
+- Owner, non-last: `MoveEventAsync` called first; `PatchEventAttendeesAsync` called with new owner and remaining attendees (new owner excluded from attendees list); `OwnerCalendarInfoId` updated in DB.
+- Last calendar (non-owner): delegates to `DeleteAsync` (no `PatchEventAttendeesAsync` call).
+- **Last calendar (owner)**: also delegates to `DeleteAsync`; `MoveEventAsync` is NOT called before delegation (no calendar to move to).
 - `NotFoundException` when calendar not in event's linked set.
 
 **Service — DeleteAsync**
