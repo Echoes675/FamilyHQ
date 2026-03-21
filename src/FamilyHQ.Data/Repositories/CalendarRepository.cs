@@ -127,15 +127,24 @@ public class CalendarRepository : ICalendarRepository
 
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Attach any detached CalendarInfo entities so EF Core does not attempt to INSERT them.
-        // GetCalendarsAsync uses AsNoTracking, so calendars assigned to a new event arrive detached.
-        foreach (var cal in calendarEvent.Calendars)
-        {
-            if (_context.Entry(cal).State == EntityState.Detached)
-                _context.Calendars.Attach(cal);
-        }
+        // Snapshot the calendars, clear the collection, then add the event first so it
+        // enters the change tracker in Added state. After that, add each calendar back
+        // via the tracked entity's skip navigation so EF Core registers every join row
+        // individually — the same pattern used by AddCalendarAsync (which is known to
+        // work correctly for multi-calendar events).
+        var calendarsToLink = calendarEvent.Calendars.ToList();
+        calendarEvent.Calendars.Clear();
 
         _context.Events.Add(calendarEvent);
+
+        foreach (var cal in calendarsToLink)
+        {
+            var tracked = _context.Entry(cal).State == EntityState.Detached
+                ? _context.Calendars.Attach(cal).Entity
+                : cal;
+            calendarEvent.Calendars.Add(tracked);
+        }
+
         return Task.CompletedTask;
     }
 
