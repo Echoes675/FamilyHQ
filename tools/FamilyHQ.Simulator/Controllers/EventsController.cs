@@ -27,8 +27,13 @@ public class EventsController : ControllerBase
         _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
         var userId = ExtractUserId(Request);
 
+        var userEventIds = await _db.Events
+            .Where(e => e.UserId == userId)
+            .Select(e => e.Id)
+            .ToListAsync();
+
         var attendeeEventIds = await _db.EventAttendees
-            .Where(a => a.AttendeeCalendarId == calendarId)
+            .Where(a => a.AttendeeCalendarId == calendarId && userEventIds.Contains(a.EventId))
             .Select(a => a.EventId)
             .ToListAsync();
 
@@ -279,6 +284,10 @@ public class EventsController : ControllerBase
                 }
             });
         }
+
+        // Remove attendees before deleting the event
+        var attendeeRows = _db.EventAttendees.Where(a => a.EventId == eventId);
+        _db.EventAttendees.RemoveRange(attendeeRows);
 
         _db.Events.Remove(existing);
         await _db.SaveChangesAsync();
