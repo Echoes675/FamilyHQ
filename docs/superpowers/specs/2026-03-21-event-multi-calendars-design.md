@@ -88,8 +88,51 @@ The simulator must return **Google-format JSON responses** (see Google API Respo
 
 Behavioural requirements for the simulator:
 - `events.list(calendarId)` returns events where `calendarId` is the **organiser** OR appears in the event's **attendees list**.
-- `events.patch` / `events.update` modifying `attendees` is reflected immediately in subsequent `events.list` calls.
+- `events.patch` modifying `attendees` is reflected immediately in subsequent `events.list` calls.
 - `events.move` changes the organiser calendar; the old calendar continues to see the event only if it remains as an attendee.
+
+### Simulator data model additions
+
+`SimulatedEvent` currently stores only `CalendarId` (the organiser) and has no attendee storage. The following additions are required:
+
+**New `SimulatedEventAttendee` table** (`tools/FamilyHQ.Simulator/Models/SimulatedEventAttendee.cs`):
+
+```csharp
+public class SimulatedEventAttendee
+{
+    public int Id { get; set; }
+    public string EventId { get; set; } = string.Empty;
+    public string AttendeeCalendarId { get; set; } = string.Empty;
+}
+```
+
+`SimContext` gains `DbSet<SimulatedEventAttendee> EventAttendees`. EF Core migration adds the table with an index on `(EventId, AttendeeCalendarId)` unique.
+
+**Updated simulator endpoints (`tools/FamilyHQ.Simulator/Controllers/EventsController.cs`)**:
+
+| Method | Route | Change |
+|--------|-------|--------|
+| `GET` | `/calendars/{calendarId}/events` | Filter: `WHERE CalendarId = calendarId OR EXISTS(SELECT 1 FROM EventAttendees WHERE EventId = e.Id AND AttendeeCalendarId = calendarId)` |
+| `GET` | `/calendars/{calendarId}/events/{eventId}` | **New.** Returns single event with `organizer` and `attendees` fields. Returns 404 if not found. Used by `IGoogleCalendarClient.GetEventAsync`. |
+| `PATCH` | `/calendars/{calendarId}/events/{eventId}` | **New.** Accepts `{ attendees: [{ email: string }] }` body. Replaces all rows in `EventAttendees` for this `EventId`. The organiser calendar (`CalendarId`) is never added to the attendees table. |
+
+**Response format for all event endpoints must include `organizer` and `attendees`:**
+
+```json
+{
+  "id": "...",
+  "status": "confirmed",
+  "summary": "...",
+  "start": { "dateTime": "..." },
+  "end": { "dateTime": "..." },
+  "organizer": { "email": "calendarId@group.calendar.google.com", "self": true },
+  "attendees": [
+    { "email": "othercalendar@group.calendar.google.com", "responseStatus": "accepted" }
+  ]
+}
+```
+
+The `self` field on `organizer` is always `true` in the simulator (single-account assumption). `attendees` is omitted from the response when the list is empty.
 
 ---
 
@@ -462,7 +505,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 
 1. Load event, verify ownership.
 2. Find `CalendarInfo` matching `calendarInfoId` in `event.Calendars`. Throw `NotFoundException` if absent.
-3. If last linked calendar: delegate to `DeleteAsync(eventId)`.
+3. If last linked calendar: delegate to `DeleteAsync(eventId)`. The full `DeleteAsync` semantics apply — including the live external-attendee check and all its branches (skip Google delete if external parties present, etc.). This is intentional: removing the last calendar is equivalent to deleting the event, and the same safety rules apply regardless of how the delete was triggered.
 4. If owner calendar and others remain: call `MoveEventAsync` to promote a remaining calendar as new owner; note new `OwnerCalendarInfoId` for DB step.
 5. Updated attendees = all linked `GoogleCalendarId` values, minus the removed calendar, minus the new owner calendar. The new owner becomes the organiser and must not appear in the attendees list (Google keeps organiser and attendees as separate fields).
 6. Call `PatchEventAttendeesAsync(newOrExistingOwnerGoogleCalendarId, googleEventId, updatedAttendees)`.
@@ -480,17 +523,19 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 
 ## Grid Query Change
 
-`GetEventsForMonthAsync` (on the service or repository layer) is responsible for expanding multi-calendar events: for an event with N linked calendars, it returns N `CalendarEventDto` entries, each with a single-entry `Calendars` list populated with that calendar's colour and display name (plus the full `Calendars` list so the edit modal can render all chips).
+Responsibilities per layer, consistent with the layer diagram:
 
-The controller calls this method and places the expanded list directly into `MonthViewDto.Days` — it performs no expansion logic of its own. The mapping from domain model to `CalendarEventDto` happens at this layer boundary.
-
-`CalendarApiService` maps each received `CalendarEventDto` to one `CalendarEventViewModel`. No ViewModel expansion logic exists anywhere — the expansion is entirely at the service/repository query boundary.
+1. **Repository / service**: `GetEventsForMonthAsync` returns `IReadOnlyList<CalendarEvent>` with `Calendars` navigations fully populated (all linked `CalendarInfo` records eager-loaded). No DTO construction or expansion here.
+2. **Controller**: Iterates the returned `CalendarEvent` list. For each event with N linked calendars, emits N `CalendarEventDto` entries — one per calendar — each with a single-entry `Calendars` list for that calendar (colour, display name) plus the full `Calendars` list so the edit modal can render all chips. Groups entries by date and builds `MonthViewDto.Days`.
+3. **`CalendarApiService`**: Receives `MonthViewDto`, maps each `CalendarEventDto` in `Days` to a `CalendarEventViewModel`, and returns a `MonthViewModel` to Blazor components. No expansion logic — the expansion already happened in the controller.
 
 ---
 
 ## `ICalendarApiService` Changes (Blazor UI service layer)
 
 The Blazor-side service interface gains new method signatures to match the event-centric routes. All methods return ViewModels — DTOs are an internal mapping intermediate inside `CalendarApiService` and never surfaced through this interface. The old calendar-scoped create/update/delete methods are removed.
+
+**Note on inbound request types:** `CreateEventRequest` and `UpdateEventRequest` live in `FamilyHQ.Core/DTOs` and are used directly as parameters in this interface. This is an intentional design decision: these types represent the user's intent (form data) and are structurally identical to what the API expects. Sharing them across the Blazor–API boundary avoids a redundant `CreateEventFormModel`/`UpdateEventFormModel` mapping step that would add no value. This is the accepted exception for _inbound_ request types. Unlike response types — where the mapping from domain model to DTO is the point of the layer — request types simply carry user input. Both the Blazor component and the controller validate and consume the same shape.
 
 ```csharp
 // Create event in one or more calendars → returns the new event ViewModel (single calendar view)
