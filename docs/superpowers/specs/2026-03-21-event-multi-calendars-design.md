@@ -12,6 +12,59 @@ Google Calendar is the source of truth. FamilyHQ reads from and writes to Google
 
 ---
 
+## Layer Architecture and Mapping Boundaries
+
+Each layer owns its own types. No type from one layer is used directly in another. Mapping between layers is explicit and located at the boundary.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Google / Simulator                                          │
+│  Returns Google Calendar API JSON (GoogleApiEvent, etc.)     │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ HTTP JSON
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  GoogleCalendarClient  (FamilyHQ.Services)                   │
+│  Deserialises Google API JSON into Google response types     │
+│  Maps Google response types → domain models                  │
+│  IGoogleCalendarClient (FamilyHQ.Core) returns domain models │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ CalendarEvent, CalendarInfo
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Service / Repository layer  (FamilyHQ.Services / .Data)     │
+│  All business logic operates on domain models                │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ CalendarEvent, CalendarInfo
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  API Controllers  (FamilyHQ.WebApi)                          │
+│  Maps domain models → API response DTOs                      │
+│  Returns CalendarEventDto, MonthViewDto, etc. over HTTP      │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ HTTP JSON (CalendarEventDto, etc.)
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  CalendarApiService  (FamilyHQ.WebUi)                        │
+│  Deserialises API response DTOs                              │
+│  Maps DTOs → ViewModels for Blazor components                │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ CalendarEventViewModel, etc.
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Blazor Components  (FamilyHQ.WebUi)                         │
+│  Binds to ViewModels only                                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Rules enforced by this architecture:**
+- Domain models (`CalendarEvent`, `CalendarInfo`) never appear in API responses.
+- API DTOs (`CalendarEventDto`, `MonthViewDto`) never appear in Blazor components.
+- ViewModels never appear in API requests or responses.
+- Google response types never escape `GoogleCalendarClient`.
+
+---
+
 ## Overview
 
 Extend FamilyHQ so that an event can be associated with multiple in-scope Google Calendars. On the calendar grid, the event appears once per internal attendee calendar, each in that calendar's colour. Users can add or remove internal calendars from an event via a chip selector in the create/edit modal.
@@ -23,32 +76,83 @@ Extend FamilyHQ so that an event can be associated with multiple in-scope Google
 In Google Calendar, the natural way for one event to appear in multiple calendars is via the **attendee model**:
 
 - An event is created in one calendar — this calendar is the **organiser**.
-- Additional calendars are added as **attendees** using their `GoogleCalendarId` (which is an email-like identifier, e.g. `family@group.calendar.google.com`).
+- Additional calendars are added as **attendees** using their `GoogleCalendarId` (email-like identifier, e.g. `family@group.calendar.google.com`).
 - Because FamilyHQ operates under a single Google account that owns all in-scope calendars, invitations to same-account calendars are **auto-accepted** by Google.
 - The event has **one `GoogleEventId`** and appears in every attendee calendar's `events.list` response under the same ID.
-- Changes made via `events.update` on the organiser calendar propagate to all attendee views because it is one event.
-- If a user edits or deletes the event in Google Calendar mobile, the change affects all calendar views automatically.
-
-This is the correct model for the stated requirements: Google-native experience, no duplicate independent events, changes propagate everywhere.
+- Changes via `events.update` on the organiser calendar propagate to all attendee views — it is one event.
+- Edits or deletes in Google Calendar mobile affect all calendar views automatically.
 
 ### Simulator responsibility
 
-The Google Calendar simulator must implement the attendee routing faithfully:
+The simulator must return **Google-format JSON responses** (see Google API Response Types below), not domain models. This ensures `GoogleCalendarClient`'s mapping code is exercised against realistic data during unit and integration testing, and that switching to real Google requires no changes to the client.
 
-- `events.list(calendarId)` returns events where `calendarId` is the **organiser calendar**, OR where `calendarId` appears in the event's **attendees list**.
-- `events.patch` / `events.update` that modifies the `attendees` array is reflected immediately in subsequent `events.list` calls for each affected calendar.
-- `events.move(calendarId, eventId, destinationCalendarId)` changes the organiser calendar; the event moves from the old organiser's exclusive ownership to the new one. The old calendar continues to see the event only if it remains as an attendee.
+Behavioural requirements for the simulator:
+- `events.list(calendarId)` returns events where `calendarId` is the **organiser** OR appears in the event's **attendees list**.
+- `events.patch` / `events.update` modifying `attendees` is reflected immediately in subsequent `events.list` calls.
+- `events.move` changes the organiser calendar; the old calendar continues to see the event only if it remains as an attendee.
 
-This ensures the API layer is correct before real Google integration testing begins.
+---
+
+## Google API Response Types
+
+These types live in `FamilyHQ.Services/Calendar/GoogleApi/` and are **internal to that namespace**. They mirror the Google Calendar API JSON schema exactly. `GoogleCalendarClient` deserialises HTTP responses into these types and then maps them to domain models. They never escape `GoogleCalendarClient`.
+
+The simulator's `EventsController` serialises these same types as its HTTP responses, ensuring the mapping code is tested against the correct format.
+
+```csharp
+// Maps to Google Calendar API "Event" resource
+internal record GoogleApiEvent(
+    string Id,
+    string? ICalUID,
+    string? Status,          // "confirmed", "cancelled"
+    GoogleApiEventDateTime Start,
+    GoogleApiEventDateTime End,
+    string? Summary,         // title
+    string? Location,
+    string? Description,
+    GoogleApiOrganizer? Organizer,
+    IReadOnlyList<GoogleApiAttendee>? Attendees);
+
+internal record GoogleApiEventDateTime(
+    string? DateTime,        // RFC3339, present for timed events
+    string? Date,            // yyyy-MM-dd, present for all-day events
+    string? TimeZone);
+
+internal record GoogleApiOrganizer(
+    string? Email,
+    bool Self);              // true when organiser is the authenticated account
+
+internal record GoogleApiAttendee(
+    string Email,
+    string? ResponseStatus); // "accepted", "declined", "needsAction", "tentative"
+
+// Wrapper for events.list and events.watch responses
+internal record GoogleApiEventList(
+    IReadOnlyList<GoogleApiEvent> Items,
+    string? NextPageToken,
+    string? NextSyncToken);
+
+// Maps to Google Calendar API "CalendarListEntry" resource
+internal record GoogleApiCalendarListEntry(
+    string Id,               // GoogleCalendarId — email-like identifier
+    string? Summary,
+    string? BackgroundColor,
+    string? ForegroundColor,
+    string? AccessRole);
+
+internal record GoogleApiCalendarList(
+    IReadOnlyList<GoogleApiCalendarListEntry> Items,
+    string? NextPageToken,
+    string? NextSyncToken);
+```
 
 ---
 
 ## What Is Already in Place
 
 - `CalendarEvent` ↔ `CalendarInfo` many-to-many via `CalendarEventCalendar` join table — **retained unchanged**.
-- `CalendarEventViewModel.LinkedCalendars (IReadOnlyList<EventCalendarDto>)` — carries all linked calendars per event.
-- `ICalendarRepository` already includes `GetEventAsync`, `GetEventsAsync` (with `Calendars` navigation), `DeleteEventAsync`, and `RemoveCalendarAsync` (unlinks calendar from event; deletes event if orphaned).
-- The existing `ReassignEventRequest` / `ReassignAsync` moves an event from one calendar to another atomically — **retired** (superseded by the new add/remove calendar endpoints).
+- `ICalendarRepository` already includes `GetEventAsync`, `GetEventsAsync` (with `Calendars` navigation), `DeleteEventAsync`, and `RemoveCalendarAsync`.
+- The existing `ReassignEventRequest` / `ReassignAsync` — **retired** (superseded by the new add/remove calendar endpoints).
 
 ---
 
@@ -58,10 +162,10 @@ This ensures the API layer is correct before real Google integration testing beg
 
 | Column | Type | Nullable | Purpose |
 |--------|------|----------|---------|
-| `OwnerCalendarInfoId` | `Guid` | No | FK to `CalendarInfo`. The calendar that is the Google organiser for this event. Hidden from the user. Used by the service layer to know which `calendarId` to pass to Google for `events.update`, `events.move`, and `events.delete`. |
-| `IsExternallyOwned` | `bool` | No | `true` when Google's `organizer.self = false` at sync time (event was created by a calendar outside FamilyHQ). Informational / sync hint. Default `false`. **Not used for delete decisions** — a live check is performed instead (see Delete). |
+| `OwnerCalendarInfoId` | `Guid` | No | FK to `CalendarInfo`. The calendar that is the Google organiser for this event. Hidden from the user. Used by the service layer to select the correct `calendarId` for `events.update`, `events.move`, and `events.delete`. |
+| `IsExternallyOwned` | `bool` | No | `true` when Google's `organizer.Self = false` at sync time. Informational only. Default `false`. **Not used for delete decisions** — a live check is performed instead. |
 
-`OwnerCalendarInfoId` has a FK to `CalendarInfo` with `DeleteBehavior.Restrict`. Before a calendar can be removed it must no longer be the owner (ownership must be transferred via `events.move` first).
+`OwnerCalendarInfoId` FK uses `DeleteBehavior.Restrict` — ownership must be transferred before a calendar can be removed.
 
 ### EF Core configuration additions (`CalendarEventConfiguration`)
 
@@ -81,7 +185,7 @@ The existing many-to-many configuration is **unchanged**.
 ### Migration
 
 1. Add `OwnerCalendarInfoId (uuid NOT NULL DEFAULT '00000000-...')` to `Events`.
-2. Backfill `OwnerCalendarInfoId` from the existing join table (all current events have exactly one calendar — that becomes the owner):
+2. Backfill from the existing join table (all current events have exactly one calendar):
    ```sql
    UPDATE "Events" e
    SET "OwnerCalendarInfoId" = (
@@ -92,22 +196,32 @@ The existing many-to-many configuration is **unchanged**.
        LIMIT 1
    );
    ```
-3. Add FK constraint `Events.OwnerCalendarInfoId → Calendars.Id` (RESTRICT).
+3. Add FK `Events.OwnerCalendarInfoId → Calendars.Id` (RESTRICT).
 4. Add `IsExternallyOwned (boolean NOT NULL DEFAULT false)` to `Events`.
-5. Drop temporary `DEFAULT` clause on `OwnerCalendarInfoId`:
+5. Drop temporary DEFAULT:
    ```sql
    ALTER TABLE "Events" ALTER COLUMN "OwnerCalendarInfoId" DROP DEFAULT;
    ```
 
 ---
 
-## DTO and ViewModel Changes
+## Type Changes per Layer
 
-### `CreateEventRequest` (updated)
+### Layer 1 — Google API response types (new, internal to `FamilyHQ.Services/Calendar/GoogleApi/`)
+
+Defined above. Used only inside `GoogleCalendarClient` and the simulator.
+
+### Layer 2 — Domain models (`FamilyHQ.Core/Models`)
+
+`CalendarEvent` gains `OwnerCalendarInfoId` and `IsExternallyOwned` (see Data Model Changes). No other changes.
+
+### Layer 3 — API inbound request types (`FamilyHQ.Core/DTOs`)
+
+#### `CreateEventRequest` (updated)
 
 ```csharp
 record CreateEventRequest(
-    IReadOnlyList<Guid> CalendarInfoIds,   // min 1, no duplicates; first entry becomes organiser
+    IReadOnlyList<Guid> CalendarInfoIds,   // min 1, no duplicates; first becomes organiser
     string Title,
     DateTimeOffset Start,
     DateTimeOffset End,
@@ -116,7 +230,7 @@ record CreateEventRequest(
     string? Description);
 ```
 
-### `UpdateEventRequest` (updated)
+#### `UpdateEventRequest` (updated)
 
 `CalendarInfoId` removed — field edits apply to the event regardless of which calendar is being viewed.
 
@@ -130,13 +244,13 @@ record UpdateEventRequest(
     string? Description);
 ```
 
-### `ReassignEventRequest` — removed.
+#### `ReassignEventRequest` — removed.
 
-### `CalendarEventDto` (updated)
+### Layer 3 — API outbound response types (`FamilyHQ.Core/DTOs`)
 
-`CalendarEventDto` is the wire type returned by the API. `CalendarEventViewModel` is a UI concern — it is never passed into or out of the API. The `CalendarApiService` (Blazor) maps `CalendarEventDto` → `CalendarEventViewModel`.
+#### `CalendarEventDto` (updated)
 
-`LinkedCalendars` moves from the view model onto the DTO so the wire response carries all linked calendar metadata:
+`CalendarInfoId` (formerly the "primary calendar" concept) is replaced by `Calendars` — a list of all linked calendars. Controllers map domain models to this type; it is the only event type that crosses the API boundary.
 
 ```csharp
 record CalendarEventDto(
@@ -148,16 +262,33 @@ record CalendarEventDto(
     bool IsAllDay,
     string? Location,
     string? Description,
-    IReadOnlyList<EventCalendarDto> Calendars);   // all linked calendars (id, name, colour)
+    IReadOnlyList<EventCalendarDto> Calendars);
 ```
 
 `EventCalendarDto` is unchanged: `record EventCalendarDto(Guid Id, string DisplayName, string? Color)`.
 
-`MonthViewDto.Days` currently holds `List<CalendarEventViewModel>` — this is updated to `List<CalendarEventDto>` to remove the ViewModel from the API surface. The Blazor `CalendarApiService` maps each `CalendarEventDto` to one or more `CalendarEventViewModel` entries (one per linked calendar) for grid rendering.
+#### `MonthViewDto` (updated)
 
-### `CalendarEventViewModel`
+`Days` changes from `Dictionary<string, List<CalendarEventViewModel>>` to `Dictionary<string, List<CalendarEventDto>>`. ViewModels do not appear in API responses.
 
-No API surface change. `LinkedCalendars` is **removed** from the view model — the grid expansion logic in `CalendarApiService` now creates one `CalendarEventViewModel` per entry in `CalendarEventDto.Calendars`, each carrying that calendar's colour and ID. The edit modal receives the originating `CalendarEventDto` (held alongside the view model) to access the full `Calendars` list for chip rendering.
+### Layer 4 — ViewModels (`FamilyHQ.WebUi`)
+
+`CalendarEventViewModel.LinkedCalendars` is **removed** — this data now comes from `CalendarEventDto.Calendars` and is used by `CalendarApiService` during mapping. The `CalendarApiService` creates one `CalendarEventViewModel` per entry in `Calendars`, each carrying that calendar's colour and ID. Blazor components never receive DTOs directly.
+
+The edit modal holds a reference to the originating `CalendarEventDto` (not the view model) for chip rendering — this is the only place a DTO exists inside the UI layer, as a local variable within `CalendarApiService` before mapping is complete.
+
+#### `GoogleEventDetail` — inbound result type for external-attendee check
+
+This type is returned by `IGoogleCalendarClient.GetEventAsync`. It lives in `FamilyHQ.Core/DTOs` because it is part of the interface contract (Core contains all interfaces). It is **not** a Google API response type — it is a domain-level extraction of only the fields the service needs:
+
+```csharp
+public record GoogleEventDetail(
+    string Id,
+    string? OrganizerEmail,
+    IReadOnlyList<string> AttendeeEmails);
+```
+
+`GoogleCalendarClient` maps `GoogleApiEvent` → `GoogleEventDetail` before returning it. `GoogleApiEvent` never escapes the Google client.
 
 ---
 
@@ -167,94 +298,74 @@ No API surface change. `LinkedCalendars` is **removed** from the view model — 
 `CalendarInfoIds`: not null; at least one item; no duplicate Guids; each item non-empty.
 
 ### `UpdateEventRequestValidator` (new)
-Validates `Title` (not empty, ≤ 200 chars), `Start` (not empty), `End` (not empty, ≥ `Start`). Replaces the existing controller bridge that adapted `UpdateEventRequest` into `CreateEventRequest` to reuse `CreateEventRequestValidator` — that adapter code is deleted.
+Validates `Title` (not empty, ≤ 200 chars), `Start` (not empty), `End` (not empty, ≥ `Start`). Replaces the existing controller bridge that adapted `UpdateEventRequest` into `CreateEventRequest`.
 
 ---
 
 ## Backend API Changes
 
-Multi-calendar operations are not scoped to a single calendar, so the new create, update, and delete endpoints move to an event-centric route prefix. The old calendar-scoped routes for these operations are **removed** — there is no production deployment to maintain backward compatibility with.
-
-The `GET /api/calendars/events` query endpoint is unchanged (it is calendar-aware by design and returns all events across all visible calendars).
+Multi-calendar operations are not scoped to a single calendar. New create, update, and delete endpoints use an event-centric route. The old calendar-scoped event routes are removed (no production deployment to preserve).
 
 ### Endpoint changes
 
 | Method | Route | Notes |
 |--------|-------|-------|
-| `GET` | `/api/calendars/events?year=&month=` | **Unchanged**. Returns `MonthViewDto` (now using `CalendarEventDto` instead of `CalendarEventViewModel`). |
-| `GET` | `/api/calendars` | **Unchanged**. |
-| `POST` | `/api/events` | **New** (replaces `/api/calendars/{calendarId}/events`). Creates event across one or more calendars. Returns 201 + `CalendarEventDto`. |
-| `PUT` | `/api/events/{eventId}` | **New** (replaces `/api/calendars/{calendarId}/events/{eventId}`). Field edits (title, times, location, description). Returns 200 + `CalendarEventDto`. |
-| `DELETE` | `/api/events/{eventId}` | **New** (replaces `/api/calendars/{calendarId}/events/{eventId}`). Full event delete with live external-attendee check. Returns 204. |
-| `POST` | `/api/events/{eventId}/calendars/{calendarId}` | **New**. Add an internal calendar to an existing event. `calendarId` = `CalendarInfo.Id`. Returns 200 + `CalendarEventDto`. Idempotent. |
-| `DELETE` | `/api/events/{eventId}/calendars/{calendarId}` | **New**. Remove one calendar from an event (not a full delete). Returns 204; 404 if calendar not linked. |
-| `POST` | `/api/calendars/{calendarId}/events` | **Removed**. |
-| `PUT` | `/api/calendars/{calendarId}/events/{eventId}` | **Removed**. |
-| `DELETE` | `/api/calendars/{calendarId}/events/{eventId}` | **Removed**. |
-| `POST` | `/api/calendars/{calendarId}/events/{eventId}/reassign` | **Removed**. |
+| `GET` | `/api/calendars/events?year=&month=` | Unchanged route. Returns `MonthViewDto` (updated to use `CalendarEventDto`). |
+| `GET` | `/api/calendars` | Unchanged. |
+| `POST` | `/api/events` | New. Creates event. Body: `CreateEventRequest`. Returns 201 + `CalendarEventDto`. |
+| `PUT` | `/api/events/{eventId}` | New. Field edits. Body: `UpdateEventRequest`. Returns 200 + `CalendarEventDto`. |
+| `DELETE` | `/api/events/{eventId}` | New. Full event delete with live external-attendee check. Returns 204. |
+| `POST` | `/api/events/{eventId}/calendars/{calendarId}` | New. Add calendar to event. `calendarId` = `CalendarInfo.Id`. Returns 200 + `CalendarEventDto`. Idempotent. |
+| `DELETE` | `/api/events/{eventId}/calendars/{calendarId}` | New. Remove calendar from event. Returns 204; 404 if not linked. |
+| `POST` | `/api/calendars/{calendarId}/events` | Removed. |
+| `PUT` | `/api/calendars/{calendarId}/events/{eventId}` | Removed. |
+| `DELETE` | `/api/calendars/{calendarId}/events/{eventId}` | Removed. |
+| `POST` | `/api/calendars/{calendarId}/events/{eventId}/reassign` | Removed. |
 
 ### Controller
 
-A new `EventsController` handles the five event-centric routes (`POST /api/events`, `PUT`, `DELETE`, `POST .../calendars/{calendarId}`, `DELETE .../calendars/{calendarId}`). The existing `CalendarsController` retains only the `GET /api/calendars` and `GET /api/calendars/events` endpoints.
-
-### Response types
-
-All event-mutating endpoints return `CalendarEventDto` (or 204 for deletes). `CalendarEventViewModel` is never in an API response.
+A new `EventsController` handles the five event-centric routes. `CalendarsController` retains only `GET /api/calendars` and `GET /api/calendars/events`. Controllers map domain models → DTOs; they never reference ViewModels.
 
 ---
 
 ## `ICalendarEventService` (revised)
 
+Services operate on domain models. They return domain models to controllers, which map to DTOs.
+
 ```csharp
-// Creates Google event in first calendar; patches attendees for additional calendars
 Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct);
-
-// Applies field edits to the Google event via the owner calendar
 Task<CalendarEvent> UpdateAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct);
-
-// Adds an internal calendar as a Google attendee; idempotent
 Task<CalendarEvent> AddCalendarAsync(Guid eventId, Guid targetCalendarInfoId, CancellationToken ct);
-
-// Removes an internal calendar; transfers ownership first if it is the organiser
 Task RemoveCalendarAsync(Guid eventId, Guid calendarInfoId, CancellationToken ct);
-
-// Deletes event with live external-attendee check
 Task DeleteAsync(Guid eventId, CancellationToken ct);
 ```
 
-`ReassignAsync` removed from interface and implementation.
+`ReassignAsync` removed.
 
 ---
 
 ## `IGoogleCalendarClient` Changes
 
+The interface returns domain models. Mapping from Google API response types to domain models happens inside `GoogleCalendarClient` — callers never see Google response types.
+
 ### Additions
 
 ```csharp
-// Patches the attendees array on the event (adds or removes; full replacement of the list)
+// Full replacement of the attendees array on the event
 Task PatchEventAttendeesAsync(
     string organizerCalendarId,
     string googleEventId,
     IEnumerable<string> attendeeGoogleCalendarIds,
     CancellationToken ct);
 
-// Fetches live event detail for external-attendee check at delete time
+// Returns null if the event is not found (404)
 Task<GoogleEventDetail?> GetEventAsync(
     string googleCalendarId,
     string googleEventId,
-    CancellationToken ct);   // null = event not found (404)
+    CancellationToken ct);
 ```
 
-`MoveEventAsync` is retained unchanged (used when owner calendar is removed).
-
-### `GoogleEventDetail` — new type in `FamilyHQ.Core/DTOs`
-
-```csharp
-public record GoogleEventDetail(
-    string Id,
-    string? OrganizerEmail,
-    IReadOnlyList<string> AttendeeEmails);
-```
+`MoveEventAsync` is retained. `GoogleCalendarClient` maps the Google API response for `GetEventAsync` into `GoogleEventDetail` before returning; `GoogleApiEvent` stays internal.
 
 ---
 
@@ -262,77 +373,71 @@ public record GoogleEventDetail(
 
 ### Ownership verification
 
-Calendar ownership uses `GetCalendarsAsync()` (user-scoped by `ICurrentUserService`) and checks whether the target `CalendarInfo.Id` is present. `GetCalendarByIdAsync` is **not** used for ownership checks — it does not filter by user.
+`GetCalendarByIdAsync` is not user-scoped and must not be used for ownership checks. Use `GetCalendarsAsync()` (filters by `ICurrentUserService.UserId`) and check whether the target `Id` is present in the returned set.
 
-Event ownership is verified by loading the event via `GetEventAsync(id)` and confirming its `CalendarInfo` records belong to the current user via the same `GetCalendarsAsync()` set.
+### External-attendee check (`DeleteAsync`)
 
-### External-attendee check (used in `DeleteAsync`)
+Call `IGoogleCalendarClient.GetEventAsync`. Form union of `OrganizerEmail` + `AttendeeEmails`. Compare against the user's `CalendarInfo.GoogleCalendarId` set. Any email not in that set is an external party.
 
-Call `GetEventAsync(ownerCalendarInfo.GoogleCalendarId, googleEventId)`. Form the union of `OrganizerEmail` + `AttendeeEmails` from the response. Compare each email against the current user's `CalendarInfo.GoogleCalendarId` set. Any email not in that set is an external party.
+- **External parties present**: delete locally only. Do not call `events.delete` — Google event persists for external attendees.
+- **No external parties**: call `events.delete`, then delete locally.
+- **`GetEventAsync` returns null**: Google event already gone; delete locally only.
 
-- **External parties present**: delete from local DB only (unlink all calendars; if no links remain, delete `CalendarEvent` row). Do **not** call `events.delete` on Google — the event persists for external attendees.
-- **No external parties**: call `events.delete` on Google, then delete locally.
-- **`GetEventAsync` returns null** (event already gone from Google): skip Google delete; delete locally.
+### Transaction and error model
 
-### Transaction and error-handling model
-
-Google API calls are made **before** opening a DB transaction. If Google succeeds but the DB transaction fails, log a reconciliation error (operation name, event ID, calendar IDs affected) and rethrow. No automatic Google cleanup is attempted — this matches the existing `ReassignAsync` pattern.
+Google API calls are made **before** opening a DB transaction. DB failure after Google success: log reconciliation error (operation, event ID, calendar IDs) and rethrow. No automatic Google rollback.
 
 ### `CreateAsync`
 
-1. Call `GetCalendarsAsync()` to get all user-owned calendars. Deduplicate and validate `CalendarInfoIds` against this set. Throw `ValidationException` for any unrecognised ID.
-2. Take `CalendarInfoIds[0]` as organiser. Call `CreateEventAsync(organiserGoogleCalendarId, event)` → `GoogleEventId`.
-3. If additional calendar IDs provided: call `PatchEventAttendeesAsync(organiserGoogleCalendarId, googleEventId, [additionalGoogleCalendarIds])`.
-4. In a DB transaction: insert `CalendarEvent` with `OwnerCalendarInfoId = CalendarInfoIds[0]`, `IsExternallyOwned = false`; insert join table entries for all calendars.
-5. Return inserted event (with `Calendars` navigation populated).
-6. On DB failure after Google success: log reconciliation error, rethrow.
+1. `GetCalendarsAsync()` → validate all `CalendarInfoIds` exist in set. Throw `ValidationException` for unknowns. Deduplicate; retain matched `CalendarInfo` objects.
+2. `CalendarInfoIds[0]` is organiser. Call `CreateEventAsync(organiserGoogleCalendarId, event)` → `GoogleEventId`.
+3. If additional calendars: call `PatchEventAttendeesAsync(organiserCalendarId, googleEventId, additionalCalendarIds)`.
+4. DB transaction: insert `CalendarEvent` (`OwnerCalendarInfoId = CalendarInfoIds[0]`, `IsExternallyOwned = false`); insert join table entries for all calendars.
+5. Return `CalendarEvent` with `Calendars` navigation populated.
+6. DB failure after Google success: log reconciliation error, rethrow.
 
 ### `UpdateAsync`
 
-1. Load event via `GetEventAsync(eventId)` (includes `CalendarInfo` navigation, includes `OwnerCalendarInfo`). Verify event belongs to current user. Throw `NotFoundException` if not found or not owned.
-2. Call `UpdateEventAsync(ownerCalendarInfo.GoogleCalendarId, event)` on Google.
-3. In a DB transaction: update event fields, call `SaveChangesAsync`.
-4. On DB failure after Google success: log reconciliation error, rethrow.
+1. Load event + `OwnerCalendarInfo`. Verify ownership via `GetCalendarsAsync()`. Throw `NotFoundException` if absent.
+2. Call `UpdateEventAsync(ownerGoogleCalendarId, event)`.
+3. DB transaction: update fields, `SaveChangesAsync`.
+4. DB failure: log reconciliation error, rethrow.
 
 ### `AddCalendarAsync`
 
-1. Load event and verify ownership (as above).
-2. Verify `targetCalendarInfoId` is in user's calendar set. Throw `NotFoundException` if not.
-3. If `targetCalendarInfoId` is already in the event's `Calendars` collection: return event immediately (idempotent).
-4. Build updated attendee list: current attendees + `targetCalendarInfo.GoogleCalendarId`.
-5. Call `PatchEventAttendeesAsync(ownerGoogleCalendarId, googleEventId, updatedAttendeeList)`.
-6. In a DB transaction: insert join table entry. On unique-constraint violation (concurrent duplicate): re-fetch and return existing (idempotent). On other DB failure: log reconciliation error, rethrow.
-7. Return updated event with all linked calendars.
+1. Load event, verify ownership.
+2. Verify `targetCalendarInfoId` in user's calendar set. Throw `NotFoundException` if absent.
+3. If already in `event.Calendars`: return event (idempotent, no Google call).
+4. Updated attendees = existing attendees + `targetCalendarInfo.GoogleCalendarId`.
+5. Call `PatchEventAttendeesAsync`.
+6. DB transaction: insert join table entry. Catch unique-constraint violation → re-fetch and return (concurrent idempotent). Other DB failure: log reconciliation error, rethrow.
+7. Return updated event.
 
 ### `RemoveCalendarAsync`
 
-1. Load event and verify ownership.
-2. Find the `CalendarInfo` entry matching `calendarInfoId` in the event's `Calendars` collection. Throw `NotFoundException` if not found.
-3. Count linked calendars.
-4. **If this is the last linked calendar**: delegate to `DeleteAsync(eventId)`.
-5. **If this is the owner calendar** (i.e. `calendarInfoId == event.OwnerCalendarInfoId`) and others remain:
-   - Pick any remaining linked calendar as the new owner.
-   - Call `MoveEventAsync(currentOwnerGoogleCalendarId, googleEventId, newOwnerGoogleCalendarId)`.
-   - Update `event.OwnerCalendarInfoId = newOwner.Id` in the DB transaction (step 6).
-6. Build updated attendee list: all linked `GoogleCalendarId` values **except** the one being removed.
-7. Call `PatchEventAttendeesAsync(newOrCurrentOwnerGoogleCalendarId, googleEventId, updatedAttendeeList)`.
-8. In a DB transaction: remove join table entry; update `OwnerCalendarInfoId` if changed.
-9. On DB failure after Google success: log reconciliation error, rethrow.
+1. Load event, verify ownership.
+2. Find `CalendarInfo` matching `calendarInfoId` in `event.Calendars`. Throw `NotFoundException` if absent.
+3. If last linked calendar: delegate to `DeleteAsync(eventId)`.
+4. If owner calendar and others remain: call `MoveEventAsync` to promote a remaining calendar as new owner; note new `OwnerCalendarInfoId` for DB step.
+5. Updated attendees = all linked `GoogleCalendarId` values except removed one.
+6. Call `PatchEventAttendeesAsync(newOrExistingOwnerGoogleCalendarId, googleEventId, updatedAttendees)`.
+7. DB transaction: remove join table entry; update `OwnerCalendarInfoId` if changed.
+8. DB failure: log reconciliation error, rethrow.
 
 ### `DeleteAsync`
 
-1. Load event and verify ownership. Load `OwnerCalendarInfo`.
-2. Perform external-attendee check (see above).
-3. If no external parties: call `events.delete(ownerGoogleCalendarId, googleEventId)` on Google.
-4. In a DB transaction: remove all join table entries for this event; delete `CalendarEvent` row.
+1. Load event + `OwnerCalendarInfo`, verify ownership.
+2. External-attendee check.
+3. If no external parties: call `events.delete`.
+4. DB transaction: remove join table entries; delete `CalendarEvent` row.
 
 ---
 
 ## Grid Query Change
 
-`GetEventsForMonthAsync` is modified to **expand multi-calendar events**: for an event with N linked calendars, return N `CalendarEventViewModel` entries, each populated with the colour and display name of its respective `CalendarInfo`. The existing `LinkedCalendars` property on `CalendarEventViewModel` continues to carry all linked calendars (so the edit modal can show all chips).
+`GetEventsForMonthAsync` expands multi-calendar events: for an event with N linked calendars, return N `CalendarEventDto` entries in `MonthViewDto`, each with a single-entry `Calendars` list populated with that calendar's colour and display name, and the full `Calendars` list also included so the client can render chips correctly.
 
-Each capsule on the grid represents one calendar's view of the event. Clicking any capsule opens the edit modal showing the full event with all linked calendar chips.
+`CalendarApiService` maps each `CalendarEventDto` to one `CalendarEventViewModel` per entry. No ViewModel expansion logic exists in the controller or service.
 
 ---
 
@@ -342,20 +447,20 @@ Each capsule on the grid represents one calendar's view of the event. Clicking a
 
 All in-scope calendars rendered as chips (colour dot + display name).
 
-**Create mode**: chips start deselected. Client accumulates selections; no API call until Save. At least one chip required.
+**Create mode**: chips start deselected. Accumulate client-side; single `POST /api/events` on Save carrying all selected `CalendarInfoIds`.
 
-**Edit mode**: chips for calendars in `LinkedCalendars` are active; others inactive.
-- Tap inactive chip → `POST .../calendars/{targetCalendarId}` (immediate API call); activates on 200.
-- Tap active chip → `DELETE .../calendars/{targetCalendarId}` (immediate API call), unless last active chip.
-- **Last chip protection**: last active chip renders without ✕. Tap is no-op. Tooltip: "Use Delete to remove this event entirely."
+**Edit mode**: the modal holds the `CalendarEventDto` from the API response. Chips whose `Id` appears in `CalendarEventDto.Calendars` are active.
+- Tap inactive chip → `POST /api/events/{eventId}/calendars/{calendarId}`; activates on 200.
+- Tap active chip → `DELETE /api/events/{eventId}/calendars/{calendarId}`, unless last active chip.
+- **Last chip protection**: last active chip has no ✕. Tap is no-op. Tooltip: "Use Delete to remove this event entirely."
 
 ### Delete button
 
-Unchanged visually. Calls existing `DELETE /api/calendars/{calendarId}/events/{eventId}`. Backend handles external-attendee check transparently. Returns 204.
+Calls `DELETE /api/events/{eventId}`. Returns 204. Backend external-attendee check is transparent.
 
 ### Grid
 
-No structural changes. The expanded query response naturally produces multiple capsules.
+No structural changes. Expanded `MonthViewDto` naturally produces one capsule per calendar per event.
 
 ---
 
@@ -364,55 +469,55 @@ No structural changes. The expanded query response naturally produces multiple c
 ### Unit tests (TDD — written before implementation)
 
 **Validators**
-- `CreateEventRequest`: rejects null list; rejects empty list; rejects duplicates; rejects empty Guid; accepts one or more valid distinct Guids.
-- `UpdateEventRequestValidator`: validates Title (not empty, ≤ 200), Start, End (≥ Start).
+- `CreateEventRequest`: rejects null list; empty list; duplicates; empty Guid; accepts one or more valid distinct Guids.
+- `UpdateEventRequestValidator`: Title not empty ≤ 200; Start not empty; End ≥ Start.
+
+**GoogleCalendarClient mapping**
+- `GoogleApiEvent` with organiser and attendees maps correctly to `GoogleEventDetail`.
+- `GoogleApiEvent` with `Status = "cancelled"` is handled as deletion during sync.
+- `GoogleApiEventDateTime` with `Date` only maps to all-day event on domain model.
 
 **Service — CreateAsync**
-- Calls `CreateEventAsync` for organiser calendar.
-- Calls `PatchEventAttendeesAsync` with additional calendar IDs when more than one calendar selected.
+- Calls `CreateEventAsync` for organiser; `PatchEventAttendeesAsync` for additional calendars.
 - Does not call `PatchEventAttendeesAsync` when only one calendar selected.
-- All join table entries created; `OwnerCalendarInfoId` set to first calendar.
+- `OwnerCalendarInfoId` set to first calendar; join entries for all.
 - `ValidationException` on unknown `CalendarInfoId`.
 - Reconciliation error logged on DB failure after Google success.
 
 **Service — UpdateAsync**
-- Calls `UpdateEventAsync` on organiser's Google calendar ID.
-- Updates DB fields in transaction.
-- Reconciliation error logged on DB failure.
-- `NotFoundException` when event not found or not owned by current user.
+- Calls `UpdateEventAsync` using owner calendar's Google ID.
+- DB fields updated in transaction.
+- `NotFoundException` on missing or unowned event.
 
 **Service — AddCalendarAsync**
-- Calls `PatchEventAttendeesAsync` with updated full attendee list.
-- Inserts join table entry.
-- No Google call and no DB write when calendar already linked (idempotent).
-- Returns existing event on concurrent unique-constraint violation.
-- `NotFoundException` when `targetCalendarInfoId` not in user's calendar set.
+- `PatchEventAttendeesAsync` called with full updated attendee list.
+- Idempotent: no Google call when already linked.
+- Handles concurrent unique-constraint violation gracefully.
+- `NotFoundException` when `targetCalendarInfoId` not in user's set.
 
 **Service — RemoveCalendarAsync**
-- Non-owner, non-last: calls `PatchEventAttendeesAsync` without the removed calendar; removes join entry.
-- Owner, non-last: calls `MoveEventAsync` first, then `PatchEventAttendeesAsync`; updates `OwnerCalendarInfoId`.
+- Non-owner, non-last: `PatchEventAttendeesAsync` without removed calendar; join entry removed.
+- Owner, non-last: `MoveEventAsync` then `PatchEventAttendeesAsync`; `OwnerCalendarInfoId` updated.
 - Last calendar: delegates to `DeleteAsync`.
-- `NotFoundException` when `calendarInfoId` not in event's linked calendars.
-- Reconciliation error logged on DB failure after Google success.
+- `NotFoundException` when calendar not in event's linked set.
 
 **Service — DeleteAsync**
-- External attendee present: `GetEventAsync` called; `events.delete` skipped; local rows deleted.
-- No external attendees: `events.delete` called; local rows deleted.
-- `GetEventAsync` returns null: skips Google delete; deletes locally.
+- External attendee present: Google delete skipped; local rows deleted.
+- No external attendees: Google delete called; local rows deleted.
+- `GetEventAsync` null: Google delete skipped; local rows deleted.
 
 **Controller — EventsController**
-- `POST /api/events`: auth enforced; returns 201 + `CalendarEventDto` with `Calendars` populated.
-- `PUT /api/events/{eventId}`: auth enforced; returns 200 + `CalendarEventDto`.
-- `DELETE /api/events/{eventId}`: auth enforced; returns 204.
-- `POST /api/events/{eventId}/calendars/{calendarId}`: auth enforced; returns 200 + `CalendarEventDto`; idempotent (200 if already linked).
-- `DELETE /api/events/{eventId}/calendars/{calendarId}`: auth enforced; returns 204; 404 on `NotFoundException`.
+- Each endpoint maps domain model → `CalendarEventDto` correctly (no ViewModel fields in response).
+- `POST /api/events`: 201 + `CalendarEventDto` with `Calendars` populated.
+- `POST /api/events/{id}/calendars/{calendarId}`: 200 + `CalendarEventDto`; 200 idempotent.
+- `DELETE /api/events/{id}/calendars/{calendarId}`: 204; 404 on `NotFoundException`.
 
 **Grid query**
-- `GetEventsForMonth_EventLinkedToTwoCalendars_ReturnsTwoDtos`: `MonthViewDto.Days` contains two `CalendarEventDto` entries for the same event (one per linked calendar), each with the correct `Calendars` list populated.
+- Event linked to two calendars returns two `CalendarEventDto` entries in `MonthViewDto`, each with correct `Calendars` list and colour.
 
 **CalendarApiService (Blazor)**
-- Maps `CalendarEventDto` → one `CalendarEventViewModel` per entry in `Calendars` for grid rendering.
-- Edit modal receives the originating `CalendarEventDto` for chip rendering.
+- Two `CalendarEventDto` entries for one event map to two `CalendarEventViewModel` entries with correct calendar colours.
+- No DTO type appears in the resulting ViewModels.
 
 ### E2E / acceptance tests (BDD)
 
@@ -423,9 +528,9 @@ No structural changes. The expanded query response naturally produces multiple c
 - Last chip protection → tapping last active chip does nothing; Delete is the only exit.
 - Delete event, no external attendees → deleted from Google and FamilyHQ.
 - Edit event fields (title) → change visible on all capsules for that event.
-- **Edge case**: event created externally, internal calendar invited, external later removes itself → user deletes → full Google delete, no zombie event.
-- **Edge case**: event created externally, external still an attendee → user deletes → local-only delete; Google event persists.
-- **Simulator**: `events.list(calendarId=B)` returns event where B is an attendee (not organiser), confirming simulator routes by attendee membership.
+- **Edge case**: externally created event, internal calendar invited, external removes itself → user deletes → full Google delete, no zombie.
+- **Edge case**: external still attendee → user deletes → local delete only; Google event persists.
+- **Simulator**: `events.list(calendarId=B)` returns event where B is attendee not organiser, confirming simulator routes by attendee membership correctly.
 
 ---
 
@@ -433,4 +538,4 @@ No structural changes. The expanded query response naturally produces multiple c
 
 - Events across multiple Google accounts.
 - Displaying external attendee names in the FamilyHQ UI.
-- Sync-time deduplication of events discovered via attendee routes (current sync processes each calendar independently; a future iteration may deduplicate by `iCalUID`).
+- Sync-time deduplication by `iCalUID` (deferred).
