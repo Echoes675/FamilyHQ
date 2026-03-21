@@ -124,8 +124,26 @@ public class DashboardPage : BasePage
         await Page.GetByText(eventName).First.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
 
-        var calendarSelect = EventModal.Locator("select.form-select");
-        await calendarSelect.SelectOptionAsync(new SelectOptionValue { Label = targetCalendarName });
+        // Activate the target calendar chip if it is not already active.
+        var targetChip = EventModal.Locator($".chip >> text={targetCalendarName}");
+        var targetClasses = await targetChip.GetAttributeAsync("class") ?? "";
+        if (!targetClasses.Contains("chip-active"))
+            await targetChip.ClickAsync();
+
+        // Deactivate all active chips that are not the target calendar.
+        // Iterate in reverse to avoid index drift as chips change state.
+        var activeChips = EventModal.Locator(".chip-active");
+        var activeCount = await activeChips.CountAsync();
+        for (int i = activeCount - 1; i >= 0; i--)
+        {
+            var chip = activeChips.Nth(i);
+            var text = await chip.InnerTextAsync();
+            if (text.Contains(targetCalendarName)) continue;
+
+            var removeBtn = chip.Locator(".chip-remove");
+            if (await removeBtn.CountAsync() > 0)
+                await removeBtn.ClickAsync();
+        }
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
