@@ -458,6 +458,10 @@ Task<GoogleEventDetail?> GetEventAsync(
 
 ## Service Behaviour
 
+### `ICalendarRepository` — join table manipulation
+
+The service layer manipulates calendar membership via EF Core change tracking on `CalendarEvent.Calendars` (the navigation property for the many-to-many join table). No new repository methods are required for inserting or removing individual join-table entries — EF Core handles this when the navigation collection is modified and `SaveChangesAsync` is called. The existing `GetEventAsync(Guid id)` must eager-load the `Calendars` navigation including `CalendarInfo` data (for `GoogleCalendarId` lookups). If the current implementation does not eager-load `Calendars`, it must be updated to do so.
+
 ### Ownership verification
 
 `GetCalendarByIdAsync` is not user-scoped and must not be used for ownership checks. Use `GetCalendarsAsync()` (filters by `ICurrentUserService.UserId`) and check whether the target `Id` is present in the returned set.
@@ -482,6 +486,8 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 - **`IsExternallyOwned`**: set to `true` when `GoogleApiOrganizer.Self = false`; `false` otherwise.
 
 `GoogleApiEvent.Organizer` and `GoogleApiEvent.Attendees` fields (defined in the Google API Response Types section above) are used for this mapping. The `CalendarSyncService` must be updated to pass the `GoogleApiEvent` organiser and attendees through to the `CalendarEvent` construction path.
+
+**Second-calendar attach path**: when `SyncAsync` encounters a `GoogleEventId` that already exists in the database (i.e., the event was already synced via a different calendar's attendee membership), the sync service adds the current calendar to the existing `CalendarEvent.Calendars` join table but **does not change `OwnerCalendarInfoId`**. The owner was established by the first sync run and must not be overwritten — it represents the Google organiser for write operations. `IsExternallyOwned` is also not re-evaluated on attach; it reflects the state at first creation and is updated only by an explicit re-sync of the owning calendar.
 
 ### `CreateAsync`
 
@@ -534,8 +540,8 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 Responsibilities per layer, consistent with the layer diagram:
 
 1. **Repository / service**: `GetEventsForMonthAsync` returns `IReadOnlyList<CalendarEvent>` with `Calendars` navigations fully populated (all linked `CalendarInfo` records eager-loaded). No DTO construction or expansion here.
-2. **Controller**: Iterates the returned `CalendarEvent` list. For each event with N linked calendars, emits N `CalendarEventDto` entries — one per calendar. Each `CalendarEventDto` carries the **full** `Calendars` list (all N linked calendars). Groups entries by date and builds `MonthViewDto.Days`. The N entries for the same event are distinguished only by which calendar `CalendarApiService` uses for the capsule — they are identical `CalendarEventDto` objects apart from that context, which is resolved in the next layer.
-3. **`CalendarApiService`**: Receives `MonthViewDto`. For each `CalendarEventDto` in `Days`, creates one `CalendarEventViewModel`. The per-capsule calendar identity is established by iterating each `EventCalendarDto` in `CalendarEventDto.Calendars` and creating one ViewModel per calendar, setting `CalendarInfoId`, `CalendarDisplayName`, and `CalendarColor` from that calendar. `AllCalendars` is populated from the full `CalendarEventDto.Calendars` list on every ViewModel. Returns a `MonthViewModel` to Blazor components. No expansion logic — all expansion happened in the controller.
+2. **Controller**: Maps each `CalendarEvent` to **one** `CalendarEventDto`, carrying the full `Calendars` list. Groups by date and builds `MonthViewDto.Days`. One `CalendarEventDto` per event — no expansion at this layer.
+3. **`CalendarApiService`**: Receives `MonthViewDto`. For each `CalendarEventDto` in `Days`, iterates `CalendarEventDto.Calendars` and creates **one `CalendarEventViewModel` per linked calendar**, setting `CalendarInfoId`, `CalendarDisplayName`, and `CalendarColor` from that `EventCalendarDto`. `AllCalendars` is set to the full `Calendars` list (as `IReadOnlyList<CalendarSummaryViewModel>`) on every ViewModel. An event with N calendars produces N ViewModels in `MonthViewModel.Days`. **Expansion happens here, not in the controller.**
 
 ---
 
@@ -582,8 +588,8 @@ All in-scope calendars rendered as chips (colour dot + display name). The modal 
 
 **Create mode**: chips start deselected. Accumulate client-side; single `POST /api/events` on Save carrying all selected `CalendarInfoIds`.
 
-**Edit mode**: the modal holds the `CalendarEventDto` from the API response. Chips whose `Id` appears in `CalendarEventDto.Calendars` are active.
-- Tap inactive chip → `POST /api/events/{eventId}/calendars/{calendarId}`; activates on 200.
+**Edit mode**: the modal binds to a `CalendarEventViewModel`. Chips whose `Id` appears in `CalendarEventViewModel.AllCalendars` are active.
+- Tap inactive chip → `POST /api/events/{eventId}/calendars/{calendarId}`; `CalendarApiService` maps the returned `CalendarEventDto` to a new `CalendarEventViewModel` (with updated `AllCalendars`); modal re-binds.
 - Tap active chip → `DELETE /api/events/{eventId}/calendars/{calendarId}`, unless last active chip.
 - **Last chip protection**: last active chip has no ✕. Tap is no-op. Tooltip: "Use Delete to remove this event entirely."
 
