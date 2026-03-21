@@ -15,7 +15,7 @@ public class CalendarEventServiceTests
     private static readonly Guid EventId   = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
     [Fact]
-    public async Task ReassignAsync_WhenValidRequest_DeletesFromSourceCreatesInTarget()
+    public async Task ReassignAsync_WhenValidRequest_MovesEventAndUpdatesFields()
     {
         // Arrange
         var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
@@ -33,34 +33,28 @@ public class CalendarEventServiceTests
             Calendars = new List<CalendarInfo> { fromCal }
         };
 
-        var createdGoogleEvent = new CalendarEvent
-        {
-            Id = EventId,
-            GoogleEventId = "new-google-id",
-            Title = "New Title"
-        };
-
         calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingEvent);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { fromCal, toCal });
-        googleClient.Setup(c => c.DeleteEventAsync(fromCal.GoogleCalendarId, existingEvent.GoogleEventId, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        googleClient.Setup(c => c.CreateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(createdGoogleEvent);
+        googleClient.Setup(c => c.MoveEventAsync(fromCal.GoogleCalendarId, "original-google-id", toCal.GoogleCalendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("original-google-id");
+        googleClient.Setup(c => c.UpdateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) => e);
 
         var request = new ReassignEventRequest(ToCalId, "New Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
 
         // Act
         var result = await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
 
-        // Assert — Google ops are the key behaviors
-        googleClient.Verify(c => c.DeleteEventAsync(fromCal.GoogleCalendarId, "original-google-id", It.IsAny<CancellationToken>()), Times.Once);
-        googleClient.Verify(c => c.CreateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Assert — move and update are called; event ID is unchanged
+        googleClient.Verify(c => c.MoveEventAsync(fromCal.GoogleCalendarId, "original-google-id", toCal.GoogleCalendarId, It.IsAny<CancellationToken>()), Times.Once);
+        googleClient.Verify(c => c.UpdateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        googleClient.Verify(c => c.CreateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        googleClient.Verify(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
-        // State: returned event reflects new google ID and correct calendar link
         result.Should().NotBeNull();
-        result!.GoogleEventId.Should().Be("new-google-id");
+        result!.GoogleEventId.Should().Be("original-google-id");
         result.Calendars.Should().ContainSingle(c => c.Id == ToCalId);
         result.Calendars.Should().NotContain(c => c.Id == FromCalId);
     }
@@ -141,7 +135,7 @@ public class CalendarEventServiceTests
     }
 
     [Fact]
-    public async Task ReassignAsync_WhenGoogleDeleteThrows_PropagatesException()
+    public async Task ReassignAsync_WhenMoveThrows_PropagatesException()
     {
         // Arrange
         var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
@@ -159,20 +153,14 @@ public class CalendarEventServiceTests
             .ReturnsAsync(existingEvent);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { fromCal, toCal });
-        
-        // Mock CreateEventAsync to return a valid event for rollback
-        googleClient.Setup(c => c.CreateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CalendarEvent { GoogleEventId = "new-google-id" });
-        googleClient.Setup(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        googleClient.Setup(c => c.MoveEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Google API unavailable"));
 
         var request = new ReassignEventRequest(ToCalId, "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
 
-        // Act
-        var act = async () => await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
-
-        // Assert
-        await act.Should().ThrowAsync<HttpRequestException>();
+        // Act & Assert
+        await systemUnderTest.Invoking(s => s.ReassignAsync(FromCalId, EventId, request))
+            .Should().ThrowAsync<HttpRequestException>();
     }
 
     private static (Mock<IGoogleCalendarClient>, Mock<ICalendarRepository>, CalendarEventService) CreateSut()

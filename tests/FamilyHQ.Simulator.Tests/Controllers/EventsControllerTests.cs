@@ -6,6 +6,8 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Moq;
 using System.Text.Json;
 using Xunit;
 
@@ -198,9 +200,65 @@ public class EventsControllerTests
         // Act
         var result = await sut.DeleteEvent("cal-bob", "evt-bob");
 
-        // Assert
-        result.Should().BeOfType<NotFoundResult>();
+        // Assert — simulator returns Google-format error body on not found
+        result.Should().BeOfType<NotFoundObjectResult>();
         db.Events.Should().Contain(e => e.Id == "evt-bob");
+    }
+
+    // ── MoveEvent ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task MoveEvent_WhenEventBelongsToUser_UpdatesCalendarId()
+    {
+        // Arrange
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-alice",
+            CalendarId = "cal-source",
+            Summary = "Alice Event",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var result = await sut.MoveEvent("cal-source", "evt-alice", "cal-destination");
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        var moved = await db.Events.FindAsync("evt-alice");
+        moved!.CalendarId.Should().Be("cal-destination");
+    }
+
+    [Fact]
+    public async Task MoveEvent_WhenEventBelongsToDifferentUser_ReturnsNotFound()
+    {
+        // Arrange
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-bob",
+            CalendarId = "cal-bob",
+            Summary = "Bob Event",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "bob"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var result = await sut.MoveEvent("cal-bob", "evt-bob", "cal-alice");
+
+        // Assert
+        result.Should().BeOfType<NotFoundObjectResult>();
+        var unchanged = await db.Events.FindAsync("evt-bob");
+        unchanged!.CalendarId.Should().Be("cal-bob");
     }
 
     private static SimContext CreateDb()
@@ -213,7 +271,8 @@ public class EventsControllerTests
 
     private static EventsController CreateSut(SimContext db, string? userId = null)
     {
-        var controller = new EventsController(db);
+        var logger = new Mock<ILogger<EventsController>>().Object;
+        var controller = new EventsController(db, logger);
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";

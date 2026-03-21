@@ -199,7 +199,29 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.DeleteAsync(endpoint, ct);
+
+        // 404 means the event is already gone — treat as success (idempotent delete)
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogWarning(
+                "Delete event {GoogleEventId} from calendar {GoogleCalendarId} returned 404 — event already absent, treating as success.",
+                googleEventId, googleCalendarId);
+            return;
+        }
+
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(sourceCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}/move?destination={Uri.EscapeDataString(destinationCalendarId)}";
+        var response = await _httpClient.PostAsync(endpoint, null, ct);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<GoogleEventItem>(cancellationToken: ct);
+        return result!.Id;
     }
 
     private static object MapToGoogleEvent(CalendarEvent calendarEvent)

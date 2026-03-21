@@ -119,6 +119,24 @@ public class DashboardPage : BasePage
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
+    public async Task ChangeEventCalendarAsync(string eventName, string targetCalendarName)
+    {
+        await Page.GetByText(eventName).First.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        var calendarSelect = EventModal.Locator("select.form-select");
+        await calendarSelect.SelectOptionAsync(new SelectOptionValue { Label = targetCalendarName });
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
     public async Task DeleteEventAsync(string title)
     {
         await Page.GetByText(title).First.ClickAsync();
