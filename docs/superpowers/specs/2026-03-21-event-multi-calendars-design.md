@@ -275,7 +275,7 @@ record CalendarEventDto(
 
 ### Layer 4 — ViewModels (`FamilyHQ.WebUi`)
 
-`CalendarEventViewModel` gains an `AllCalendars` property — the full list of calendars the event belongs to — so the edit modal can render chips without holding a DTO reference. `CalendarApiService` populates this from `CalendarEventDto.Calendars` during mapping.
+`CalendarEventViewModel` gains an `AllCalendars` property — the full list of calendars the event belongs to — so the edit modal can render chips without holding a DTO reference. `CalendarApiService` populates this from `CalendarEventDto.Calendars` during mapping, projecting each `EventCalendarDto` into a `CalendarSummaryViewModel`.
 
 ```csharp
 record CalendarEventViewModel(
@@ -291,10 +291,22 @@ record CalendarEventViewModel(
     string CalendarDisplayName,
     string? CalendarColor,
     // All calendars this event belongs to — used by edit modal for chip rendering
-    IReadOnlyList<EventCalendarDto> AllCalendars);
+    IReadOnlyList<CalendarSummaryViewModel> AllCalendars);
 ```
 
-`CalendarApiService` creates one `CalendarEventViewModel` per `CalendarEventDto` entry received from the API. Blazor components bind to `CalendarEventViewModel` only — DTOs do not appear in component code.
+`CalendarSummaryViewModel` (defined in `ICalendarApiService` section above: `record CalendarSummaryViewModel(Guid Id, string DisplayName, string? Color)`) is reused here. `EventCalendarDto` never appears in a ViewModel or component.
+
+`CalendarApiService` creates one `CalendarEventViewModel` per `CalendarEventDto` entry received from the API. Blazor components bind to `CalendarEventViewModel` only — no DTO type appears in component code.
+
+#### `MonthViewModel` (new, `FamilyHQ.WebUi`)
+
+`ICalendarApiService.GetEventsForMonthAsync` returns a `MonthViewModel` (not `MonthViewDto`). `CalendarApiService` maps the `MonthViewDto` received from the API into this type, converting each `CalendarEventDto` in `Days` into a `CalendarEventViewModel`.
+
+```csharp
+record MonthViewModel(Dictionary<string, List<CalendarEventViewModel>> Days);
+```
+
+`MonthViewDto` (with `Dictionary<string, List<CalendarEventDto>>`) remains the API-layer type returned by the controller and deserialised by `CalendarApiService`. It never appears in Blazor component code.
 
 #### `GoogleEventDetail` — inbound result type for external-attendee check
 
@@ -455,7 +467,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 5. Updated attendees = all linked `GoogleCalendarId` values, minus the removed calendar, minus the new owner calendar. The new owner becomes the organiser and must not appear in the attendees list (Google keeps organiser and attendees as separate fields).
 6. Call `PatchEventAttendeesAsync(newOrExistingOwnerGoogleCalendarId, googleEventId, updatedAttendees)`.
 7. DB transaction: remove join table entry; update `OwnerCalendarInfoId` if changed.
-8. DB failure: log reconciliation error, rethrow.
+8. DB failure after Google success: log reconciliation error (event ID, removed calendar ID, new owner calendar ID if changed), rethrow.
 
 ### `DeleteAsync`
 
@@ -499,13 +511,13 @@ Task RemoveCalendarFromEventAsync(Guid eventId, Guid calendarId, CancellationTok
 // Existing — returns a lightweight calendar summary ViewModel for chip rendering
 Task<IReadOnlyList<CalendarSummaryViewModel>> GetCalendarsAsync(CancellationToken ct);
 
-// Existing — unchanged return type
-Task<MonthViewDto> GetEventsForMonthAsync(int year, int month, CancellationToken ct);
+// Existing — now returns MonthViewModel (CalendarApiService maps MonthViewDto → MonthViewModel)
+Task<MonthViewModel> GetEventsForMonthAsync(int year, int month, CancellationToken ct);
 ```
 
-`CalendarSummaryViewModel` is a new lightweight ViewModel: `record CalendarSummaryViewModel(Guid Id, string DisplayName, string? Color)`. This also resolves the pre-existing `CalendarInfo` domain model leakage in `GetCalendarsAsync`. The chip selector in the edit modal binds to `CalendarSummaryViewModel` — no domain model or DTO appears in component code.
+`CalendarSummaryViewModel` is a new lightweight ViewModel: `record CalendarSummaryViewModel(Guid Id, string DisplayName, string? Color)`. This also resolves the pre-existing `CalendarInfo` domain model leakage in `GetCalendarsAsync`.
 
-> Note: `GetEventsForMonthAsync` still returns `MonthViewDto` — this is the one remaining DTO in the interface. It is the grid data payload and its structure does not need a separate ViewModel wrapper. This is an acknowledged exception: the `MonthViewDto` is effectively a ViewModel-shaped structure (a date-keyed dictionary) and treating it as a DTO in the UI layer is acceptable for this shape. Future cleanup can introduce a `MonthViewModel` wrapper if needed.
+`GetEventsForMonthAsync` now returns a `MonthViewModel` (defined in the Layer 4 section below). `CalendarApiService` deserialises the `MonthViewDto` from the API and maps each `CalendarEventDto` in `Days` into a `CalendarEventViewModel` before returning. No DTO type appears in Blazor component code.
 
 ---
 
