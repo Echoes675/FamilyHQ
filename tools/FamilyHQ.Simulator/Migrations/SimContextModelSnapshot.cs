@@ -88,6 +88,32 @@ namespace FamilyHQ.Simulator.Migrations
                     b.ToTable("SimulatedEvents", (string)null);
                 });
 
+            modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedEventAttendee", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AttendeeCalendarId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId", "AttendeeCalendarId")
+                        .IsUnique();
+
+                    b.ToTable("SimulatedEventAttendees", (string)null);
+                });
+
             modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedUser", b =>
                 {
                     b.Property<string>("Id")

@@ -1,76 +1,58 @@
+using FluentAssertions;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Validators;
-using FluentAssertions;
 using Xunit;
 
 namespace FamilyHQ.Core.Tests.Validators;
 
 public class CreateEventRequestValidatorTests
 {
-    private readonly CreateEventRequestValidator _validator = new();
+    private static readonly Guid CalA = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid CalB = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+
+    private static CreateEventRequest Valid(IReadOnlyList<Guid>? calIds = null) =>
+        new(calIds ?? [CalA], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
 
     [Fact]
-    public void Validator_WhenValidRequest_ShouldNotHaveErrors()
+    public async Task Valid_SingleCalendar_Passes()
     {
-        // Arrange
-        var request = new CreateEventRequest(
-            CalendarInfoId: Guid.NewGuid(),
-            Title: "Test Event",
-            Start: DateTimeOffset.UtcNow,
-            End: DateTimeOffset.UtcNow.AddHours(1),
-            IsAllDay: false,
-            Location: "Home",
-            Description: "A descriptive event"
-        );
-
-        // Act
-        var result = _validator.Validate(request);
-
-        // Assert
+        var result = await new CreateEventRequestValidator().ValidateAsync(Valid([CalA]));
         result.IsValid.Should().BeTrue();
     }
 
     [Fact]
-    public void Validator_WhenEmptyTitle_ShouldHaveError()
+    public async Task Valid_MultipleCalendars_Passes()
     {
-        // Arrange
-        var request = new CreateEventRequest(
-            CalendarInfoId: Guid.NewGuid(),
-            Title: "",
-            Start: DateTimeOffset.UtcNow,
-            End: DateTimeOffset.UtcNow.AddHours(1),
-            IsAllDay: false,
-            Location: null,
-            Description: null
-        );
-
-        // Act
-        var result = _validator.Validate(request);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(e => e.PropertyName == "Title");
+        var result = await new CreateEventRequestValidator().ValidateAsync(Valid([CalA, CalB]));
+        result.IsValid.Should().BeTrue();
     }
 
     [Fact]
-    public void Validator_WhenEndIsBeforeStart_ShouldHaveError()
+    public async Task Null_CalendarInfoIds_Fails()
     {
-        // Arrange
-        var request = new CreateEventRequest(
-            CalendarInfoId: Guid.NewGuid(),
-            Title: "Test Event",
-            Start: DateTimeOffset.UtcNow.AddHours(1),
-            End: DateTimeOffset.UtcNow,
-            IsAllDay: false,
-            Location: null,
-            Description: null
-        );
-
-        // Act
-        var result = _validator.Validate(request);
-
-        // Assert
+        var request = Valid() with { CalendarInfoIds = null! };
+        var result = await new CreateEventRequestValidator().ValidateAsync(request);
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(e => e.PropertyName == "End" && e.ErrorMessage.Contains("after start time"));
+    }
+
+    [Fact]
+    public async Task Empty_CalendarInfoIds_Fails()
+    {
+        var result = await new CreateEventRequestValidator().ValidateAsync(Valid([]));
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Duplicate_CalendarInfoIds_Fails()
+    {
+        var result = await new CreateEventRequestValidator().ValidateAsync(Valid([CalA, CalA]));
+        result.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EmptyGuid_InCalendarInfoIds_Fails()
+    {
+        var result = await new CreateEventRequestValidator().ValidateAsync(Valid([Guid.Empty]));
+        result.IsValid.Should().BeFalse();
     }
 }

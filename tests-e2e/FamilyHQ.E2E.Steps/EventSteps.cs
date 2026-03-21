@@ -64,16 +64,16 @@ public class EventSteps
     public async Task GivenTheUserHasAnAllDayEventTomorrowInCalendar(string eventName, string calendarName)
     {
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        
+
         // Find the calendar ID by name
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
         if (calendar == null)
         {
             throw new Exception($"Calendar '{calendarName}' not found in template.");
         }
-        
+
         var tomorrow = DateTime.Today.AddDays(1);
-        
+
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
             Id = "evt_" + Guid.NewGuid().ToString("N"),
@@ -83,6 +83,25 @@ public class EventSteps
             EndTime = tomorrow.AddDays(1),
             IsAllDay = true
         });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has the event ""([^""]*)"" also in ""([^""]*)""")]
+    public async Task GivenTheUserHasTheEventAlsoInCalendar(string eventName, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+
+        var attendeeCalendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
+        if (attendeeCalendar == null)
+            throw new Exception($"Calendar '{calendarName}' not found in template.");
+
+        // Find the existing event by name and append the attendee calendar ID.
+        var existingEvent = isolatedTemplate.Events.Find(e => e.Summary == eventName);
+        if (existingEvent == null)
+            throw new Exception($"Event '{eventName}' not found in template — add it before calling this step.");
+
+        existingEvent.AttendeeCalendarIds.Add(attendeeCalendar.Id);
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }

@@ -25,6 +25,10 @@ public class SimulatorConfigController : ControllerBase
         // Remove only this user's existing data — other users' data is untouched
         var userCalendars = await _db.Calendars.Where(c => c.UserId == config.UserName).ToListAsync();
         var userEvents = await _db.Events.Where(e => e.UserId == config.UserName).ToListAsync();
+        var userEventIds = userEvents.Select(e => e.Id).ToList();
+        var userAttendees = await _db.EventAttendees.Where(a => userEventIds.Contains(a.EventId)).ToListAsync();
+
+        _db.EventAttendees.RemoveRange(userAttendees);
         _db.Calendars.RemoveRange(userCalendars);
         _db.Events.RemoveRange(userEvents);
 
@@ -56,6 +60,15 @@ public class SimulatorConfigController : ControllerBase
                 IsAllDay = e.IsAllDay,
                 UserId = config.UserName
             });
+
+            foreach (var attendeeCalendarId in e.AttendeeCalendarIds)
+            {
+                _db.EventAttendees.Add(new SimulatedEventAttendee
+                {
+                    EventId = e.Id,
+                    AttendeeCalendarId = attendeeCalendarId
+                });
+            }
         }
 
         await _db.SaveChangesAsync();

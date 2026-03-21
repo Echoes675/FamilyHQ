@@ -57,9 +57,17 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsExternallyOwned")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("Location")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("OwnerCalendarInfoId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("Start")
                         .HasColumnType("timestamp with time zone");
@@ -75,6 +83,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     b.HasIndex("GoogleEventId")
                         .IsUnique();
+
+                    b.HasIndex("OwnerCalendarInfoId");
 
                     b.HasIndex("Start");
 
@@ -219,6 +229,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .WithMany()
                         .HasForeignKey("EventsId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.CalendarEvent", b =>
+                {
+                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerCalendarInfoId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

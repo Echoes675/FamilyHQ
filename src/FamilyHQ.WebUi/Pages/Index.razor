@@ -2,8 +2,7 @@
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.Services.Auth
 @using FamilyHQ.Core.DTOs
-@using FamilyHQ.Core.ViewModels
-@using FamilyHQ.Core.Models
+@using FamilyHQ.WebUi.ViewModels
 @implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
 @inject SignalRService SignalR
@@ -116,7 +115,7 @@
                                     {
                                         <div class="event-capsule" 
                                              style="background-color: @(evt.CalendarColor ?? "var(--primary)"); cursor: pointer;"
-                                             title="@evt.Title (@evt.StartTime.ToString("t")) - @evt.Location"
+                                             title="@evt.Title (@evt.Start.ToString("t")) - @evt.Location"
                                              @onclick="() => OpenEditEventModal(evt)">
                                             @if (evt.IsAllDay)
                                             {
@@ -124,7 +123,7 @@
                                             }
                                             else
                                             {
-                                                <span><b>@evt.StartTime.ToString("h:mm tt")</b> @evt.Title</span>
+                                                <span><b>@evt.Start.ToString("h:mm tt")</b> @evt.Title</span>
                                             }
                                         </div>
                                     }
@@ -194,31 +193,18 @@
                 </div>
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label class="form-label">Calendar</label>
-                        <select class="form-select" @bind="_selectedCalendarId">
-                            <option value="">-- Select Calendar --</option>
-                            @foreach(var cal in _calendars.Where(c => c.IsVisible))
-                            {
-                                <option value="@cal.Id">@cal.DisplayName</option>
-                            }
-                        </select>
+                        <label class="form-label">Calendars</label>
+                        <CalendarChipSelector
+                            AllCalendars="_calendars"
+                            SelectedCalendarIds="_selectedCalendarIds"
+                            SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
+                            EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
+                            CalendarApi="CalendarApi" />
+                        @if (_selectedCalendarIds.Count == 0)
+                        {
+                            <div class="text-danger mt-1" style="font-size: 0.82rem;">Please select at least one calendar.</div>
+                        }
                     </div>
-
-                    @if (_isEditingEvent && _eventModel.LinkedCalendars.Count > 1)
-                    {
-                        <div class="mb-3">
-                            <label class="form-label text-muted" style="font-size: 0.85rem;">Also on</label>
-                            <div class="d-flex flex-wrap gap-1">
-                                @foreach (var cal in _eventModel.LinkedCalendars.Where(c => c.Id != _selectedCalendarId))
-                                {
-                                    <span class="badge rounded-pill"
-                                          style="background-color: @(cal.Color ?? "#6c757d"); font-size: 0.8rem;">
-                                        @cal.DisplayName
-                                    </span>
-                                }
-                            </div>
-                        </div>
-                    }
 
                     <div class="mb-3">
                         <label class="form-label">Event Title</label>
@@ -239,7 +225,7 @@
                             }
                             else
                             {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.StartTime" />
+                                <input type="datetime-local" class="form-control" @bind="_eventModel.Start" />
                             }
                         </div>
                         <div class="col-6">
@@ -250,7 +236,7 @@
                             }
                             else
                             {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.EndTime" />
+                                <input type="datetime-local" class="form-control" @bind="_eventModel.End" />
                             }
                         </div>
                     </div>
@@ -300,7 +286,7 @@
 
     private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private bool IsLoading = true;
-    private MonthViewDto? _monthView;
+    private MonthViewModel? _monthView;
     private List<List<DayItem>> _weeks = new();
 
     // Quick Jump Modal State
@@ -310,23 +296,22 @@
     // Event Modal State
     private bool _showEventModal = false;
     private bool _isEditingEvent = false;
-    private CalendarEventViewModel _eventModel = new();
-    private Guid _selectedCalendarId;
-    private Guid _originalCalendarId;
-    private IReadOnlyList<CalendarInfo> _calendars = Array.Empty<CalendarInfo>();
+    private EventFormModel _eventModel = new();
+    private HashSet<Guid> _selectedCalendarIds = new();
+    private IReadOnlyList<CalendarSummaryViewModel> _calendars = Array.Empty<CalendarSummaryViewModel>();
     private string? _modalError;
     private bool _isSaving = false;
 
     // Helper properties for All-day date binding
     private DateTime _eventModelStartDate
     {
-        get => _eventModel.StartTime.Date;
-        set => _eventModel.StartTime = value.Date;
+        get => _eventModel.Start.LocalDateTime.Date;
+        set => _eventModel.Start = new DateTimeOffset(value.Date, TimeSpan.Zero);
     }
     private DateTime _eventModelEndDate
     {
-        get => _eventModel.EndTime.Date;
-        set => _eventModel.EndTime = value.Date.AddDays(1).AddTicks(-1); 
+        get => _eventModel.End.LocalDateTime.Date;
+        set => _eventModel.End = new DateTimeOffset(value.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
     }
 
     protected override async Task OnInitializedAsync()
@@ -394,11 +379,11 @@
                 var dateKey = currentDay.ToString("yyyy-MM-dd");
                 var eventsForDay = new List<CalendarEventViewModel>();
                 
-                if (_monthView != null && _monthView.Days != null && _monthView.Days.ContainsKey(dateKey))
+                if (_monthView != null && _monthView.Days.ContainsKey(dateKey))
                 {
                     eventsForDay = _monthView.Days[dateKey]
                         .OrderByDescending(e => e.IsAllDay)
-                        .ThenBy(e => e.StartTime)
+                        .ThenBy(e => e.Start)
                         .ToList();
                 }
 
@@ -477,14 +462,16 @@
     private void OpenAddEventModal(DateTime date)
     {
         _isEditingEvent = false;
-        _eventModel = new CalendarEventViewModel
+        _eventModel = new EventFormModel
         {
             Title = "",
-            StartTime = date.AddHours(9), // Default to 9 AM
-            EndTime = date.AddHours(10),  // Default to 10 AM
+            Start = new DateTimeOffset(date.AddHours(9), TimeSpan.Zero),
+            End = new DateTimeOffset(date.AddHours(10), TimeSpan.Zero),
             IsAllDay = false
         };
-        _selectedCalendarId = _calendars.FirstOrDefault()?.Id ?? Guid.Empty;
+        _selectedCalendarIds = _calendars.FirstOrDefault() is { } firstCal
+            ? [firstCal.Id]
+            : [];
         _modalError = null;
         _showEventModal = true;
     }
@@ -493,21 +480,18 @@
     {
         _isEditingEvent = true;
 
-        // Clone to avoid mutating grid before save
-        _eventModel = new CalendarEventViewModel
+        _eventModel = new EventFormModel
         {
             Id = evt.Id,
             Title = evt.Title,
-            StartTime = evt.StartTime,
-            EndTime = evt.EndTime,
+            Start = evt.Start,
+            End = evt.End,
             IsAllDay = evt.IsAllDay,
             Location = evt.Location,
-            CalendarId = evt.CalendarId,
-            LinkedCalendars = evt.LinkedCalendars
+            AllCalendars = evt.AllCalendars.ToList()
         };
 
-        _selectedCalendarId = evt.CalendarId;
-        _originalCalendarId = evt.CalendarId;
+        _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
 
         _modalError = null;
         _showEventModal = true;
@@ -528,13 +512,13 @@
             return;
         }
 
-        if (_selectedCalendarId == Guid.Empty)
+        if (_selectedCalendarIds.Count == 0)
         {
-            _modalError = "Please select a calendar.";
+            _modalError = "Please select at least one calendar.";
             return;
         }
 
-        if (_eventModel.EndTime < _eventModel.StartTime)
+        if (_eventModel.End < _eventModel.Start)
         {
             _modalError = "End time must be after start time.";
             return;
@@ -546,49 +530,29 @@
         {
             if (_isEditingEvent)
             {
-                if (!Guid.TryParse(_eventModel.Id, out var eventId))
-                {
-                    _modalError = "Invalid Event ID format.";
-                    return;
-                }
+                var eventId = _eventModel.Id;
 
-                if (_selectedCalendarId != _originalCalendarId)
-                {
-                    var reassignReq = new ReassignEventRequest(
-                        _selectedCalendarId,
-                        _eventModel.Title,
-                        _eventModel.StartTime,
-                        _eventModel.EndTime,
-                        _eventModel.IsAllDay,
-                        _eventModel.Location,
-                        null);
-                    await CalendarApi.ReassignEventAsync(_originalCalendarId, eventId, reassignReq);
-                }
-                else
-                {
-                    var updateReq = new UpdateEventRequest(
-                        _selectedCalendarId,
-                        _eventModel.Title,
-                        _eventModel.StartTime,
-                        _eventModel.EndTime,
-                        _eventModel.IsAllDay,
-                        _eventModel.Location,
-                        null);
-                    await CalendarApi.UpdateEventAsync(_selectedCalendarId, eventId, updateReq);
-                }
+                var updateReq = new UpdateEventRequest(
+                    _eventModel.Title,
+                    _eventModel.Start,
+                    _eventModel.End,
+                    _eventModel.IsAllDay,
+                    _eventModel.Location,
+                    null);
+                await CalendarApi.UpdateEventAsync(eventId, updateReq);
             }
             else
             {
                 var createReq = new CreateEventRequest(
-                    _selectedCalendarId,
+                    _selectedCalendarIds.ToList(),
                     _eventModel.Title,
-                    _eventModel.StartTime,
-                    _eventModel.EndTime,
+                    _eventModel.Start,
+                    _eventModel.End,
                     _eventModel.IsAllDay,
                     _eventModel.Location,
                     null
                 );
-                await CalendarApi.CreateEventAsync(_selectedCalendarId, createReq);
+                await CalendarApi.CreateEventAsync(createReq);
             }
             
             CloseEventModal();
@@ -607,12 +571,13 @@
 
     private async Task DeleteEvent()
     {
-        if (!Guid.TryParse(_eventModel.Id, out var eventId)) return;
-        
+        var eventId = _eventModel.Id;
+        if (eventId == Guid.Empty) return;
+
         _isSaving = true;
         try
         {
-            await CalendarApi.DeleteEventAsync(_selectedCalendarId, eventId);
+            await CalendarApi.DeleteEventAsync(eventId);
             CloseEventModal();
             await LoadMonthDataAsync();
         }
@@ -637,5 +602,16 @@
     {
         public DateTime Date { get; set; }
         public List<CalendarEventViewModel> Events { get; set; } = new();
+    }
+
+    private class EventFormModel
+    {
+        public Guid Id { get; set; }
+        public string Title { get; set; } = "";
+        public DateTimeOffset Start { get; set; }
+        public DateTimeOffset End { get; set; }
+        public bool IsAllDay { get; set; }
+        public string? Location { get; set; }
+        public List<CalendarSummaryViewModel> AllCalendars { get; set; } = new();
     }
 }

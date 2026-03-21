@@ -82,6 +82,86 @@ body {
     cursor: pointer;
 }
 
+/* ── Calendar chip selector ─────────────────────────────────────────── */
+
+.chip-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: opacity 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+    user-select: none;
+}
+
+.chip:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.chip-active {
+    background-color: var(--chip-color, #4F46E5);
+    border-color: var(--chip-color, #4F46E5);
+    color: #fff;
+}
+
+.chip-inactive {
+    background-color: transparent;
+    border-color: var(--chip-color, #6c757d);
+    color: var(--chip-color, #6c757d);
+    opacity: 0.65;
+}
+
+.chip-inactive:hover {
+    opacity: 1;
+}
+
+.chip-dot {
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background-color: currentColor;
+    flex-shrink: 0;
+}
+
+.chip-active .chip-dot {
+    background-color: rgba(255, 255, 255, 0.85);
+}
+
+.chip-name {
+    line-height: 1;
+}
+
+.chip-remove {
+    font-size: 0.7rem;
+    line-height: 1;
+    margin-left: 0.1rem;
+    opacity: 0.8;
+    transition: opacity 0.1s;
+}
+
+.chip-remove:hover {
+    opacity: 1;
+}
+
+.chip-error {
+    font-size: 0.82rem;
+    color: #dc3545;
+}
+
+/* ── End chip selector ──────────────────────────────────────────────── */
+
 #blazor-error-ui {
     background: lightyellow;
     bottom: 0;

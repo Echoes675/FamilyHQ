@@ -124,8 +124,26 @@ public class DashboardPage : BasePage
         await Page.GetByText(eventName).First.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
 
-        var calendarSelect = EventModal.Locator("select.form-select");
-        await calendarSelect.SelectOptionAsync(new SelectOptionValue { Label = targetCalendarName });
+        // Activate the target calendar chip if it is not already active.
+        var targetChip = EventModal.Locator($".chip >> text={targetCalendarName}");
+        var targetClasses = await targetChip.GetAttributeAsync("class") ?? "";
+        if (!targetClasses.Contains("chip-active"))
+            await targetChip.ClickAsync();
+
+        // Deactivate all active chips that are not the target calendar.
+        // Iterate in reverse to avoid index drift as chips change state.
+        var activeChips = EventModal.Locator(".chip-active");
+        var activeCount = await activeChips.CountAsync();
+        for (int i = activeCount - 1; i >= 0; i--)
+        {
+            var chip = activeChips.Nth(i);
+            var text = await chip.InnerTextAsync();
+            if (text.Contains(targetCalendarName)) continue;
+
+            var removeBtn = chip.Locator(".chip-remove");
+            if (await removeBtn.CountAsync() > 0)
+                await removeBtn.ClickAsync();
+        }
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
@@ -183,6 +201,136 @@ public class DashboardPage : BasePage
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
+    public async Task OpenEventForEditingAsync(string eventName)
+    {
+        await Page.GetByText(eventName).First.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Activates the chip for <paramref name="calendarName"/> in the event modal chip selector,
+    /// saves the event and waits for the calendar to reload.
+    /// </summary>
+    public async Task AddCalendarChipToEventAsync(string calendarName)
+    {
+        var chip = EventModal.Locator($".chip >> text={calendarName}");
+        await chip.ClickAsync();
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Removes the chip for <paramref name="calendarName"/> from the event modal chip selector,
+    /// saves the event and waits for the calendar to reload.
+    /// </summary>
+    public async Task RemoveCalendarChipFromEventAsync(string calendarName)
+    {
+        var removeBtn = EventModal.Locator($"[aria-label='Remove {calendarName}']");
+        await removeBtn.ClickAsync();
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Creates an event in two named calendars by filling the title and activating both chips.
+    /// </summary>
+    public async Task CreateEventInCalendarsAsync(string title, string calendarName1, string calendarName2)
+    {
+        await AddEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EventTitleInput.FillAsync(title);
+
+        // Activate both chips — the primary calendar chip may already be active;
+        // clicking an already-active chip toggles it off, so we check state first.
+        var chip1 = EventModal.Locator($".chip >> text={calendarName1}");
+        var chip1Classes = await chip1.GetAttributeAsync("class") ?? "";
+        if (!chip1Classes.Contains("chip-active"))
+            await chip1.ClickAsync();
+
+        var chip2 = EventModal.Locator($".chip >> text={calendarName2}");
+        var chip2Classes = await chip2.GetAttributeAsync("class") ?? "";
+        if (!chip2Classes.Contains("chip-active"))
+            await chip2.ClickAsync();
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Returns whether any event capsule for <paramref name="eventName"/> is rendered
+    /// in the background colour of <paramref name="calendarName"/>.
+    /// </summary>
+    public async Task<bool> IsEventDisplayedInCalendarColourAsync(string eventName, string calendarColor)
+    {
+        var count = await EventCapsules.CountAsync();
+        for (int i = 0; i < count; i++)
+        {
+            var capsule = EventCapsules.Nth(i);
+            var text = await capsule.InnerTextAsync();
+            if (!text.Contains(eventName)) continue;
+
+            var style = await capsule.GetAttributeAsync("style") ?? "";
+            if (style.Contains(calendarColor, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true if no event capsule for <paramref name="eventName"/> carries
+    /// the background colour associated with <paramref name="calendarName"/>.
+    /// </summary>
+    public async Task<bool> NoEventCapsuleWithCalendarColourAsync(string eventName, string calendarName, string calendarColor)
+    {
+        var count = await EventCapsules.CountAsync();
+        for (int i = 0; i < count; i++)
+        {
+            var capsule = EventCapsules.Nth(i);
+            var text = await capsule.InnerTextAsync();
+            if (!text.Contains(eventName)) continue;
+
+            var style = await capsule.GetAttributeAsync("style") ?? "";
+            if (style.Contains(calendarColor, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Returns true when the only active chip in the event modal has no remove button visible,
+    /// which is the "last chip protected" invariant.
+    /// </summary>
+    public async Task<bool> LastActiveChipHasNoRemoveButtonAsync()
+    {
+        var activeChips = EventModal.Locator(".chip-active");
+        var activeCount = await activeChips.CountAsync();
+        if (activeCount != 1) return false;
+
+        var removeBtn = activeChips.First.Locator(".chip-remove");
+        return await removeBtn.CountAsync() == 0;
+    }
+
     // Assertions / State Checks
     public async Task<IReadOnlyList<string>> GetVisibleEventsAsync()
     {
@@ -196,5 +344,24 @@ public class DashboardPage : BasePage
         }
 
         return titles;
+    }
+
+    /// <summary>
+    /// Returns the background-color hex value declared for <paramref name="calendarName"/>
+    /// in the chip selector within the open event modal.
+    /// The colour is read from the <c>--chip-color</c> CSS variable on the chip element.
+    /// </summary>
+    public async Task<string> GetChipColourForCalendarAsync(string calendarName)
+    {
+        var chip = EventModal.Locator($".chip >> text={calendarName}");
+        var style = await chip.GetAttributeAsync("style") ?? "";
+        // style is e.g. "--chip-color: #ea4335"
+        var idx = style.IndexOf("#", StringComparison.Ordinal);
+        if (idx >= 0)
+        {
+            var raw = style[idx..].Split(';', ' ')[0].Trim();
+            return raw;
+        }
+        return string.Empty;
     }
 }

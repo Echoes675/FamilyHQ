@@ -8,4 +8,9 @@ public class EventModel
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }
+    /// <summary>
+    /// Additional calendar IDs that this event appears in.
+    /// Seeds EventAttendee rows so the event surfaces on each attendee calendar's feed.
+    /// </summary>
+    public List<string> AttendeeCalendarIds { get; set; } = new();
 }
