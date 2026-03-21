@@ -6,6 +6,8 @@ using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Moq;
 using System.Text.Json;
 using Xunit;
 
@@ -269,7 +271,8 @@ public class EventsControllerTests
 
     private static EventsController CreateSut(SimContext db, string? userId = null)
     {
-        var controller = new EventsController(db);
+        var logger = new Mock<ILogger<EventsController>>().Object;
+        var controller = new EventsController(db, logger);
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";

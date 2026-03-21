@@ -4,6 +4,7 @@ using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Simulator.Controllers;
 
@@ -12,16 +13,18 @@ namespace FamilyHQ.Simulator.Controllers;
 public class EventsController : ControllerBase
 {
     private readonly SimContext _db;
+    private readonly ILogger<EventsController> _logger;
 
-    public EventsController(SimContext db)
+    public EventsController(SimContext db, ILogger<EventsController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     [HttpGet]
     public async Task<IActionResult> ListEvents(string calendarId)
     {
-        Console.WriteLine($"[SIM] GET events for calendar: {calendarId}");
+        _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
         var userId = ExtractUserId(Request);
         var events = await _db.Events
             .Where(e => e.CalendarId == calendarId && e.UserId == userId)
@@ -48,10 +51,10 @@ public class EventsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateEvent(string calendarId, [FromBody] GoogleEventRequest body)
     {
-        Console.WriteLine($"[SIM] POST create event for calendar: {calendarId}");
+        _logger.LogInformation("[SIM] POST create event for calendar: {CalendarId}", calendarId);
         if (body == null)
         {
-            Console.WriteLine("[SIM] Error: Failed to deserialize request body.");
+            _logger.LogWarning("[SIM] Failed to deserialize request body for CreateEvent.");
             return BadRequest();
         }
 
@@ -71,7 +74,7 @@ public class EventsController : ControllerBase
 
         _db.Events.Add(newEvent);
         await _db.SaveChangesAsync();
-        Console.WriteLine($"[SIM] Created event: {newEvent.Id} ({newEvent.Summary})");
+        _logger.LogInformation("[SIM] Created event: {EventId} ({Summary})", newEvent.Id, newEvent.Summary);
 
         return Ok(new
         {
@@ -88,7 +91,7 @@ public class EventsController : ControllerBase
     [HttpPut("{eventId}")]
     public async Task<IActionResult> UpdateEvent(string calendarId, string eventId, [FromBody] GoogleEventRequest body)
     {
-        Console.WriteLine($"[SIM] PUT update event: {eventId} for calendar: {calendarId}");
+        _logger.LogInformation("[SIM] PUT update event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
@@ -102,7 +105,7 @@ public class EventsController : ControllerBase
 
         if (existing == null)
         {
-            Console.WriteLine($"[SIM] Error: Event {eventId} not found (tried alt too).");
+            _logger.LogWarning("[SIM] Event {EventId} not found for update (tried alt too).", eventId);
             return NotFound();
         }
 
@@ -110,7 +113,7 @@ public class EventsController : ControllerBase
 
         if (body == null)
         {
-            Console.WriteLine("[SIM] Error: Failed to deserialize request body.");
+            _logger.LogWarning("[SIM] Failed to deserialize request body for UpdateEvent {EventId}.", eventId);
             return BadRequest();
         }
 
@@ -122,7 +125,7 @@ public class EventsController : ControllerBase
         existing.IsAllDay = body.Start.Date != null;
 
         await _db.SaveChangesAsync();
-        Console.WriteLine($"[SIM] Updated event: {existing.Id} ({existing.Summary}) on calendar: {existing.CalendarId}");
+        _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
 
         return Ok(new
         {
@@ -139,14 +142,14 @@ public class EventsController : ControllerBase
     [HttpPost("{eventId}/move")]
     public async Task<IActionResult> MoveEvent(string calendarId, string eventId, [FromQuery] string destination)
     {
-        Console.WriteLine($"[SIM] POST move event: {eventId} from calendar: {calendarId} to: {destination}");
+        _logger.LogInformation("[SIM] POST move event: {EventId} from calendar: {CalendarId} to: {Destination}", eventId, calendarId, destination);
         var userId = ExtractUserId(Request);
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 
         if (existing == null)
         {
-            Console.WriteLine($"[SIM] Error: Event {eventId} not found for move.");
+            _logger.LogWarning("[SIM] Event {EventId} not found for move.", eventId);
             return NotFound(new
             {
                 error = new
@@ -163,7 +166,7 @@ public class EventsController : ControllerBase
 
         existing.CalendarId = destination;
         await _db.SaveChangesAsync();
-        Console.WriteLine($"[SIM] Moved event: {existing.Id} to calendar: {destination}");
+        _logger.LogInformation("[SIM] Moved event: {EventId} to calendar: {Destination}", existing.Id, destination);
 
         return Ok(new
         {
@@ -180,7 +183,7 @@ public class EventsController : ControllerBase
     [HttpDelete("{eventId}")]
     public async Task<IActionResult> DeleteEvent(string calendarId, string eventId)
     {
-        Console.WriteLine($"[SIM] DELETE event: {eventId} for calendar: {calendarId}");
+        _logger.LogInformation("[SIM] DELETE event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
@@ -193,7 +196,7 @@ public class EventsController : ControllerBase
 
         if (existing == null)
         {
-            Console.WriteLine($"[SIM] Error: Event {eventId} not found (tried alt too).");
+            _logger.LogWarning("[SIM] Event {EventId} not found for delete (tried alt too).", eventId);
             return NotFound(new
             {
                 error = new
@@ -210,7 +213,7 @@ public class EventsController : ControllerBase
 
         _db.Events.Remove(existing);
         await _db.SaveChangesAsync();
-        Console.WriteLine($"[SIM] Deleted event: {eventId}");
+        _logger.LogInformation("[SIM] Deleted event: {EventId}", eventId);
 
         return NoContent();
     }
