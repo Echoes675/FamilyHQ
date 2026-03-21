@@ -193,8 +193,16 @@ internal record GoogleApiCalendarList(
 
 ## What Is Already in Place
 
-- `CalendarEvent` ↔ `CalendarInfo` many-to-many via `CalendarEventCalendar` join table — **retained unchanged**.
+The `EventMultipleCalendars` migration (committed on the `bug-change-calendar` branch, merged into `dev`) has already:
+- Dropped `Events.CalendarInfoId` (the old single-calendar FK column).
+- Created the `CalendarEventCalendar` join table (`PK_CalendarEventCalendar` on `(CalendarsId, EventsId)`).
+- Added `IX_Events_GoogleEventId` (unique index, replacing the old composite index).
+
+Therefore, the **current dev schema** at the start of this feature is: no `Events.CalendarInfoId`, join table present, unique index on `GoogleEventId`. The migration in this feature adds only `OwnerCalendarInfoId` and `IsExternallyOwned` and backfills from the existing join table.
+
+- `CalendarEvent` ↔ `CalendarInfo` many-to-many via `CalendarEventCalendar` join table — **already in place, retained unchanged**.
 - `ICalendarRepository` already includes `GetEventAsync`, `GetEventsAsync` (with `Calendars` navigation), `DeleteEventAsync`, and `RemoveCalendarAsync`.
+- `CalendarEventViewModel` currently lives in `FamilyHQ.Core/ViewModels/CalendarEventViewModel.cs` — **this file is deleted** as part of this feature. The new `CalendarEventViewModel` record (with `AllCalendars`) is created in `FamilyHQ.WebUi`. The `FamilyHQ.Core/ViewModels/` folder is removed if it becomes empty. All existing usages of `FamilyHQ.Core.ViewModels.CalendarEventViewModel` in WebUi must be updated to reference the new WebUi type.
 - The existing `ReassignEventRequest` / `ReassignAsync` — **retired** (superseded by the new add/remove calendar endpoints).
 
 ---
@@ -507,7 +515,7 @@ Google API calls are made **before** opening a DB transaction. DB failure after 
 2. Find `CalendarInfo` matching `calendarInfoId` in `event.Calendars`. Throw `NotFoundException` if absent.
 3. If last linked calendar: delegate to `DeleteAsync(eventId)`. The full `DeleteAsync` semantics apply — including the live external-attendee check and all its branches (skip Google delete if external parties present, etc.). This is intentional: removing the last calendar is equivalent to deleting the event, and the same safety rules apply regardless of how the delete was triggered.
 4. If owner calendar and others remain: call `MoveEventAsync` to promote a remaining calendar as new owner; note new `OwnerCalendarInfoId` for DB step.
-5. Updated attendees = all linked `GoogleCalendarId` values, minus the removed calendar, minus the new owner calendar. The new owner becomes the organiser and must not appear in the attendees list (Google keeps organiser and attendees as separate fields).
+5. Updated attendees = all linked `GoogleCalendarId` values, minus the removed calendar, minus the new owner calendar. The new owner becomes the organiser and must not appear in the attendees list (Google keeps organiser and attendees as separate fields). If the result is an empty list (owner removed, one calendar remained), pass an empty attendees list — `PatchEventAttendeesAsync` is still called with `[]`, which clears all attendees in Google and leaves only the organiser. This is correct: the event now belongs to exactly one calendar in Google. Do not skip the call.
 6. Call `PatchEventAttendeesAsync(newOrExistingOwnerGoogleCalendarId, googleEventId, updatedAttendees)`.
 7. DB transaction: remove join table entry; update `OwnerCalendarInfoId` if changed.
 8. DB failure after Google success: log reconciliation error (event ID, removed calendar ID, new owner calendar ID if changed), rethrow.
