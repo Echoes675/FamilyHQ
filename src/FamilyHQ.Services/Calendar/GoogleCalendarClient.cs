@@ -199,6 +199,16 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.DeleteAsync(endpoint, ct);
+
+        // 404 means the event is already gone — treat as success (idempotent delete)
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogWarning(
+                "Delete event {GoogleEventId} from calendar {GoogleCalendarId} returned 404 — event already absent, treating as success.",
+                googleEventId, googleCalendarId);
+            return;
+        }
+
         response.EnsureSuccessStatusCode();
     }
 

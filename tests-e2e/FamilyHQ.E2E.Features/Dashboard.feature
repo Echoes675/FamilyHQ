@@ -64,6 +64,24 @@ Feature: Dashboard Calendar Viewer
     When I click on the event "School Holiday"
     Then I see the event details for "School Holiday"
 
+  Scenario: Update event after changing its calendar
+    Given I have a user like "MultiCalendarUser" with calendar "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
+    And I login as the user "MultiCalendarUser"
+    And I view the dashboard
+    And I change the event "Team Meeting" to calendar "Personal Calendar"
+    When I rename the event "Team Meeting" to "Updated Team Meeting"
+    Then I see the event "Updated Team Meeting" displayed on the calendar
+
+  Scenario: Delete event after changing its calendar
+    Given I have a user like "MultiCalendarUser" with calendar "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
+    And I login as the user "MultiCalendarUser"
+    And I view the dashboard
+    And I change the event "Team Meeting" to calendar "Personal Calendar"
+    When I delete the event "Team Meeting"
+    Then I do not see the event "Team Meeting" displayed on the calendar
+
   Scenario: Navigate to next month
     Given I have a user like "TestFamilyMember" with calendar "Family Events"
     And the user has an all-day event "Next Month Event" in 30 days

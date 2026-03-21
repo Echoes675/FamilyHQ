@@ -153,7 +153,18 @@ public class EventsController : ControllerBase
         if (existing == null)
         {
             Console.WriteLine($"[SIM] Error: Event {eventId} not found (tried alt too).");
-            return NotFound();
+            return NotFound(new
+            {
+                error = new
+                {
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
+                    {
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                    }
+                }
+            });
         }
 
         _db.Events.Remove(existing);

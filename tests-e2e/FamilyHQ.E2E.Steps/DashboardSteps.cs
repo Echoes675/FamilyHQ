@@ -87,4 +87,10 @@ public class DashboardSteps
     {
         await _dashboardPage.NavigateToNextMonthAsync();
     }
+
+    [Given(@"I change the event ""([^""]*)"" to calendar ""([^""]*)""")]
+    public async Task GivenIChangeTheEventToCalendar(string eventName, string calendarName)
+    {
+        await _dashboardPage.ChangeEventCalendarAsync(eventName, calendarName);
+    }
 }

@@ -45,13 +45,16 @@ public class CalendarEventService(
         existing.Location = request.Location;
         existing.Description = request.Description;
 
+        // Capture the old Google Event ID before CreateEventAsync mutates existing.GoogleEventId
+        var oldGoogleEventId = existing.GoogleEventId;
+
         // Create on new calendar FIRST
         var created = await googleCalendarClient.CreateEventAsync(toCalendar.GoogleCalendarId, existing, ct);
 
         try
         {
-            // Then delete from old calendar
-            await googleCalendarClient.DeleteEventAsync(fromCalendar.GoogleCalendarId, existing.GoogleEventId, ct);
+            // Then delete from old calendar using the saved original event ID
+            await googleCalendarClient.DeleteEventAsync(fromCalendar.GoogleCalendarId, oldGoogleEventId, ct);
         }
         catch (Exception)
         {
@@ -59,8 +62,6 @@ public class CalendarEventService(
             await googleCalendarClient.DeleteEventAsync(toCalendar.GoogleCalendarId, created.GoogleEventId, ct);
             throw;
         }
-
-        existing.GoogleEventId = created.GoogleEventId;
 
         existing.Calendars.Remove(fromCalendar);
         existing.Calendars.Add(toCalendar);
