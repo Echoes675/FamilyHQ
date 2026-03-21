@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -139,9 +140,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                     }
 
                     var startParam = item.Start?.DateTime
-                        ?? (item.Start?.Date != null ? DateTimeOffset.Parse(item.Start.Date) : (DateTimeOffset?)null);
+                        ?? (item.Start?.Date != null ? DateTimeOffset.Parse(item.Start.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
                     var endParam = item.End?.DateTime
-                        ?? (item.End?.Date != null ? DateTimeOffset.Parse(item.End.Date) : (DateTimeOffset?)null);
+                        ?? (item.End?.Date != null ? DateTimeOffset.Parse(item.End.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
 
                     if (startParam == null || endParam == null) continue; // Skip malformed events
 
