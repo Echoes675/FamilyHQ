@@ -26,26 +26,69 @@ public class EventsController : ControllerBase
     {
         _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
         var userId = ExtractUserId(Request);
-        var events = await _db.Events
-            .Where(e => e.CalendarId == calendarId && e.UserId == userId)
+
+        var attendeeEventIds = await _db.EventAttendees
+            .Where(a => a.AttendeeCalendarId == calendarId)
+            .Select(a => a.EventId)
             .ToListAsync();
+
+        var events = await _db.Events
+            .Where(e => e.UserId == userId && (e.CalendarId == calendarId || attendeeEventIds.Contains(e.Id)))
+            .ToListAsync();
+
+        var eventIds = events.Select(e => e.Id).ToList();
+        var allAttendees = await _db.EventAttendees
+            .Where(a => eventIds.Contains(a.EventId))
+            .ToListAsync();
+
+        var attendeesByEvent = allAttendees
+            .GroupBy(a => a.EventId)
+            .ToDictionary(g => g.Key, g => g.Select(a => a.AttendeeCalendarId).ToList());
 
         var response = new
         {
-            items = events.Select(e => new
+            items = events.Select(e =>
             {
-                id = e.Id,
-                status = "confirmed",
-                summary = e.Summary,
-                location = e.Location,
-                description = e.Description,
-                start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
-                end = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") } : new { dateTime = e.EndTime.ToString("O") }
+                var eventAttendees = attendeesByEvent.TryGetValue(e.Id, out var list) ? list : new List<string>();
+                return MapEventResponse(e, eventAttendees);
             }),
             nextSyncToken = "simulated_sync_token_" + Guid.NewGuid().ToString("N")
         };
 
         return Ok(response);
+    }
+
+    [HttpGet("{eventId}")]
+    public async Task<IActionResult> GetEvent(string calendarId, string eventId)
+    {
+        _logger.LogInformation("[SIM] GET event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
+        var userId = ExtractUserId(Request);
+
+        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
+
+        if (existing == null)
+        {
+            _logger.LogWarning("[SIM] Event {EventId} not found.", eventId);
+            return NotFound(new
+            {
+                error = new
+                {
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
+                    {
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                    }
+                }
+            });
+        }
+
+        var attendeeCalendarIds = await _db.EventAttendees
+            .Where(a => a.EventId == eventId)
+            .Select(a => a.AttendeeCalendarId)
+            .ToListAsync();
+
+        return Ok(MapEventResponse(existing, attendeeCalendarIds));
     }
 
     [HttpPost]
@@ -76,16 +119,7 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Created event: {EventId} ({Summary})", newEvent.Id, newEvent.Summary);
 
-        return Ok(new
-        {
-            id = newEvent.Id,
-            status = "confirmed",
-            summary = newEvent.Summary,
-            location = newEvent.Location,
-            description = newEvent.Description,
-            start = newEvent.IsAllDay ? (object)new { date = newEvent.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = newEvent.StartTime.ToString("O") },
-            end = newEvent.IsAllDay ? (object)new { date = newEvent.EndTime.ToString("yyyy-MM-dd") } : new { dateTime = newEvent.EndTime.ToString("O") }
-        });
+        return Ok(MapEventResponse(newEvent, new List<string>()));
     }
 
     [HttpPut("{eventId}")]
@@ -127,16 +161,12 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
 
-        return Ok(new
-        {
-            id = existing.Id,
-            status = "confirmed",
-            summary = existing.Summary,
-            location = existing.Location,
-            description = existing.Description,
-            start = existing.IsAllDay ? (object)new { date = existing.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.StartTime.ToString("O") },
-            end = existing.IsAllDay ? (object)new { date = existing.EndTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.EndTime.ToString("O") }
-        });
+        var attendeeCalendarIds = await _db.EventAttendees
+            .Where(a => a.EventId == existing.Id)
+            .Select(a => a.AttendeeCalendarId)
+            .ToListAsync();
+
+        return Ok(MapEventResponse(existing, attendeeCalendarIds));
     }
 
     [HttpPost("{eventId}/move")]
@@ -168,16 +198,55 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Moved event: {EventId} to calendar: {Destination}", existing.Id, destination);
 
-        return Ok(new
+        var attendeeCalendarIds = await _db.EventAttendees
+            .Where(a => a.EventId == existing.Id)
+            .Select(a => a.AttendeeCalendarId)
+            .ToListAsync();
+
+        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+    }
+
+    [HttpPatch("{eventId}")]
+    public async Task<IActionResult> PatchEvent(string calendarId, string eventId, [FromBody] SimulatorPatchAttendeesRequest body)
+    {
+        _logger.LogInformation("[SIM] PATCH attendees for event: {EventId} on calendar: {CalendarId}", eventId, calendarId);
+        var userId = ExtractUserId(Request);
+
+        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
+
+        if (existing == null)
         {
-            id = existing.Id,
-            status = "confirmed",
-            summary = existing.Summary,
-            location = existing.Location,
-            description = existing.Description,
-            start = existing.IsAllDay ? (object)new { date = existing.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.StartTime.ToString("O") },
-            end = existing.IsAllDay ? (object)new { date = existing.EndTime.ToString("yyyy-MM-dd") } : new { dateTime = existing.EndTime.ToString("O") }
-        });
+            _logger.LogWarning("[SIM] Event {EventId} not found for patch.", eventId);
+            return NotFound(new
+            {
+                error = new
+                {
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
+                    {
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                    }
+                }
+            });
+        }
+
+        var currentAttendees = await _db.EventAttendees
+            .Where(a => a.EventId == eventId)
+            .ToListAsync();
+        _db.EventAttendees.RemoveRange(currentAttendees);
+
+        var newAttendees = body.Attendees
+            .Where(a => a.Email != existing.CalendarId)
+            .Select(a => new SimulatedEventAttendee { EventId = eventId, AttendeeCalendarId = a.Email })
+            .ToList();
+        _db.EventAttendees.AddRange(newAttendees);
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("[SIM] Patched attendees for event: {EventId}", eventId);
+
+        var attendeeCalendarIds = newAttendees.Select(a => a.AttendeeCalendarId).ToList();
+        return Ok(MapEventResponse(existing, attendeeCalendarIds));
     }
 
     [HttpDelete("{eventId}")]
@@ -217,6 +286,21 @@ public class EventsController : ControllerBase
 
         return NoContent();
     }
+
+    private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
+    {
+        id = e.Id,
+        status = "confirmed",
+        summary = e.Summary,
+        location = e.Location,
+        description = e.Description,
+        start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
+        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd")   } : new { dateTime = e.EndTime.ToString("O")   },
+        organizer = new { email = e.CalendarId, self = true },
+        attendees = attendeeCalendarIds.Count > 0
+            ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+            : null
+    };
 
     // Token format: "simulated_{userId}_{nonce}"
     private static string? ExtractUserId(HttpRequest request)

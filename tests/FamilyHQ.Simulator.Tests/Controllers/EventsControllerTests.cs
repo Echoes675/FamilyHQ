@@ -205,6 +205,120 @@ public class EventsControllerTests
         db.Events.Should().Contain(e => e.Id == "evt-bob");
     }
 
+    // ── ListEvents — attendee filter ──────────────────────────────────────────
+
+    [Fact]
+    public async Task ListEvents_ReturnsEventWhereCalendarIsAttendee()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-organiser", Summary = "Multi", UserId = "alice" });
+        db.EventAttendees.Add(new SimulatedEventAttendee
+            { EventId = "evt-1", AttendeeCalendarId = "cal-attendee" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var result = await sut.ListEvents("cal-attendee");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("evt-1");
+    }
+
+    [Fact]
+    public async Task ListEvents_ResponseIncludesOrganizerAndAttendees()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-org", Summary = "With Attendee", UserId = "alice" });
+        db.EventAttendees.Add(new SimulatedEventAttendee
+            { EventId = "evt-1", AttendeeCalendarId = "cal-att" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var result = await sut.ListEvents("cal-org");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("\"organizer\"");
+        json.Should().Contain("cal-org");
+        json.Should().Contain("\"attendees\"");
+        json.Should().Contain("cal-att");
+    }
+
+    // ── GetEvent (new) ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetEvent_ReturnsEventWithOrganizerAndAttendees()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
+        db.EventAttendees.Add(new SimulatedEventAttendee
+            { EventId = "evt-1", AttendeeCalendarId = "cal-att" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var result = await sut.GetEvent("cal-org", "evt-1");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("evt-1");
+        json.Should().Contain("\"organizer\"");
+        json.Should().Contain("\"attendees\"");
+        json.Should().Contain("cal-att");
+    }
+
+    [Fact]
+    public async Task GetEvent_Returns404WhenNotFound()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var result = await sut.GetEvent("cal-org", "no-such-event");
+        result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    // ── PatchEvent (new) ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PatchEvent_ReplacesAttendees()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
+        db.EventAttendees.Add(new SimulatedEventAttendee
+            { EventId = "evt-1", AttendeeCalendarId = "cal-old" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var body = new SimulatorPatchAttendeesRequest(
+            new[] { new SimulatorAttendee("cal-new") });
+        var result = await sut.PatchEvent("cal-org", "evt-1", body);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var attendees = await db.EventAttendees.Where(a => a.EventId == "evt-1").ToListAsync();
+        attendees.Should().ContainSingle(a => a.AttendeeCalendarId == "cal-new");
+        attendees.Should().NotContain(a => a.AttendeeCalendarId == "cal-old");
+    }
+
+    [Fact]
+    public async Task PatchEvent_DoesNotAddOrganizerToAttendeesTable()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var body = new SimulatorPatchAttendeesRequest(
+            new[] { new SimulatorAttendee("cal-org"), new SimulatorAttendee("cal-att") });
+        await sut.PatchEvent("cal-org", "evt-1", body);
+
+        var attendees = await db.EventAttendees.Where(a => a.EventId == "evt-1").ToListAsync();
+        attendees.Should().NotContain(a => a.AttendeeCalendarId == "cal-org");
+        attendees.Should().ContainSingle(a => a.AttendeeCalendarId == "cal-att");
+    }
+
     // ── MoveEvent ─────────────────────────────────────────────────────────────
 
     [Fact]

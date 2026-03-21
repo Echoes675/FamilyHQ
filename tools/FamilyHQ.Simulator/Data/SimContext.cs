@@ -10,6 +10,7 @@ public class SimContext : DbContext
     public DbSet<SimulatedEvent> Events => Set<SimulatedEvent>();
     public DbSet<SimulatedCalendar> Calendars => Set<SimulatedCalendar>();
     public DbSet<SimulatedUser> Users => Set<SimulatedUser>();
+    public DbSet<SimulatedEventAttendee> EventAttendees => Set<SimulatedEventAttendee>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,7 +42,16 @@ public class SimContext : DbContext
             entity.Property(e => e.Id).HasMaxLength(255);
             entity.Property(e => e.Username).IsRequired().HasMaxLength(255);
         });
-        
+
+        modelBuilder.Entity<SimulatedEventAttendee>(entity =>
+        {
+            entity.ToTable("SimulatedEventAttendees");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventId).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.AttendeeCalendarId).IsRequired().HasMaxLength(255);
+            entity.HasIndex(e => new { e.EventId, e.AttendeeCalendarId }).IsUnique();
+        });
+
         // Universal UTC conversion for all DateTime properties
         var dateTimeConverter = new ValueConverter<DateTime, DateTime>(
             v => v.ToUniversalTime(),
