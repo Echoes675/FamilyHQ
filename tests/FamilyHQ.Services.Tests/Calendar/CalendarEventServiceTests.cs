@@ -5,175 +5,317 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Xunit;
 
 namespace FamilyHQ.Services.Tests.Calendar;
 
 public class CalendarEventServiceTests
 {
-    private static readonly Guid FromCalId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-    private static readonly Guid ToCalId   = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
-    private static readonly Guid EventId   = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+    private static readonly Guid CalAId  = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid CalBId  = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    private static readonly Guid EventId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+
+    // ── CreateAsync ───────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task ReassignAsync_WhenValidRequest_MovesEventAndUpdatesFields()
+    public async Task CreateAsync_SingleCalendar_CallsCreateEventOnlyNoPatch()
     {
-        // Arrange
-        var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
+        google.Setup(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) =>
+                { e.GoogleEventId = "new-gid"; return e; });
+        repo.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
-        var fromCal = new CalendarInfo { Id = FromCalId, GoogleCalendarId = "from-cal@google.com", DisplayName = "From Cal" };
-        var toCal   = new CalendarInfo { Id = ToCalId,   GoogleCalendarId = "to-cal@google.com",   DisplayName = "To Cal"   };
+        var request = new CreateEventRequest(
+            [CalAId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
+        var result = await sut.CreateAsync(request);
 
-        var existingEvent = new CalendarEvent
+        google.Verify(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        google.Verify(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.GoogleEventId.Should().Be("new-gid");
+        result.OwnerCalendarInfoId.Should().Be(CalAId);
+    }
+
+    [Fact]
+    public async Task CreateAsync_TwoCalendars_CallsCreateThenPatch()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var calB = Cal(CalBId, "cal-b@google.com");
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA, calB]);
+        google.Setup(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) =>
+                { e.GoogleEventId = "new-gid"; return e; });
+        google.Setup(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        var request = new CreateEventRequest(
+            [CalAId, CalBId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
+        await sut.CreateAsync(request);
+
+        google.Verify(g => g.PatchEventAttendeesAsync(
+            "cal-a@google.com", "new-gid",
+            It.Is<IEnumerable<string>>(ids => ids.Single() == "cal-b@google.com"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_UnknownCalendarId_ThrowsValidationException()
+    {
+        var (google, repo, sut) = CreateSut();
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Cal(CalAId, "cal-a@google.com")]);
+
+        var request = new CreateEventRequest(
+            [CalBId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
+        await sut.Invoking(s => s.CreateAsync(request))
+            .Should().ThrowAsync<Exception>(); // ValidationException or similar
+    }
+
+    [Fact]
+    public async Task CreateAsync_DbFailureAfterGoogleSuccess_LogsReconciliationErrorAndRethrows()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) =>
+                { e.GoogleEventId = "gid-db-fail"; return e; });
+        repo.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB error"));
+
+        var request = new CreateEventRequest(
+            [CalAId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
+
+        await sut.Invoking(s => s.CreateAsync(request))
+            .Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    // ── UpdateAsync ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateAsync_CallsUpdateEventWithOwnerCalendar()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "old-gid", CalAId, calA);
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.UpdateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) => e);
+        repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        var request = new UpdateEventRequest("New Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
+        var result = await sut.UpdateAsync(EventId, request);
+
+        google.Verify(g => g.UpdateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        result.Title.Should().Be("New Title");
+    }
+
+    // ── AddCalendarAsync ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AddCalendarAsync_CallsPatchWithNewAttendee()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var calB = Cal(CalBId, "cal-b@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA); // only calA linked
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA, calB]);
+        google.Setup(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.AddCalendarAsync(EventId, CalBId);
+
+        google.Verify(g => g.PatchEventAttendeesAsync(
+            "cal-a@google.com", "gid-1",
+            It.Is<IEnumerable<string>>(ids => ids.Contains("cal-b@google.com")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AddCalendarAsync_Idempotent_NoGoogleCallWhenAlreadyLinked()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA); // calA already linked
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+
+        await sut.AddCalendarAsync(EventId, CalAId);
+
+        google.Verify(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── RemoveCalendarAsync ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RemoveCalendarAsync_NonOwner_CallsPatchWithoutRemovedCalendar()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var calB = Cal(CalBId, "cal-b@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA, calB); // owner=A, B is attendee
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA, calB]);
+        google.Setup(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.RemoveCalendarAsync(EventId, CalBId);
+
+        google.Verify(g => g.PatchEventAttendeesAsync(
+            "cal-a@google.com", "gid-1",
+            It.Is<IEnumerable<string>>(ids => !ids.Contains("cal-b@google.com")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        google.Verify(g => g.MoveEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveCalendarAsync_OwnerWithOthers_MovesEventThenPatchesInOrder()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var calB = Cal(CalBId, "cal-b@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA, calB); // owner=A, removing A
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA, calB]);
+
+        var callOrder = new List<string>();
+        google.Setup(g => g.MoveEventAsync("cal-a@google.com", "gid-1", "cal-b@google.com", It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("Move"))
+            .ReturnsAsync("gid-1");
+        google.Setup(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => callOrder.Add("Patch"))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.RemoveCalendarAsync(EventId, CalAId);
+
+        google.Verify(g => g.MoveEventAsync("cal-a@google.com", "gid-1", "cal-b@google.com", It.IsAny<CancellationToken>()), Times.Once);
+        google.Verify(g => g.PatchEventAttendeesAsync(
+            "cal-b@google.com", "gid-1",
+            It.Is<IEnumerable<string>>(ids => !ids.Any()), // empty — new owner has no other attendees
+            It.IsAny<CancellationToken>()), Times.Once);
+        callOrder.Should().ContainInOrder("Move", "Patch");
+    }
+
+    [Fact]
+    public async Task RemoveCalendarAsync_LastCalendar_DelegatesToDelete()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA); // only calendar
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.GetEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventDetail("gid-1", "cal-a@google.com", []));
+        google.Setup(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.RemoveCalendarAsync(EventId, CalAId);
+
+        google.Verify(g => g.PatchEventAttendeesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+        google.Verify(g => g.MoveEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        google.Verify(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── DeleteAsync ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteAsync_NoExternalAttendees_CallsGoogleDelete()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA);
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.GetEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventDetail("gid-1", "cal-a@google.com", []));
+        google.Setup(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repo.Setup(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.DeleteAsync(EventId);
+
+        google.Verify(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ExternalAttendeePresent_SkipsGoogleDelete()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA);
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.GetEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventDetail("gid-1", "cal-a@google.com", ["external@gmail.com"]));
+        repo.Setup(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.DeleteAsync(EventId);
+
+        google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        repo.Verify(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_GetEventReturnsNull_SkipsGoogleDeleteDeletesLocally()
+    {
+        var (google, repo, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com");
+        var evt = Event(EventId, "gid-1", CalAId, calA);
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        google.Setup(g => g.GetEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((GoogleEventDetail?)null);
+        repo.Setup(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await sut.DeleteAsync(EventId);
+
+        google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        repo.Verify(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static CalendarInfo Cal(Guid id, string googleId) =>
+        new() { Id = id, GoogleCalendarId = googleId, DisplayName = googleId };
+
+    private static CalendarEvent Event(Guid id, string googleId, Guid ownerCalId, params CalendarInfo[] cals) =>
+        new()
         {
-            Id = EventId,
-            GoogleEventId = "original-google-id",
-            Title = "Old Title",
+            Id = id,
+            GoogleEventId = googleId,
+            Title = "Test Event",
             Start = DateTimeOffset.UtcNow,
             End = DateTimeOffset.UtcNow.AddHours(1),
-            Calendars = new List<CalendarInfo> { fromCal }
+            OwnerCalendarInfoId = ownerCalId,
+            Calendars = cals.ToList()
         };
-
-        calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
-        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { fromCal, toCal });
-        googleClient.Setup(c => c.MoveEventAsync(fromCal.GoogleCalendarId, "original-google-id", toCal.GoogleCalendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync("original-google-id");
-        googleClient.Setup(c => c.UpdateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, CancellationToken _) => e);
-
-        var request = new ReassignEventRequest(ToCalId, "New Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
-
-        // Act
-        var result = await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
-
-        // Assert — move and update are called; event ID is unchanged
-        googleClient.Verify(c => c.MoveEventAsync(fromCal.GoogleCalendarId, "original-google-id", toCal.GoogleCalendarId, It.IsAny<CancellationToken>()), Times.Once);
-        googleClient.Verify(c => c.UpdateEventAsync(toCal.GoogleCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Once);
-        googleClient.Verify(c => c.CreateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
-        googleClient.Verify(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-
-        result.Should().NotBeNull();
-        result!.GoogleEventId.Should().Be("original-google-id");
-        result.Calendars.Should().ContainSingle(c => c.Id == ToCalId);
-        result.Calendars.Should().NotContain(c => c.Id == FromCalId);
-    }
-
-    [Fact]
-    public async Task ReassignAsync_WhenEventNotFound_ReturnsNull()
-    {
-        // Arrange
-        var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
-
-        calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CalendarEvent?)null);
-
-        var request = new ReassignEventRequest(ToCalId, "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
-
-        // Act
-        var result = await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
-
-        // Assert
-        result.Should().BeNull();
-        googleClient.Verify(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ReassignAsync_WhenEventNotLinkedToFromCalendar_ReturnsNull()
-    {
-        // Arrange
-        var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
-
-        var unrelatedCal = new CalendarInfo { Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"), GoogleCalendarId = "other@google.com" };
-        var existingEvent = new CalendarEvent
-        {
-            Id = EventId,
-            GoogleEventId = "google-id",
-            Calendars = new List<CalendarInfo> { unrelatedCal } // not linked to FromCalId
-        };
-
-        calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
-
-        var request = new ReassignEventRequest(ToCalId, "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
-
-        // Act
-        var result = await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
-
-        // Assert
-        result.Should().BeNull();
-        googleClient.Verify(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ReassignAsync_WhenToCalendarNotFound_ReturnsNull()
-    {
-        // Arrange
-        var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
-
-        var fromCal = new CalendarInfo { Id = FromCalId, GoogleCalendarId = "from-cal@google.com" };
-        var existingEvent = new CalendarEvent
-        {
-            Id = EventId,
-            GoogleEventId = "google-id",
-            Calendars = new List<CalendarInfo> { fromCal }
-        };
-
-        calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
-        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { fromCal }); // ToCalId not in list
-
-        var request = new ReassignEventRequest(ToCalId, "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
-
-        // Act
-        var result = await systemUnderTest.ReassignAsync(FromCalId, EventId, request);
-
-        // Assert
-        result.Should().BeNull();
-        googleClient.Verify(c => c.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ReassignAsync_WhenMoveThrows_PropagatesException()
-    {
-        // Arrange
-        var (googleClient, calendarRepository, systemUnderTest) = CreateSut();
-
-        var fromCal = new CalendarInfo { Id = FromCalId, GoogleCalendarId = "from-cal@google.com" };
-        var toCal   = new CalendarInfo { Id = ToCalId,   GoogleCalendarId = "to-cal@google.com"   };
-        var existingEvent = new CalendarEvent
-        {
-            Id = EventId,
-            GoogleEventId = "google-id",
-            Calendars = new List<CalendarInfo> { fromCal }
-        };
-
-        calendarRepository.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
-        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { fromCal, toCal });
-        googleClient.Setup(c => c.MoveEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("Google API unavailable"));
-
-        var request = new ReassignEventRequest(ToCalId, "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
-
-        // Act & Assert
-        await systemUnderTest.Invoking(s => s.ReassignAsync(FromCalId, EventId, request))
-            .Should().ThrowAsync<HttpRequestException>();
-    }
 
     private static (Mock<IGoogleCalendarClient>, Mock<ICalendarRepository>, CalendarEventService) CreateSut()
     {
-        var googleClientMock = new Mock<IGoogleCalendarClient>();
-        var calendarRepositoryMock = new Mock<ICalendarRepository>();
-        var loggerMock = new Mock<ILogger<CalendarEventService>>();
-
-        var systemUnderTest = new CalendarEventService(
-            googleClientMock.Object,
-            calendarRepositoryMock.Object,
-            loggerMock.Object);
-
-        return (googleClientMock, calendarRepositoryMock, systemUnderTest);
+        var google = new Mock<IGoogleCalendarClient>();
+        var repo   = new Mock<ICalendarRepository>();
+        var logger = new Mock<ILogger<CalendarEventService>>();
+        return (google, repo, new CalendarEventService(google.Object, repo.Object, logger.Object));
     }
 }
