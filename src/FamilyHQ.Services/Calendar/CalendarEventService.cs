@@ -63,6 +63,8 @@ public class CalendarEventService(
             throw;
         }
 
+        existing.GoogleEventId = created.GoogleEventId;
+
         existing.Calendars.Remove(fromCalendar);
         existing.Calendars.Add(toCalendar);
 
