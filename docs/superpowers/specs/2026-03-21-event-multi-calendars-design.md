@@ -132,9 +132,32 @@ record UpdateEventRequest(
 
 ### `ReassignEventRequest` — removed.
 
-### `CalendarEventViewModel` (updated)
+### `CalendarEventDto` (updated)
 
-No structural change. `LinkedCalendars` remains. `LogicalEventId` is **not** added — the existing `Id` (`GoogleEventId`) is the natural group key.
+`CalendarEventDto` is the wire type returned by the API. `CalendarEventViewModel` is a UI concern — it is never passed into or out of the API. The `CalendarApiService` (Blazor) maps `CalendarEventDto` → `CalendarEventViewModel`.
+
+`LinkedCalendars` moves from the view model onto the DTO so the wire response carries all linked calendar metadata:
+
+```csharp
+record CalendarEventDto(
+    Guid Id,
+    string GoogleEventId,
+    string Title,
+    DateTimeOffset Start,
+    DateTimeOffset End,
+    bool IsAllDay,
+    string? Location,
+    string? Description,
+    IReadOnlyList<EventCalendarDto> Calendars);   // all linked calendars (id, name, colour)
+```
+
+`EventCalendarDto` is unchanged: `record EventCalendarDto(Guid Id, string DisplayName, string? Color)`.
+
+`MonthViewDto.Days` currently holds `List<CalendarEventViewModel>` — this is updated to `List<CalendarEventDto>` to remove the ViewModel from the API surface. The Blazor `CalendarApiService` maps each `CalendarEventDto` to one or more `CalendarEventViewModel` entries (one per linked calendar) for grid rendering.
+
+### `CalendarEventViewModel`
+
+No API surface change. `LinkedCalendars` is **removed** from the view model — the grid expansion logic in `CalendarApiService` now creates one `CalendarEventViewModel` per entry in `CalendarEventDto.Calendars`, each carrying that calendar's colour and ID. The edit modal receives the originating `CalendarEventDto` (held alongside the view model) to access the full `Calendars` list for chip rendering.
 
 ---
 
@@ -150,16 +173,33 @@ Validates `Title` (not empty, ≤ 200 chars), `Start` (not empty), `End` (not em
 
 ## Backend API Changes
 
+Multi-calendar operations are not scoped to a single calendar, so the new create, update, and delete endpoints move to an event-centric route prefix. The old calendar-scoped routes for these operations are **removed** — there is no production deployment to maintain backward compatibility with.
+
+The `GET /api/calendars/events` query endpoint is unchanged (it is calendar-aware by design and returns all events across all visible calendars).
+
 ### Endpoint changes
 
-| Method | Route | Change | Notes |
-|--------|-------|--------|-------|
-| `POST` | `/api/calendars/{calendarId}/events` | Modified | `calendarId` ignored server-side; calendars driven by `CalendarInfoIds` in body. Returns 201 + `CalendarEventViewModel`. |
-| `PUT` | `/api/calendars/{calendarId}/events/{eventId}` | Modified | Field edits only (title, times, location, description). `calendarId` ignored. Returns 200 + `CalendarEventViewModel`. |
-| `DELETE` | `/api/calendars/{calendarId}/events/{eventId}` | Unchanged route | Now performs live external-attendee check before deciding whether to delete from Google. Returns 204. |
-| `POST` | `/api/calendars/{calendarId}/events/{eventId}/calendars/{targetCalendarId}` | **New** | Add an internal calendar to an existing event. `targetCalendarId` = `CalendarInfo.Id`. Returns 200 + `CalendarEventViewModel`. Idempotent. |
-| `DELETE` | `/api/calendars/{calendarId}/events/{eventId}/calendars/{targetCalendarId}` | **New** | Remove one internal calendar from an event (not a full delete). Returns 204; 404 if not found. |
-| `POST` | `/api/calendars/{calendarId}/events/{eventId}/reassign` | **Removed** | |
+| Method | Route | Notes |
+|--------|-------|-------|
+| `GET` | `/api/calendars/events?year=&month=` | **Unchanged**. Returns `MonthViewDto` (now using `CalendarEventDto` instead of `CalendarEventViewModel`). |
+| `GET` | `/api/calendars` | **Unchanged**. |
+| `POST` | `/api/events` | **New** (replaces `/api/calendars/{calendarId}/events`). Creates event across one or more calendars. Returns 201 + `CalendarEventDto`. |
+| `PUT` | `/api/events/{eventId}` | **New** (replaces `/api/calendars/{calendarId}/events/{eventId}`). Field edits (title, times, location, description). Returns 200 + `CalendarEventDto`. |
+| `DELETE` | `/api/events/{eventId}` | **New** (replaces `/api/calendars/{calendarId}/events/{eventId}`). Full event delete with live external-attendee check. Returns 204. |
+| `POST` | `/api/events/{eventId}/calendars/{calendarId}` | **New**. Add an internal calendar to an existing event. `calendarId` = `CalendarInfo.Id`. Returns 200 + `CalendarEventDto`. Idempotent. |
+| `DELETE` | `/api/events/{eventId}/calendars/{calendarId}` | **New**. Remove one calendar from an event (not a full delete). Returns 204; 404 if calendar not linked. |
+| `POST` | `/api/calendars/{calendarId}/events` | **Removed**. |
+| `PUT` | `/api/calendars/{calendarId}/events/{eventId}` | **Removed**. |
+| `DELETE` | `/api/calendars/{calendarId}/events/{eventId}` | **Removed**. |
+| `POST` | `/api/calendars/{calendarId}/events/{eventId}/reassign` | **Removed**. |
+
+### Controller
+
+A new `EventsController` handles the five event-centric routes (`POST /api/events`, `PUT`, `DELETE`, `POST .../calendars/{calendarId}`, `DELETE .../calendars/{calendarId}`). The existing `CalendarsController` retains only the `GET /api/calendars` and `GET /api/calendars/events` endpoints.
+
+### Response types
+
+All event-mutating endpoints return `CalendarEventDto` (or 204 for deletes). `CalendarEventViewModel` is never in an API response.
 
 ---
 
@@ -360,13 +400,19 @@ No structural changes. The expanded query response naturally produces multiple c
 - No external attendees: `events.delete` called; local rows deleted.
 - `GetEventAsync` returns null: skips Google delete; deletes locally.
 
-**Controller**
-- `POST .../calendars/{targetCalendarId}`: auth enforced; returns 200 + `CalendarEventViewModel`.
-- `DELETE .../calendars/{targetCalendarId}`: auth enforced; returns 204; 404 on `NotFoundException`.
-- Idempotent add: 200 with existing view model.
+**Controller — EventsController**
+- `POST /api/events`: auth enforced; returns 201 + `CalendarEventDto` with `Calendars` populated.
+- `PUT /api/events/{eventId}`: auth enforced; returns 200 + `CalendarEventDto`.
+- `DELETE /api/events/{eventId}`: auth enforced; returns 204.
+- `POST /api/events/{eventId}/calendars/{calendarId}`: auth enforced; returns 200 + `CalendarEventDto`; idempotent (200 if already linked).
+- `DELETE /api/events/{eventId}/calendars/{calendarId}`: auth enforced; returns 204; 404 on `NotFoundException`.
 
 **Grid query**
-- `GetEventsForMonth_EventLinkedToTwoCalendars_ReturnsTwoViewModels`: event with two join-table entries returns two `CalendarEventViewModel` entries, each with the correct `CalendarColor`; each carries the full `LinkedCalendars` list.
+- `GetEventsForMonth_EventLinkedToTwoCalendars_ReturnsTwoDtos`: `MonthViewDto.Days` contains two `CalendarEventDto` entries for the same event (one per linked calendar), each with the correct `Calendars` list populated.
+
+**CalendarApiService (Blazor)**
+- Maps `CalendarEventDto` → one `CalendarEventViewModel` per entry in `Calendars` for grid rendering.
+- Edit modal receives the originating `CalendarEventDto` for chip rendering.
 
 ### E2E / acceptance tests (BDD)
 
