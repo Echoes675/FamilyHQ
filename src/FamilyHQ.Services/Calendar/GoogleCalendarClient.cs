@@ -156,7 +156,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         End = endParam.Value,
                         IsAllDay = isAllDay,
                         Location = item.Location,
-                        Description = item.Description
+                        Description = item.Description,
+                        IsExternallyOwned = item.Organizer?.Self == false
                     });
                 }
 

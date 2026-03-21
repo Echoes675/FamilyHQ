@@ -82,6 +82,119 @@ public class GoogleCalendarClientMappingTests
         result.Should().BeNull();
     }
 
+    // ── GetEventsAsync organizer mapping ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetEventsAsync_WhenOrganizerSelfFalse_SetsIsExternallyOwned()
+    {
+        // Arrange
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            items = new[] {
+                new {
+                    id = "evt-1", status = "confirmed", summary = "External Meeting",
+                    start = new { dateTime = "2026-03-01T10:00:00Z" },
+                    end   = new { dateTime = "2026-03-01T11:00:00Z" },
+                    organizer = new { email = "other@calendar.google.com", self = false }
+                }
+            },
+            nextSyncToken = "token-1"
+        });
+        SetupEventsResponse(http, json);
+
+        // Act
+        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+            new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
+            ct: CancellationToken.None);
+
+        // Assert
+        events.Should().ContainSingle(e => e.IsExternallyOwned);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenOrganizerSelfTrue_IsExternallyOwnedIsFalse()
+    {
+        // Arrange
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            items = new[] {
+                new {
+                    id = "evt-2", status = "confirmed", summary = "My Meeting",
+                    start = new { dateTime = "2026-03-01T10:00:00Z" },
+                    end   = new { dateTime = "2026-03-01T11:00:00Z" },
+                    organizer = new { email = "me@calendar.google.com", self = true }
+                }
+            },
+            nextSyncToken = "token-2"
+        });
+        SetupEventsResponse(http, json);
+
+        // Act
+        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+            new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
+            ct: CancellationToken.None);
+
+        // Assert
+        events.Should().ContainSingle(e => !e.IsExternallyOwned);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenOrganizerAbsent_IsExternallyOwnedIsFalse()
+    {
+        // Arrange
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        var json = JsonSerializer.Serialize(new
+        {
+            items = new[] {
+                new {
+                    id = "evt-3", status = "confirmed", summary = "Simple Meeting",
+                    start = new { dateTime = "2026-03-01T10:00:00Z" },
+                    end   = new { dateTime = "2026-03-01T11:00:00Z" }
+                    // no organizer field
+                }
+            },
+            nextSyncToken = "token-3"
+        });
+        SetupEventsResponse(http, json);
+
+        // Act
+        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+            new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
+            ct: CancellationToken.None);
+
+        // Assert
+        events.Should().ContainSingle(e => !e.IsExternallyOwned);
+    }
+
+    private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
+    {
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req =>
+                    req.Method == HttpMethod.Get &&
+                    req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(json)
+            });
+    }
+
     private static void SetupAuthResponse(Mock<HttpMessageHandler> http)
     {
         http.Protected()

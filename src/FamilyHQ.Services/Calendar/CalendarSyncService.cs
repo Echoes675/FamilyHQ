@@ -59,15 +59,12 @@ public class CalendarSyncService : ICalendarSyncService
 
     public async Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
-        Console.WriteLine($"[DEBUG] SyncAsync called for calendarInfoId={calendarInfoId}");
         var calendar = await _calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
         {
-            Console.WriteLine($"[DEBUG] Calendar {calendarInfoId} not found in DB. Skipping.");
             _logger.LogWarning("Calendar {CalendarId} not found in DB. Skipping sync.", calendarInfoId);
             return;
         }
-        Console.WriteLine($"[DEBUG] Calendar found: {calendar.DisplayName} (GoogleId={calendar.GoogleCalendarId})");
 
         bool isNewSyncState = false;
         var syncState = await _calendarRepository.GetSyncStateAsync(calendarInfoId, ct);
@@ -84,14 +81,12 @@ public class CalendarSyncService : ICalendarSyncService
 
         try
         {
-            Console.WriteLine($"[DEBUG] Fetching events for {calendar.GoogleCalendarId}. IsFullSync={isFullSync}");
             var (events, nextSyncToken) = await _googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
                 currentSyncToken,
                 ct);
-            Console.WriteLine($"[DEBUG] Fetched {events.Count()} events from Google for {calendar.DisplayName}");
 
             var existingEvents = await _calendarRepository.GetEventsAsync(calendarInfoId, startDate, endDate, ct);
 
@@ -114,10 +109,8 @@ public class CalendarSyncService : ICalendarSyncService
                 }
             }
 
-            Console.WriteLine($"[DEBUG] Processing {events.Count()} events for {calendar.DisplayName}.");
             foreach (var evt in events)
             {
-                Console.WriteLine($"[DEBUG] Processing event: '{evt.Title}' (GoogleId={evt.GoogleEventId}, Start={evt.Start})");
                 if (evt.Title == "CANCELLED_TOMBSTONE")
                 {
                     var tracked = await _calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
@@ -137,7 +130,8 @@ public class CalendarSyncService : ICalendarSyncService
                 var existingLinked = existingEvents.FirstOrDefault(e => e.GoogleEventId == evt.GoogleEventId);
                 if (existingLinked != null)
                 {
-                    // Already linked to this calendar — update properties only
+                    // Already linked to this calendar — update properties only.
+                    // IsExternallyOwned is informational and set at initial insert; not refreshed here.
                     existingLinked.Title = evt.Title;
                     existingLinked.Start = evt.Start;
                     existingLinked.End = evt.End;
@@ -156,7 +150,9 @@ public class CalendarSyncService : ICalendarSyncService
                         var tracked = await _calendarRepository.GetEventByIdAsync(existingInDb.Id, ct);
                         if (tracked != null)
                         {
-                            // Update properties and add this calendar link
+                            // Update properties and add this calendar link.
+                            // OwnerCalendarInfoId is not changed — owner was set when event was first inserted.
+                            // IsExternallyOwned is informational and set at initial insert; not refreshed here.
                             tracked.Title = evt.Title;
                             tracked.Start = evt.Start;
                             tracked.End = evt.End;
@@ -170,6 +166,7 @@ public class CalendarSyncService : ICalendarSyncService
                     else
                     {
                         // Brand new event
+                        evt.OwnerCalendarInfoId = calendar.Id;
                         evt.Calendars.Add(calendar);
                         await _calendarRepository.AddEventAsync(evt, ct);
                     }
@@ -190,7 +187,6 @@ public class CalendarSyncService : ICalendarSyncService
                 await _calendarRepository.SaveSyncStateAsync(syncState, ct);
 
             await _calendarRepository.SaveChangesAsync(ct);
-            Console.WriteLine($"[DEBUG] SaveChangesAsync completed for {calendar.DisplayName}.");
             _logger.LogInformation("Successfully synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("no longer valid"))
