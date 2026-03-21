@@ -198,8 +198,8 @@ public class EventsControllerTests
         // Act
         var result = await sut.DeleteEvent("cal-bob", "evt-bob");
 
-        // Assert
-        result.Should().BeOfType<NotFoundResult>();
+        // Assert — simulator returns Google-format error body on not found
+        result.Should().BeOfType<NotFoundObjectResult>();
         db.Events.Should().Contain(e => e.Id == "evt-bob");
     }
 
