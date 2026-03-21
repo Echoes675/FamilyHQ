@@ -653,7 +653,7 @@ No structural changes. Expanded `MonthViewDto` naturally produces one capsule pe
 - `DELETE /api/events/{id}/calendars/{calendarId}`: 204; 404 on `NotFoundException`.
 
 **Grid query**
-- Event linked to two calendars returns two `CalendarEventDto` entries in `MonthViewDto`, each with correct `Calendars` list and colour.
+- Event linked to two calendars returns **one** `CalendarEventDto` in `MonthViewDto.Days` with a `Calendars` list containing both calendars and their correct colours. (`CalendarApiService` then expands this into two `CalendarEventViewModel` entries — covered by the `CalendarApiService` test below.)
 
 **CalendarApiService (Blazor)**
 - Two `CalendarEventDto` entries for one event map to two `CalendarEventViewModel` entries with correct calendar colours.
