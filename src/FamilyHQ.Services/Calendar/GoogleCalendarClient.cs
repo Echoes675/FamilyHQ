@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Calendar.GoogleApi;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -68,21 +69,21 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var response = await _httpClient.GetAsync(endpoint, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<CalendarListResponse>(cancellationToken: ct);
-        
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiCalendarList>(cancellationToken: ct);
+
         return result?.Items.Select(item => new CalendarInfo
         {
             GoogleCalendarId = item.Id,
-            DisplayName = item.SummaryOverride ?? item.Summary,
+            DisplayName = item.SummaryOverride ?? item.Summary ?? string.Empty,
             Color = item.BackgroundColor
         }) ?? Array.Empty<CalendarInfo>();
     }
 
     public async Task<(IEnumerable<CalendarEvent> Events, string? NextSyncToken)> GetEventsAsync(
-        string googleCalendarId, 
-        DateTimeOffset? syncWindowStart, 
-        DateTimeOffset? syncWindowEnd, 
-        string? syncToken = null, 
+        string googleCalendarId,
+        DateTimeOffset? syncWindowStart,
+        DateTimeOffset? syncWindowEnd,
+        string? syncToken = null,
         CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
@@ -111,7 +112,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
 
             var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events?{string.Join("&", query)}";
-            
+
             var response = await _httpClient.GetAsync(endpoint, ct);
             if (response.StatusCode == System.Net.HttpStatusCode.Gone)
             {
@@ -120,7 +121,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<EventsResponse>(cancellationToken: ct);
+            var result = await response.Content.ReadFromJsonAsync<GoogleApiEventList>(cancellationToken: ct);
             if (result != null)
             {
                 foreach (var item in result.Items)
@@ -137,9 +138,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         continue;
                     }
 
-                    var startParam = item.Start?.DateTime ?? item.Start?.Date;
-                    var endParam = item.End?.DateTime ?? item.End?.Date;
-                    
+                    var startParam = item.Start?.DateTime
+                        ?? (item.Start?.Date != null ? DateTimeOffset.Parse(item.Start.Date) : (DateTimeOffset?)null);
+                    var endParam = item.End?.DateTime
+                        ?? (item.End?.Date != null ? DateTimeOffset.Parse(item.End.Date) : (DateTimeOffset?)null);
+
                     if (startParam == null || endParam == null) continue; // Skip malformed events
 
                     var isAllDay = item.Start?.Date != null;
@@ -169,14 +172,14 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await SetAuthorizationHeaderAsync(ct);
 
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        
+
         var requestBody = MapToGoogleEvent(calendarEvent);
         var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<GoogleEventItem>(cancellationToken: ct);
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
-        
+
         return calendarEvent;
     }
 
@@ -185,7 +188,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await SetAuthorizationHeaderAsync(ct);
 
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-        
+
         var requestBody = MapToGoogleEvent(calendarEvent);
         var response = await _httpClient.PutAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
         response.EnsureSuccessStatusCode();
@@ -220,8 +223,42 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var response = await _httpClient.PostAsync(endpoint, null, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<GoogleEventItem>(cancellationToken: ct);
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         return result!.Id;
+    }
+
+    public async Task PatchEventAttendeesAsync(
+        string organizerCalendarId,
+        string googleEventId,
+        IEnumerable<string> attendeeGoogleCalendarIds,
+        CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(organizerCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
+        var body = new
+        {
+            attendees = attendeeGoogleCalendarIds.Select(id => new { email = id }).ToArray()
+        };
+        var response = await _httpClient.PatchAsJsonAsync(endpoint, body, _jsonSerializerOptions, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<GoogleEventDetail?> GetEventAsync(
+        string googleCalendarId,
+        string googleEventId,
+        CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
+        var response = await _httpClient.GetAsync(endpoint, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+        if (apiEvent is null) return null;
+        return new GoogleEventDetail(
+            Id: apiEvent.Id,
+            OrganizerEmail: apiEvent.Organizer?.Email,
+            AttendeeEmails: apiEvent.Attendees?.Select(a => a.Email).ToList() ?? []);
     }
 
     private static object MapToGoogleEvent(CalendarEvent calendarEvent)
@@ -249,5 +286,4 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             };
         }
     }
-
 }

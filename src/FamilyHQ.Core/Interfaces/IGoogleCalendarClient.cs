@@ -10,4 +10,20 @@ public interface IGoogleCalendarClient
     Task<CalendarEvent> UpdateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, CancellationToken ct = default);
     Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
     Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Full replacement of the attendees array. attendeeGoogleCalendarIds must contain ALL
+    /// calendars EXCEPT the organiser — Google keeps organiser and attendees as separate fields.
+    /// </summary>
+    Task PatchEventAttendeesAsync(
+        string organizerCalendarId,
+        string googleEventId,
+        IEnumerable<string> attendeeGoogleCalendarIds,
+        CancellationToken ct);
+
+    /// <summary>Returns null if the event is not found (404).</summary>
+    Task<GoogleEventDetail?> GetEventAsync(
+        string googleCalendarId,
+        string googleEventId,
+        CancellationToken ct);
 }
