@@ -1,6 +1,5 @@
 using FluentAssertions;
 using FamilyHQ.Core.DTOs;
-using FamilyHQ.Core.ViewModels;
 
 namespace FamilyHQ.Core.Tests.DTOs;
 
@@ -67,43 +66,4 @@ public class DtoAndViewModelTests
         dto.Days.Should().BeEquivalentTo(days);
     }
 
-    [Fact]
-    public void CalendarEventViewModel_Initialization_SetPropertiesCorrectly()
-    {
-        // Arrange
-        var id = "string-id";
-        var title = "View Model Title";
-        var startTime = DateTime.Now;
-        var endTime = DateTime.Now.AddHours(2);
-        var isAllDay = false;
-        var location = "Home";
-        var calendarName = "Work Calendar";
-        var calendarColor = "#ff0000";
-        var calendarId = Guid.NewGuid();
-
-        // Act
-        var vm = new CalendarEventViewModel
-        {
-            Id = id,
-            Title = title,
-            StartTime = startTime,
-            EndTime = endTime,
-            IsAllDay = isAllDay,
-            Location = location,
-            CalendarName = calendarName,
-            CalendarColor = calendarColor,
-            CalendarId = calendarId
-        };
-
-        // Assert
-        vm.Id.Should().Be(id);
-        vm.Title.Should().Be(title);
-        vm.StartTime.Should().Be(startTime);
-        vm.EndTime.Should().Be(endTime);
-        vm.IsAllDay.Should().Be(isAllDay);
-        vm.Location.Should().Be(location);
-        vm.CalendarName.Should().Be(calendarName);
-        vm.CalendarColor.Should().Be(calendarColor);
-        vm.CalendarId.Should().Be(calendarId);
-    }
 }
