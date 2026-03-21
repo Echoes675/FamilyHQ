@@ -1,0 +1,113 @@
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.ViewModels
+
+<div class="chip-selector">
+    @foreach (var cal in AllCalendars)
+    {
+        var isActive = SelectedCalendarIds.Contains(cal.Id);
+        var isLast   = isActive && SelectedCalendarIds.Count == 1;
+
+        <div class="chip @(isActive ? "chip-active" : "chip-inactive")"
+             style="--chip-color: @(cal.Color ?? "#6c757d")"
+             @onclick="() => ToggleCalendarAsync(cal)"
+             title="@(isLast ? "Use Delete to remove this event entirely." : "")">
+            <span class="chip-dot"></span>
+            <span class="chip-name">@cal.DisplayName</span>
+            @if (isActive && !isLast)
+            {
+                <span class="chip-remove" aria-label="Remove @cal.DisplayName">&#x2715;</span>
+            }
+        </div>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(_chipError))
+{
+    <div class="chip-error mt-1">@_chipError</div>
+}
+
+@code {
+    /// <summary>All calendars available to the user.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<CalendarSummaryViewModel> AllCalendars { get; set; } = Array.Empty<CalendarSummaryViewModel>();
+
+    /// <summary>
+    /// The currently selected calendar IDs. For create mode this is mutated locally.
+    /// For edit mode add/remove calls are issued via the service.
+    /// Two-way bound via SelectedCalendarIdsChanged.
+    /// </summary>
+    [Parameter, EditorRequired]
+    public HashSet<Guid> SelectedCalendarIds { get; set; } = new();
+
+    [Parameter]
+    public EventCallback<HashSet<Guid>> SelectedCalendarIdsChanged { get; set; }
+
+    /// <summary>When null the component operates in create mode (no API calls).</summary>
+    [Parameter]
+    public Guid? EventId { get; set; }
+
+    [Parameter]
+    public ICalendarApiService? CalendarApi { get; set; }
+
+    private string? _chipError;
+
+    private async Task ToggleCalendarAsync(CalendarSummaryViewModel cal)
+    {
+        _chipError = null;
+        var isActive = SelectedCalendarIds.Contains(cal.Id);
+
+        if (EventId is null)
+        {
+            // Create mode — purely local state
+            if (isActive)
+            {
+                if (SelectedCalendarIds.Count > 1)
+                    SelectedCalendarIds.Remove(cal.Id);
+                // last active chip — do nothing (no API, no remove)
+            }
+            else
+            {
+                SelectedCalendarIds.Add(cal.Id);
+            }
+
+            await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
+            return;
+        }
+
+        // Edit mode — issue API calls
+        if (CalendarApi is null)
+            return;
+
+        if (isActive)
+        {
+            if (SelectedCalendarIds.Count <= 1)
+                return; // protected — last chip
+
+            try
+            {
+                await CalendarApi.RemoveCalendarFromEventAsync(EventId.Value, cal.Id);
+                SelectedCalendarIds.Remove(cal.Id);
+                await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
+            {
+                _chipError = $"Could not remove '{cal.DisplayName}'. Please try again.";
+            }
+        }
+        else
+        {
+            try
+            {
+                // Return value (refreshed CalendarEventViewModel) not needed here;
+                // SelectedCalendarIds is updated locally to keep the chip list in sync.
+                await CalendarApi.AddCalendarToEventAsync(EventId.Value, cal.Id);
+                SelectedCalendarIds.Add(cal.Id);
+                await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
+            {
+                _chipError = $"Could not add '{cal.DisplayName}'. Please try again.";
+            }
+        }
+    }
+}

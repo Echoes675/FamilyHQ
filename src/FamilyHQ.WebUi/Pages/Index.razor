@@ -193,31 +193,18 @@
                 </div>
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label class="form-label">Calendar</label>
-                        <select class="form-select" @bind="_selectedCalendarId">
-                            <option value="">-- Select Calendar --</option>
-                            @foreach(var cal in _calendars)
-                            {
-                                <option value="@cal.Id">@cal.DisplayName</option>
-                            }
-                        </select>
+                        <label class="form-label">Calendars</label>
+                        <CalendarChipSelector
+                            AllCalendars="_calendars"
+                            SelectedCalendarIds="_selectedCalendarIds"
+                            SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
+                            EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
+                            CalendarApi="CalendarApi" />
+                        @if (_selectedCalendarIds.Count == 0)
+                        {
+                            <div class="text-danger mt-1" style="font-size: 0.82rem;">Please select at least one calendar.</div>
+                        }
                     </div>
-
-                    @if (_isEditingEvent && _eventModel.AllCalendars.Count > 1)
-                    {
-                        <div class="mb-3">
-                            <label class="form-label text-muted" style="font-size: 0.85rem;">Also on</label>
-                            <div class="d-flex flex-wrap gap-1">
-                                @foreach (var cal in _eventModel.AllCalendars.Where(c => c.Id != _selectedCalendarId))
-                                {
-                                    <span class="badge rounded-pill"
-                                          style="background-color: @(cal.Color ?? "#6c757d"); font-size: 0.8rem;">
-                                        @cal.DisplayName
-                                    </span>
-                                }
-                            </div>
-                        </div>
-                    }
 
                     <div class="mb-3">
                         <label class="form-label">Event Title</label>
@@ -310,8 +297,7 @@
     private bool _showEventModal = false;
     private bool _isEditingEvent = false;
     private EventFormModel _eventModel = new();
-    private Guid _selectedCalendarId;
-    private Guid _originalCalendarId;
+    private HashSet<Guid> _selectedCalendarIds = new();
     private IReadOnlyList<CalendarSummaryViewModel> _calendars = Array.Empty<CalendarSummaryViewModel>();
     private string? _modalError;
     private bool _isSaving = false;
@@ -483,7 +469,9 @@
             End = new DateTimeOffset(date.AddHours(10), TimeSpan.Zero),
             IsAllDay = false
         };
-        _selectedCalendarId = _calendars.FirstOrDefault()?.Id ?? Guid.Empty;
+        _selectedCalendarIds = _calendars.FirstOrDefault() is { } firstCal
+            ? [firstCal.Id]
+            : [];
         _modalError = null;
         _showEventModal = true;
     }
@@ -503,8 +491,7 @@
             AllCalendars = evt.AllCalendars.ToList()
         };
 
-        _selectedCalendarId = evt.CalendarInfoId;
-        _originalCalendarId = evt.CalendarInfoId;
+        _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
 
         _modalError = null;
         _showEventModal = true;
@@ -525,9 +512,9 @@
             return;
         }
 
-        if (_selectedCalendarId == Guid.Empty)
+        if (_selectedCalendarIds.Count == 0)
         {
-            _modalError = "Please select a calendar.";
+            _modalError = "Please select at least one calendar.";
             return;
         }
 
@@ -557,7 +544,7 @@
             else
             {
                 var createReq = new CreateEventRequest(
-                    [_selectedCalendarId],
+                    _selectedCalendarIds.ToList(),
                     _eventModel.Title,
                     _eventModel.Start,
                     _eventModel.End,
