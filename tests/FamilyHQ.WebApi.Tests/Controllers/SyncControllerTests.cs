@@ -18,7 +18,7 @@ public class SyncControllerTests
     public async Task TriggerSync_ShouldCallSyncAndNotifyClients()
     {
         // Arrange
-        var (sync, proxy, systemUnderTest) = CreateSut();
+        var (constructorSync, _, proxy, systemUnderTest) = CreateSut();
 
         // Act
         var result = await systemUnderTest.TriggerSync(CancellationToken.None);
@@ -26,7 +26,7 @@ public class SyncControllerTests
         // Assert
         result.Should().BeOfType<OkObjectResult>();
 
-        sync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        constructorSync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -34,7 +34,7 @@ public class SyncControllerTests
     public async Task GooglePushWebhook_ShouldSyncEachRegisteredUserAndNotifyClients()
     {
         // Arrange
-        var (scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
+        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
         systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
@@ -51,7 +51,7 @@ public class SyncControllerTests
     public async Task GooglePushWebhook_WhenNoRegisteredUsers_ShouldStillNotifyClients()
     {
         // Arrange
-        var (_, proxy, systemUnderTest) = CreateSut(userIds: []);
+        var (_, _, proxy, systemUnderTest) = CreateSut(userIds: []);
         systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
@@ -62,8 +62,11 @@ public class SyncControllerTests
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private static (Mock<ICalendarSyncService> ScopedSync, Mock<IClientProxy> Proxy, SyncController SystemUnderTest) CreateSut(
-        IEnumerable<string>? userIds = null)
+    private static (
+        Mock<ICalendarSyncService> ConstructorSync,
+        Mock<ICalendarSyncService> ScopedSync,
+        Mock<IClientProxy> Proxy,
+        SyncController SystemUnderTest) CreateSut(IEnumerable<string>? userIds = null)
     {
         var syncServiceMock = new Mock<ICalendarSyncService>();
         var scopedSyncServiceMock = new Mock<ICalendarSyncService>();
@@ -103,6 +106,6 @@ public class SyncControllerTests
             }
         };
 
-        return (scopedSyncServiceMock, clientProxyMock, systemUnderTest);
+        return (syncServiceMock, scopedSyncServiceMock, clientProxyMock, systemUnderTest);
     }
 }
