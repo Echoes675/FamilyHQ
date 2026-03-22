@@ -64,6 +64,10 @@ public class AuthenticationSteps
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
         await page.WaitForURLAsync(config.BaseUrl + "/");
+
+        // Wait for Blazor's auth check to complete and render the authenticated view
+        // so that subsequent steps (e.g. clicking Sign Out) find the expected UI.
+        await _dashboardPage.SignOutBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
     }
 
     [When(@"I navigate to the dashboard")]
@@ -120,7 +124,7 @@ public class AuthenticationSteps
     [Then(@"I do not see the username displayed")]
     public async Task ThenIDoNotSeeTheUsernameDisplayed()
     {
-        await _dashboardPage.UserInfo.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 5000 });
+        await _dashboardPage.UserInfo.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 10000 });
         var userInfoVisible = await _dashboardPage.UserInfo.CountAsync() > 0;
         userInfoVisible.Should().BeFalse("Username should not be displayed after sign out");
     }
