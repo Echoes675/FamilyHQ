@@ -18,6 +18,7 @@
 | `tests-e2e/FamilyHQ.E2E.Steps/UserSteps.cs` | **Modify** | Remove `with calendar` param; add activation step |
 | `tests-e2e/FamilyHQ.E2E.Steps/EventSteps.cs` | **Modify** | Replace 3× raw `Get<string>("CurrentCalendarId")` with helper |
 | `tests-e2e/FamilyHQ.E2E.Steps/WebhookDataSteps.cs` | **Modify** | Replace 1× raw `Get<string>("CurrentCalendarId")` with helper |
+| `tests-e2e/FamilyHQ.E2E.Features/Authentication.feature` | **Modify** | Split all `with calendar` steps; add activation where needed |
 | `tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature` | **Modify** | Split all `with calendar` steps; add activation where needed |
 | `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature` | **Modify** | Split all `with calendar` steps; add activation to all scenarios |
 
@@ -209,12 +210,57 @@ git commit -m "refactor(e2e): split user setup and active calendar selection int
 
 ---
 
-## Task 4: Update `Dashboard.feature`
+## Task 4: Update `Authentication.feature`
+
+**Files:**
+- Modify: `tests-e2e/FamilyHQ.E2E.Features/Authentication.feature`
+
+Three scenarios use `with calendar "Family Events"`. Apply the rules from the spec:
+
+| Scenario | Change |
+|----------|--------|
+| User can sign in and see their username | Strip `with calendar` only — no unqualified event steps |
+| User can sign out and return to sign-in screen | Strip `with calendar` only — no unqualified event steps |
+| Calendar is visible when authenticated | Split + add activation (`"Family Events"`) — uses `the user has an all-day event X tomorrow` |
+
+- [ ] **Step 4.1: Apply changes to `Authentication.feature`**
+
+"User can sign in" and "User can sign out" become:
+```gherkin
+Given I have a user like "TestFamilyMember"
+```
+
+"Calendar is visible when authenticated" becomes:
+```gherkin
+Given I have a user like "TestFamilyMember"
+And the "Family Events" calendar is the active calendar
+And the user has an all-day event "School Holiday" tomorrow
+```
+
+- [ ] **Step 4.2: Build to confirm**
+
+```bash
+dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj
+```
+
+Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
+
+- [ ] **Step 4.3: Commit**
+
+```bash
+git add tests-e2e/FamilyHQ.E2E.Features/Authentication.feature
+git commit -m "test(e2e): update Authentication.feature to use explicit calendar activation step"
+```
+
+---
+
+## Task 5: Update `Dashboard.feature`
 
 **Files:**
 - Modify: `tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature`
 
 Apply the split pattern. The table below drives every change — check each row off as you go.
+
 
 | Location | Change |
 |----------|--------|
@@ -251,40 +297,7 @@ with:
 Given I have a user like "X"
 ```
 
-- [ ] **Step 4.1: Apply all changes to `Dashboard.feature` per the table above**
-
-- [ ] **Step 4.2: Build to confirm**
-
-```bash
-dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj
-```
-
-Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
-
-- [ ] **Step 4.3: Commit**
-
-```bash
-git add tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature
-git commit -m "test(e2e): update Dashboard.feature to use explicit calendar activation step"
-```
-
----
-
-## Task 5: Update `GoogleCalendarSync.feature` and verify
-
-**Files:**
-- Modify: `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature`
-
-All six scenarios use `TestFamilyMember` and all need the activation step — either because they use an unqualified event step (`the user has an all-day event X tomorrow`) or the `When a new event "X" is added to Google Calendar` step (which calls `GetCurrentCalendarId()` internally).
-
-Apply "Split + add activation" to every `Given I have a user like "TestFamilyMember" with calendar "Family Events"` in the file:
-
-```gherkin
-Given I have a user like "TestFamilyMember"
-And the "Family Events" calendar is the active calendar
-```
-
-- [ ] **Step 5.1: Apply the split to all six scenarios in `GoogleCalendarSync.feature`**
+- [ ] **Step 5.1: Apply all changes to `Dashboard.feature` per the table above**
 
 - [ ] **Step 5.2: Build to confirm**
 
@@ -297,11 +310,45 @@ Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
 - [ ] **Step 5.3: Commit**
 
 ```bash
+git add tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature
+git commit -m "test(e2e): update Dashboard.feature to use explicit calendar activation step"
+```
+
+---
+
+## Task 6: Update `GoogleCalendarSync.feature` and verify
+
+**Files:**
+- Modify: `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature`
+
+
+All six scenarios use `TestFamilyMember` and all need the activation step — either because they use an unqualified event step (`the user has an all-day event X tomorrow`) or the `When a new event "X" is added to Google Calendar` step (which calls `GetCurrentCalendarId()` internally).
+
+Apply "Split + add activation" to every `Given I have a user like "TestFamilyMember" with calendar "Family Events"` in the file:
+
+```gherkin
+Given I have a user like "TestFamilyMember"
+And the "Family Events" calendar is the active calendar
+```
+
+- [ ] **Step 6.1: Apply the split to all six scenarios in `GoogleCalendarSync.feature`**
+
+- [ ] **Step 6.2: Build to confirm**
+
+```bash
+dotnet build tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj
+```
+
+Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
+
+- [ ] **Step 6.3: Commit**
+
+```bash
 git add tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature
 git commit -m "test(e2e): update GoogleCalendarSync.feature to use explicit calendar activation step"
 ```
 
-- [ ] **Step 5.4: Verify no remaining `with calendar` references in feature files**
+- [ ] **Step 6.4: Verify no remaining `with calendar` references in feature files**
 
 ```bash
 grep -r "with calendar" tests-e2e/FamilyHQ.E2E.Features/
@@ -313,4 +360,4 @@ Expected: no output (zero matches).
 
 ## Done
 
-All five tasks complete. The branch is ready for a build pipeline run and E2E test pass before raising a PR to `dev`.
+All six tasks complete. The branch is ready for a build pipeline run and E2E test pass before raising a PR to `dev`.

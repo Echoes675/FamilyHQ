@@ -125,6 +125,7 @@ Scenario: New event added in Google Calendar appears on dashboard after sync
 | `tests-e2e/FamilyHQ.E2E.Steps/ScenarioContextExtensions.cs` | New file — `GetCurrentCalendarId()` extension method |
 | `tests-e2e/FamilyHQ.E2E.Steps/EventSteps.cs` | Replace all `Get<string>("CurrentCalendarId")` with `GetCurrentCalendarId()` |
 | `tests-e2e/FamilyHQ.E2E.Steps/WebhookDataSteps.cs` | Replace `Get<string>("CurrentCalendarId")` with `GetCurrentCalendarId()` |
+| `tests-e2e/FamilyHQ.E2E.Features/Authentication.feature` | Split all `with calendar` steps; add activation where needed |
 | `tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature` | Split all `with calendar` steps; add activation steps per table above |
 | `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature` | Split all `with calendar` steps; add activation step to all scenarios |
 
