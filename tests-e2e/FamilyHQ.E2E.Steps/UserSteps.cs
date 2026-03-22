@@ -4,6 +4,7 @@ using FamilyHQ.E2E.Data.Models;
 using FamilyHQ.E2E.Steps.Hooks;
 using Microsoft.Playwright;
 using Reqnroll;
+using System.Linq;
 
 namespace FamilyHQ.E2E.Steps;
 
@@ -19,19 +20,13 @@ public class UserSteps
         _simulatorApi = simulatorApi;
     }
 
-    [Given(@"I have a user like ""([^""]*)"" with calendar ""([^""]*)""")]
-    public async Task GivenIHaveAUserLikeWithCalendar(string userKey, string calendarName)
+    [Given(@"I have a user like ""([^""]*)""")]
+    public async Task GivenIHaveAUserLike(string userKey)
     {
         if (!TemplateHooks.UserTemplates.TryGetValue(userKey, out var template))
-        {
             throw new Exception($"Template '{userKey}' not found in user_templates.json");
-        }
 
-        // Generate a unique username per call so that each scenario execution is fully
-        // isolated in both the simulator and the WebApi database, even when the same
-        // userKey (e.g. "Test Family Member") appears in Background and in a Scenario.
         var uniqueUsername = $"{userKey}_{Guid.NewGuid():N}";
-
         var isolatedTemplate = new SimulatorConfigurationModel { UserName = uniqueUsername };
         var newCalendarIds = new Dictionary<string, string>();
 
@@ -46,19 +41,9 @@ public class UserSteps
                 Summary = c.Summary,
                 BackgroundColor = c.BackgroundColor
             });
-
-            if (c.Summary == calendarName)
-            {
-                _scenarioContext["CurrentCalendarId"] = newId;
-            }
         }
 
-        if (!_scenarioContext.ContainsKey("CurrentCalendarId"))
-        {
-            throw new Exception($"Calendar '{calendarName}' not found in template '{userKey}'.");
-        }
-
-        foreach(var e in template.Events)
+        foreach (var e in template.Events)
         {
             isolatedTemplate.Events.Add(new SimulatorEventModel
             {
@@ -75,6 +60,21 @@ public class UserSteps
         _scenarioContext[$"UniqueUsername:{userKey}"] = uniqueUsername;
         _scenarioContext["UserTemplate"] = isolatedTemplate;
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the ""([^""]*)"" calendar is the active calendar")]
+    public Task GivenTheCalendarIsTheActiveCalendar(string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
+
+        if (calendar == null)
+            throw new Exception(
+                $"Calendar '{calendarName}' not found in the user template. " +
+                $"Available: {string.Join(", ", isolatedTemplate.Calendars.Select(c => c.Summary))}");
+
+        _scenarioContext["CurrentCalendarId"] = calendar.Id;
+        return Task.CompletedTask;
     }
 
     [Given(@"I login as the user ""([^""]*)""")]
