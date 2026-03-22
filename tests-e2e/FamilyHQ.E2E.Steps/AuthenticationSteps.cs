@@ -120,6 +120,7 @@ public class AuthenticationSteps
     [Then(@"I do not see the username displayed")]
     public async Task ThenIDoNotSeeTheUsernameDisplayed()
     {
+        await _dashboardPage.UserInfo.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 5000 });
         var userInfoVisible = await _dashboardPage.UserInfo.CountAsync() > 0;
         userInfoVisible.Should().BeFalse("Username should not be displayed after sign out");
     }

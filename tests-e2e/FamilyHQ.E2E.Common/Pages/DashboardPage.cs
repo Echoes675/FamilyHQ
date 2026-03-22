@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FamilyHQ.E2E.Common.Configuration;
 using Microsoft.Playwright;
 
@@ -257,15 +258,23 @@ public class DashboardPage : BasePage
 
         // Activate both chips — the primary calendar chip may already be active;
         // clicking an already-active chip toggles it off, so we check state first.
+        // After each click, wait for Blazor to reflect the active state in the DOM
+        // before proceeding, to avoid a race where Save fires before state is committed.
         var chip1 = EventModal.Locator($".chip >> text={calendarName1}");
         var chip1Classes = await chip1.GetAttributeAsync("class") ?? "";
         if (!chip1Classes.Contains("chip-active"))
+        {
             await chip1.ClickAsync();
+            await Assertions.Expect(chip1).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
 
         var chip2 = EventModal.Locator($".chip >> text={calendarName2}");
         var chip2Classes = await chip2.GetAttributeAsync("class") ?? "";
         if (!chip2Classes.Contains("chip-active"))
+        {
             await chip2.ClickAsync();
+            await Assertions.Expect(chip2).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
