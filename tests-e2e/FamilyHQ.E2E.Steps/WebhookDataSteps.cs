@@ -1,7 +1,6 @@
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
 using FamilyHQ.E2E.Data.Models;
-using FluentAssertions;
 using Microsoft.Playwright;
 using Reqnroll;
 
@@ -41,7 +40,7 @@ public class WebhookDataSteps
 
         // Strip surrounding quotes that ReadAsStringAsync may include
         eventId = eventId.Trim('"');
-        _scenarioContext["LastCreatedEventId"] = eventId;
+        _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
     }
 
     [When(@"the event ""([^""]*)"" is updated to ""([^""]*)"" in Google Calendar")]
@@ -93,11 +92,11 @@ public class WebhookDataSteps
     }
 
     // Resolves an event ID from ScenarioContext.
-    // Checks LastCreatedEventId first (for dynamically-added events), then falls back
+    // Checks for a name-keyed dynamic ID first (for dynamically-added events), then falls back
     // to searching the UserTemplate's Events list by Summary (for pre-seeded events).
     private string ResolveEventId(string eventName)
     {
-        if (_scenarioContext.TryGetValue("LastCreatedEventId", out var lastId) && lastId is string id)
+        if (_scenarioContext.TryGetValue($"CreatedEventId:{eventName}", out var storedId) && storedId is string id)
             return id;
 
         var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
@@ -105,7 +104,7 @@ public class WebhookDataSteps
         if (match == null)
             throw new InvalidOperationException(
                 $"Could not resolve event ID for '{eventName}'. " +
-                "Ensure the event was seeded via 'Given the user has an all-day event' or 'When a new event is added'.");
+                "Ensure the event was seeded via 'Given the user has an all-day event' or added via 'When a new event \"{eventName}\" is added'.");
 
         return match.Id;
     }
