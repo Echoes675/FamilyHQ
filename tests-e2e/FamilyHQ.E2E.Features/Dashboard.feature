@@ -4,7 +4,8 @@ Feature: Dashboard Calendar Viewer
   So that I can see my upcoming schedule
 
   Background:
-    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
     And the user has an all-day event "School Holiday" tomorrow
     And I login as the user "TestFamilyMember"
 
@@ -28,7 +29,7 @@ Feature: Dashboard Calendar Viewer
     Then I do not see the event "School Holiday" displayed on the calendar
 
   Scenario: View events from multiple calendars
-    Given I have a user like "MultiCalendarUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalendarUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And the user has an all-day event "Family Dinner" tomorrow in "Personal Calendar"
     And the user has an all-day event "Parent Teacher Meeting" tomorrow in "School Calendar"
@@ -39,7 +40,8 @@ Feature: Dashboard Calendar Viewer
     And I see the event "Parent Teacher Meeting" displayed on the calendar
 
   Scenario: View all-day events
-    Given I have a user like "AllDayEventsUser" with calendar "Holidays"
+    Given I have a user like "AllDayEventsUser"
+    And the "Holidays" calendar is the active calendar
     And the user has an all-day event "Christmas Day" tomorrow
     And the user has an all-day event "New Year's Day" in 7 days
     And I login as the user "AllDayEventsUser"
@@ -48,7 +50,8 @@ Feature: Dashboard Calendar Viewer
     And I see the event "New Year's Day" displayed on the calendar
 
   Scenario: View timed events
-    Given I have a user like "TimedEventsUser" with calendar "Appointments"
+    Given I have a user like "TimedEventsUser"
+    And the "Appointments" calendar is the active calendar
     And the user has a timed event "Dentist Checkup" tomorrow at "10:00" for 1 hour
     And the user has a timed event "Team Standup" tomorrow at "09:00" for 30 minutes
     And I login as the user "TimedEventsUser"
@@ -57,7 +60,8 @@ Feature: Dashboard Calendar Viewer
     And I see the event "Team Standup" displayed on the calendar
 
   Scenario: View event details
-    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
     And the user has an all-day event "School Holiday" tomorrow
     And I login as the user "TestFamilyMember"
     And I view the dashboard
@@ -65,7 +69,7 @@ Feature: Dashboard Calendar Viewer
     Then I see the event details for "School Holiday"
 
   Scenario: Update event after changing its calendar
-    Given I have a user like "MultiCalendarUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalendarUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalendarUser"
     And I view the dashboard
@@ -74,7 +78,7 @@ Feature: Dashboard Calendar Viewer
     Then I see the event "Updated Team Meeting" displayed on the calendar
 
   Scenario: Delete event after changing its calendar
-    Given I have a user like "MultiCalendarUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalendarUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalendarUser"
     And I view the dashboard
@@ -83,7 +87,8 @@ Feature: Dashboard Calendar Viewer
     Then I do not see the event "Team Meeting" displayed on the calendar
 
   Scenario: Navigate to next month
-    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
     And the user has an all-day event "Next Month Event" in 30 days
     And I login as the user "TestFamilyMember"
     And I view the dashboard
@@ -91,7 +96,7 @@ Feature: Dashboard Calendar Viewer
     Then I see the event "Next Month Event" displayed on the calendar
 
   Scenario: Create event in two calendars appears twice on grid
-    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalUser"
     And I login as the user "MultiCalUser"
     And I view the dashboard
     When I create an event "Standup" in calendars "Work Calendar" and "Personal Calendar"
@@ -99,7 +104,7 @@ Feature: Dashboard Calendar Viewer
     And I see the event "Standup" displayed on the calendar in "Personal Calendar" colour
 
   Scenario: Add calendar to existing event via chip
-    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
@@ -109,7 +114,7 @@ Feature: Dashboard Calendar Viewer
     And I see the event "Team Meeting" displayed on the calendar in "Personal Calendar" colour
 
   Scenario: Remove calendar chip from event
-    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And the user has the event "Team Meeting" also in "Personal Calendar"
     And I login as the user "MultiCalUser"
@@ -120,7 +125,7 @@ Feature: Dashboard Calendar Viewer
     And I do not see a "Personal Calendar" capsule for "Team Meeting" on the calendar
 
   Scenario: Last chip is protected — cannot remove final calendar
-    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalUser"
     And the user has an all-day event "Solo Event" tomorrow in "Work Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
@@ -128,7 +133,7 @@ Feature: Dashboard Calendar Viewer
     Then the last active calendar chip has no remove button
 
   Scenario: Delete event removes it from all calendars
-    Given I have a user like "MultiCalUser" with calendar "Work Calendar"
+    Given I have a user like "MultiCalUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And the user has the event "Team Meeting" also in "Personal Calendar"
     And I login as the user "MultiCalUser"
