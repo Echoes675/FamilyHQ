@@ -64,7 +64,9 @@ public class BackdoorEventsController : ControllerBase
     }
 
     /// <summary>
-    /// Deletes an event. Accepts userId as a query string parameter.
+    /// Soft-deletes an event. Accepts userId as a query string parameter.
+    /// The event remains in the database with IsDeleted=true so the next sync
+    /// receives a cancelled tombstone and removes it from the WebApi's local store.
     /// </summary>
     [HttpDelete("{eventId}")]
     public async Task<IActionResult> DeleteEvent(string eventId, [FromQuery] string userId)
@@ -76,9 +78,7 @@ public class BackdoorEventsController : ControllerBase
         if (existing == null)
             return NotFound();
 
-        var attendees = _db.EventAttendees.Where(a => a.EventId == eventId);
-        _db.EventAttendees.RemoveRange(attendees);
-        _db.Events.Remove(existing);
+        existing.IsDeleted = true;
         await _db.SaveChangesAsync();
 
         return NoContent();

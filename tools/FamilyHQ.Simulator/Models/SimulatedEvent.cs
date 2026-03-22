@@ -11,4 +11,5 @@ public class SimulatedEvent
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }
     public string? UserId { get; set; }
+    public bool IsDeleted { get; set; }
 }

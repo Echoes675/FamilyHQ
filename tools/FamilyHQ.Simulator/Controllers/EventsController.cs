@@ -38,7 +38,7 @@ public class EventsController : ControllerBase
             .ToListAsync();
 
         var events = await _db.Events
-            .Where(e => e.UserId == userId && (e.CalendarId == calendarId || attendeeEventIds.Contains(e.Id)))
+            .Where(e => e.UserId == userId && (e.IsDeleted || e.CalendarId == calendarId || attendeeEventIds.Contains(e.Id)))
             .ToListAsync();
 
         var eventIds = events.Select(e => e.Id).ToList();
@@ -299,7 +299,7 @@ public class EventsController : ControllerBase
     private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
     {
         id = e.Id,
-        status = "confirmed",
+        status = e.IsDeleted ? "cancelled" : "confirmed",
         summary = e.Summary,
         location = e.Location,
         description = e.Description,
