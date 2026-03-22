@@ -6,7 +6,7 @@ pipeline {
     }
 
     triggers {
-        upstream(upstreamProjects: 'FamilyHQ-Deploy-Dev', threshold: hudson.model.Result.SUCCESS)
+        upstream(upstreamProjects: 'FamilyHQ/dev', threshold: hudson.model.Result.SUCCESS)
     }
 
     tools {
