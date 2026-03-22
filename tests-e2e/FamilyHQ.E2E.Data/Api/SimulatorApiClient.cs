@@ -28,6 +28,60 @@ public class SimulatorApiClient : IDisposable
         response.EnsureSuccessStatusCode(); 
     }
 
+    /// <summary>
+    /// Adds a new event directly to the Simulator via the back-door endpoint.
+    /// Returns the newly created event's ID.
+    /// </summary>
+    public async Task<string> AddEventAsync(
+        string userId, string calendarId, string summary,
+        DateTime start, DateTime end, bool isAllDay)
+    {
+        var body = new
+        {
+            UserId = userId,
+            CalendarId = calendarId,
+            Summary = summary,
+            Start = start,
+            End = end,
+            IsAllDay = isAllDay
+        };
+        var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/events", body);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    /// <summary>
+    /// Updates the summary of an existing event via the back-door endpoint.
+    /// </summary>
+    public async Task UpdateEventAsync(string userId, string eventId, string newSummary)
+    {
+        var body = new { UserId = userId, Summary = newSummary };
+        var response = await _httpClient.PutAsJsonAsync(
+            $"api/simulator/backdoor/events/{eventId}", body);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Deletes an event via the back-door endpoint.
+    /// </summary>
+    public async Task DeleteEventAsync(string userId, string eventId)
+    {
+        var response = await _httpClient.DeleteAsync(
+            $"api/simulator/backdoor/events/{eventId}?userId={userId}");
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Triggers the Simulator to fire a push notification to the WebApi webhook endpoint,
+    /// which causes the WebApi to run SyncAllAsync and notify clients via SignalR.
+    /// </summary>
+    public async Task TriggerWebhookAsync()
+    {
+        // "simulate/push" — no leading slash, resolves against BaseAddress correctly
+        var response = await _httpClient.PostAsync("simulate/push", null);
+        response.EnsureSuccessStatusCode();
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();
