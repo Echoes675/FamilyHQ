@@ -20,6 +20,7 @@ public class Program
         builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
         builder.Services.AddScoped<ICorrelationIdTokenStore, LocalStorageCorrelationIdTokenStore>();
         builder.Services.AddTransient<CorrelationIdMessageHandler>();
+        builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
 
         builder.Services.AddHttpClient<ICalendarApiService, CalendarApiService>(client =>
         {
