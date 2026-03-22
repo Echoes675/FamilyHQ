@@ -39,10 +39,10 @@ public class DashboardSteps
     [Then(@"I see the event ""([^""]*)"" displayed on the calendar")]
     public async Task ThenISeeTheEventDisplayedOnTheCalendar(string eventName)
     {
-        var visibleEvents = await _dashboardPage.GetVisibleEventsAsync();
-        
-        visibleEvents.Should().Contain(e => e.Contains(eventName), 
-            $"The event '{eventName}' should be visible on the dashboard month view.");
+        // Use Playwright's built-in retry to handle the render cycle between the HTTP
+        // response landing and Blazor painting the event capsules into the DOM.
+        var capsule = _dashboardPage.EventCapsules.Filter(new() { HasText = eventName });
+        await Assertions.Expect(capsule.First).ToBeVisibleAsync(new() { Timeout = 10000 });
     }
 
     [Then(@"I do not see the event ""([^""]*)"" displayed on the calendar")]
