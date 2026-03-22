@@ -24,7 +24,7 @@ public class UserSteps
     public async Task GivenIHaveAUserLike(string userKey)
     {
         if (!TemplateHooks.UserTemplates.TryGetValue(userKey, out var template))
-            throw new Exception($"Template '{userKey}' not found in user_templates.json");
+            throw new InvalidOperationException($"Template '{userKey}' not found in user_templates.json");
 
         var uniqueUsername = $"{userKey}_{Guid.NewGuid():N}";
         var isolatedTemplate = new SimulatorConfigurationModel { UserName = uniqueUsername };
@@ -69,7 +69,7 @@ public class UserSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
 
         if (calendar == null)
-            throw new Exception(
+            throw new InvalidOperationException(
                 $"Calendar '{calendarName}' not found in the user template. " +
                 $"Available: {string.Join(", ", isolatedTemplate.Calendars.Select(c => c.Summary))}");
 
