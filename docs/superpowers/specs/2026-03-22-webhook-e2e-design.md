@@ -32,17 +32,32 @@ Add a `GoogleCalendarSync.feature` file with 6 scenarios covering:
 
 New `BackdoorEventsController` in `tools/FamilyHQ.Simulator`, route prefix `api/simulator/backdoor/events`.
 
-Unlike the existing `EventsController` (which mimics the Google Calendar API and reads the user from a Bearer token), this controller accepts `userId` directly in the request body. This allows test code to mutate simulator state without constructing a fake OAuth token.
+> **Note:** The existing `WebhookController` sits at `[Route("simulate/push")]` — outside the `api/simulator/` namespace. The new back-door controller follows the `api/simulator/` convention used by `SimulatorConfigController`. Do not prefix it with `simulate/` by analogy with `WebhookController`.
+
+Unlike the existing `EventsController` (which mimics the Google Calendar API and reads the user from a Bearer token), this controller accepts `userId` directly in the request body or query string. This allows test code to mutate simulator state without constructing a fake OAuth token.
 
 **Endpoints:**
 
-| Method | Route | Purpose |
-|--------|-------|---------|
-| `POST` | `/api/simulator/backdoor/events` | Add a new event for a user |
-| `PUT` | `/api/simulator/backdoor/events/{eventId}` | Update an event's summary |
-| `DELETE` | `/api/simulator/backdoor/events/{eventId}?userId={userId}` | Delete an event |
+| Method | Route | `userId` location | Purpose |
+|--------|-------|------------------|---------|
+| `POST` | `/api/simulator/backdoor/events` | Request body | Add a new event |
+| `PUT` | `/api/simulator/backdoor/events/{eventId}` | Request body | Update an event's summary |
+| `DELETE` | `/api/simulator/backdoor/events/{eventId}?userId={userId}` | Query string | Delete an event |
 
-`POST` returns the created event's ID in the response body so the scenario context can store it for subsequent update/delete steps.
+`POST` returns the created event's ID (string) in the response body so the scenario context can store it.
+
+#### `BackdoorEventRequest` DTO fields
+
+Used by both `POST` and `PUT` bodies:
+
+| Field | Type | Required for POST | Required for PUT |
+|-------|------|:-----------------:|:----------------:|
+| `UserId` | `string` | ✓ | ✓ |
+| `CalendarId` | `string` | ✓ | — |
+| `Summary` | `string` | ✓ | ✓ |
+| `Start` | `DateTime` | ✓ | — |
+| `End` | `DateTime` | ✓ | — |
+| `IsAllDay` | `bool` | ✓ | — |
 
 ### 2. SimulatorApiClient Extensions
 
@@ -55,15 +70,22 @@ Task DeleteEventAsync(string userId, string eventId)
 Task TriggerWebhookAsync()
 ```
 
-- `AddEventAsync` returns the new event's ID for storage in `ScenarioContext`
-- `TriggerWebhookAsync` calls `POST /simulate/push` — the Simulator then forwards to `POST /api/sync/webhook` on the WebApi (mirrors real Google push notification behaviour)
+- `AddEventAsync` posts to `POST /api/simulator/backdoor/events` and returns the created event's ID
+- `UpdateEventAsync` puts to `PUT /api/simulator/backdoor/events/{eventId}` with `userId` and `newSummary` in the request body (`BackdoorEventRequest`)
+- `DeleteEventAsync` calls `DELETE /api/simulator/backdoor/events/{eventId}?userId={userId}`
+- `TriggerWebhookAsync` calls `POST /simulate/push` on the Simulator — the **already-existing** `WebhookController` then forwards the request to `POST /api/sync/webhook` on the WebApi, mirroring real Google push notification behaviour. The relative path passed to `_httpClient.PostAsync` must be `"simulate/push"` (no leading slash) to correctly resolve against the `BaseAddress` set in the constructor
 - All methods follow the existing `EnsureSuccessStatusCode()` pattern
+
+> **Known limitation:** `WebhookController` hardcodes the WebApi URL as `https://localhost:7196/api/sync/webhook`. This is a pre-existing constraint and is out of scope for this spec. If the environment changes, the URL must be updated in `WebhookController` or moved to Simulator `appsettings.json`.
 
 ### 3. WebhookDataSteps.cs
 
-New step definitions file in `tests-e2e/FamilyHQ.E2E.Steps/`:
+New step definitions file in `tests-e2e/FamilyHQ.E2E.Steps/`.
+
+`WebhookDataSteps` constructs its own `DashboardPage` instance from `scenarioContext.Get<IPage>()`, matching the pattern used in `DashboardSteps` and `AuthenticationSteps`. `DashboardPage` is not registered in the BoDi container — it is always constructed manually.
 
 **Data mutation steps** (call back-door Simulator endpoints):
+
 ```gherkin
 When a new event "X" is added to Google Calendar
 When the event "X" is updated to "Y" in Google Calendar
@@ -71,85 +93,103 @@ When the event "X" is deleted from Google Calendar
 ```
 
 **Webhook trigger step:**
+
 ```gherkin
 When Google Calendar sends a webhook notification
 ```
 
-**Real-time assertion steps** (Playwright polling loop, up to 5s, no navigation):
+**Real-time assertion steps** (Playwright polling, no navigation):
+
 ```gherkin
 Then the dashboard live-updates to show "X"
 Then the dashboard live-updates to remove "X"
 ```
 
-The mutation steps read `UserTemplate` and calendar IDs from `ScenarioContext` (set during `Given I have a user like...`). The event ID returned by `AddEventAsync` is stored in `ScenarioContext["LastCreatedEventId"]` for use by update/delete steps.
+#### Step implementation notes
 
-The live-update assertion steps poll `_dashboardPage.GetVisibleEventsAsync()` in a short retry loop rather than using a hard wait, so they pass as soon as the SignalR-pushed DOM update lands.
+**`userId` and `calendarId` resolution:**
+- `userId` is read from `ScenarioContext["UserTemplate"].UserName`
+- `calendarId` for `AddEventAsync` is read from `ScenarioContext["CurrentCalendarId"]` (set by `UserSteps.GivenIHaveAUserLikeWithCalendar`)
+
+**Event ID resolution for update/delete steps:**
+- When the event was created by `AddEventAsync` (the add scenarios), the `When a new event "X" is added to Google Calendar` step implementation writes the returned ID into `ScenarioContext["LastCreatedEventId"]` immediately after the `AddEventAsync` call
+- When the event was pre-seeded via `Given the user has an all-day event "X" tomorrow` (the update/delete scenarios), the step implementation resolves the ID by searching `ScenarioContext["UserTemplate"].Events` by `Summary == eventName`
+- This means `EventSteps` steps store events in the template with their generated IDs, which is already the case
+
+**Live-update polling:**
+- The `Then the dashboard live-updates to show/remove "X"` steps poll `_dashboardPage.GetVisibleEventsAsync()` in a retry loop
+- Timeout: 5 seconds. `TestConfiguration.DefaultTimeoutMs` exists but is set to 30 000 ms — do **not** use it here. Use a local constant `LiveUpdateTimeoutMs = 5000` within `WebhookDataSteps`
+- Poll interval: 250ms
+- Failure message: `"Dashboard did not live-update within 5s after webhook notification"`
+
+**Navigation race note:** The eventual consistency scenarios re-navigate via `And I view the dashboard` after the webhook fires. `DashboardPage.NavigateAndWaitAsync` waits for `NetworkIdle` after `GotoAsync`, ensuring the `api/calendars/events` response has completed before assertions run. The SignalR push from the webhook is therefore irrelevant for eventual consistency scenarios — the full page reload always retrieves fresh data.
 
 ### 4. GoogleCalendarSync.feature
 
-New feature file in `tests-e2e/FamilyHQ.E2E.Features/`:
+New feature file in `tests-e2e/FamilyHQ.E2E.Features/`.
 
-#### Eventual Consistency Scenarios
-
-```gherkin
-Scenario: New event added in Google Calendar appears on dashboard after sync
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When a new event "Dentist Appointment" is added to Google Calendar
-  And Google Calendar sends a webhook notification
-  And I view the dashboard
-  Then I see the event "Dentist Appointment" displayed on the calendar
-
-Scenario: Event updated in Google Calendar shows new title after sync
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And the user has an all-day event "School Holiday" tomorrow
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
-  And Google Calendar sends a webhook notification
-  And I view the dashboard
-  Then I see the event "School Holiday (Cancelled)" displayed on the calendar
-
-Scenario: Event deleted in Google Calendar disappears after sync
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And the user has an all-day event "School Holiday" tomorrow
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When the event "School Holiday" is deleted from Google Calendar
-  And Google Calendar sends a webhook notification
-  And I view the dashboard
-  Then I do not see the event "School Holiday" displayed on the calendar
-```
-
-#### Real-Time SignalR Push Scenarios
+No `Background` block is used because the real-time and eventual consistency scenarios differ in their flow after login (one keeps the dashboard open; the other re-navigates). Each scenario states its full setup explicitly.
 
 ```gherkin
-Scenario: New event added in Google Calendar appears live on open dashboard
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When a new event "Dentist Appointment" is added to Google Calendar
-  And Google Calendar sends a webhook notification
-  Then the dashboard live-updates to show "Dentist Appointment"
+Feature: Google Calendar Webhook Sync
+  As a family member
+  I want my dashboard to reflect changes made in Google Calendar
+  So that I always see an up-to-date view of my schedule
 
-Scenario: Event updated in Google Calendar shows live on open dashboard
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And the user has an all-day event "School Holiday" tomorrow
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
-  And Google Calendar sends a webhook notification
-  Then the dashboard live-updates to show "School Holiday (Cancelled)"
+  Scenario: New event added in Google Calendar appears on dashboard after sync
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When a new event "Dentist Appointment" is added to Google Calendar
+    And Google Calendar sends a webhook notification
+    And I view the dashboard
+    Then I see the event "Dentist Appointment" displayed on the calendar
 
-Scenario: Event deleted in Google Calendar disappears live from open dashboard
-  Given I have a user like "TestFamilyMember" with calendar "Family Events"
-  And the user has an all-day event "School Holiday" tomorrow
-  And I login as the user "TestFamilyMember"
-  And I view the dashboard
-  When the event "School Holiday" is deleted from Google Calendar
-  And Google Calendar sends a webhook notification
-  Then the dashboard live-updates to remove "School Holiday"
+  Scenario: Event updated in Google Calendar shows new title after sync
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
+    And Google Calendar sends a webhook notification
+    And I view the dashboard
+    Then I see the event "School Holiday (Cancelled)" displayed on the calendar
+
+  Scenario: Event deleted in Google Calendar disappears after sync
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When the event "School Holiday" is deleted from Google Calendar
+    And Google Calendar sends a webhook notification
+    And I view the dashboard
+    Then I do not see the event "School Holiday" displayed on the calendar
+
+  Scenario: New event added in Google Calendar appears live on open dashboard
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When a new event "Dentist Appointment" is added to Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to show "Dentist Appointment"
+
+  Scenario: Event updated in Google Calendar shows live on open dashboard
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to show "School Holiday (Cancelled)"
+
+  Scenario: Event deleted in Google Calendar disappears live from open dashboard
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    When the event "School Holiday" is deleted from Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to remove "School Holiday"
 ```
 
 ---
@@ -171,3 +211,4 @@ Scenario: Event deleted in Google Calendar disappears live from open dashboard
 - Webhook authentication/validation (Google signature headers) — not relevant to the Simulator
 - Multi-calendar webhook scenarios — can be added in a follow-up
 - Recurring event changes — out of scope for this iteration
+- Making the WebApi URL in `WebhookController` configurable — pre-existing constraint
