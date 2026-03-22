@@ -16,5 +16,5 @@ See skill git-commit-formatter
 ## PR Requirements
 - Code must compile via dotnet build.
 - All unit tests must pass.
-- All E2E tests must pass.
+- All E2E tests must pass on the `FamilyHQ-Deploy-Dev` pipeline.
 - No commented-out code or Console.WriteLine statements (use ILogger).
