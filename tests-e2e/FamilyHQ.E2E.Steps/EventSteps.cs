@@ -22,7 +22,7 @@ public class EventSteps
     public async Task GivenTheUserHasAnAll_DayEventTomorrow(string eventName)
     {
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
         
         var tomorrow = DateTime.Today.AddDays(1);
         
@@ -43,7 +43,7 @@ public class EventSteps
     public async Task GivenTheUserHasAnAllDayEventInDays(string eventName, int days)
     {
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
         
         var eventDate = DateTime.Today.AddDays(days);
         
@@ -117,7 +117,7 @@ public class EventSteps
     private async Task AddTimedEvent(string eventName, string timeStr, int durationMinutes)
     {
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
 
         var tomorrow = DateTime.Today.AddDays(1);
         var timeParts = timeStr.Split(':');
