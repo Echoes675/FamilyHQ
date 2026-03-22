@@ -18,8 +18,8 @@
 | `tests-e2e/FamilyHQ.E2E.Steps/UserSteps.cs` | **Modify** | Remove `with calendar` param; add activation step |
 | `tests-e2e/FamilyHQ.E2E.Steps/EventSteps.cs` | **Modify** | Replace 3× raw `Get<string>("CurrentCalendarId")` with helper |
 | `tests-e2e/FamilyHQ.E2E.Steps/WebhookDataSteps.cs` | **Modify** | Replace 1× raw `Get<string>("CurrentCalendarId")` with helper |
-| `tests-e2e/FamilyHQ.E2E.Features/WebUi/Dashboard.feature` | **Modify** | Split all `with calendar` steps; add activation where needed |
-| `tests-e2e/FamilyHQ.E2E.Features/WebUi/GoogleCalendarSync.feature` | **Modify** | Split all `with calendar` steps; add activation to all scenarios |
+| `tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature` | **Modify** | Split all `with calendar` steps; add activation where needed |
+| `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature` | **Modify** | Split all `with calendar` steps; add activation to all scenarios |
 
 ---
 
@@ -212,7 +212,7 @@ git commit -m "refactor(e2e): split user setup and active calendar selection int
 ## Task 4: Update `Dashboard.feature`
 
 **Files:**
-- Modify: `tests-e2e/FamilyHQ.E2E.Features/WebUi/Dashboard.feature`
+- Modify: `tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature`
 
 Apply the split pattern. The table below drives every change — check each row off as you go.
 
@@ -264,7 +264,7 @@ Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
 - [ ] **Step 4.3: Commit**
 
 ```bash
-git add tests-e2e/FamilyHQ.E2E.Features/WebUi/Dashboard.feature
+git add tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature
 git commit -m "test(e2e): update Dashboard.feature to use explicit calendar activation step"
 ```
 
@@ -273,7 +273,7 @@ git commit -m "test(e2e): update Dashboard.feature to use explicit calendar acti
 ## Task 5: Update `GoogleCalendarSync.feature` and verify
 
 **Files:**
-- Modify: `tests-e2e/FamilyHQ.E2E.Features/WebUi/GoogleCalendarSync.feature`
+- Modify: `tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature`
 
 All six scenarios use `TestFamilyMember` and all need the activation step — either because they use an unqualified event step (`the user has an all-day event X tomorrow`) or the `When a new event "X" is added to Google Calendar` step (which calls `GetCurrentCalendarId()` internally).
 
@@ -297,7 +297,7 @@ Expected: `Build succeeded. 0 Warning(s). 0 Error(s).`
 - [ ] **Step 5.3: Commit**
 
 ```bash
-git add tests-e2e/FamilyHQ.E2E.Features/WebUi/GoogleCalendarSync.feature
+git add tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature
 git commit -m "test(e2e): update GoogleCalendarSync.feature to use explicit calendar activation step"
 ```
 
