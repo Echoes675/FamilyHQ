@@ -208,7 +208,8 @@ pipeline {
                         TestConfiguration__Headless=true \
                         dotnet test tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj \
                             -c Release --no-build \
-                            --logger "trx;LogFileName=e2e-results.trx"
+                            --logger "trx;LogFileName=e2e-results.trx" \
+                            --logger "console;verbosity=detailed"
                     """
                 }
             }

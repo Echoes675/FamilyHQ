@@ -1,5 +1,6 @@
 using Microsoft.Playwright;
 using Reqnroll;
+using Xunit.Abstractions;
 using FamilyHQ.E2E.Data.Api;
 
 namespace FamilyHQ.E2E.Steps.Hooks;
@@ -9,19 +10,21 @@ public class CorrelationIdHooks
 {
     private readonly ScenarioContext _scenarioContext;
     private readonly SimulatorApiClient _simulatorApi;
+    private readonly ITestOutputHelper _testOutputHelper;
 
-    public CorrelationIdHooks(ScenarioContext scenarioContext, SimulatorApiClient simulatorApi)
+    public CorrelationIdHooks(ScenarioContext scenarioContext, SimulatorApiClient simulatorApi, ITestOutputHelper testOutputHelper)
     {
         _scenarioContext = scenarioContext;
         _simulatorApi = simulatorApi;
+        _testOutputHelper = testOutputHelper;
     }
 
     [BeforeScenario(Order = 2)]
     public async Task SetCorrelationIdAsync()
     {
         var testCorrelationId = Guid.NewGuid().ToString();
-        
-        Console.WriteLine($"Starting Test '{_scenarioContext.ScenarioInfo.Title}' with TestCorrelationId: {testCorrelationId}");
+
+        _testOutputHelper.WriteLine($"Starting Test '{_scenarioContext.ScenarioInfo.Title}' with TestCorrelationId: {testCorrelationId}");
         
         _scenarioContext.Set(testCorrelationId, "TestCorrelationId");
         _simulatorApi.SetCorrelationId(testCorrelationId);
