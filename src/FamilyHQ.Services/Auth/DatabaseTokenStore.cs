@@ -180,7 +180,7 @@ public class DatabaseTokenStore : ITokenStore
     public async Task SaveRefreshTokenAsync(string refreshToken, string userId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(refreshToken);
-        
+
         if (string.IsNullOrEmpty(userId))
         {
             throw new InvalidOperationException("Cannot save refresh token: no user ID provided");
@@ -224,5 +224,13 @@ public class DatabaseTokenStore : ITokenStore
         {
             _lock.Release();
         }
+    }
+
+    public async Task<IEnumerable<string>> GetAllUserIdsAsync(CancellationToken ct = default)
+    {
+        return await _dbContext.UserTokens
+            .Select(t => t.UserId)
+            .Distinct()
+            .ToListAsync(ct);
     }
 }
