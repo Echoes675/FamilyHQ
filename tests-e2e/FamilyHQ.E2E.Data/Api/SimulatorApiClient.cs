@@ -19,6 +19,16 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
+    /// Sets the correlation ID for all subsequent requests from this client instance.
+    /// This ensures API-only tests supply the TestCorrelationId.
+    /// </summary>
+    public void SetCorrelationId(string correlationId)
+    {
+        _httpClient.DefaultRequestHeaders.Remove("X-Correlation-Id");
+        _httpClient.DefaultRequestHeaders.Add("X-Correlation-Id", correlationId);
+    }
+
+    /// <summary>
     /// Injects a pre-defined user configuration template into the dumb Simulator.
     /// This establishes the isolated data context for the subsequent E2E test scenario.
     /// </summary>

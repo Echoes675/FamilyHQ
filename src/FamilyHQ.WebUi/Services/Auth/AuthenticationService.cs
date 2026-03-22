@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using FamilyHQ.WebUi.Services.Correlation;
 
 namespace FamilyHQ.WebUi.Services.Auth;
 
@@ -10,15 +11,17 @@ namespace FamilyHQ.WebUi.Services.Auth;
 public class AuthenticationService : IAuthenticationService
 {
     private readonly IAuthTokenStore _tokenStore;
+    private readonly ICorrelationIdTokenStore _correlationStore;
     
     private string? _cachedUserId;
     private string? _cachedUsername;
     private bool _isAuthenticated;
     private bool _isInitialized;
 
-    public AuthenticationService(IAuthTokenStore tokenStore)
+    public AuthenticationService(IAuthTokenStore tokenStore, ICorrelationIdTokenStore correlationStore)
     {
         _tokenStore = tokenStore;
+        _correlationStore = correlationStore;
     }
 
     /// <summary>
@@ -54,6 +57,7 @@ public class AuthenticationService : IAuthenticationService
     public async Task SignOutAsync()
     {
         await _tokenStore.ClearTokenAsync();
+        await _correlationStore.ClearSessionCorrelationIdAsync();
         _cachedUserId = null;
         _cachedUsername = null;
         _isAuthenticated = false;
