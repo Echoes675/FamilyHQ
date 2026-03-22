@@ -6,11 +6,19 @@ namespace FamilyHQ.Simulator.Controllers;
 [Route("simulate/push")]
 public class WebhookController : ControllerBase
 {
+    private readonly IConfiguration _configuration;
+
+    public WebhookController(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
     [HttpPost]
     public async Task<IActionResult> PushWebhook()
     {
         using var client = new HttpClient();
-        var webApiUrl = "https://localhost:7196/api/sync/webhook";
+        var webApiBaseUrl = _configuration["WebApiBaseUrl"] ?? "https://localhost:7196";
+        var webApiUrl = webApiBaseUrl.TrimEnd('/') + "/api/sync/webhook";
         var webhookRequest = new HttpRequestMessage(HttpMethod.Post, webApiUrl);
         webhookRequest.Headers.Add("x-goog-resource-state", "sync");
         webhookRequest.Headers.Add("x-goog-resource-id", "simulated_resource_" + Guid.NewGuid().ToString());

@@ -49,6 +49,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Staging
       - ConnectionStrings__DefaultConnection=${Simulator__ConnectionStrings__DefaultConnection}
       - PathBase=/simulator
+      - WebApiBaseUrl=http://familyhq-webapi-staging:8080
     labels:
       - "traefik.enable=true"
       - "traefik.constraint-label=familyhq-staging"
