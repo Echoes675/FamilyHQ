@@ -33,4 +33,32 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <ReqnrollFeatureFile Update="WebUi\Authentication.feature">
+      <NormalizedLogicalName>Authentication.feature</NormalizedLogicalName>
+      <CodeBehindFile>Authentication.feature.cs</CodeBehindFile>
+      <MessagesFile>obj\Debug\net10.0\Authentication.feature.ndjson</MessagesFile>
+      <MessagesResourceName>Authentication.feature.ndjson</MessagesResourceName>
+      <FeatureFileResourceName>Authentication.feature</FeatureFileResourceName>
+    </ReqnrollFeatureFile>
+    <ReqnrollFeatureFile Update="WebUi\Dashboard.feature">
+      <NormalizedLogicalName>Dashboard.feature</NormalizedLogicalName>
+      <CodeBehindFile>Dashboard.feature.cs</CodeBehindFile>
+      <MessagesFile>obj\Debug\net10.0\Dashboard.feature.ndjson</MessagesFile>
+      <MessagesResourceName>Dashboard.feature.ndjson</MessagesResourceName>
+      <FeatureFileResourceName>Dashboard.feature</FeatureFileResourceName>
+    </ReqnrollFeatureFile>
+    <ReqnrollFeatureFile Update="WebUi\GoogleCalendarSync.feature">
+      <NormalizedLogicalName>GoogleCalendarSync.feature</NormalizedLogicalName>
+      <CodeBehindFile>GoogleCalendarSync.feature.cs</CodeBehindFile>
+      <MessagesFile>obj\Debug\net10.0\GoogleCalendarSync.feature.ndjson</MessagesFile>
+      <MessagesResourceName>GoogleCalendarSync.feature.ndjson</MessagesResourceName>
+      <FeatureFileResourceName>GoogleCalendarSync.feature</FeatureFileResourceName>
+    </ReqnrollFeatureFile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="WebApi\" />
+  </ItemGroup>
+
 </Project>
