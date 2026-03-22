@@ -127,23 +127,18 @@ public class CalendarRepository : ICalendarRepository
 
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Snapshot the calendars, clear the collection, then add the event first so it
-        // enters the change tracker in Added state. After that, add each calendar back
-        // via the tracked entity's skip navigation so EF Core registers every join row
-        // individually — the same pattern used by AddCalendarAsync (which is known to
-        // work correctly for multi-calendar events).
-        var calendarsToLink = calendarEvent.Calendars.ToList();
-        calendarEvent.Calendars.Clear();
-
-        _context.Events.Add(calendarEvent);
-
-        foreach (var cal in calendarsToLink)
-        {
-            var tracked = _context.Entry(cal).State == EntityState.Detached
+        // Attach all linked calendars to the context BEFORE calling Events.Add() so that
+        // EF Core's graph traversal during Add() sees the full skip-navigation collection
+        // and registers every join row in one pass. Attaching after Add() risks the join
+        // rows being missed because the snapshot was already taken with an empty collection.
+        var trackedCalendars = calendarEvent.Calendars
+            .Select(cal => _context.Entry(cal).State == EntityState.Detached
                 ? _context.Calendars.Attach(cal).Entity
-                : cal;
-            calendarEvent.Calendars.Add(tracked);
-        }
+                : cal)
+            .ToList();
+
+        calendarEvent.Calendars = trackedCalendars;
+        _context.Events.Add(calendarEvent);
 
         return Task.CompletedTask;
     }

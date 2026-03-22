@@ -1,7 +1,9 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.WebApi.Hubs;
+using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Controllers;
@@ -12,15 +14,21 @@ public class SyncController : ControllerBase
 {
     private readonly ICalendarSyncService _syncService;
     private readonly IHubContext<CalendarHub> _hubContext;
+    private readonly ITokenStore _tokenStore;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SyncController> _logger;
 
     public SyncController(
         ICalendarSyncService syncService,
         IHubContext<CalendarHub> hubContext,
+        ITokenStore tokenStore,
+        IServiceScopeFactory scopeFactory,
         ILogger<SyncController> logger)
     {
         _syncService = syncService;
         _hubContext = hubContext;
+        _tokenStore = tokenStore;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -71,11 +79,31 @@ public class SyncController : ControllerBase
         
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
-        
+
         try
         {
-            await _syncService.SyncAllAsync(startDate, endDate, ct);
-            
+            var userIds = (await _tokenStore.GetAllUserIdsAsync(ct)).ToList();
+            _logger.LogInformation("Webhook sync: found {Count} registered user(s).", userIds.Count);
+
+            foreach (var userId in userIds)
+            {
+                BackgroundUserContext.Current = userId;
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
+                    await syncService.SyncAllAsync(startDate, endDate, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error syncing user {UserId} during webhook.", userId);
+                }
+                finally
+                {
+                    BackgroundUserContext.Current = null;
+                }
+            }
+
             // 2. Notify clients via SignalR
             await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
         }
