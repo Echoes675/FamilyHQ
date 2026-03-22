@@ -28,6 +28,7 @@ tests/
 ├── FamilyHQ.Core.Tests/
 ├── FamilyHQ.Services.Tests/
 ├── FamilyHQ.WebApi.Tests/
+├── FamilyHQ.WebUi.Tests/
 └── FamilyHQ.Simulator.Tests/
 
 tests-e2e/
@@ -154,7 +155,7 @@ See [`.agent/docs/e2e-testing-maintenance.md`](.agent/docs/e2e-testing-maintenan
 
 `tools/FamilyHQ.Simulator` is a lightweight ASP.NET Core API that mimics the Google Calendar and OAuth endpoints. It runs on `https://localhost:7199` and is used exclusively for local development and E2E testing — no real Google credentials are required.
 
-The Simulator exposes a `/api/simulator` configuration endpoint that the E2E test suite uses to seed isolated per-scenario user data.
+The Simulator exposes a `/api/simulator` configuration endpoint that the E2E test suite uses to seed isolated per-scenario user data. It also exposes a `/api/simulator/backdoor/events` endpoint that allows tests to add, update, or soft-delete events directly — used by the webhook sync scenarios to simulate external Google Calendar changes without going through the OAuth flow.
 
 ## Architecture Notes
 

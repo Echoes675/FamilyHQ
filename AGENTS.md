@@ -42,6 +42,7 @@ Read the relevant skill file before starting any task of that type:
 - **Working with DateTimeOffset and PostgreSQL**: Read `.agent/skills/datetimeoffset-postgresql/SKILL.md`
 - **Writing or modifying tests**: Read `.agent/skills/testing-standards/SKILL.md` and `.agent/skills/test-driven-development/SKILL.md`
 - **BDD/acceptance tests**: Read `.agent/skills/bdd-testing/SKILL.md`
+- **Playwright/browser automation**: Read `.agent/skills/playwright-cli/SKILL.md`
 - **Security-sensitive code**: Read `.agent/skills/security/SKILL.md`
 - **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
 - **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`

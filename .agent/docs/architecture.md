@@ -1,8 +1,8 @@
 # Architecture & Structure
 
 ## Project Layout
-- src/FamilyHQ.WebUi.Web/: Blazor WASM UI.
-- src/FamilyHQ.WebApi.Web/: ASP.NET Core API.
+- src/FamilyHQ.WebUi/: Blazor WASM UI.
+- src/FamilyHQ.WebApi/: ASP.NET Core API.
 - src/FamilyHQ.Services/: Business logic and orchestration.
 - src/FamilyHQ.Data/: EF Core context
 - src/FamilyHQ.Data.PostgreSQL/: PostgreSQL specific implementation and migrations.

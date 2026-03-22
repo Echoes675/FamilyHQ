@@ -125,17 +125,21 @@ Contains Reqnroll step definitions that connect Gherkin scenarios to code:
 - **Hooks/** - Reqnroll hooks for setup/teardown
 
 Key files:
-- [`Steps/DashboardSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/DashboardSteps.cs) - Dashboard interaction steps
-- [`Steps/EventSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/EventSteps.cs) - Event creation steps
-- [`Steps/UserSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/UserSteps.cs) - User setup steps
+- [`DashboardSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/DashboardSteps.cs) - Dashboard navigation, event display assertions
+- [`EventSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/EventSteps.cs) - Seeding events into the simulator before a scenario
+- [`UserSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/UserSteps.cs) - User provisioning and login via OAuth flow
+- [`AuthenticationSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/AuthenticationSteps.cs) - Sign-in / sign-out assertions
+- [`WebhookDataSteps.cs`](tests-e2e/FamilyHQ.E2E.Steps/WebhookDataSteps.cs) - Backdoor event mutations and webhook trigger for sync scenarios
+- [`Hooks/MasterHooks.cs`](tests-e2e/FamilyHQ.E2E.Steps/Hooks/MasterHooks.cs) - Per-scenario browser setup/teardown
+- [`Hooks/TemplateHooks.cs`](tests-e2e/FamilyHQ.E2E.Steps/Hooks/TemplateHooks.cs) - Loads `user_templates.json` once before the test run
 
 #### FamilyHQ.E2E.Features
 Contains Gherkin feature files written in natural language:
 
-- **Dashboard.feature** - Main dashboard functionality scenarios
-
 Key files:
-- [`Dashboard.feature`](tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature) - All dashboard test scenarios
+- [`Dashboard.feature`](tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature) - Dashboard calendar viewer scenarios (CRUD, multi-calendar, navigation)
+- [`Authentication.feature`](tests-e2e/FamilyHQ.E2E.Features/Authentication.feature) - Sign-in and sign-out scenarios
+- [`GoogleCalendarSync.feature`](tests-e2e/FamilyHQ.E2E.Features/GoogleCalendarSync.feature) - Webhook-triggered sync and live SignalR update scenarios
 
 ### Page Object Model Pattern
 
@@ -181,16 +185,21 @@ Scenario: Create a new event
 
 ### Adding New User Templates
 
-User templates define the default calendars and event structure for test users. Edit [`user_templates.json`](tests-e2e/FamilyHQ.E2E.Data/Templates/user_templates.json):
+User templates define the calendars available to a test user. Each template key is used in the `Given I have a user like "..."` step. Edit [`user_templates.json`](tests-e2e/FamilyHQ.E2E.Data/Templates/user_templates.json):
 
 ```json
 {
-    "New User Type": {
+    "NewUserType": {
         "Calendars": [
             {
                 "Id": "template_work",
                 "Summary": "Work Calendar",
                 "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_personal",
+                "Summary": "Personal Calendar",
+                "BackgroundColor": "#34a853"
             }
         ],
         "Events": []
@@ -198,9 +207,11 @@ User templates define the default calendars and event structure for test users. 
 }
 ```
 
+Each scenario gets a **unique isolated copy** of the template at runtime (unique username, new calendar IDs). Pre-seeded events are added via the `EventSteps` (`Given the user has an all-day event...`) rather than in the template's `Events` array.
+
 Then use the template in a scenario:
 ```gherkin
-Given I have a user like "New User Type" with calendar "Work Calendar"
+Given I have a user like "NewUserType" with calendar "Work Calendar"
 ```
 
 ### Adding New Feature Scenarios
@@ -247,29 +258,64 @@ public async Task FilterByCalendarAsync(string calendarName)
 
 ## Current Test Coverage
 
-### Dashboard.feature Scenarios
+The suite currently contains **27 scenarios** across three feature files.
 
-The [`Dashboard.feature`](tests-e2e/FamilyHQ.E2E.Features/Dashboard.feature) file contains **8 scenarios** covering the following functionality:
+### Dashboard.feature (15 scenarios)
 
-| Scenario | Category | Description |
-|----------|----------|-------------|
-| View upcoming events on the dashboard month view | **Display** | Verifies events appear in the month calendar view |
-| Create a new event | **CRUD** | Tests event creation through the UI |
-| Update an existing event | **CRUD** | Tests renaming an event |
-| Delete an existing event | **CRUD** | Tests event deletion |
-| View events from multiple calendars | **Multi-Calendar** | Verifies events from 3 different calendars display together |
-| View all-day events | **Event Types** | Tests all-day event display |
-| View timed events | **Event Types** | Tests timed event display with duration |
-| View event details | **Interaction** | Tests clicking an event shows details modal |
-| Navigate to next month | **Navigation** | Tests month navigation functionality |
+Has a `Background` that provisions a `TestFamilyMember` user and logs in before each scenario. Scenarios that need a different user provision their own user on top of the Background.
+
+| Scenario | Category |
+|----------|----------|
+| View upcoming events on the dashboard month view | Display |
+| Create a new event | CRUD |
+| Update an existing event | CRUD |
+| Delete an existing event | CRUD |
+| View events from multiple calendars | Multi-Calendar |
+| View all-day events | Event Types |
+| View timed events | Event Types |
+| View event details | Interaction |
+| Update event after changing its calendar | Multi-Calendar / CRUD |
+| Delete event after changing its calendar | Multi-Calendar / CRUD |
+| Navigate to next month | Navigation |
+| Create event in two calendars appears twice on grid | Multi-Calendar |
+| Add calendar to existing event via chip | Multi-Calendar |
+| Remove calendar chip from event | Multi-Calendar |
+| Last chip is protected — cannot remove final calendar | Multi-Calendar |
+| Delete event removes it from all calendars | Multi-Calendar / CRUD |
+
+### Authentication.feature (5 scenarios)
+
+| Scenario | Category |
+|----------|----------|
+| User sees sign-in button when not authenticated | Auth |
+| User can sign in and see their username | Auth |
+| User can sign out and return to sign-in screen | Auth |
+| Calendar is hidden when not authenticated | Auth |
+| Calendar is visible when authenticated | Auth |
+
+### GoogleCalendarSync.feature (6 scenarios)
+
+Tests the full webhook → sync → UI update pipeline using the Simulator's backdoor API to mutate events and the `/api/sync/webhook` endpoint to trigger a sync.
+
+| Scenario | Category |
+|----------|----------|
+| New event added in Google Calendar appears on dashboard after sync | Webhook Sync |
+| Event updated in Google Calendar shows new title after sync | Webhook Sync |
+| Event deleted in Google Calendar disappears after sync | Webhook Sync |
+| New event added in Google Calendar appears live on open dashboard | Live Update (SignalR) |
+| Event updated in Google Calendar shows live on open dashboard | Live Update (SignalR) |
+| Event deleted in Google Calendar disappears live from open dashboard | Live Update (SignalR) |
 
 ### Test Categories
 
-1. **Display Tests** - Verify events render correctly on the calendar
-2. **CRUD Tests** - Create, Read, Update, Delete operations
-3. **Multi-Calendar Tests** - Events from multiple calendar sources
-4. **Event Types Tests** - All-day vs timed events
-5. **Interaction Tests** - User interactions like clicking, navigating
+1. **Display** - Events render correctly on the calendar grid
+2. **CRUD** - Create, Update, Delete operations through the UI
+3. **Multi-Calendar** - Chip selector, per-calendar capsule rendering, last-chip protection
+4. **Event Types** - All-day vs timed event display
+5. **Navigation** - Month navigation
+6. **Auth** - Sign-in / sign-out flows
+7. **Webhook Sync** - Events added/updated/deleted externally appear after a webhook sync
+8. **Live Update** - SignalR pushes cause the open dashboard to refresh without navigation
 
 ---
 
