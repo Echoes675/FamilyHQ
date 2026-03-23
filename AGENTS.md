@@ -32,6 +32,7 @@ Dashboard app that displays a family calendar events
 ## Progressive Disclosure Links
 Refer to these files in the .agent/ directory for specific implementation details:
 - Project Architecture & Structure: `.agent/docs/architecture.md`
+- Data Protection Key Encryption: `.agent/docs/data-protection-key-encryption.md`
 
 ## Skills
 Read the relevant skill file before starting any task of that type:

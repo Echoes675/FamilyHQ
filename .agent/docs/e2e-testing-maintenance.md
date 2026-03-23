@@ -319,6 +319,21 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 
 ---
 
+## Tracing with Correlation IDs
+
+The E2E test suite uses unique correlation IDs to facilitate debugging across multiple services:
+
+### How it Works
+1. **Scenario-scoped ID**: Every scenario generates a unique `TestCorrelationId` (GUID) via `CorrelationIdHooks.cs`.
+2. **Browser Injection**: This ID is injected into the browser's `localStorage` as `familyhq_session_correlation_id`.
+3. **Header Propagation**: The Blazor UI and Simulator API clients include this ID in the `X-Session-Correlation-Id` header for all outgoing requests.
+4. **Log Stitching**: WebApi and Simulator services log this ID, allowing you to filter logs for a specific scenario across all services.
+
+### Troubleshooting with ID
+If a scenario fails, look for the `TestCorrelationId` in the test output. You can then use this ID to search through the logs of the WebApi, WebUi, and Simulator to trace the exact sequence of events that led to the failure.
+
+---
+
 ## Maintenance Checklist
 
 ### When to Update Tests
