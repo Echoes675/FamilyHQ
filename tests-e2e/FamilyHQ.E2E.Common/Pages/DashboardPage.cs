@@ -450,16 +450,11 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task<IReadOnlyList<string>> GetVisibleEventsAsync()
     {
-        var count = await EventCapsules.CountAsync();
-        var titles = new List<string>();
-
-        for (int i = 0; i < count; i++)
-        {
-            var text = await EventCapsules.Nth(i).InnerTextAsync();
-            titles.Add(text);
-        }
-
-        return titles;
+        // AllInnerTextsAsync captures all texts atomically in one call, avoiding the
+        // TOCTOU race where CountAsync returns 1 but the element disappears before
+        // InnerTextAsync can read it (causing a 30s auto-wait timeout).
+        var texts = await EventCapsules.AllInnerTextsAsync();
+        return texts;
     }
 
     /// <summary>
