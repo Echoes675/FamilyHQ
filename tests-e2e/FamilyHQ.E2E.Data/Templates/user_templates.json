@@ -63,5 +63,35 @@
             }
         ],
         "Events": []
+    },
+    "NMoreUser": {
+        "Calendars": [
+            {
+                "Id": "template_nmore",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    },
+    "LayoutUser": {
+        "Calendars": [
+            {
+                "Id": "template_layout",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    },
+    "MultiDayUser": {
+        "Calendars": [
+            {
+                "Id": "template_multiday",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
     }
 }

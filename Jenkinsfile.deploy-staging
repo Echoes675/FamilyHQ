@@ -5,6 +5,10 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    triggers {
+        upstream(upstreamProjects: 'FamilyHQ/dev', threshold: hudson.model.Result.SUCCESS)
+    }
+
     tools {
         dotnetsdk '.Net_10.0_SDK'
     }

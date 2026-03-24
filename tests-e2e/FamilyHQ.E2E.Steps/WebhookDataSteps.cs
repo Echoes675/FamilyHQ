@@ -27,7 +27,7 @@ public class WebhookDataSteps
     public async Task WhenANewEventIsAddedToGoogleCalendar(string eventName)
     {
         var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        var calendarId = _scenarioContext.Get<string>("CurrentCalendarId");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
         var tomorrow = DateTime.Today.AddDays(1);
 
         var eventId = await _simulatorApi.AddEventAsync(
