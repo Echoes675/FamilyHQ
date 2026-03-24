@@ -179,6 +179,7 @@
         var dayEvents = _monthView.Days.TryGetValue(key, out var evts) ? evts : new List<CalendarEventViewModel>();
         
         <div class="day-view-container" id="day-view-container">
+            <h2 class="view-header-title d-none" data-testid="day-view-header">@key</h2>
             <div class="day-view-sticky-header">
                 <!-- Headers -->
                 <div class="day-header">

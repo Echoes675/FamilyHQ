@@ -90,6 +90,10 @@ public class DashboardPage : BasePage
         
         // Ensure modal is gone before proceeding
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        
+        // Wait for the header to reflect the new date to avoid race conditions
+        await Assertions.Expect(Page.GetByTestId("day-view-header")).ToHaveTextAsync(dateYyyyMmDd);
+        
         await WaitForCalendarVisibleAsync();
     }
 
