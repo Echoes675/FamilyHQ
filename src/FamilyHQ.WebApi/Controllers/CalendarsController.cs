@@ -68,22 +68,11 @@ public class CalendarsController : ControllerBase
                 evt.Description,
                 evt.Calendars.Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color)).ToList());
 
-            // Index once for each day the event spans within the viewable range.
-            // AddTicks(-1) handles midnight-ending events (e.g. all-day ending at 00:00 next day).
-            var current = evt.Start.Date;
-            var last = evt.End.AddTicks(-1).Date;
-            
-            int daysProcessed = 0;
-            while (current <= last && daysProcessed < 366)
-            {
-                var dateKey = current.ToString("yyyy-MM-dd");
-                if (!monthView.Days.ContainsKey(dateKey))
-                    monthView.Days[dateKey] = [];
+            var dateKey = evt.Start.ToString("yyyy-MM-dd");
+            if (!monthView.Days.ContainsKey(dateKey))
+                monthView.Days[dateKey] = [];
 
-                monthView.Days[dateKey].Add(dto);
-                current = current.AddDays(1);
-                daysProcessed++;
-            }
+            monthView.Days[dateKey].Add(dto);
         }
 
         return Ok(monthView);

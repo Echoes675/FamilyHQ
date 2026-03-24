@@ -9,14 +9,14 @@ Feature: Authentication
     Then I see the "Login to Google" button
 
   Scenario: User can sign in and see their username
-    Given I have a user like "TestFamilyMember"
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
     And I am not authenticated
     When I sign in as the user "TestFamilyMember"
     Then I see the username displayed
     And I see the "Sign Out" button
 
   Scenario: User can sign out and return to sign-in screen
-    Given I have a user like "TestFamilyMember"
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
     And I am signed in as the user "TestFamilyMember"
     When I click the "Sign Out" button
     Then I see the "Login to Google" button
@@ -28,8 +28,7 @@ Feature: Authentication
     Then I do not see the calendar
 
   Scenario: Calendar is visible when authenticated
-    Given I have a user like "TestFamilyMember"
-    And the "Family Events" calendar is the active calendar
+    Given I have a user like "TestFamilyMember" with calendar "Family Events"
     And the user has an all-day event "School Holiday" tomorrow
     And I am signed in as the user "TestFamilyMember"
     When I view the dashboard

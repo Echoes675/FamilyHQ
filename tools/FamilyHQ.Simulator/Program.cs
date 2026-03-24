@@ -1,7 +1,6 @@
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
-using FamilyHQ.Simulator.Middleware;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -11,8 +10,6 @@ builder.Services.AddDbContext<SimContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var app = builder.Build();
-
-app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapControllers();
 

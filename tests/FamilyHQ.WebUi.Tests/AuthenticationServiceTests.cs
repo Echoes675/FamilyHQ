@@ -1,5 +1,4 @@
 using FamilyHQ.WebUi.Services.Auth;
-using FamilyHQ.WebUi.Services.Correlation;
 using FluentAssertions;
 using Moq;
 
@@ -8,14 +7,12 @@ namespace FamilyHQ.WebUi.Tests;
 public class AuthenticationServiceTests
 {
     private readonly Mock<IAuthTokenStore> _tokenStoreMock;
-    private readonly Mock<ICorrelationIdTokenStore> _correlationStoreMock;
     private readonly AuthenticationService _systemUnderTest;
 
     public AuthenticationServiceTests()
     {
         _tokenStoreMock = new Mock<IAuthTokenStore>();
-        _correlationStoreMock = new Mock<ICorrelationIdTokenStore>();
-        _systemUnderTest = new AuthenticationService(_tokenStoreMock.Object, _correlationStoreMock.Object);
+        _systemUnderTest = new AuthenticationService(_tokenStoreMock.Object);
     }
 
     #region IsAuthenticatedAsync
@@ -179,7 +176,6 @@ public class AuthenticationServiceTests
 
         // Assert
         _tokenStoreMock.Verify(s => s.ClearTokenAsync(), Times.Once);
-        _correlationStoreMock.Verify(s => s.ClearSessionCorrelationIdAsync(), Times.Once);
         
         var isAuthenticated = await _systemUnderTest.IsAuthenticatedAsync();
         isAuthenticated.Should().BeFalse();
@@ -203,7 +199,6 @@ public class AuthenticationServiceTests
 
         // Assert
         _tokenStoreMock.Verify(s => s.ClearTokenAsync(), Times.Once);
-        _correlationStoreMock.Verify(s => s.ClearSessionCorrelationIdAsync(), Times.Once);
     }
 
     #endregion

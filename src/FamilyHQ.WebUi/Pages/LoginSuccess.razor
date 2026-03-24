@@ -1,6 +1,5 @@
 @page "/login-success"
 @inject FamilyHQ.WebUi.Services.Auth.IAuthTokenStore TokenStore
-@inject FamilyHQ.WebUi.Services.Correlation.ICorrelationIdTokenStore CorrelationStore
 @inject NavigationManager NavigationManager
 
 @code {
@@ -10,13 +9,6 @@
         if (!string.IsNullOrEmpty(token))
         {
             await TokenStore.SetTokenAsync(token);
-            
-            var existingSessionCorrelationId = await CorrelationStore.GetSessionCorrelationIdAsync();
-            if (string.IsNullOrEmpty(existingSessionCorrelationId))
-            {
-                await CorrelationStore.SetSessionCorrelationIdAsync(Guid.NewGuid().ToString());
-            }
-
             // Small delay to ensure JS interop completes before navigation
             // This prevents the race condition where the token isn't saved
             // before the page unloads with forceLoad: true

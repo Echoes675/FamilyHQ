@@ -10,7 +10,6 @@ using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-using FamilyHQ.Core.Constants;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -119,7 +118,6 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 }
 
-app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 // Configure the HTTP request pipeline.
