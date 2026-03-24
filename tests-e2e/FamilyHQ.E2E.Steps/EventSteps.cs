@@ -139,4 +139,52 @@ public class EventSteps
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
+
+    [Given(@"the user has an all-day event ""([^""]*)"" spanning (\d+) days starting tomorrow")]
+    public async Task GivenTheUserHasAnAllDayEventSpanningDaysStartingTomorrow(string eventName, int days)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
+        
+        var tomorrow = DateTime.Today.AddDays(1);
+        
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendarId,
+            Summary = eventName,
+            StartTime = tomorrow,
+            EndTime = tomorrow.AddDays(days), // E.g., spanning 2 days ends logic
+            IsAllDay = true
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has a timed event ""([^""]*)"" starting tomorrow at ""([^""]*)"" spanning (\d+) days")]
+    public async Task GivenTheUserHasATimedEventStartingTomorrowAtSpanningDays(string eventName, string timeStr, int days)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
+
+        var tomorrow = DateTime.Today.AddDays(1);
+        var timeParts = timeStr.Split(':');
+        var hour = int.Parse(timeParts[0]);
+        var minute = int.Parse(timeParts[1]);
+
+        var startTime = tomorrow.AddHours(hour).AddMinutes(minute);
+        var endTime = startTime.AddDays(days); // E.g. 10:00 AM tomorrow to 10:00 AM next day (spans 1 24h period)
+        
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendarId,
+            Summary = eventName,
+            StartTime = startTime,
+            EndTime = endTime,
+            IsAllDay = false
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
 }

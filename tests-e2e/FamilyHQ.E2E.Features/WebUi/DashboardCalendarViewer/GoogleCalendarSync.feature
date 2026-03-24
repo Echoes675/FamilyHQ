@@ -63,3 +63,38 @@ Feature: Google Calendar Webhook Sync
     When the event "School Holiday" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
     Then the dashboard live-updates to remove "School Holiday"
+
+  Scenario: New event added in Google Calendar appears live on open Day View
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    And I switch to the Day View tab
+    And I select the date "tomorrow" using the day picker
+    When a new event "Dentist Appointment" is added to Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to show "Dentist Appointment"
+
+  Scenario: Event updated in Google Calendar shows live on open Day View
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    And I switch to the Day View tab
+    And I select the date "tomorrow" using the day picker
+    When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to show "School Holiday (Cancelled)"
+
+  Scenario: Event deleted in Google Calendar disappears live from open Day View
+    Given I have a user like "TestFamilyMember"
+    And the "Family Events" calendar is the active calendar
+    And the user has an all-day event "School Holiday" tomorrow
+    And I login as the user "TestFamilyMember"
+    And I view the dashboard
+    And I switch to the Day View tab
+    And I select the date "tomorrow" using the day picker
+    When the event "School Holiday" is deleted from Google Calendar
+    And Google Calendar sends a webhook notification
+    Then the dashboard live-updates to remove "School Holiday"

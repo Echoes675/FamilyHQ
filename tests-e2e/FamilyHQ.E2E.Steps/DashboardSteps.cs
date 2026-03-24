@@ -60,6 +60,12 @@ public class DashboardSteps
         await _dashboardPage.CreateEventAsync(eventName);
     }
 
+    [When(@"I fill in and save the event ""([^""]*)""")]
+    public async Task WhenIFillInAndSaveTheEvent(string eventName)
+    {
+        await _dashboardPage.FillAndSaveEventAsync(eventName);
+    }
+
     [When(@"I rename the event ""([^""]*)"" to ""([^""]*)""")]
     public async Task WhenIRenameTheEventTo(string oldEventName, string newEventName)
     {
@@ -152,5 +158,85 @@ public class DashboardSteps
         var protected_ = await _dashboardPage.LastActiveChipHasNoRemoveButtonAsync();
         protected_.Should().BeTrue(
             "the sole remaining active calendar chip must not expose a remove button.");
+    }
+
+    [StepDefinition(@"I switch to the Day View tab")]
+    public async Task WhenISwitchToTheDayViewTab()
+    {
+        await _dashboardPage.SwitchToDayViewAsync();
+    }
+
+    [StepDefinition(@"I switch to the Month View tab")]
+    public async Task WhenISwitchToTheMonthViewTab()
+    {
+        await _dashboardPage.SwitchToMonthViewAsync();
+    }
+
+    [StepDefinition(@"I select the date ""([^""]*)"" using the day picker")]
+    public async Task WhenISelectTheDateUsingTheDayPicker(string dateString)
+    {
+        string yyyyMmDd = dateString.ToLower() == "tomorrow" 
+            ? DateTime.Today.AddDays(1).ToString("yyyy-MM-dd")
+            : dateString;
+            
+        await _dashboardPage.OpenDayPickerAndGoAsync(yyyyMmDd);
+    }
+
+    [When(@"^I click the ""\+n more"" link for tomorrow$")]
+    public async Task WhenIClickTheMoreEventsLinkForTomorrow()
+    {
+        var dateYyyyMmDd = DateTime.Today.AddDays(1).ToString("yyyy-MM-dd");
+        await _dashboardPage.ClickMoreEventsLinkAsync(dateYyyyMmDd);
+    }
+
+    [When(@"I click an empty grid slot for calendar ""([^""]*)"" at ""([^""]*)""")]
+    public async Task WhenIClickAnEmptyGridSlotForCalendarAt(string calendarName, string timeString)
+    {
+        await _dashboardPage.ClickDayGridSlotAsync(calendarName, timeString);
+    }
+
+    [Then(@"I see the Day View Container")]
+    public async Task ThenISeeTheDayViewContainer()
+    {
+        await Assertions.Expect(_dashboardPage.DayViewContainer).ToBeVisibleAsync();
+    }
+
+    [Then(@"I see the Month View Table")]
+    public async Task ThenISeeTheMonthViewTable()
+    {
+        await Assertions.Expect(_dashboardPage.MonthTable).ToBeVisibleAsync();
+    }
+
+    [Then(@"there are (\d+) calendar columns in the day view")]
+    public async Task ThenThereAreCalendarColumnsInTheDayView(int count)
+    {
+        var actualCount = await _dashboardPage.GetCalendarHeaderCountAsync();
+        actualCount.Should().Be(count);
+    }
+
+    [Then(@"I see the all-day event ""([^""]*)"" displayed at the top of the Day View")]
+    public async Task ThenISeeTheAllDayEventDisplayedAtTheTopOfTheDayView(string eventName)
+    {
+        await _dashboardPage.WaitForAllDayEventVisibleAsync(eventName);
+    }
+
+    [Then(@"I see the timed event ""([^""]*)"" displayed in the Day View grid")]
+    public async Task ThenISeeTheTimedEventDisplayedInTheDayViewGrid(string eventName)
+    {
+        await _dashboardPage.WaitForTimedEventVisibleAsync(eventName);
+    }
+
+    [Then(@"the event ""([^""]*)"" has a height representing (\d+) minutes")]
+    public async Task ThenTheEventHasAHeightRepresentingMinutes(string eventName, int durationMinutes)
+    {
+        var height = await _dashboardPage.GetTimedEventHeightAsync(eventName);
+        height.Should().BeApproximately(durationMinutes, 5.0, $"The event '{eventName}' should be roughly {durationMinutes}px tall based on its duration.");
+    }
+
+    [Then(@"the current time line is visible")]
+    public async Task ThenTheCurrentTimeLineIsVisible()
+    {
+        var visible = await _dashboardPage.IsCurrentTimeLineVisibleAsync();
+        visible.Should().BeTrue();
     }
 }

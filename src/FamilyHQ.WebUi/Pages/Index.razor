@@ -9,6 +9,7 @@
 @inject NavigationManager NavigationManager
 @inject IConfiguration Configuration
 @inject IAuthenticationService AuthService
+@inject IJSRuntime JSRuntime
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
 
@@ -37,20 +38,48 @@
             </div>
         </div>
 
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <!-- Navigation Controls -->
-            <div class="btn-group">
-                <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
-                <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
-                    @CurrentMonth.ToString("MMMM yyyy")
+        <ul class="nav nav-tabs mb-4">
+            <li class="nav-item">
+                <button class="nav-link @(_currentView == DashboardView.Month ? "active" : "")" @onclick="() => SwitchToView(DashboardView.Month)">Month View</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link @(_currentView == DashboardView.Day ? "active" : "")" @onclick="() => SwitchToView(DashboardView.Day)">Day View</button>
+            </li>
+        </ul>
+
+        @if (_currentView == DashboardView.Month)
+        {
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <!-- Navigation Controls -->
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
+                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
+                        @CurrentMonth.ToString("MMMM yyyy")
+                    </button>
+                    <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
+                </div>
+                
+                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)" data-testid="add-event-btn">
+                    <i class="bi bi-plus-circle"></i> Add Event
                 </button>
-                <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
             </div>
-            
-            <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)">
-                <i class="bi bi-plus-circle"></i> Add Event
-            </button>
-        </div>
+        }
+        else if (_currentView == DashboardView.Day)
+        {
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div class="btn-group">
+                    <button class="btn btn-outline-primary" @onclick="() => SwitchToView(DashboardView.Day, _selectedDate.AddDays(-1))">&lt; Prev</button>
+                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenDayPickerModal" data-testid="day-picker-btn">
+                        @_selectedDate.ToString("D")
+                    </button>
+                    <button class="btn btn-outline-primary" @onclick="() => SwitchToView(DashboardView.Day, _selectedDate.AddDays(1))">Next &gt;</button>
+                </div>
+                
+                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(_selectedDate)" data-testid="add-event-btn">
+                    <i class="bi bi-plus-circle"></i> Add Event
+                </button>
+            </div>
+        }
     }
 
     @if (_isAuthenticated)
@@ -71,6 +100,8 @@
         </div>
     }
     else
+    {
+    @if (_currentView == DashboardView.Month)
     {
         <table class="month-table">
             <thead>
@@ -99,7 +130,7 @@
                             if (isToday) cssClass += " today-cell";
                             else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
 
-                            <td class="@cssClass">
+                            <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <span style="font-weight: @(isToday ? "700" : "400")">
                                         @day.Date.Day
@@ -130,7 +161,7 @@
                                     
                                     @if(day.Events.Count() > 3)
                                     {
-                                        <div class="overflow-indicator mt-1 text-center">
+                                        <div class="overflow-indicator mt-1 text-center" @onclick="() => SwitchToView(DashboardView.Day, day.Date)" data-testid="overflow-indicator">
                                             +@(day.Events.Count() - 3) more
                                         </div>
                                     }
@@ -141,6 +172,99 @@
                 }
             </tbody>
         </table>
+    }
+    else if (_currentView == DashboardView.Day)
+    {
+        var key = _selectedDate.ToString("yyyy-MM-dd");
+        var dayEvents = _monthView.Days.TryGetValue(key, out var evts) ? evts : new List<CalendarEventViewModel>();
+        
+        <div class="day-view-container" id="day-view-container">
+            <div class="day-view-sticky-header">
+                <!-- Headers -->
+                <div class="day-header">
+                <div class="time-axis-header"></div>
+                @foreach (var cal in _calendars)
+                {
+                    <div class="calendar-header-col" title="@cal.DisplayName">@cal.DisplayName</div>
+                }
+            </div>
+            
+            <!-- All Day Row -->
+            <div class="all-day-container">
+                <div class="all-day-label">All Day</div>
+                @foreach (var cal in _calendars)
+                {
+                    var calAllDayEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id && e.IsAllDay).ToList();
+                    <div class="all-day-col">
+                        @foreach (var evt in calAllDayEvents)
+                        {
+                            <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--primary)");"
+                                 title="@evt.Title"
+                                 @onclick="() => OpenEditEventModal(evt)">
+                                @evt.Title
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+            </div> <!-- .day-view-sticky-header -->
+            
+            <!-- Scrollable Body -->
+            <div class="day-body-scrollable" id="day-body-scrollable">
+                <div class="day-body-flex">
+                    <!-- Current Time Line -->
+                    @if (_selectedDate == DateTime.Today)
+                    {
+                        <div class="current-time-line" style="top: @GetCurrentTimeTopPosition()%" id="current-time-line"></div>
+                    }
+
+                    <!-- Time Axis -->
+                    <div class="time-axis">
+                        @for (int i = 0; i < 24; i++)
+                        {
+                            var topPos = (i / 24.0) * 100;
+                            var label = i == 0 ? "12 AM" : i < 12 ? $"{i} AM" : i == 12 ? "12 PM" : $"{i - 12} PM";
+                            if (i > 0)
+                            {
+                                <div class="time-slot-label" style="top: @topPos%">@label</div>
+                            }
+                        }
+                    </div>
+                    
+                    <!-- Grid Lines -->
+                    <div class="hour-lines-container">
+                        @for (int i = 1; i < 24; i++)
+                        {
+                            <div class="hour-line" style="top: @((i / 24.0) * 100)%"></div>
+                        }
+                    </div>
+                    
+                    <!-- Columns -->
+                    <div class="calendar-cols-container">
+                        @foreach (var cal in _calendars)
+                        {
+                            var calEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id).ToList();
+                            var placedEvents = GetPlacedEvents(calEvents);
+                            
+                            <div class="calendar-col" @onclick="(e) => OnDayGridClick(e, _selectedDate, cal.Id)">
+                                @foreach (var p in placedEvents)
+                                {
+                                    <div class="day-event-block" 
+                                         style="@GetEventStyle(p, _selectedDate)" 
+                                         title="@($"{p.Event.Title}\n{p.Event.Start.LocalDateTime:t} - {p.Event.End.LocalDateTime:t}\n{p.Event.Location}")"
+                                         @onclick:stopPropagation="true"
+                                         @onclick="() => OpenEditEventModal(p.Event)">
+                                        <div class="fw-bold">@p.Event.Title</div>
+                                        <div>@p.Event.Start.LocalDateTime.ToString("h:mm tt")</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
     }
     }
 </div>
@@ -176,6 +300,25 @@
                 </div>
                 <div class="modal-footer border-0 pt-0 justify-content-center">
                     <button class="btn btn-link text-decoration-none" @onclick="JumpToToday">Go to Today</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showDayPickerModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header pb-2">
+                    <h5 class="modal-title">Select Date</h5>
+                    <button type="button" class="btn-close" @onclick="CloseDayPickerModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <input type="date" class="form-control mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
+                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay" data-testid="day-picker-go-btn">Go Context</button>
+                    <button class="btn btn-outline-secondary w-100" @onclick="JumpToTodayDayView" data-testid="day-picker-today-btn">Jump to Today</button>
                 </div>
             </div>
         </div>
@@ -279,6 +422,10 @@
 }
 
 @code {
+    private enum DashboardView { Month, Day }
+    private DashboardView _currentView = DashboardView.Month;
+    private DateTime _selectedDate = DateTime.Today;
+
     // Authentication State
     private bool _isAuthenticated;
     private string? _username;
@@ -292,6 +439,10 @@
     // Quick Jump Modal State
     private bool _showQuickJumpModal = false;
     private int _jumpYear;
+
+    // Day Picker Modal State
+    private bool _showDayPickerModal = false;
+    private DateTime _pickedDate = DateTime.Today;
 
     // Event Modal State
     private bool _showEventModal = false;
@@ -334,6 +485,35 @@
         await SignalR.StartAsync();
         
         await LoadMonthDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_currentView == DashboardView.Day && _selectedDate.Date == DateTime.Today)
+        {
+            try
+            {
+                var currentMins = DateTime.Now.TimeOfDay.TotalMinutes;
+                await JSRuntime.InvokeVoidAsync("eval", $@"
+                    var c = document.getElementById('day-view-container');
+                    if(c && !c.dataset.scrolled) {{
+                        c.dataset.scrolled = 'true';
+                        var target = ({currentMins} / 1440) * 1440;
+                        c.scrollTop = target - (c.clientHeight / 4);
+                    }}
+                ");
+            }
+            catch { /* Ignored if JSInterop fails on first render */ }
+        }
+        else if (_currentView != DashboardView.Day)
+        {
+            // Reset scroll tracking
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("eval", "var c = document.getElementById('day-view-container'); if(c) c.removeAttribute('data-scrolled');");
+            }
+            catch { }
+        }
     }
 
     private void RefreshDataFromSignalR()
@@ -413,6 +593,31 @@
         await LoadMonthDataAsync();
     }
     
+    // View Switching Logic
+    private async Task SwitchToView(DashboardView view, DateTime? date = null)
+    {
+        _currentView = view;
+        if (date.HasValue)
+        {
+            _selectedDate = date.Value.Date;
+            if (_selectedDate.Month != CurrentMonth.Month || _selectedDate.Year != CurrentMonth.Year)
+            {
+                CurrentMonth = new DateTime(_selectedDate.Year, _selectedDate.Month, 1);
+                await LoadMonthDataAsync();
+            }
+        }
+        else if (view == DashboardView.Day && _selectedDate == default)
+        {
+            _selectedDate = DateTime.Today;
+            if (_selectedDate.Month != CurrentMonth.Month || _selectedDate.Year != CurrentMonth.Year)
+            {
+                CurrentMonth = new DateTime(_selectedDate.Year, _selectedDate.Month, 1);
+                await LoadMonthDataAsync();
+            }
+        }
+        StateHasChanged();
+    }
+    
     // Quick Jump Modal Logic
     private void OpenQuickJumpModal()
     {
@@ -442,6 +647,36 @@
         await LoadMonthDataAsync();
     }
 
+    // Day Picker Modal Logic
+    private void OpenDayPickerModal()
+    {
+        _pickedDate = _selectedDate == default ? DateTime.Today : _selectedDate;
+        _showDayPickerModal = true;
+    }
+
+    private void CloseDayPickerModal()
+    {
+        _showDayPickerModal = false;
+    }
+
+    private async Task JumpToPickedDay()
+    {
+        CloseDayPickerModal();
+        await SwitchToView(DashboardView.Day, _pickedDate);
+    }
+
+    private async Task JumpToTodayDayView()
+    {
+        CloseDayPickerModal();
+        await SwitchToView(DashboardView.Day, DateTime.Today);
+    }
+
+    private double GetCurrentTimeTopPosition()
+    {
+        var now = DateTime.Now.TimeOfDay;
+        return (now.TotalMinutes / 1440.0) * 100;
+    }
+
     private void OnLoginClicked()
     {
         var backendUrl = Configuration["BackendUrl"]
@@ -459,21 +694,36 @@
     }
 
     // Event Modal Logic
-    private void OpenAddEventModal(DateTime date)
+    private void OpenAddEventModal(DateTime date, Guid? calendarId = null)
     {
         _isEditingEvent = false;
+        
+        var start = date.Hour == 0 && date.Minute == 0 ? date.AddHours(9) : date;
+        var end = start.AddHours(1);
+
         _eventModel = new EventFormModel
         {
             Title = "",
-            Start = new DateTimeOffset(date.AddHours(9), TimeSpan.Zero),
-            End = new DateTimeOffset(date.AddHours(10), TimeSpan.Zero),
+            Start = new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
+            End = new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)),
             IsAllDay = false
         };
-        _selectedCalendarIds = _calendars.FirstOrDefault() is { } firstCal
-            ? [firstCal.Id]
-            : [];
+        
+        var targetCalendarId = calendarId ?? _calendars.FirstOrDefault()?.Id ?? Guid.Empty;
+        _selectedCalendarIds = targetCalendarId != Guid.Empty ? [targetCalendarId] : [];
+        
         _modalError = null;
         _showEventModal = true;
+    }
+
+    private void OnDayGridClick(MouseEventArgs e, DateTime date, Guid calendarId)
+    {
+        // 1px = 1min based on height: 1440px
+        int totalMinutes = (int)e.OffsetY; 
+        int roundedMinutes = (totalMinutes / 30) * 30;
+        var startDateTime = date.Date.AddMinutes(roundedMinutes);
+        
+        OpenAddEventModal(startDateTime, calendarId);
     }
 
     private void OpenEditEventModal(CalendarEventViewModel evt)
@@ -596,6 +846,77 @@
     {
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
         return ValueTask.CompletedTask;
+    }
+
+    // --- Day View Layout Logic ---
+    
+    private List<PlacedEvent> GetPlacedEvents(IEnumerable<CalendarEventViewModel> events)
+    {
+        var timedEvents = events.Where(e => !e.IsAllDay).OrderBy(e => e.Start).ThenByDescending(e => e.End).ToList();
+        var groups = new List<List<PlacedEvent>>();
+        
+        foreach (var evt in timedEvents)
+        {
+            var pEvent = new PlacedEvent { Event = evt, ColumnIndex = 0, TotalColumns = 1 };
+            
+            var overlappingGroup = groups.FirstOrDefault(g => g.Any(e => EventsOverlap(e.Event, evt)));
+            if (overlappingGroup != null)
+            {
+                var usedColumns = overlappingGroup.Where(e => EventsOverlap(e.Event, evt)).Select(e => e.ColumnIndex).ToHashSet();
+                int col = 0;
+                while (usedColumns.Contains(col)) col++;
+                
+                pEvent.ColumnIndex = col;
+                overlappingGroup.Add(pEvent);
+                
+                int maxCols = overlappingGroup.Max(e => e.ColumnIndex) + 1;
+                foreach (var e in overlappingGroup)
+                {
+                    e.TotalColumns = Math.Max(e.TotalColumns, maxCols);
+                }
+            }
+            else
+            {
+                groups.Add([pEvent]);
+            }
+        }
+        
+        return groups.SelectMany(g => g).ToList();
+    }
+    
+    private bool EventsOverlap(CalendarEventViewModel a, CalendarEventViewModel b)
+    {
+        return a.Start < b.End && b.Start < a.End;
+    }
+
+    private string GetEventStyle(PlacedEvent p, DateTime expectedDate)
+    {
+        var localStart = p.Event.Start.LocalDateTime;
+        var localEnd = p.Event.End.LocalDateTime;
+        
+        if (localStart < expectedDate.Date) localStart = expectedDate.Date;
+        if (localEnd > expectedDate.Date.AddDays(1)) localEnd = expectedDate.Date.AddDays(1);
+        
+        var startMins = localStart.Hour * 60 + localStart.Minute;
+        var durationMins = (localEnd - localStart).TotalMinutes;
+        
+        if (durationMins < 15) durationMins = 15;
+        if (startMins + durationMins > 1440) durationMins = 1440 - startMins;
+        
+        var top = (startMins / 1440.0) * 100;
+        var height = (durationMins / 1440.0) * 100;
+        
+        var width = 100.0 / p.TotalColumns;
+        var left = width * p.ColumnIndex;
+        
+        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--primary)"};";
+    }
+
+    private class PlacedEvent
+    {
+        public CalendarEventViewModel Event { get; set; } = null!;
+        public int ColumnIndex { get; set; }
+        public int TotalColumns { get; set; }
     }
 
     private class DayItem
