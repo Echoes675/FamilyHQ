@@ -492,13 +492,13 @@ public class DashboardPage : BasePage
     public async Task WaitForTimedEventVisibleAsync(string eventName)
     {
         await WaitForCalendarVisibleAsync();
-        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        var capsule = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
         await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     public async Task<double> GetTimedEventHeightAsync(string eventName)
     {
-        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        var capsule = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
         await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         var style = await capsule.GetAttributeAsync("style") ?? "";
         
@@ -514,7 +514,7 @@ public class DashboardPage : BasePage
 
     public async Task<double> GetTimedEventWidthPercentageAsync(string eventName)
     {
-        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        var capsule = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
         var style = await capsule.GetAttributeAsync("style") ?? "";
         
         var match = Regex.Match(style, @"width:\s*calc\(([\d.]+)%");
