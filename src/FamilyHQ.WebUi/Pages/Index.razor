@@ -130,7 +130,7 @@
                             if (isToday) cssClass += " today-cell";
                             else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
 
-                            <td class="@cssClass">
+                            <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <span style="font-weight: @(isToday ? "700" : "400")">
                                         @day.Date.Day

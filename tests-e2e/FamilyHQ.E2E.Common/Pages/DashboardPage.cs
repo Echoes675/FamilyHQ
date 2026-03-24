@@ -26,7 +26,7 @@ public class DashboardPage : BasePage
     public ILocator UserInfo => Page.GetByText("Signed in as:");
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
     private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "< Prev" });
-    private ILocator AddEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Add Event" });
+    private ILocator AddEventBtn => Page.Locator("button").Filter(new() { HasText = "Add Event" });
 
     // Modal Locators
     private ILocator EventTitleInput => Page.GetByPlaceholder("e.g. Doctor Appointment");
@@ -52,8 +52,20 @@ public class DashboardPage : BasePage
         await NavigateAsync();
         await eventsResponseTask;
         
-        // Month view is default
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        // Wait for either view to be ready
+        await WaitForCalendarVisibleAsync();
+    }
+
+    private async Task WaitForCalendarVisibleAsync()
+    {
+        // Wait for loading spinner to be gone first
+        await Page.Locator(".spinner-border").WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        
+        // Either MonthTable or DayViewContainer should be visible
+        var monthTask = MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        var dayTask = DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        
+        await Task.WhenAny(monthTask, dayTask);
     }
 
     public async Task SwitchToDayViewAsync()
@@ -87,7 +99,7 @@ public class DashboardPage : BasePage
         // Need to narrow down to the specific day's more link if provided, but since most tests only run on specific days we can just pick the first visible or use nth(0) assuming our tests are isolated.
         // Actually best is to find the cell by date. The cell has an id like `day-cell-2026-03-24`
         var cell = Page.Locator($"#day-cell-{dayDateString}");
-        await cell.Locator(".more-events-link").ClickAsync();
+        await cell.Locator(".overflow-indicator").ClickAsync();
         await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
@@ -133,7 +145,7 @@ public class DashboardPage : BasePage
         await Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
             new() { Timeout = 30000 });
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task LoginAsync(string userName)
@@ -144,7 +156,7 @@ public class DashboardPage : BasePage
         await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
         await Page.Locator("select#selectedUserId").SelectOptionAsync(new SelectOptionValue { Label = userName });
         await Page.Locator("button[type='submit']").ClickAsync();
-        await WaitForCalendarToLoadAsync();
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task SignOutAsync()
@@ -178,7 +190,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task UpdateEventAsync(string oldTitle, string newTitle)
@@ -195,7 +207,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task ChangeEventCalendarAsync(string eventName, string targetCalendarName)
@@ -231,7 +243,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task DeleteEventAsync(string title)
@@ -246,7 +258,7 @@ public class DashboardPage : BasePage
         await DeleteEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task ClickEventAsync(string eventName)
@@ -302,7 +314,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     /// <summary>
@@ -321,7 +333,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     /// <summary>
@@ -364,7 +376,7 @@ public class DashboardPage : BasePage
         await SaveEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await WaitForCalendarVisibleAsync();
     }
 
     /// <summary>
