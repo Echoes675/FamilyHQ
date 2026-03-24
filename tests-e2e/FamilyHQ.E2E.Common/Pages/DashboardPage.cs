@@ -26,7 +26,7 @@ public class DashboardPage : BasePage
     public ILocator UserInfo => Page.GetByText("Signed in as:");
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
     private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "< Prev" });
-    private ILocator AddEventBtn => Page.Locator("button").Filter(new() { HasText = "Add Event" });
+    private ILocator AddEventBtn => Page.GetByTestId("add-event-btn");
 
     // Modal Locators
     private ILocator EventTitleInput => Page.GetByPlaceholder("e.g. Doctor Appointment");
@@ -99,7 +99,7 @@ public class DashboardPage : BasePage
         // Need to narrow down to the specific day's more link if provided, but since most tests only run on specific days we can just pick the first visible or use nth(0) assuming our tests are isolated.
         // Actually best is to find the cell by date. The cell has an id like `day-cell-2026-03-24`
         var cell = Page.Locator($"#day-cell-{dayDateString}");
-        await cell.Locator(".overflow-indicator").ClickAsync();
+        await cell.GetByTestId("overflow-indicator").ClickAsync();
         await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
@@ -436,6 +436,7 @@ public class DashboardPage : BasePage
     // Assertions / State Checks
     public async Task<IReadOnlyList<string>> GetVisibleEventsAsync()
     {
+        await WaitForCalendarVisibleAsync();
         var count = await EventCapsules.CountAsync();
         var titles = new List<string>();
 

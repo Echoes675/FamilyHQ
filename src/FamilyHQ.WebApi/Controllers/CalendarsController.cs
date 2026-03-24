@@ -70,7 +70,7 @@ public class CalendarsController : ControllerBase
 
             // Index once for each day the event spans within the viewable range
             var current = evt.Start.Date;
-            var last = evt.End.Date;
+            var last = evt.End.AddTicks(-1).Date; // Use ticks to handle midnight end times correctly
             
             // Safety: cap multi-day events to a reasonable range if misconfigured
             int daysProcessed = 0;

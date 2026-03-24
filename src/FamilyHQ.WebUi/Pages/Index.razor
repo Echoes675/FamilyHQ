@@ -75,7 +75,7 @@
                     <button class="btn btn-outline-primary" @onclick="() => SwitchToView(DashboardView.Day, _selectedDate.AddDays(1))">Next &gt;</button>
                 </div>
                 
-                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(_selectedDate)">
+                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(_selectedDate)" data-testid="add-event-btn">
                     <i class="bi bi-plus-circle"></i> Add Event
                 </button>
             </div>
@@ -161,7 +161,7 @@
                                     
                                     @if(day.Events.Count() > 3)
                                     {
-                                        <div class="overflow-indicator mt-1 text-center" @onclick="() => SwitchToView(DashboardView.Day, day.Date)">
+                                        <div class="overflow-indicator mt-1 text-center" @onclick="() => SwitchToView(DashboardView.Day, day.Date)" data-testid="overflow-indicator">
                                             +@(day.Events.Count() - 3) more
                                         </div>
                                     }
