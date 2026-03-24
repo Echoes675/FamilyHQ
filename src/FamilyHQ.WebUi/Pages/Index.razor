@@ -69,7 +69,7 @@
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div class="btn-group">
                     <button class="btn btn-outline-primary" @onclick="() => SwitchToView(DashboardView.Day, _selectedDate.AddDays(-1))">&lt; Prev</button>
-                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenDayPickerModal">
+                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenDayPickerModal" data-testid="day-picker-btn">
                         @_selectedDate.ToString("D")
                     </button>
                     <button class="btn btn-outline-primary" @onclick="() => SwitchToView(DashboardView.Day, _selectedDate.AddDays(1))">Next &gt;</button>
@@ -316,9 +316,9 @@
                     <button type="button" class="btn-close" @onclick="CloseDayPickerModal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body text-center">
-                    <input type="date" class="form-control mb-3" @bind="_pickedDate" />
-                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay">Go Context</button>
-                    <button class="btn btn-outline-secondary w-100" @onclick="JumpToTodayDayView">Jump to Today</button>
+                    <input type="date" class="form-control mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
+                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay" data-testid="day-picker-go-btn">Go</button>
+                    <button class="btn btn-outline-secondary w-100" @onclick="JumpToTodayDayView" data-testid="day-picker-today-btn">Jump to Today</button>
                 </div>
             </div>
         </div>

@@ -33,9 +33,10 @@ public class DashboardPage : BasePage
     private ILocator SaveEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Save" });
     private ILocator DeleteEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Delete" });
     private ILocator EventModal => Page.Locator(".modal-content");
-    private ILocator DayPickerModal => Page.Locator(".modal-content").Filter(new() { HasText = "Select Date" });
-    private ILocator SelectDateInput => DayPickerModal.Locator("input[type='date']");
-    private ILocator GoContextBtn => DayPickerModal.GetByRole(AriaRole.Button, new() { Name = "Go Context" });
+    private ILocator DayPickerBtn => Page.GetByTestId("day-picker-btn");
+    private ILocator DayPickerInput => Page.GetByTestId("day-picker-input");
+    private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
+    private ILocator DayPickerModal => Page.Locator(".modal").Filter(new() { HasText = "Select Date" });
 
     // Actions
 
@@ -81,13 +82,15 @@ public class DashboardPage : BasePage
     public async Task OpenDayPickerAndGoAsync(string dateYyyyMmDd)
     {
         // Click the center date header button on Day view
-        var dateBtn = Page.Locator(".btn-light");
-        await dateBtn.ClickAsync();
+        await DayPickerBtn.ClickAsync();
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         
-        await SelectDateInput.FillAsync(dateYyyyMmDd);
-        await GoContextBtn.ClickAsync();
+        await DayPickerInput.FillAsync(dateYyyyMmDd);
+        await DayPickerGoBtn.ClickAsync();
+        
+        // Ensure modal is gone before proceeding
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task ClickMoreEventsLinkAsync(string dayDateString)
