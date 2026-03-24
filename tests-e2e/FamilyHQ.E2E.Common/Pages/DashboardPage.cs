@@ -443,9 +443,13 @@ public class DashboardPage : BasePage
     }
 
     // Assertions / State Checks
+    /// <summary>
+    /// Returns titles of all visible event capsules. Does NOT wait for the calendar
+    /// to be fully rendered — this makes it safe for use inside polling loops
+    /// (e.g. WaitForConditionAsync) where the page may be mid-re-render.
+    /// </summary>
     public async Task<IReadOnlyList<string>> GetVisibleEventsAsync()
     {
-        await WaitForCalendarVisibleAsync();
         var count = await EventCapsules.CountAsync();
         var titles = new List<string>();
 
