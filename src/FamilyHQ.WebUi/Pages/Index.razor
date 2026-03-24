@@ -59,7 +59,7 @@
                     <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
                 </div>
                 
-                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)">
+                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)" data-testid="add-event-btn">
                     <i class="bi bi-plus-circle"></i> Add Event
                 </button>
             </div>

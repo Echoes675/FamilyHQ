@@ -61,11 +61,9 @@ public class DashboardPage : BasePage
         // Wait for loading spinner to be gone first
         await Page.Locator(".spinner-border").WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         
-        // Either MonthTable or DayViewContainer should be visible
-        var monthTask = MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        var dayTask = DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        
-        await Task.WhenAny(monthTask, dayTask);
+        // Wait for either the month table or day view container to be visible
+        // This ensures the page is actually rendered before returning
+        await Page.Locator(".month-table, .day-view-container").First.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
     public async Task SwitchToDayViewAsync()
