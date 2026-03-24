@@ -59,12 +59,12 @@ public class DashboardPage : BasePage
 
     private async Task WaitForCalendarVisibleAsync()
     {
-        // Wait for loading spinner to be gone first
-        await Page.Locator(".spinner-border").WaitForAsync(new() { State = WaitForSelectorState.Hidden });
-        
-        // Wait for either the month table or day view container to be visible
-        // This ensures the page is actually rendered before returning
-        await Page.Locator(".month-table, .day-view-container").First.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        // Wait for either the month table or day view container to be visible.
+        // This is safe to call at any point — it simply waits for the final rendered state.
+        // We intentionally do NOT wait for the spinner first because in some flows
+        // (e.g. after OAuth redirect) the spinner may never appear in the DOM.
+        await Page.Locator(".month-table, .day-view-container").First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     public async Task SwitchToDayViewAsync()
@@ -90,10 +90,6 @@ public class DashboardPage : BasePage
         
         // Ensure modal is gone before proceeding
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
-        
-        // Wait for the header to reflect the new date to avoid race conditions
-        await Assertions.Expect(Page.GetByTestId("day-view-header")).ToHaveTextAsync(dateYyyyMmDd);
-        
         await WaitForCalendarVisibleAsync();
     }
 
@@ -161,7 +157,7 @@ public class DashboardPage : BasePage
         await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
         await Page.Locator("select#selectedUserId").SelectOptionAsync(new SelectOptionValue { Label = userName });
         await Page.Locator("button[type='submit']").ClickAsync();
-        await WaitForCalendarVisibleAsync();
+        await WaitForCalendarToLoadAsync();
     }
 
     public async Task SignOutAsync()

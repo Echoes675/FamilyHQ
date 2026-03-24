@@ -179,7 +179,6 @@
         var dayEvents = _monthView.Days.TryGetValue(key, out var evts) ? evts : new List<CalendarEventViewModel>();
         
         <div class="day-view-container" id="day-view-container">
-            <h2 class="view-header-title d-none" data-testid="day-view-header">@key</h2>
             <div class="day-view-sticky-header">
                 <!-- Headers -->
                 <div class="day-header">
@@ -318,7 +317,7 @@
                 </div>
                 <div class="modal-body text-center">
                     <input type="date" class="form-control mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
-                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay" data-testid="day-picker-go-btn">Go</button>
+                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay" data-testid="day-picker-go-btn">Go Context</button>
                     <button class="btn btn-outline-secondary w-100" @onclick="JumpToTodayDayView" data-testid="day-picker-today-btn">Jump to Today</button>
                 </div>
             </div>

@@ -68,11 +68,10 @@ public class CalendarsController : ControllerBase
                 evt.Description,
                 evt.Calendars.Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color)).ToList());
 
-            // Index once for each day the event spans within the viewable range
-            // We use the date part to correctly place it on the calendar day it belongs to
-            var current = new DateTime(evt.Start.Year, evt.Start.Month, evt.Start.Day);
-            var lastDateValue = evt.End.AddTicks(-1);
-            var last = new DateTime(lastDateValue.Year, lastDateValue.Month, lastDateValue.Day);
+            // Index once for each day the event spans within the viewable range.
+            // AddTicks(-1) handles midnight-ending events (e.g. all-day ending at 00:00 next day).
+            var current = evt.Start.Date;
+            var last = evt.End.AddTicks(-1).Date;
             
             int daysProcessed = 0;
             while (current <= last && daysProcessed < 366)
