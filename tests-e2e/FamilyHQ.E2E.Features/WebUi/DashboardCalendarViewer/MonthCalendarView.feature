@@ -143,6 +143,7 @@ Feature: Month Calendar View
 
   Scenario: Month View displays multi-day All-Day events
     Given I have a user like "AllDayEventsUser"
+    And the "Family Events" calendar is the active calendar
     And the user has an all-day event "Vacation" spanning 3 days starting tomorrow
     And I login as the user "AllDayEventsUser"
     When I view the dashboard
@@ -150,6 +151,7 @@ Feature: Month Calendar View
 
   Scenario: Month View displays multi-day Timed events
     Given I have a user like "TimedEventsUser"
+    And the "Family Events" calendar is the active calendar
     And the user has a timed event "Conference" starting tomorrow at "09:00" spanning 2 days
     And I login as the user "TimedEventsUser"
     When I view the dashboard

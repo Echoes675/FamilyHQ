@@ -60,6 +60,12 @@ public class DashboardSteps
         await _dashboardPage.CreateEventAsync(eventName);
     }
 
+    [When(@"I fill in and save the event ""([^""]*)""")]
+    public async Task WhenIFillInAndSaveTheEvent(string eventName)
+    {
+        await _dashboardPage.FillAndSaveEventAsync(eventName);
+    }
+
     [When(@"I rename the event ""([^""]*)"" to ""([^""]*)""")]
     public async Task WhenIRenameTheEventTo(string oldEventName, string newEventName)
     {

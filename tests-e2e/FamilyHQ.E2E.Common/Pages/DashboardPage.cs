@@ -181,7 +181,15 @@ public class DashboardPage : BasePage
     {
         await AddEventBtn.ClickAsync();
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await FillAndSaveEventAsync(title);
+    }
 
+    /// <summary>
+    /// Fills in the event title and saves when the modal is already open
+    /// (e.g. after clicking a Day View grid slot).
+    /// </summary>
+    public async Task FillAndSaveEventAsync(string title)
+    {
         await EventTitleInput.FillAsync(title);
 
         var eventsResponseTask = Page.WaitForResponseAsync(
