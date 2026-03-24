@@ -16,11 +16,16 @@ public class DashboardPage : BasePage
 
     // Locators
     public ILocator MonthTable => Page.Locator("table.month-table");
+    public ILocator DayViewContainer => Page.Locator(".day-view-container");
+    public ILocator MonthTab => Page.GetByRole(AriaRole.Button, new() { Name = "Month View" });
+    public ILocator DayTab => Page.GetByRole(AriaRole.Button, new() { Name = "Day View" });
     public ILocator EventCapsules => Page.Locator(".event-capsule");
+    public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
+    private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "< Prev" });
     private ILocator AddEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Add Event" });
 
     // Modal Locators
@@ -28,6 +33,9 @@ public class DashboardPage : BasePage
     private ILocator SaveEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Save" });
     private ILocator DeleteEventBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Delete" });
     private ILocator EventModal => Page.Locator(".modal-content");
+    private ILocator DayPickerModal => Page.Locator(".modal-content").Filter(new() { HasText = "Select Date" });
+    private ILocator SelectDateInput => DayPickerModal.Locator("input[type='date']");
+    private ILocator GoContextBtn => DayPickerModal.GetByRole(AriaRole.Button, new() { Name = "Go Context" });
 
     // Actions
 
@@ -43,7 +51,77 @@ public class DashboardPage : BasePage
             new() { Timeout = 30000 });
         await NavigateAsync();
         await eventsResponseTask;
+        
+        // Month view is default
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task SwitchToDayViewAsync()
+    {
+        await DayTab.ClickAsync();
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task SwitchToMonthViewAsync()
+    {
+        await MonthTab.ClickAsync();
+        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task OpenDayPickerAndGoAsync(string dateYyyyMmDd)
+    {
+        // Click the center date header button on Day view
+        var dateBtn = Page.Locator(".btn-light");
+        await dateBtn.ClickAsync();
+        await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        
+        await SelectDateInput.FillAsync(dateYyyyMmDd);
+        await GoContextBtn.ClickAsync();
+        await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+    }
+
+    public async Task ClickMoreEventsLinkAsync(string dayDateString)
+    {
+        // Click the +n more text on the month view
+        var link = Page.GetByText(new Regex(@"^\+\d+ more$"));
+        // Need to narrow down to the specific day's more link if provided, but since most tests only run on specific days we can just pick the first visible or use nth(0) assuming our tests are isolated.
+        // Actually best is to find the cell by date. The cell has an id like `day-cell-2026-03-24`
+        var cell = Page.Locator($"#day-cell-{dayDateString}");
+        await cell.Locator(".more-events-link").ClickAsync();
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task ClickDayGridSlotAsync(string calendarName, string timeString)
+    {
+        // Finds the specific calendar column and clicks roughly around the time slot
+        var calHeader = Page.Locator(".calendar-header-col").Filter(new() { HasText = calendarName });
+        // Since we know the index of the header, we can find the equivalent col in day-body-flex
+        var idxTask = calHeader.EvaluateAsync<int>("el => Array.from(el.parentNode.children).indexOf(el) - 1"); // -1 for time-axis
+        int colIndex = await idxTask;
+        
+        var col = Page.Locator(".calendar-col").Nth(colIndex);
+        
+        // Time string e.g. "10:00". Calculate Y offset... Actually just clicking the column is enough to open the modal!
+        // The modal opens with start time based on the height clicked.
+        // For E2E we might just want to trigger the event. Playwright allows clicking at X/Y offsets!
+        var hParts = timeString.Split(':');
+        int hours = int.Parse(hParts[0]);
+        int minutes = int.Parse(hParts[1]);
+        int totalMinutes = (hours * 60) + minutes;
+        
+        // The day body is 1440px tall (1px/minute).
+        // Let's scroll into view first.
+        var colBox = await col.BoundingBoxAsync();
+        if (colBox != null)
+        {
+            await col.ClickAsync(new() { Position = new Position { X = 10, Y = totalMinutes } });
+        }
+        else 
+        {
+            await col.ClickAsync(); 
+        }
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
     /// <summary>
@@ -375,5 +453,56 @@ public class DashboardPage : BasePage
             return raw;
         }
         return string.Empty;
+    }
+
+    public async Task<int> GetCalendarHeaderCountAsync()
+    {
+        return await Page.Locator(".calendar-header-col").CountAsync();
+    }
+
+    public async Task WaitForAllDayEventVisibleAsync(string eventName)
+    {
+        var capsule = Page.Locator($".all-day-col .event-capsule:has-text('{eventName}')").First;
+        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task WaitForTimedEventVisibleAsync(string eventName)
+    {
+        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task<double> GetTimedEventHeightAsync(string eventName)
+    {
+        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        var style = await capsule.GetAttributeAsync("style") ?? "";
+        
+        // Extract height e.g., "height: 4.166666666666667%;"
+        var match = Regex.Match(style, @"height:\s*([\d.]+)%");
+        if (match.Success && double.TryParse(match.Groups[1].Value, out double heightPercentage))
+        {
+            // The container is 1440px tall, so 1% = 14.4px
+            return heightPercentage * 14.4;
+        }
+        return 0;
+    }
+
+    public async Task<double> GetTimedEventWidthPercentageAsync(string eventName)
+    {
+        var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
+        var style = await capsule.GetAttributeAsync("style") ?? "";
+        
+        var match = Regex.Match(style, @"width:\s*calc\(([\d.]+)%");
+        if (match.Success && double.TryParse(match.Groups[1].Value, out double widthPercentage))
+        {
+            return widthPercentage;
+        }
+        return 0;
+    }
+
+    public async Task<bool> IsCurrentTimeLineVisibleAsync()
+    {
+        return await CurrentTimeLine.IsVisibleAsync();
     }
 }

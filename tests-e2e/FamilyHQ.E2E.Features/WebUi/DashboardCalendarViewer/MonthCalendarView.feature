@@ -1,4 +1,4 @@
-Feature: Dashboard Calendar Viewer
+Feature: Month Calendar View
   As a family member
   I want to view my imported events on the dashboard
   So that I can see my upcoming schedule
@@ -140,3 +140,17 @@ Feature: Dashboard Calendar Viewer
     And I view the dashboard
     When I delete the event "Team Meeting"
     Then I do not see the event "Team Meeting" displayed on the calendar
+
+  Scenario: Month View displays multi-day All-Day events
+    Given I have a user like "AllDayEventsUser"
+    And the user has an all-day event "Vacation" spanning 3 days starting tomorrow
+    And I login as the user "AllDayEventsUser"
+    When I view the dashboard
+    Then I see the event "Vacation" displayed on the calendar
+
+  Scenario: Month View displays multi-day Timed events
+    Given I have a user like "TimedEventsUser"
+    And the user has a timed event "Conference" starting tomorrow at "09:00" spanning 2 days
+    And I login as the user "TimedEventsUser"
+    When I view the dashboard
+    Then I see the event "Conference" displayed on the calendar
