@@ -476,14 +476,16 @@ public class DashboardPage : BasePage
 
     public async Task WaitForAllDayEventVisibleAsync(string eventName)
     {
+        await WaitForCalendarVisibleAsync();
         var capsule = Page.Locator($".all-day-col .event-capsule:has-text('{eventName}')").First;
-        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     public async Task WaitForTimedEventVisibleAsync(string eventName)
     {
+        await WaitForCalendarVisibleAsync();
         var capsule = Page.Locator($".calendar-col .event-capsule:has-text('{eventName}')").First;
-        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     public async Task<double> GetTimedEventHeightAsync(string eventName)
