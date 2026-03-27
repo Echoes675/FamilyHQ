@@ -1,9 +1,13 @@
 ﻿@inherits LayoutComponentBase
+@using FamilyHQ.WebUi.Components
 
-<div class="page">
-    <main>
-        <article class="content px-4">
+<div id="kiosk-shell" class="kiosk-shell">
+    <AmbientBackground />
+    <BurnInOrbit />
+    <div class="kiosk-content">
+        <DashboardHeader />
+        <main class="kiosk-main">
             @Body
-        </article>
-    </main>
+        </main>
+    </div>
 </div>

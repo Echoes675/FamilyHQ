@@ -1,0 +1,45 @@
+@using System.Globalization
+
+<div class="month-quick-jump-modal-overlay" @onclick="Close">
+    <div class="month-quick-jump-modal" @onclick:stopPropagation="true">
+        <div class="modal-header">
+            <button class="year-nav" @onclick="() => ChangeYear(-1)">&lt;</button>
+            <h2 class="year-display">@SelectedYear</h2>
+            <button class="year-nav" @onclick="() => ChangeYear(1)">&gt;</button>
+        </div>
+        <div class="month-grid">
+            @foreach (var month in Enumerable.Range(1, 12))
+            {
+                <button class="month-button @(month == SelectedMonth ? "selected" : "")"
+                        @onclick="() => SelectMonth(month)">
+                    @CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(month)
+                </button>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="close-button" @onclick="Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int SelectedYear { get; set; } = DateTime.Today.Year;
+    [Parameter] public int SelectedMonth { get; set; } = DateTime.Today.Month;
+    [Parameter] public EventCallback<(int Year, int Month)> OnDateSelected { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private void ChangeYear(int delta)
+    {
+        SelectedYear += delta;
+    }
+
+    private async Task SelectMonth(int month)
+    {
+        await OnDateSelected.InvokeAsync((SelectedYear, month));
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+}

@@ -386,3 +386,4 @@ plans/*
 !AGENTS.md
 !.agent/rules/
 !.agent/skills/
+docs/superpowers/

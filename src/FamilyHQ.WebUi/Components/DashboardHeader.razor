@@ -1,0 +1,151 @@
+@using System.Globalization
+
+<div class="dashboard-header">
+    <div class="header-left">
+        <div class="app-title">FamilyHQ</div>
+    </div>
+    <div class="header-center">
+        <div class="view-switcher">
+            <button class="view-tab @(ActiveView == DashboardView.Today ? "active" : "")"
+                    @onclick="() => SwitchView(DashboardView.Today)"
+                    aria-label="Today view">
+                Today
+            </button>
+            <button class="view-tab @(ActiveView == DashboardView.Week ? "active" : "")"
+                    @onclick="() => SwitchView(DashboardView.Week)"
+                    aria-label="Week view">
+                Week
+            </button>
+            <button class="view-tab @(ActiveView == DashboardView.Month ? "active" : "")"
+                    @onclick="() => SwitchView(DashboardView.Month)"
+                    aria-label="Month view">
+                Month
+            </button>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="month-navigation">
+            <button class="nav-button" @onclick="PreviousPeriod" aria-label="Previous period">
+                &lt;
+            </button>
+            <button class="month-year-label" @onclick="() => ShowMonthQuickJump = true">
+                @SelectedDate.ToString("MMMM yyyy", CultureInfo.InvariantCulture)
+            </button>
+            <button class="nav-button" @onclick="NextPeriod" aria-label="Next period">
+                &gt;
+            </button>
+        </div>
+        <div class="weather-indicator">
+            <span class="weather-icon">☁</span>
+            <span class="weather-temp">—</span>
+        </div>
+    </div>
+</div>
+
+@if (ShowMonthQuickJump)
+{
+    <MonthQuickJumpModal @ref="monthQuickJumpModal"
+                         SelectedYear="@SelectedDate.Year"
+                         SelectedMonth="@SelectedDate.Month"
+                         OnDateSelected="HandleMonthSelected"
+                         OnClose="CloseMonthQuickJump" />
+}
+
+@code {
+    public enum DashboardView { Today, Week, Month }
+
+    private DashboardView _activeView = DashboardView.Today;
+    private DateOnly _selectedDate = DateOnly.FromDateTime(DateTime.Today);
+    private bool _showMonthQuickJump = false;
+    private MonthQuickJumpModal? monthQuickJumpModal;
+
+    [Parameter]
+    public DashboardView ActiveView { get; set; } = DashboardView.Today;
+
+    [Parameter]
+    public DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+
+    [Parameter]
+    public EventCallback<DashboardView> ActiveViewChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<DateOnly> SelectedDateChanged { get; set; }
+
+    private bool ShowMonthQuickJump
+    {
+        get => _showMonthQuickJump;
+        set
+        {
+            if (_showMonthQuickJump != value)
+            {
+                _showMonthQuickJump = value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Detect changes from parent and update backing fields
+        if (_activeView != ActiveView)
+        {
+            _activeView = ActiveView;
+            ActiveViewChanged.InvokeAsync(ActiveView);
+        }
+        if (_selectedDate != SelectedDate)
+        {
+            _selectedDate = SelectedDate;
+            SelectedDateChanged.InvokeAsync(SelectedDate);
+        }
+        base.OnParametersSet();
+    }
+
+    private void SwitchView(DashboardView view)
+    {
+        ActiveView = view;
+        _activeView = view;
+        ActiveViewChanged.InvokeAsync(view);
+    }
+
+    private void PreviousPeriod()
+    {
+        var newDate = ActiveView switch
+        {
+            DashboardView.Today => SelectedDate.AddDays(-1),
+            DashboardView.Week => SelectedDate.AddDays(-7),
+            DashboardView.Month => SelectedDate.AddMonths(-1),
+            _ => SelectedDate
+        };
+        SelectedDate = newDate;
+        _selectedDate = newDate;
+        SelectedDateChanged.InvokeAsync(newDate);
+    }
+
+    private void NextPeriod()
+    {
+        var newDate = ActiveView switch
+        {
+            DashboardView.Today => SelectedDate.AddDays(1),
+            DashboardView.Week => SelectedDate.AddDays(7),
+            DashboardView.Month => SelectedDate.AddMonths(1),
+            _ => SelectedDate
+        };
+        SelectedDate = newDate;
+        _selectedDate = newDate;
+        SelectedDateChanged.InvokeAsync(newDate);
+    }
+
+    private void HandleMonthSelected((int Year, int Month) date)
+    {
+        var newDate = new DateOnly(date.Year, date.Month, 1);
+        SelectedDate = newDate;
+        _selectedDate = newDate;
+        SelectedDateChanged.InvokeAsync(newDate);
+        ShowMonthQuickJump = false;
+    }
+
+    private void CloseMonthQuickJump()
+    {
+        ShowMonthQuickJump = false;
+    }
+}
