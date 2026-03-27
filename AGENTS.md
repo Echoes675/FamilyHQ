@@ -47,3 +47,10 @@ Read the relevant skill file before starting any task of that type:
 - **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
 - **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`
 - **Frontend UI development**: Read `.agent/skills/frontend-design/SKILL.md`
+
+### Skill Registration Rule
+When creating a new skill:
+1. Create the skill directory and `SKILL.md` file in `.agent/skills/`.
+2. Update this "## Skills" section to include the new skill.
+3. Ensure the skill follows the standard format with clear triggers and instructions.
+4. Skills are automatically discovered at runtime using `list_files(".agent/skills", recursive=true)`.
