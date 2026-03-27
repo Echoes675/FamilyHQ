@@ -13,4 +13,9 @@ public record CalendarEventViewModel(
     string CalendarDisplayName,
     string? CalendarColor,
     // All calendars this event belongs to — for chip rendering in edit modal
-    IReadOnlyList<CalendarSummaryViewModel> AllCalendars);
+    IReadOnlyList<CalendarSummaryViewModel> AllCalendars,
+    // RRULE recurrence fields
+    string? RecurrenceRule = null,
+    string? RecurrenceId = null,
+    bool IsRecurrenceException = false,
+    Guid? MasterEventId = null);

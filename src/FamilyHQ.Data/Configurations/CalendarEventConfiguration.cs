@@ -49,5 +49,11 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.Property(e => e.IsExternallyOwned)
             .IsRequired()
             .HasDefaultValue(false);
+
+        builder.Property(x => x.RecurrenceRule).HasMaxLength(2000).IsRequired(false);
+        builder.Property(x => x.RecurrenceId).HasMaxLength(100).IsRequired(false);
+        builder.Property(x => x.IsRecurrenceException).HasDefaultValue(false);
+        builder.Property(x => x.MasterEventId).IsRequired(false);
+        builder.HasIndex(x => x.MasterEventId); // For efficient lookup of exceptions
     }
 }

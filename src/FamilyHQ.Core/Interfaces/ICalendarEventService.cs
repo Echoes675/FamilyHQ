@@ -38,4 +38,62 @@ public interface ICalendarEventService
     /// Always deletes local rows.
     /// </summary>
     Task DeleteAsync(Guid eventId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Gets all events (including expanded recurring instances) for a date range.
+    /// </summary>
+    Task<IEnumerable<CalendarEventDto>> GetEventsForRangeAsync(
+        DateTimeOffset start, 
+        DateTimeOffset end, 
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates a single instance of a recurring event (creates an exception).
+    /// </summary>
+    Task<CalendarEventDto> UpdateInstanceAsync(
+        Guid masterEventId,
+        string recurrenceId,
+        UpdateEventRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates this and all following instances of a recurring event.
+    /// Splits the series at the given recurrenceId.
+    /// </summary>
+    Task<CalendarEventDto> UpdateSeriesFromAsync(
+        Guid masterEventId,
+        string recurrenceId,
+        UpdateEventRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Updates all instances of a recurring event (modifies the master).
+    /// </summary>
+    Task<CalendarEventDto> UpdateAllInSeriesAsync(
+        Guid masterEventId,
+        UpdateEventRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes a single instance of a recurring event (adds an EXDATE exception).
+    /// </summary>
+    Task DeleteInstanceAsync(
+        Guid masterEventId,
+        string recurrenceId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes this and all following instances of a recurring event.
+    /// </summary>
+    Task DeleteSeriesFromAsync(
+        Guid masterEventId,
+        string recurrenceId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes all instances of a recurring event (deletes the master).
+    /// </summary>
+    Task DeleteAllInSeriesAsync(
+        Guid masterEventId,
+        CancellationToken cancellationToken = default);
 }

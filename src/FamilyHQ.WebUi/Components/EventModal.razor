@@ -131,7 +131,7 @@
     private bool IsSaving { get; set; }
     private bool ShowRecurrencePrompt { get; set; }
     private bool ShowDeleteConfirm { get; set; }
-    private bool IsRecurringEvent => false; // RecurrenceRule not yet in ViewModel; Phase 9 will add full support
+    private bool IsRecurringEvent => !string.IsNullOrEmpty(RecurrenceRule);
 
     private bool IsEditMode => EditingEvent != null;
 
@@ -146,8 +146,7 @@
             IsAllDay = EditingEvent.IsAllDay;
             SelectedCalendarId = EditingEvent.CalendarInfoId;
             Description = EditingEvent.Description;
-            // Note: RecurrenceRule not yet present in ViewModel, will be added later
-            RecurrenceRule = null;
+            RecurrenceRule = EditingEvent.RecurrenceRule;
             RecurrenceEnd = null;
         }
         else
@@ -253,9 +252,43 @@
     private async Task HandleRecurrenceScope(RecurrenceEditScope scope)
     {
         ShowRecurrencePrompt = false;
-        // TODO: Pass scope to update/delete API when backend supports it
-        // For now, just proceed with normal update/delete
-        await HandleSubmit();
+        // Map scope to API endpoint suffix
+        var scopeString = scope switch
+        {
+            RecurrenceEditScope.ThisInstance => "this",
+            RecurrenceEditScope.ThisAndFollowing => "from",
+            RecurrenceEditScope.AllInSeries => "all",
+            _ => "all"
+        };
+
+        if (IsEditMode && EditingEvent != null)
+        {
+            // Update the event with the new recurrence rule
+            var startDateTime = IsAllDay
+                ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+                : new DateTimeOffset(Date.ToDateTime(StartTime), TimeSpan.Zero);
+            var endDateTime = IsAllDay
+                ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+                : new DateTimeOffset(Date.ToDateTime(EndTime), TimeSpan.Zero);
+
+            var request = new UpdateEventRequest(
+                Title: Title,
+                Start: startDateTime,
+                End: endDateTime,
+                IsAllDay: IsAllDay,
+                Location: null,
+                Description: Description,
+                RecurrenceRule: RecurrenceRule
+            );
+
+            var updated = await CalendarApiService.UpdateEventInstanceAsync(
+                EditingEvent.Id,
+                EditingEvent.RecurrenceId ?? string.Empty,
+                scopeString,
+                request);
+            await OnSaved.InvokeAsync(updated);
+            await OnClose.InvokeAsync();
+        }
     }
 
     private void CancelRecurrencePrompt()
@@ -281,8 +314,23 @@
         IsSaving = true;
         try
         {
-            await CalendarApiService.DeleteEventAsync(EditingEvent!.Id);
-            await OnClose.InvokeAsync();
+            // Map scope to API endpoint suffix
+            var scopeString = scope switch
+            {
+                RecurrenceEditScope.ThisInstance => "this",
+                RecurrenceEditScope.ThisAndFollowing => "from",
+                RecurrenceEditScope.AllInSeries => "all",
+                _ => "all"
+            };
+
+            if (IsEditMode && EditingEvent != null)
+            {
+                await CalendarApiService.DeleteEventInstanceAsync(
+                    EditingEvent.Id,
+                    EditingEvent.RecurrenceId ?? string.Empty,
+                    scopeString);
+                await OnClose.InvokeAsync();
+            }
         }
         finally
         {

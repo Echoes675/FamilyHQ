@@ -76,6 +76,9 @@ builder.Services.Configure<KioskOptions>(builder.Configuration.GetSection(KioskO
 builder.Services.AddSingleton<ISolarCalculator, SolarCalculator>();
 builder.Services.AddHostedService<CircadianStateService>();
 
+// RRULE services
+builder.Services.AddSingleton<IRruleExpander, FamilyHQ.Services.Calendar.RruleExpander>();
+
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("JWT signing key is not configured.");

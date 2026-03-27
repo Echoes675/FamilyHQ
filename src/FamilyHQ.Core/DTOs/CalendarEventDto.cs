@@ -9,4 +9,8 @@ public record CalendarEventDto(
     bool IsAllDay,
     string? Location,
     string? Description,
-    IReadOnlyList<EventCalendarDto> Calendars);
+    IReadOnlyList<EventCalendarDto> Calendars,
+    string? RecurrenceRule = null,
+    string? RecurrenceId = null,
+    bool IsRecurrenceException = false,
+    Guid? MasterEventId = null);
