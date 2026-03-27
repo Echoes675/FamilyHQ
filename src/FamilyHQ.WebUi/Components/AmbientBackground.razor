@@ -1,5 +1,7 @@
 @implements IDisposable
 @using System.Threading
+@inject HttpClient HttpClient
+@inject IConfiguration Configuration
 
 <div class="ambient-bg @CircadianClass @WeatherClass" aria-hidden="true">
     <div class="ambient-legibility-layer"></div>
@@ -16,6 +18,7 @@
     private CircadianState CurrentCircadianState { get; set; } = CircadianState.Day;
     private WeatherCondition CurrentWeatherCondition { get; set; } = WeatherCondition.Clear;
     private Timer? _circadianTimer;
+    private bool _apiPollingEnabled = true;
 
     private string CircadianClass => CurrentCircadianState switch
     {
@@ -42,18 +45,52 @@
     {
         if (firstRender)
         {
-            UpdateCircadianState();
+            // Try to poll the API first
+            await PollCircadianApiAsync();
+            
             // Start a timer that fires every 5 minutes (300,000 ms) to re-evaluate circadian state
-            _circadianTimer = new Timer(_ => InvokeAsync(() =>
+            _circadianTimer = new Timer(_ => InvokeAsync(async () =>
             {
-                UpdateCircadianState();
+                // Try API first, fall back to client-side clock if API fails
+                var success = await PollCircadianApiAsync();
+                if (!success)
+                {
+                    UpdateCircadianStateFromClientClock();
+                }
                 StateHasChanged();
             }), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
         }
         await base.OnAfterRenderAsync(firstRender);
     }
 
-    private void UpdateCircadianState()
+    private async Task<bool> PollCircadianApiAsync()
+    {
+        if (!_apiPollingEnabled) return false;
+
+        try
+        {
+            var apiBaseUrl = Configuration["ApiBaseUrl"] ?? "https://localhost:7001";
+            var response = await HttpClient.GetAsync($"{apiBaseUrl}/api/circadian/current");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadFromJsonAsync<CircadianApiResponse>();
+                if (json?.State is not null && Enum.TryParse<CircadianState>(json.State, ignoreCase: true, out var state))
+                {
+                    CurrentCircadianState = state;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // API call failed, fall back to client-side clock
+        }
+        
+        return false;
+    }
+
+    private void UpdateCircadianStateFromClientClock()
     {
         var now = TimeOnly.FromDateTime(DateTime.Now);
         CurrentCircadianState = GetCircadianStateFromTime(now);
@@ -78,4 +115,10 @@
     {
         _circadianTimer?.Dispose();
     }
+
+    private record CircadianApiResponse(
+        string State,
+        string? SunriseUtc,
+        string? SunsetUtc,
+        DateTimeOffset? ComputedAt);
 }

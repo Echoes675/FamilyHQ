@@ -4,8 +4,10 @@ using FamilyHQ.Data;
 using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Circadian;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Weather;
+using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using FamilyHQ.WebApi.Services;
@@ -66,6 +68,13 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<IWeatherProvider, NullWeatherProvider>();
 builder.Services.AddSingleton<WeatherBackgroundService>();
 builder.Services.AddSingleton<IHostedService, WeatherBroadcastService>();
+
+// Kiosk options
+builder.Services.Configure<KioskOptions>(builder.Configuration.GetSection(KioskOptions.SectionName));
+
+// Circadian services
+builder.Services.AddSingleton<ISolarCalculator, SolarCalculator>();
+builder.Services.AddHostedService<CircadianStateService>();
 
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
