@@ -1,0 +1,40 @@
+@using FamilyHQ.WebUi.ViewModels
+
+@if (IsVisible)
+{
+    <div class="modal-backdrop" @onclick="OnClose">
+        <div class="modal-panel day-detail-modal" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>@Date.ToString("dddd, d MMMM yyyy")</h2>
+                <button class="modal-close-btn" @onclick="OnClose">✕</button>
+            </div>
+            <div class="modal-body">
+                @foreach (var evt in Events.OrderBy(e => e.IsAllDay ? DateTimeOffset.MinValue : e.Start))
+                {
+                    var cal = Calendars.FirstOrDefault(c => c.Id == evt.CalendarInfoId);
+                    <div class="day-detail-event" 
+                         style="border-left: 4px solid @(cal?.Color ?? "#6b7280")"
+                         @onclick="() => OnEventSelected.InvokeAsync(evt)">
+                        <div class="day-detail-event-time">
+                            @(evt.IsAllDay ? "All day" : $"{evt.Start.LocalDateTime:HH:mm} – {evt.End.LocalDateTime:HH:mm}")
+                        </div>
+                        <div class="day-detail-event-title">@evt.Title</div>
+                        @if (!string.IsNullOrEmpty(cal?.DisplayName))
+                        {
+                            <div class="day-detail-event-calendar">@cal.DisplayName</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public DateOnly Date { get; set; }
+    [Parameter] public List<CalendarEventViewModel> Events { get; set; } = new();
+    [Parameter] public List<CalendarSummaryViewModel> Calendars { get; set; } = new();
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEventSelected { get; set; }
+    [Parameter] public bool IsVisible { get; set; } = true;
+}

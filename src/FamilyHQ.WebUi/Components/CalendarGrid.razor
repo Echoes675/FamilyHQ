@@ -1,0 +1,192 @@
+@using System.Globalization
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@inject ICalendarApiService CalendarApiService
+@implements IDisposable
+
+<div class="month-grid">
+    <!-- Sticky column headers row -->
+    <div class="month-grid-header">
+        <div class="month-date-col-header">Date</div>
+        @foreach (var calendar in Calendars)
+        {
+            <div class="month-cal-header" style="border-top: 3px solid @calendar.Color">
+                @calendar.DisplayName
+            </div>
+        }
+    </div>
+    
+    <!-- Day rows -->
+    @foreach (var day in DaysInMonth)
+    {
+        <div class="month-row @(day == DateOnly.FromDateTime(DateTime.Today) ? "month-row-today" : "") @(day.DayOfWeek == DayOfWeek.Saturday || day.DayOfWeek == DayOfWeek.Sunday ? "month-row-weekend" : "")"
+             style="height: @RowHeightPx px"
+             @onclick="() => OnDayClick(day)">
+            
+            <!-- Sticky date column -->
+            <div class="month-date-cell">
+                <span class="month-day-number @(day == DateOnly.FromDateTime(DateTime.Today) ? "month-today-badge" : "")">@day.Day</span>
+                <span class="month-day-name">@day.ToString("ddd")</span>
+            </div>
+            
+            <!-- Calendar event cells -->
+            @foreach (var calendar in Calendars)
+            {
+                var dayEvents = GetEventsForDayAndCalendar(day, calendar.Id);
+                var visibleEvents = dayEvents.Take(EventDensity).ToList();
+                var overflowCount = dayEvents.Count - visibleEvents.Count;
+                
+                <div class="month-event-cell" @onclick:stopPropagation="true">
+                    @foreach (var evt in visibleEvents)
+                    {
+                        <div class="month-event-chip" 
+                             style="background: @(calendar.Color)33; border-left: 3px solid @calendar.Color"
+                             @onclick="() => OnEventClick(evt)">
+                            @if (!evt.IsAllDay)
+                            {
+                                <span class="month-event-time">@evt.Start.LocalDateTime.ToString("HH:mm")</span>
+                            }
+                            <span class="month-event-title">@evt.Title</span>
+                        </div>
+                    }
+                    @if (overflowCount > 0)
+                    {
+                        <div class="month-overflow-badge" @onclick="() => OnOverflowClick(day)">
+                            +@overflowCount
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- DayDetailModal -->
+@if (ShowDayDetail)
+{
+    <DayDetailModal Date="SelectedDetailDay" 
+                    Events="GetEventsForDay(SelectedDetailDay)"
+                    Calendars="Calendars"
+                    OnClose="CloseDayDetail"
+                    OnEventSelected="OnEventClick" />
+}
+
+@code {
+    [Parameter] public int Year { get; set; }
+    [Parameter] public int Month { get; set; }
+    [Parameter] public int EventDensity { get; set; } = 2;
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEventSelected { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnDaySelected { get; set; }
+
+    private List<DateOnly> DaysInMonth { get; set; } = new();
+    private List<CalendarSummaryViewModel> Calendars { get; set; } = new();
+    private List<CalendarEventViewModel> Events { get; set; } = new();
+    private int RowHeightPx { get; set; } = 56;
+    private bool ShowDayDetail { get; set; }
+    private DateOnly SelectedDetailDay { get; set; }
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await RecalculateDaysInMonth();
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Optionally set up a timer to refresh data periodically
+            _refreshTimer = new System.Threading.Timer(async _ =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadDataAsync();
+                    StateHasChanged();
+                });
+            }, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+        }
+    }
+
+    private async Task RecalculateDaysInMonth()
+    {
+        var daysInMonth = DateTime.DaysInMonth(Year, Month);
+        DaysInMonth = Enumerable.Range(1, daysInMonth)
+            .Select(d => new DateOnly(Year, Month, d))
+            .ToList();
+
+        // Calculate row height based on available viewport height (1800px - header 48px - padding 16px)
+        const int availableHeight = 1800 - 48 - 16;
+        RowHeightPx = Math.Max(40, availableHeight / DaysInMonth.Count);
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            // Load calendars
+            var calendars = await CalendarApiService.GetCalendarsAsync();
+            Calendars = calendars?.ToList() ?? new List<CalendarSummaryViewModel>();
+
+            // Load month events
+            var monthViewModel = await CalendarApiService.GetEventsForMonthAsync(Year, Month);
+            Events = new List<CalendarEventViewModel>();
+
+            // Flatten events from all days
+            foreach (var (_, dayEvents) in monthViewModel.Days)
+            {
+                Events.AddRange(dayEvents);
+            }
+        }
+        catch (Exception ex)
+        {
+            // In production, log error
+            Console.Error.WriteLine($"Error loading CalendarGrid data: {ex.Message}");
+        }
+    }
+
+    private List<CalendarEventViewModel> GetEventsForDayAndCalendar(DateOnly day, Guid calendarId)
+    {
+        return Events
+            .Where(e => DateOnly.FromDateTime(e.Start.LocalDateTime) == day 
+                     && e.CalendarInfoId == calendarId)
+            .OrderBy(e => e.IsAllDay ? DateTimeOffset.MinValue : e.Start)
+            .ToList();
+    }
+
+    private List<CalendarEventViewModel> GetEventsForDay(DateOnly day)
+    {
+        return Events
+            .Where(e => DateOnly.FromDateTime(e.Start.LocalDateTime) == day)
+            .OrderBy(e => e.IsAllDay ? DateTimeOffset.MinValue : e.Start)
+            .ToList();
+    }
+
+    private async Task OnDayClick(DateOnly day)
+    {
+        await OnDaySelected.InvokeAsync(day);
+    }
+
+    private async Task OnEventClick(CalendarEventViewModel evt)
+    {
+        await OnEventSelected.InvokeAsync(evt);
+    }
+
+    private void OnOverflowClick(DateOnly day)
+    {
+        SelectedDetailDay = day;
+        ShowDayDetail = true;
+        StateHasChanged();
+    }
+
+    private void CloseDayDetail()
+    {
+        ShowDayDetail = false;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
+}
