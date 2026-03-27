@@ -1,13 +1,5 @@
 namespace FamilyHQ.Core.Models;
 
-public enum CircadianState
-{
-    Dawn,
-    Day,
-    Dusk,
-    Night
-}
-
 /// <summary>
 /// Stores the computed sunrise/sunset boundaries for a specific date and location.
 /// Computed daily by CircadianStateService using the NOAA solar algorithm.

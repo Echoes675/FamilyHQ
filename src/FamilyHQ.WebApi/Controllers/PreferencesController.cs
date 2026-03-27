@@ -62,9 +62,3 @@ public class PreferencesController : ControllerBase
         });
     }
 }
-
-public record UpdatePreferencesRequest(
-    int EventDensity,
-    string? CalendarColumnOrder,
-    string? CalendarColorOverrides
-);

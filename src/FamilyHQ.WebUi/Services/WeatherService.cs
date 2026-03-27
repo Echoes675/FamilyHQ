@@ -2,18 +2,6 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 namespace FamilyHQ.WebUi.Services;
 
-public interface IWeatherService
-{
-    WeatherConditionDto CurrentCondition { get; }
-    event EventHandler<WeatherConditionDto>? WeatherChanged;
-    Task StartAsync();
-}
-
-public enum WeatherConditionDto
-{
-    Clear, Cloudy, LightRain, HeavyRain, Thunder, Snow, WindMist
-}
-
 public sealed class WeatherService : IWeatherService, IAsyncDisposable
 {
     private readonly HubConnection _hubConnection;
