@@ -1,4 +1,7 @@
 @using System.Globalization
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@inject ICalendarApiService CalendarApiService
 
 <div class="dashboard-header">
     <div class="header-left">
@@ -35,6 +38,9 @@
                 &gt;
             </button>
         </div>
+        <button class="settings-btn" @onclick="() => ShowSettings = true" aria-label="Settings">
+            ⚙
+        </button>
         <div class="weather-indicator">
             <span class="weather-icon">☁</span>
             <span class="weather-temp">—</span>
@@ -51,13 +57,22 @@
                          OnClose="CloseMonthQuickJump" />
 }
 
+@if (ShowSettings)
+{
+    <SettingsPanel IsVisible="@ShowSettings"
+                   OnClose="() => ShowSettings = false"
+                   Calendars="@Calendars" />
+}
+
 @code {
     public enum DashboardView { Today, Week, Month }
 
     private DashboardView _activeView = DashboardView.Today;
     private DateOnly _selectedDate = DateOnly.FromDateTime(DateTime.Today);
     private bool _showMonthQuickJump = false;
+    private bool _showSettings = false;
     private MonthQuickJumpModal? monthQuickJumpModal;
+    private List<CalendarSummaryViewModel> Calendars = new();
 
     [Parameter]
     public DashboardView ActiveView { get; set; } = DashboardView.Today;
@@ -81,6 +96,37 @@
                 _showMonthQuickJump = value;
                 StateHasChanged();
             }
+        }
+    }
+
+    private bool ShowSettings
+    {
+        get => _showSettings;
+        set
+        {
+            if (_showSettings != value)
+            {
+                _showSettings = value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCalendars();
+    }
+
+    private async Task LoadCalendars()
+    {
+        try
+        {
+            var calendars = await CalendarApiService.GetCalendarsAsync();
+            Calendars = calendars.ToList();
+        }
+        catch
+        {
+            Calendars = new();
         }
     }
 

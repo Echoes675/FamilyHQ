@@ -1,0 +1,178 @@
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Models
+@using FamilyHQ.WebUi.Services
+@inject IUserPreferencesService PreferencesService
+
+@if (IsVisible)
+{
+    <div class="settings-backdrop" @onclick="OnClose">
+        <div class="settings-panel" @onclick:stopPropagation="true">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="modal-close-btn" @onclick="OnClose">✕</button>
+            </div>
+            <div class="settings-body">
+                <!-- Event Density Section -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Event Density</h3>
+                    <p class="settings-section-desc">How many events to show per day in month view</p>
+                    <div class="density-selector">
+                        @foreach (var density in new[] { 1, 2, 3 })
+                        {
+                            <button class="density-btn @(CurrentDensity == density ? "density-btn-active" : "")"
+                                    @onclick="() => SetDensity(density)">
+                                @density
+                            </button>
+                        }
+                    </div>
+                </div>
+                
+                <!-- Calendar Colors Section -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Calendar Colors</h3>
+                    <p class="settings-section-desc">Customize calendar display colors</p>
+                    @foreach (var calendar in Calendars)
+                    {
+                        var currentColor = GetCalendarColor(calendar.Id.ToString());
+                        <div class="calendar-color-row">
+                            <div class="calendar-color-swatch" style="background: @currentColor"></div>
+                            <span class="calendar-color-name">@calendar.DisplayName</span>
+                            <input type="color" 
+                                   class="calendar-color-picker"
+                                   value="@currentColor"
+                                   @onchange="(e) => SetCalendarColor(calendar.Id.ToString(), e.Value?.ToString() ?? currentColor)" />
+                        </div>
+                    }
+                </div>
+                
+                <!-- Calendar Column Order Section -->
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Column Order</h3>
+                    <p class="settings-section-desc">Reorder calendar columns in month and week views</p>
+                    @foreach (var (calId, index) in OrderedCalendarIds.Select((id, i) => (id, i)))
+                    {
+                        var cal = Calendars.FirstOrDefault(c => c.Id.ToString() == calId);
+                        if (cal is null) continue;
+                        <div class="column-order-row">
+                            <span class="column-order-name">@cal.DisplayName</span>
+                            <div class="column-order-buttons">
+                                <button class="order-btn" @onclick="() => MoveUp(index)" disabled="@(index == 0)">↑</button>
+                                <button class="order-btn" @onclick="() => MoveDown(index)" disabled="@(index == OrderedCalendarIds.Count - 1)">↓</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public List<CalendarSummaryViewModel> Calendars { get; set; } = new();
+
+    private int CurrentDensity = 2;
+    private List<string> OrderedCalendarIds = new();
+    private Dictionary<string, string> ColorOverrides = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var prefs = PreferencesService.Current;
+        CurrentDensity = prefs.EventDensity;
+        
+        // Parse column order
+        if (!string.IsNullOrEmpty(prefs.CalendarColumnOrder))
+        {
+            try { OrderedCalendarIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(prefs.CalendarColumnOrder) ?? new(); }
+            catch { OrderedCalendarIds = new(); }
+        }
+        
+        // Ensure all calendars are in the order list
+        foreach (var cal in Calendars)
+        {
+            if (!OrderedCalendarIds.Contains(cal.Id.ToString()))
+                OrderedCalendarIds.Add(cal.Id.ToString());
+        }
+        
+        // Parse color overrides
+        if (!string.IsNullOrEmpty(prefs.CalendarColorOverrides))
+        {
+            try { ColorOverrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(prefs.CalendarColorOverrides) ?? new(); }
+            catch { ColorOverrides = new(); }
+        }
+
+        // Subscribe to preferences changes
+        PreferencesService.PreferencesChanged += OnPreferencesChanged;
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Re-initialize when Calendars list changes
+        foreach (var cal in Calendars)
+        {
+            if (!OrderedCalendarIds.Contains(cal.Id.ToString()))
+                OrderedCalendarIds.Add(cal.Id.ToString());
+        }
+    }
+
+    private void OnPreferencesChanged(object? sender, UserPreferencesDto e)
+    {
+        CurrentDensity = e.EventDensity;
+        
+        // Parse column order
+        if (!string.IsNullOrEmpty(e.CalendarColumnOrder))
+        {
+            try { OrderedCalendarIds = System.Text.Json.JsonSerializer.Deserialize<List<string>>(e.CalendarColumnOrder) ?? new(); }
+            catch { OrderedCalendarIds = new(); }
+        }
+        
+        // Parse color overrides
+        if (!string.IsNullOrEmpty(e.CalendarColorOverrides))
+        {
+            try { ColorOverrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(e.CalendarColorOverrides) ?? new(); }
+            catch { ColorOverrides = new(); }
+        }
+        
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetCalendarColor(string calendarId)
+    {
+        if (ColorOverrides.TryGetValue(calendarId, out var color))
+            return color;
+        var cal = Calendars.FirstOrDefault(c => c.Id.ToString() == calendarId);
+        return cal?.Color ?? "#6b7280";
+    }
+
+    private async Task SetDensity(int density)
+    {
+        CurrentDensity = density;
+        await PreferencesService.UpdateEventDensityAsync(density);
+    }
+
+    private async Task SetCalendarColor(string calendarId, string hexColor)
+    {
+        ColorOverrides[calendarId] = hexColor;
+        await PreferencesService.UpdateCalendarColorAsync(calendarId, hexColor);
+    }
+
+    private async Task MoveUp(int index)
+    {
+        if (index <= 0) return;
+        (OrderedCalendarIds[index - 1], OrderedCalendarIds[index]) = (OrderedCalendarIds[index], OrderedCalendarIds[index - 1]);
+        await PreferencesService.UpdateCalendarOrderAsync(OrderedCalendarIds);
+    }
+
+    private async Task MoveDown(int index)
+    {
+        if (index >= OrderedCalendarIds.Count - 1) return;
+        (OrderedCalendarIds[index], OrderedCalendarIds[index + 1]) = (OrderedCalendarIds[index + 1], OrderedCalendarIds[index]);
+        await PreferencesService.UpdateCalendarOrderAsync(OrderedCalendarIds);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        PreferencesService.PreferencesChanged -= OnPreferencesChanged;
+    }
+}
