@@ -1,6 +1,7 @@
 @using System.Globalization
 @using FamilyHQ.WebUi.ViewModels
 @using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Models
 @inject ICalendarApiService CalendarApiService
 @implements IDisposable
 
@@ -62,6 +63,7 @@
 @code {
     [Parameter] public DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
     [Parameter] public EventCallback<CalendarEventViewModel> OnEventSelected { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnDaySelected { get; set; }
 
     private List<DateOnly> WeekDays { get; set; } = new();
     private List<CalendarSummaryViewModel>? Calendars { get; set; }
@@ -193,6 +195,11 @@
     private async Task OnEventClick(CalendarEventViewModel evt)
     {
         await OnEventSelected.InvokeAsync(evt);
+    }
+
+    private async Task OnDayClick(DateOnly day)
+    {
+        await OnDaySelected.InvokeAsync(day);
     }
 
     public void Dispose()

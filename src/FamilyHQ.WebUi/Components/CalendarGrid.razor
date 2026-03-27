@@ -1,6 +1,7 @@
 @using System.Globalization
 @using FamilyHQ.WebUi.ViewModels
 @using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Models
 @inject ICalendarApiService CalendarApiService
 @implements IDisposable
 
@@ -22,7 +23,7 @@
         <div class="month-row @(day == DateOnly.FromDateTime(DateTime.Today) ? "month-row-today" : "") @(day.DayOfWeek == DayOfWeek.Saturday || day.DayOfWeek == DayOfWeek.Sunday ? "month-row-weekend" : "")"
              style="height: @RowHeightPx px"
              @onclick="() => OnDayClick(day)">
-            
+             
             <!-- Sticky date column -->
             <div class="month-date-cell">
                 <span class="month-day-number @(day == DateOnly.FromDateTime(DateTime.Today) ? "month-today-badge" : "")">@day.Day</span>

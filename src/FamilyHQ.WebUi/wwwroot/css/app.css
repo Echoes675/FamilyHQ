@@ -1390,3 +1390,47 @@ body {
     opacity: 0.3;
     cursor: not-allowed;
 }
+
+/* ── Kiosk UI Redesign Styles ─────────────────────────────────────────── */
+
+/* Floating Action Button for new event */
+.fab-new-event {
+    position: fixed;
+    bottom: 32px;
+    right: 32px;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    font-size: 2rem;
+    font-weight: 300;
+    cursor: pointer;
+    z-index: 50;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+    transition: background 0.15s ease, transform 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.fab-new-event:hover {
+    background: #2563eb;
+    transform: scale(1.05);
+}
+
+/* Kiosk view area */
+.kiosk-view-area {
+    height: 100%;
+    overflow: hidden;
+}
+
+.kiosk-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: rgba(148, 163, 184, 0.7);
+    font-size: 1.125rem;
+}
