@@ -79,6 +79,9 @@ builder.Services.AddHostedService<CircadianStateService>();
 // RRULE services
 builder.Services.AddSingleton<IRruleExpander, FamilyHQ.Services.Calendar.RruleExpander>();
 
+// User preferences service
+builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
+
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("JWT signing key is not configured.");

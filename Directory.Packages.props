@@ -32,6 +32,8 @@
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+    <!-- Blazored LocalStorage -->
+    <PackageVersion Include="Blazored.LocalStorage" Version="4.5.0" />
     <!-- Testing -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
