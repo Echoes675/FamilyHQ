@@ -30,6 +30,7 @@ public class Program
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
         
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
+        builder.Services.AddSingleton<IWeatherService, WeatherService>();
 
         await builder.Build().RunAsync();
     }
