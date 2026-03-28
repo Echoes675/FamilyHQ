@@ -24,18 +24,7 @@
     }
     else
     {
-        <!-- Authenticated - Show full dashboard with header -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div class="d-flex align-items-center gap-3">
-                <h1>Family HQ Dashboard</h1>
-            </div>
-            
-            <!-- User Info and Sign Out (Top Right) -->
-            <div class="d-flex align-items-center gap-3">
-                <span class="text-muted">Signed in as: <strong>@(_username ?? _userId ?? "Unknown")</strong></span>
-                <button class="btn btn-outline-danger btn-sm" @onclick="OnSignOutClicked">Sign Out</button>
-            </div>
-        </div>
+        <DashboardHeader Username="@_username" UserId="@_userId" OnSignOut="OnSignOutClicked" />
 
         <ul class="nav nav-tabs mb-4">
             <li class="nav-item">
