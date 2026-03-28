@@ -93,5 +93,35 @@
             }
         ],
         "Events": []
+    },
+    "StandardUser": {
+        "Calendars": [
+            {
+                "Id": "template_standard_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            }
+        ],
+        "Events": []
+    },
+    "OverflowUser": {
+        "Calendars": [
+            {
+                "Id": "template_overflow_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            }
+        ],
+        "Events": []
+    },
+    "SyncUser": {
+        "Calendars": [
+            {
+                "Id": "template_sync_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            }
+        ],
+        "Events": []
     }
 }
