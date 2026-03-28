@@ -37,7 +37,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I click the "Day View" tab
+    And I switch to the Day View tab
     Then I see the Day View Container
 
   Scenario: Tapping "+N more" navigates to the day view for the correct date
