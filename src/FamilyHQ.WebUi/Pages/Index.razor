@@ -329,7 +329,7 @@
 
                                 <td data-testid="@($"agenda-cell-{dateKey}-{cal.Id}")"
                                     class="agenda-cal-cell"
-                                    @onclick="() => OpenAddEventModal(date, cal.Id)">
+                                    @onclick="() => { if (dayEvents.Count > 0) SwitchToView(DashboardView.Day, date); else OpenAddEventModal(date, cal.Id); }">
                                     @foreach (var evt in dayEvents.Take(3))
                                     {
                                         var isContinuation = !evt.IsAllDay && evt.Start.Date < date.Date;
@@ -338,18 +338,14 @@
                                             : $"{evt.Start.LocalDateTime:HH:mm} {evt.Title}";
 
                                         <div data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
-                                             class="agenda-event-line"
-                                             @onclick="() => OpenEditEventModal(evt)"
-                                             @onclick:stopPropagation="true">
+                                             class="agenda-event-line">
                                             @displayText
                                         </div>
                                     }
                                     @if (dayEvents.Count > 3)
                                     {
                                         <div data-testid="@($"agenda-overflow-{dateKey}-{cal.Id}")"
-                                             class="agenda-overflow-btn"
-                                             @onclick="() => SwitchToView(DashboardView.Day, date)"
-                                             @onclick:stopPropagation="true">
+                                             class="agenda-overflow-btn">
                                             +@(dayEvents.Count - 3) more
                                         </div>
                                     }
