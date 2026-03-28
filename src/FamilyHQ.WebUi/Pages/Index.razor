@@ -26,17 +26,7 @@
     {
         <DashboardHeader Username="@_username" UserId="@_userId" OnSignOut="OnSignOutClicked" />
 
-        <ul class="nav nav-tabs mb-4">
-            <li class="nav-item">
-                <button data-testid="month-tab" class="nav-link @(_currentView == DashboardView.Month ? "active" : "")" @onclick="() => SwitchToView(DashboardView.Month)">Month View</button>
-            </li>
-            <li class="nav-item">
-                <button data-testid="agenda-tab" class="nav-link @(_currentView == DashboardView.MonthAgenda ? "active" : "")" @onclick="() => SwitchToView(DashboardView.MonthAgenda)">Agenda</button>
-            </li>
-            <li class="nav-item">
-                <button data-testid="day-tab" class="nav-link @(_currentView == DashboardView.Day ? "active" : "")" @onclick="() => SwitchToView(DashboardView.Day)">Day View</button>
-            </li>
-        </ul>
+        <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 
         @if (_currentView == DashboardView.Month)
         {
@@ -673,6 +663,8 @@
     }
     
     // View Switching Logic
+    private Task OnTabViewChanged(DashboardView view) => SwitchToView(view);
+
     private async Task SwitchToView(DashboardView view, DateTime? date = null)
     {
         _currentView = view;
