@@ -351,101 +351,10 @@
                 OnJumpToday="JumpToTodayDayView"
                 OnClose="CloseDayPickerModal" />
 
-@if (_showEventModal)
-{
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">@(_isEditingEvent ? "Edit Event" : "Create Event")</h5>
-                    <button type="button" class="btn-close" @onclick="CloseEventModal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Calendars</label>
-                        <CalendarChipSelector
-                            AllCalendars="_calendars"
-                            SelectedCalendarIds="_selectedCalendarIds"
-                            SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
-                            EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
-                            CalendarApi="CalendarApi" />
-                        @if (_selectedCalendarIds.Count == 0)
-                        {
-                            <div class="text-danger mt-1" style="font-size: 0.82rem;">Please select at least one calendar.</div>
-                        }
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Event Title</label>
-                        <input type="text" class="form-control" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
-                    </div>
-                    
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="allDayCheck" @bind="_eventModel.IsAllDay">
-                        <label class="form-check-label" for="allDayCheck">All Day Event</label>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <label class="form-label">Start</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-control" @bind="@_eventModelStartDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.Start" />
-                            }
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label">End</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-control" @bind="@_eventModelEndDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.End" />
-                            }
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label">Location (Optional)</label>
-                        <input type="text" class="form-control" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
-                    </div>
-
-                    @if (!string.IsNullOrEmpty(_modalError))
-                    {
-                        <div class="alert alert-danger p-2 mb-0">@_modalError</div>
-                    }
-                </div>
-                <div class="modal-footer d-flex justify-content-between">
-                    <div>
-                        @if (_isEditingEvent)
-                        {
-                            <button type="button" class="btn btn-outline-danger" @onclick="DeleteEvent">Delete</button>
-                        }
-                    </div>
-                    <div>
-                        <button type="button" class="btn btn-secondary" @onclick="CloseEventModal">Cancel</button>
-                        <button type="button" class="btn btn-primary" @onclick="SaveEvent" disabled="@_isSaving">
-                            @if (_isSaving)
-                            {
-                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                                <span class="visually-hidden">Saving...</span>
-                            }
-                            else
-                            {
-                                <span>Save</span>
-                            }
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-}
+<EventModal @ref="_eventModal"
+            Calendars="_calendars"
+            OnSaved="LoadMonthDataAsync"
+            OnDeleted="LoadMonthDataAsync" />
 
 @code {
     private DashboardView _currentView = DashboardView.Month;
@@ -467,26 +376,9 @@
     // Day Picker Modal State
     private bool _showDayPickerModal = false;
 
-    // Event Modal State
-    private bool _showEventModal = false;
-    private bool _isEditingEvent = false;
-    private EventFormModel _eventModel = new();
-    private HashSet<Guid> _selectedCalendarIds = new();
+    // Event Modal
+    private EventModal _eventModal = default!;
     private IReadOnlyList<CalendarSummaryViewModel> _calendars = Array.Empty<CalendarSummaryViewModel>();
-    private string? _modalError;
-    private bool _isSaving = false;
-
-    // Helper properties for All-day date binding
-    private DateTime _eventModelStartDate
-    {
-        get => _eventModel.Start.LocalDateTime.Date;
-        set => _eventModel.Start = new DateTimeOffset(value.Date, TimeSpan.Zero);
-    }
-    private DateTime _eventModelEndDate
-    {
-        get => _eventModel.End.LocalDateTime.Date;
-        set => _eventModel.End = new DateTimeOffset(value.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
-    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -700,27 +592,8 @@
     }
 
     // Event Modal Logic
-    private void OpenAddEventModal(DateTime date, Guid? calendarId = null)
-    {
-        _isEditingEvent = false;
-        
-        var start = date.Hour == 0 && date.Minute == 0 ? date.AddHours(9) : date;
-        var end = start.AddHours(1);
-
-        _eventModel = new EventFormModel
-        {
-            Title = "",
-            Start = new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
-            End = new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)),
-            IsAllDay = false
-        };
-        
-        var targetCalendarId = calendarId ?? _calendars.FirstOrDefault()?.Id ?? Guid.Empty;
-        _selectedCalendarIds = targetCalendarId != Guid.Empty ? [targetCalendarId] : [];
-        
-        _modalError = null;
-        _showEventModal = true;
-    }
+    private void OpenAddEventModal(DateTime date, Guid? calendarId = null) =>
+        _eventModal.OpenForCreate(date, calendarId);
 
     private void OnDayGridClick(MouseEventArgs e, DateTime date, Guid calendarId)
     {
@@ -732,121 +605,8 @@
         OpenAddEventModal(startDateTime, calendarId);
     }
 
-    private void OpenEditEventModal(CalendarEventViewModel evt)
-    {
-        _isEditingEvent = true;
-
-        _eventModel = new EventFormModel
-        {
-            Id = evt.Id,
-            Title = evt.Title,
-            Start = evt.Start,
-            End = evt.End,
-            IsAllDay = evt.IsAllDay,
-            Location = evt.Location,
-            AllCalendars = evt.AllCalendars.ToList()
-        };
-
-        _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
-
-        _modalError = null;
-        _showEventModal = true;
-    }
-
-    private void CloseEventModal()
-    {
-        _showEventModal = false;
-    }
-
-    private async Task SaveEvent()
-    {
-        _modalError = null;
-        
-        if (string.IsNullOrWhiteSpace(_eventModel.Title))
-        {
-            _modalError = "Title is required.";
-            return;
-        }
-
-        if (_selectedCalendarIds.Count == 0)
-        {
-            _modalError = "Please select at least one calendar.";
-            return;
-        }
-
-        if (_eventModel.End < _eventModel.Start)
-        {
-            _modalError = "End time must be after start time.";
-            return;
-        }
-
-        _isSaving = true;
-
-        try
-        {
-            if (_isEditingEvent)
-            {
-                var eventId = _eventModel.Id;
-
-                var updateReq = new UpdateEventRequest(
-                    _eventModel.Title,
-                    _eventModel.Start,
-                    _eventModel.End,
-                    _eventModel.IsAllDay,
-                    _eventModel.Location,
-                    null);
-                await CalendarApi.UpdateEventAsync(eventId, updateReq);
-            }
-            else
-            {
-                var createReq = new CreateEventRequest(
-                    _selectedCalendarIds.ToList(),
-                    _eventModel.Title,
-                    _eventModel.Start,
-                    _eventModel.End,
-                    _eventModel.IsAllDay,
-                    _eventModel.Location,
-                    null
-                );
-                await CalendarApi.CreateEventAsync(createReq);
-            }
-            
-            CloseEventModal();
-            await LoadMonthDataAsync();
-        }
-        catch (Exception ex)
-        {
-            _modalError = "An error occurred while saving.";
-            Console.WriteLine(ex.ToString());
-        }
-        finally
-        {
-            _isSaving = false;
-        }
-    }
-
-    private async Task DeleteEvent()
-    {
-        var eventId = _eventModel.Id;
-        if (eventId == Guid.Empty) return;
-
-        _isSaving = true;
-        try
-        {
-            await CalendarApi.DeleteEventAsync(eventId);
-            CloseEventModal();
-            await LoadMonthDataAsync();
-        }
-        catch (Exception ex)
-        {
-            _modalError = "An error occurred while deleting.";
-            Console.WriteLine(ex.ToString());
-        }
-        finally
-        {
-            _isSaving = false;
-        }
-    }
+    private void OpenEditEventModal(CalendarEventViewModel evt) =>
+        _eventModal.OpenForEdit(evt);
 
     public ValueTask DisposeAsync()
     {
@@ -925,14 +685,4 @@
         public int TotalColumns { get; set; }
     }
 
-    private class EventFormModel
-    {
-        public Guid Id { get; set; }
-        public string Title { get; set; } = "";
-        public DateTimeOffset Start { get; set; }
-        public DateTimeOffset End { get; set; }
-        public bool IsAllDay { get; set; }
-        public string? Location { get; set; }
-        public List<CalendarSummaryViewModel> AllCalendars { get; set; } = new();
-    }
 }
