@@ -373,3 +373,107 @@ body {
     filter: brightness(1.1);
     z-index: 50 !important; /* Bring to front on hover */
 }
+
+/* ── Month Agenda View ─────────────────────────────────────────────────────── */
+
+.agenda-view-container {
+    background: var(--surface);
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+    overflow: hidden;
+}
+
+.agenda-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.agenda-table th,
+.agenda-table td {
+    border: 1px solid var(--border);
+    padding: 2px 4px;
+    vertical-align: top;
+    overflow: hidden;
+}
+
+.agenda-header-row th {
+    background-color: var(--surface);
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.agenda-day-col {
+    width: 80px;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.agenda-cal-col {
+    font-size: 0.75rem;
+}
+
+.agenda-cal-cell {
+    cursor: pointer;
+    height: calc((100vh - 150px) / 31);
+    font-size: 0.75rem;
+    overflow: hidden;
+}
+
+.agenda-cal-cell:hover {
+    background-color: rgba(0,0,0,0.02);
+}
+
+.agenda-weekend-row .agenda-day-col,
+.agenda-weekend-row .agenda-cal-cell {
+    background-color: var(--weekend-bg);
+}
+
+.agenda-today-row .agenda-day-col {
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.agenda-today-row .agenda-cal-cell {
+    background-color: var(--today-bg);
+}
+
+.agenda-event-line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-main);
+    font-size: 0.75rem;
+    padding: 1px 2px;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+.agenda-event-line:hover {
+    background-color: rgba(0,0,0,0.07);
+}
+
+.agenda-overflow-btn {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    cursor: pointer;
+    padding: 1px 2px;
+}
+
+.agenda-overflow-btn:hover {
+    color: var(--text-main);
+    text-decoration: underline;
+}
+
+.cal-color-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}

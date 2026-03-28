@@ -17,8 +17,10 @@ public class DashboardPage : BasePage
     // Locators
     public ILocator MonthTable => Page.Locator("table.month-table");
     public ILocator DayViewContainer => Page.Locator(".day-view-container");
-    public ILocator MonthTab => Page.GetByRole(AriaRole.Button, new() { Name = "Month View" });
-    public ILocator DayTab => Page.GetByRole(AriaRole.Button, new() { Name = "Day View" });
+    public ILocator AgendaViewContainer => Page.Locator(".agenda-view-container");
+    public ILocator MonthTab => Page.GetByTestId("month-tab");
+    public ILocator DayTab => Page.GetByTestId("day-tab");
+    public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
@@ -63,7 +65,7 @@ public class DashboardPage : BasePage
         // This is safe to call at any point — it simply waits for the final rendered state.
         // We intentionally do NOT wait for the spinner first because in some flows
         // (e.g. after OAuth redirect) the spinner may never appear in the DOM.
-        await Page.Locator(".month-table, .day-view-container").First.WaitForAsync(
+        await Page.Locator(".month-table, .day-view-container, .agenda-view-container").First.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
@@ -77,6 +79,155 @@ public class DashboardPage : BasePage
     {
         await MonthTab.ClickAsync();
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task SwitchToAgendaViewAsync()
+    {
+        await AgendaTab.ClickAsync();
+        await AgendaViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task NavigateAgendaPrevMonthAsync()
+    {
+        var current = await GetAgendaCurrentMonthAsync();
+        var expectedText = current.AddMonths(-1).ToString("MMMM yyyy");
+        await Page.GetByTestId("agenda-prev-month").ClickAsync();
+        await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
+            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+        await Page.WaitForTimeoutAsync(1000);
+    }
+
+    public async Task NavigateAgendaNextMonthAsync()
+    {
+        var current = await GetAgendaCurrentMonthAsync();
+        var expectedText = current.AddMonths(1).ToString("MMMM yyyy");
+        await Page.GetByTestId("agenda-next-month").ClickAsync();
+        await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
+            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+        await Page.WaitForTimeoutAsync(1000);
+    }
+
+    public async Task<string> GetAgendaMonthYearTextAsync()
+    {
+        return (await Page.GetByTestId("agenda-month-year-label").InnerTextAsync()).Trim();
+    }
+
+    private async Task<DateTime> GetAgendaCurrentMonthAsync()
+    {
+        var text = await GetAgendaMonthYearTextAsync();
+        return DateTime.ParseExact(text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public async Task<int> GetAgendaDayRowCountAsync()
+    {
+        return await Page.Locator(".agenda-day-row").CountAsync();
+    }
+
+    public async Task<bool> HasTodayRowHighlightAsync()
+    {
+        return await Page.Locator(".agenda-today-row").CountAsync() == 1;
+    }
+
+    public async Task<bool> WeekendRowsHaveClassAsync()
+    {
+        // A month always has at least 8 weekend days
+        return await Page.Locator(".agenda-weekend-row").CountAsync() >= 8;
+    }
+
+    public async Task<int> GetWeekdayRowsWithoutWeekendClassAsync()
+    {
+        // All .agenda-day-row rows that do NOT have .agenda-weekend-row
+        var all = await Page.Locator(".agenda-day-row").CountAsync();
+        var weekends = await Page.Locator(".agenda-weekend-row").CountAsync();
+        return all - weekends;
+    }
+
+    public async Task<bool> IsAgendaCalendarHeaderVisibleAsync(string calendarName)
+    {
+        var header = Page.Locator("[data-testid^='agenda-calendar-header-']")
+                         .Filter(new() { HasText = calendarName })
+                         .First;
+        try
+        {
+            await header.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> IsAgendaEventVisibleAsync(string expectedText, string dateKey, Guid calendarId)
+    {
+        var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
+        return await cell.GetByText(expectedText, new() { Exact = false }).CountAsync() > 0;
+    }
+
+    public async Task<int> GetAgendaEventLineCountAsync(string dateKey, Guid calendarId)
+    {
+        var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
+        return await cell.Locator(".agenda-event-line").CountAsync();
+    }
+
+    public async Task<string> GetAgendaOverflowTextAsync(string dateKey, Guid calendarId)
+    {
+        return await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").InnerTextAsync();
+    }
+
+    public async Task<bool> IsAgendaOverflowVisibleAsync(string dateKey, Guid calendarId)
+    {
+        return await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").CountAsync() > 0;
+    }
+
+    public async Task TapAgendaEventAsync(string eventText, string dateKey, Guid calendarId)
+    {
+        var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
+        await cell.GetByText(eventText, new() { Exact = false }).First.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task TapAgendaCellAsync(string dateKey, Guid calendarId)
+    {
+        // Click the cell itself (not an event line) to trigger the create modal
+        await Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}").ClickAsync(
+            new() { Position = new Position { X = 5, Y = 5 } });
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task TapAgendaFilledCellAsync(string dateKey, Guid calendarId)
+    {
+        // Click a cell that contains events — navigates to Day view
+        await Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}").ClickAsync(
+            new() { Position = new Position { X = 5, Y = 5 } });
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task TapAgendaOverflowAsync(string dateKey, Guid calendarId)
+    {
+        await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").ClickAsync();
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task TapAgendaCreateButtonAsync()
+    {
+        await Page.GetByTestId("agenda-create-button").ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    public async Task<string> GetModalStartDateValueAsync()
+    {
+        // Timed events use input[type='datetime-local'], value format: "yyyy-MM-ddTHH:mm"
+        // Use .First to target the Start input (modal has both Start and End datetime-local inputs)
+        var input = EventModal.Locator("input[type='datetime-local']").First;
+        return await input.InputValueAsync();
+    }
+
+    public async Task<bool> IsCalendarChipActiveAsync(string calendarName)
+    {
+        var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
+        var classes = await chip.GetAttributeAsync("class") ?? "";
+        return classes.Contains("chip-active");
     }
 
     public async Task OpenDayPickerAndGoAsync(string dateYyyyMmDd)

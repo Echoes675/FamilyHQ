@@ -28,6 +28,23 @@ Feature: Month Calendar View
     When I delete the event "School Holiday"
     Then I do not see the event "School Holiday" displayed on the calendar
 
+  Scenario: View events from all 6 calendars on the month view
+    Given I have a user like "SixCalUser"
+    And the user has an all-day event "Work Event" on "2026-03-05" in "Work Calendar"
+    And the user has an all-day event "Personal Event" on "2026-03-10" in "Personal Calendar"
+    And the user has an all-day event "School Event" on "2026-03-15" in "School Calendar"
+    And the user has an all-day event "Sports Event" on "2026-03-20" in "Sports Calendar"
+    And the user has an all-day event "Health Event" on "2026-03-25" in "Health Calendar"
+    And the user has an all-day event "Hobbies Event" on "2026-03-29" in "Hobbies Calendar"
+    And I login as the user "SixCalUser"
+    When I view the dashboard
+    Then I see the event "Work Event" displayed on the calendar
+    And I see the event "Personal Event" displayed on the calendar
+    And I see the event "School Event" displayed on the calendar
+    And I see the event "Sports Event" displayed on the calendar
+    And I see the event "Health Event" displayed on the calendar
+    And I see the event "Hobbies Event" displayed on the calendar
+
   Scenario: View events from multiple calendars
     Given I have a user like "MultiCalendarUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
