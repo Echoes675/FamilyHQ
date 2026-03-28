@@ -1,0 +1,93 @@
+@* Month nav bar *@
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="btn-group">
+        <button class="btn btn-outline-primary" @onclick="OnPreviousMonth">&lt; Prev</button>
+        <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenQuickJump">
+            @CurrentMonth.ToString("MMMM yyyy")
+        </button>
+        <button class="btn btn-outline-primary" @onclick="OnNextMonth">Next &gt;</button>
+    </div>
+    <button class="btn btn-primary ms-3" @onclick="() => OnAddEvent.InvokeAsync(DateTime.Today)" data-testid="add-event-btn">
+        <i class="bi bi-plus-circle"></i> Add Event
+    </button>
+</div>
+
+@* Month grid *@
+<table class="month-table">
+    <thead>
+        <tr>
+            <th style="width: 14.28%">Sun</th>
+            <th style="width: 14.28%">Mon</th>
+            <th style="width: 14.28%">Tue</th>
+            <th style="width: 14.28%">Wed</th>
+            <th style="width: 14.28%">Thu</th>
+            <th style="width: 14.28%">Fri</th>
+            <th style="width: 14.28%">Sat</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var week in Weeks)
+        {
+            <tr>
+                @foreach (var day in week)
+                {
+                    var isCurrentMonth = day.Date.Month == CurrentMonth.Month;
+                    var isToday = day.Date.Date == DateTime.Today;
+                    var isWeekend = day.Date.DayOfWeek == DayOfWeek.Saturday || day.Date.DayOfWeek == DayOfWeek.Sunday;
+
+                    var cssClass = "calendar-cell";
+                    if (!isCurrentMonth) cssClass += " text-muted bg-light";
+                    if (isToday) cssClass += " today-cell";
+                    else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
+
+                    <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span style="font-weight: @(isToday ? "700" : "400")">@day.Date.Day</span>
+                            <button class="btn btn-sm btn-link p-0 text-muted shadow-none" title="Add event on this day"
+                                    @onclick="() => OnAddEvent.InvokeAsync(day.Date)">
+                                <span style="font-size: 1.2rem; line-height: 1;">+</span>
+                            </button>
+                        </div>
+                        <div class="mt-2">
+                            @foreach (var evt in day.Events.Take(3))
+                            {
+                                <div class="event-capsule"
+                                     style="background-color: @(evt.CalendarColor ?? "var(--primary)"); cursor: pointer;"
+                                     title="@evt.Title (@evt.Start.ToString("t")) - @evt.Location"
+                                     @onclick="() => OnEditEvent.InvokeAsync(evt)">
+                                    @if (evt.IsAllDay)
+                                    {
+                                        <span>@evt.Title</span>
+                                    }
+                                    else
+                                    {
+                                        <span><b>@evt.Start.ToString("h:mm tt")</b> @evt.Title</span>
+                                    }
+                                </div>
+                            }
+                            @if (day.Events.Count() > 3)
+                            {
+                                <div class="overflow-indicator mt-1 text-center"
+                                     @onclick="() => OnDayDrillDown.InvokeAsync(day.Date)"
+                                     data-testid="overflow-indicator">
+                                    +@(day.Events.Count() - 3) more
+                                </div>
+                            }
+                        </div>
+                    </td>
+                }
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [Parameter] public DateTime CurrentMonth { get; set; }
+    [Parameter] public List<List<DayItem>> Weeks { get; set; } = new();
+    [Parameter] public EventCallback OnPreviousMonth { get; set; }
+    [Parameter] public EventCallback OnNextMonth { get; set; }
+    [Parameter] public EventCallback OnOpenQuickJump { get; set; }
+    [Parameter] public EventCallback<DateTime> OnAddEvent { get; set; }
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEditEvent { get; set; }
+    [Parameter] public EventCallback<DateTime> OnDayDrillDown { get; set; }
+}

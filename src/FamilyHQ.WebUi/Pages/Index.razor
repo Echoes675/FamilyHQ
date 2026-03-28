@@ -28,24 +28,7 @@
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 
-        @if (_currentView == DashboardView.Month)
-        {
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <!-- Navigation Controls -->
-                <div class="btn-group">
-                    <button class="btn btn-outline-primary" @onclick="GoToPreviousMonth">&lt; Prev</button>
-                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OpenQuickJumpModal">
-                        @CurrentMonth.ToString("MMMM yyyy")
-                    </button>
-                    <button class="btn btn-outline-primary" @onclick="GoToNextMonth">Next &gt;</button>
-                </div>
-                
-                <button class="btn btn-primary ms-3" @onclick="() => OpenAddEventModal(DateTime.Today)" data-testid="add-event-btn">
-                    <i class="bi bi-plus-circle"></i> Add Event
-                </button>
-            </div>
-        }
-        else if (_currentView == DashboardView.MonthAgenda)
+        @if (_currentView == DashboardView.MonthAgenda)
         {
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div class="btn-group">
@@ -99,75 +82,14 @@
     {
     @if (_currentView == DashboardView.Month)
     {
-        <table class="month-table">
-            <thead>
-                <tr>
-                    <th style="width: 14.28%">Sun</th>
-                    <th style="width: 14.28%">Mon</th>
-                    <th style="width: 14.28%">Tue</th>
-                    <th style="width: 14.28%">Wed</th>
-                    <th style="width: 14.28%">Thu</th>
-                    <th style="width: 14.28%">Fri</th>
-                    <th style="width: 14.28%">Sat</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var week in _weeks)
-                {
-                    <tr>
-                        @foreach (var day in week)
-                        {
-                            var isCurrentMonth = day.Date.Month == CurrentMonth.Month;
-                            var isToday = day.Date.Date == DateTime.Today;
-                            var isWeekend = day.Date.DayOfWeek == DayOfWeek.Saturday || day.Date.DayOfWeek == DayOfWeek.Sunday;
-                            
-                            var cssClass = "calendar-cell";
-                            if (!isCurrentMonth) cssClass += " text-muted bg-light";
-                            if (isToday) cssClass += " today-cell";
-                            else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
-
-                            <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <span style="font-weight: @(isToday ? "700" : "400")">
-                                        @day.Date.Day
-                                    </span>
-                                    <button class="btn btn-sm btn-link p-0 text-muted shadow-none" title="Add event on this day" @onclick="() => OpenAddEventModal(day.Date)">
-                                        <span style="font-size: 1.2rem; line-height: 1;">+</span>
-                                    </button>
-                                </div>
-                                
-                                <div class="mt-2">
-                                    @* Display up to 3 events *@
-                                    @foreach (var evt in day.Events.Take(3))
-                                    {
-                                        <div class="event-capsule" 
-                                             style="background-color: @(evt.CalendarColor ?? "var(--primary)"); cursor: pointer;"
-                                             title="@evt.Title (@evt.Start.ToString("t")) - @evt.Location"
-                                             @onclick="() => OpenEditEventModal(evt)">
-                                            @if (evt.IsAllDay)
-                                            {
-                                                <span>@evt.Title</span>
-                                            }
-                                            else
-                                            {
-                                                <span><b>@evt.Start.ToString("h:mm tt")</b> @evt.Title</span>
-                                            }
-                                        </div>
-                                    }
-                                    
-                                    @if(day.Events.Count() > 3)
-                                    {
-                                        <div class="overflow-indicator mt-1 text-center" @onclick="() => SwitchToView(DashboardView.Day, day.Date)" data-testid="overflow-indicator">
-                                            +@(day.Events.Count() - 3) more
-                                        </div>
-                                    }
-                                </div>
-                            </td>
-                        }
-                    </tr>
-                }
-            </tbody>
-        </table>
+        <MonthView CurrentMonth="CurrentMonth"
+                   Weeks="_weeks"
+                   OnPreviousMonth="GoToPreviousMonth"
+                   OnNextMonth="GoToNextMonth"
+                   OnOpenQuickJump="OpenQuickJumpModal"
+                   OnAddEvent="OnMonthAddEvent"
+                   OnEditEvent="OpenEditEventModal"
+                   OnDayDrillDown="OnMonthDrillDown" />
     }
     else if (_currentView == DashboardView.Day)
     {
@@ -508,6 +430,10 @@
         await LoadMonthDataAsync();
     }
     
+    private Task OnMonthDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
+
+    private void OnMonthAddEvent(DateTime date) => OpenAddEventModal(date);
+
     // View Switching Logic
     private Task OnTabViewChanged(DashboardView view) => SwitchToView(view);
 
