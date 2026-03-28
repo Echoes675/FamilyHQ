@@ -145,8 +145,17 @@ public class DashboardPage : BasePage
     public async Task<bool> IsAgendaCalendarHeaderVisibleAsync(string calendarName)
     {
         var header = Page.Locator("[data-testid^='agenda-calendar-header-']")
-                         .Filter(new() { HasText = calendarName });
-        return await header.CountAsync() > 0;
+                         .Filter(new() { HasText = calendarName })
+                         .First;
+        try
+        {
+            await header.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<bool> IsAgendaEventVisibleAsync(string expectedText, string dateKey, Guid calendarId)
