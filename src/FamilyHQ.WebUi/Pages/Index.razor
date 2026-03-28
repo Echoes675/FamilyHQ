@@ -2,7 +2,6 @@
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.Services.Auth
 @using FamilyHQ.Core.DTOs
-@using FamilyHQ.WebUi.ViewModels
 @implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
 @inject SignalRService SignalR
@@ -514,7 +513,6 @@
 }
 
 @code {
-    private enum DashboardView { Month, MonthAgenda, Day }
     private DashboardView _currentView = DashboardView.Month;
     private DateTime _selectedDate = DateTime.Today;
 
@@ -1009,12 +1007,6 @@
         public CalendarEventViewModel Event { get; set; } = null!;
         public int ColumnIndex { get; set; }
         public int TotalColumns { get; set; }
-    }
-
-    private class DayItem
-    {
-        public DateTime Date { get; set; }
-        public List<CalendarEventViewModel> Events { get; set; } = new();
     }
 
     private class EventFormModel
