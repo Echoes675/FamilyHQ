@@ -109,6 +109,27 @@ public class WebhookDataSteps
         return match.Id;
     }
 
+    [When(@"a new event ""([^""]*)"" is added to Google Calendar on ""([^""]*)"" in ""([^""]*)""")]
+    public async Task WhenANewEventIsAddedOnDateInCalendar(string eventName, string dateStr, string calendarName)
+    {
+        var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = template.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(dateStr, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        var eventId = await _simulatorApi.AddEventAsync(
+            userId: template.UserName,
+            calendarId: calendar.Id,
+            summary: eventName,
+            start: date,
+            end: date.AddDays(1),
+            isAllDay: true);
+
+        eventId = eventId.Trim('"');
+        _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
+    }
+
     private static async Task WaitForConditionAsync(Func<Task<bool>> condition, string failMessage)
     {
         var deadline = DateTime.UtcNow.AddMilliseconds(LiveUpdateTimeoutMs);

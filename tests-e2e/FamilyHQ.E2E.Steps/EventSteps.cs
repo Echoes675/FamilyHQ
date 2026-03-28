@@ -174,7 +174,7 @@ public class EventSteps
 
         var startTime = tomorrow.AddHours(hour).AddMinutes(minute);
         var endTime = startTime.AddDays(days); // E.g. 10:00 AM tomorrow to 10:00 AM next day (spans 1 24h period)
-        
+
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
             Id = "evt_" + Guid.NewGuid().ToString("N"),
@@ -184,6 +184,80 @@ public class EventSteps
             EndTime = endTime,
             IsAllDay = false
         });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has a timed event ""([^""]*)"" at ""([^""]*)"" on ""([^""]*)"" in ""([^""]*)""")]
+    public async Task GivenTheUserHasATimedEventAtOnInCalendar(
+        string eventName, string timeStr, string dateStr, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(dateStr, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var timeParts = timeStr.Split(':');
+        var startTime = date.AddHours(int.Parse(timeParts[0])).AddMinutes(int.Parse(timeParts[1]));
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = startTime,
+            EndTime = startTime.AddHours(1),
+            IsAllDay = false
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has an all-day event ""([^""]*)"" on ""([^""]*)"" in ""([^""]*)""")]
+    public async Task GivenTheUserHasAnAllDayEventOnInCalendar(
+        string eventName, string dateStr, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(dateStr, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = date,
+            EndTime = date.AddDays(1),
+            IsAllDay = true
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    [Given(@"the user has (\d+) events on ""([^""]*)"" in ""([^""]*)""")]
+    public async Task GivenTheUserHasNEventsOnInCalendar(int count, string dateStr, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(dateStr, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        for (int i = 0; i < count; i++)
+        {
+            var startTime = date.AddHours(8 + i);
+            isolatedTemplate.Events.Add(new SimulatorEventModel
+            {
+                Id = "evt_" + Guid.NewGuid().ToString("N"),
+                CalendarId = calendar.Id,
+                Summary = $"Event {i + 1}",
+                StartTime = startTime,
+                EndTime = startTime.AddHours(1),
+                IsAllDay = false
+            });
+        }
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
