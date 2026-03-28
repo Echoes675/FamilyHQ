@@ -15,6 +15,8 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<CalendarEvent> Events => Set<CalendarEvent>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
     public DbSet<UserToken> UserTokens => Set<UserToken>();
+    public DbSet<CircadianBoundaries> CircadianBoundaries => Set<CircadianBoundaries>();
+    public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
 
     /// <summary>
     /// Required for ASP.NET Core Data Protection key storage in the database.

@@ -1,0 +1,34 @@
+@using FamilyHQ.WebUi.Models
+
+<div class="modal-backdrop">
+    <div class="modal-panel recurrence-prompt-modal">
+        <div class="modal-header">
+            <h2>Edit recurring event</h2>
+        </div>
+        <div class="modal-body">
+            <p class="recurrence-prompt-description">This event is part of a series. Which events do you want to edit?</p>
+            <div class="recurrence-options">
+                <button class="recurrence-option-btn" @onclick="() => OnSelected.InvokeAsync(RecurrenceEditScope.ThisInstance)">
+                    <span class="recurrence-option-title">This event only</span>
+                    <span class="recurrence-option-desc">Only change this occurrence</span>
+                </button>
+                <button class="recurrence-option-btn" @onclick="() => OnSelected.InvokeAsync(RecurrenceEditScope.ThisAndFollowing)">
+                    <span class="recurrence-option-title">This and following events</span>
+                    <span class="recurrence-option-desc">Change this and all future occurrences</span>
+                </button>
+                <button class="recurrence-option-btn" @onclick="() => OnSelected.InvokeAsync(RecurrenceEditScope.AllInSeries)">
+                    <span class="recurrence-option-title">All events in series</span>
+                    <span class="recurrence-option-desc">Change every occurrence in this series</span>
+                </button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" @onclick="OnCancel">Cancel</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback<RecurrenceEditScope> OnSelected { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}

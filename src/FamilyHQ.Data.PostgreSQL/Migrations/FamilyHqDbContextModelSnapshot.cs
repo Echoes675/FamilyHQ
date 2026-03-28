@@ -62,12 +62,28 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false);
 
+                    b.Property<bool>("IsRecurrenceException")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<string>("Location")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<Guid?>("MasterEventId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid>("OwnerCalendarInfoId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RecurrenceId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RecurrenceRule")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
                     b.Property<DateTimeOffset>("Start")
                         .HasColumnType("timestamp with time zone");
@@ -83,6 +99,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     b.HasIndex("GoogleEventId")
                         .IsUnique();
+
+                    b.HasIndex("MasterEventId");
 
                     b.HasIndex("OwnerCalendarInfoId");
 
@@ -127,6 +145,40 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("Calendars", (string)null);
                 });
 
+            modelBuilder.Entity("FamilyHQ.Core.Models.CircadianBoundaries", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset>("ComputedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<TimeOnly>("SunriseUtc")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<TimeOnly>("SunsetUtc")
+                        .HasColumnType("time without time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date", "Latitude", "Longitude")
+                        .IsUnique();
+
+                    b.ToTable("CircadianBoundaries", (string)null);
+                });
+
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncState", b =>
                 {
                     b.Property<Guid>("Id")
@@ -155,6 +207,43 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .IsUnique();
 
                     b.ToTable("SyncStates", (string)null);
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.UserPreferences", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CalendarColorOverrides")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<string>("CalendarColumnOrder")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
+                    b.Property<int>("EventDensity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(2);
+
+                    b.Property<DateTimeOffset>("LastModified")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("UserPreferences", (string)null);
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.UserToken", b =>

@@ -1,0 +1,28 @@
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+@code {
+    private static readonly (int X, int Y)[] OrbitPositions = [
+        (0, 0), (1, 0), (1, 1), (0, 1), (-1, 1),
+        (-1, 0), (-1, -1), (0, -1), (1, -1)
+    ];
+    private int _orbitIndex = 0;
+    private Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _timer = new Timer(async _ =>
+        {
+            _orbitIndex = (_orbitIndex + 1) % OrbitPositions.Length;
+            var (x, y) = OrbitPositions[_orbitIndex];
+            await JSRuntime.InvokeVoidAsync("kioskOrbit.setOffset", x, y);
+        }, null, TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(120));
+        // Initial position
+        await JSRuntime.InvokeVoidAsync("kioskOrbit.setOffset", 0, 0);
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}

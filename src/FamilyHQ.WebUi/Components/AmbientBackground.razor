@@ -1,0 +1,124 @@
+@implements IDisposable
+@using System.Threading
+@inject HttpClient HttpClient
+@inject IConfiguration Configuration
+
+<div class="ambient-bg @CircadianClass @WeatherClass" aria-hidden="true">
+    <div class="ambient-legibility-layer"></div>
+    @if (WeatherClass != "weather-clear")
+    {
+        <div class="ambient-weather-overlay @WeatherClass-overlay"></div>
+    }
+</div>
+
+@code {
+    public enum CircadianState { Dawn, Day, Dusk, Night }
+    public enum WeatherCondition { Clear, Cloudy, LightRain, HeavyRain, Thunder, Snow, WindMist }
+
+    private CircadianState CurrentCircadianState { get; set; } = CircadianState.Day;
+    private WeatherCondition CurrentWeatherCondition { get; set; } = WeatherCondition.Clear;
+    private Timer? _circadianTimer;
+    private bool _apiPollingEnabled = true;
+
+    private string CircadianClass => CurrentCircadianState switch
+    {
+        CircadianState.Dawn => "circadian-dawn",
+        CircadianState.Day => "circadian-day",
+        CircadianState.Dusk => "circadian-dusk",
+        CircadianState.Night => "circadian-night",
+        _ => "circadian-day"
+    };
+
+    private string WeatherClass => CurrentWeatherCondition switch
+    {
+        WeatherCondition.Clear => "weather-clear",
+        WeatherCondition.Cloudy => "weather-cloudy",
+        WeatherCondition.LightRain => "weather-light-rain",
+        WeatherCondition.HeavyRain => "weather-heavy-rain",
+        WeatherCondition.Thunder => "weather-thunder",
+        WeatherCondition.Snow => "weather-snow",
+        WeatherCondition.WindMist => "weather-wind-mist",
+        _ => "weather-clear"
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Try to poll the API first
+            await PollCircadianApiAsync();
+            
+            // Start a timer that fires every 5 minutes (300,000 ms) to re-evaluate circadian state
+            _circadianTimer = new Timer(_ => InvokeAsync(async () =>
+            {
+                // Try API first, fall back to client-side clock if API fails
+                var success = await PollCircadianApiAsync();
+                if (!success)
+                {
+                    UpdateCircadianStateFromClientClock();
+                }
+                StateHasChanged();
+            }), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+        }
+        await base.OnAfterRenderAsync(firstRender);
+    }
+
+    private async Task<bool> PollCircadianApiAsync()
+    {
+        if (!_apiPollingEnabled) return false;
+
+        try
+        {
+            var apiBaseUrl = Configuration["ApiBaseUrl"] ?? "https://localhost:7001";
+            var response = await HttpClient.GetAsync($"{apiBaseUrl}/api/circadian/current");
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var json = await response.Content.ReadFromJsonAsync<CircadianApiResponse>();
+                if (json?.State is not null && Enum.TryParse<CircadianState>(json.State, ignoreCase: true, out var state))
+                {
+                    CurrentCircadianState = state;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // API call failed, fall back to client-side clock
+        }
+        
+        return false;
+    }
+
+    private void UpdateCircadianStateFromClientClock()
+    {
+        var now = TimeOnly.FromDateTime(DateTime.Now);
+        CurrentCircadianState = GetCircadianStateFromTime(now);
+    }
+
+    private CircadianState GetCircadianStateFromTime(TimeOnly time)
+    {
+        // Approximate boundaries — will be replaced by API polling in Phase 8b
+        if (time >= new TimeOnly(5, 30) && time < new TimeOnly(7, 30)) return CircadianState.Dawn;
+        if (time >= new TimeOnly(7, 30) && time < new TimeOnly(18, 0)) return CircadianState.Day;
+        if (time >= new TimeOnly(18, 0) && time < new TimeOnly(20, 0)) return CircadianState.Dusk;
+        return CircadianState.Night;
+    }
+
+    public void SetWeatherCondition(WeatherCondition condition)
+    {
+        CurrentWeatherCondition = condition;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _circadianTimer?.Dispose();
+    }
+
+    private record CircadianApiResponse(
+        string State,
+        string? SunriseUtc,
+        string? SunsetUtc,
+        DateTimeOffset? ComputedAt);
+}

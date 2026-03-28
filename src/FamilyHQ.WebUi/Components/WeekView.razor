@@ -1,0 +1,209 @@
+@using System.Globalization
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Models
+@inject ICalendarApiService CalendarApiService
+@implements IDisposable
+
+<div class="week-view">
+    <!-- Day header row -->
+    <div class="week-header">
+        <div class="week-time-gutter"></div>  <!-- spacer for time axis -->
+        @foreach (var day in WeekDays)
+        {
+            <div class="week-day-header @(day == DateOnly.FromDateTime(DateTime.Today) ? "week-day-today" : "")">
+                <span class="week-day-name">@day.ToString("ddd")</span>
+                <span class="week-day-number @(day == DateOnly.FromDateTime(DateTime.Today) ? "today-badge" : "")">@day.Day</span>
+            </div>
+        }
+    </div>
+    
+    <!-- Scrollable time grid -->
+    <div class="week-grid-scroll">
+        <div class="week-grid">
+            <!-- Time axis -->
+            <div class="week-time-axis">
+                @for (int hour = 0; hour < 24; hour++)
+                {
+                    <div class="week-time-slot">
+                        <span class="week-time-label">@($"{hour:D2}:00")</span>
+                    </div>
+                }
+            </div>
+            
+            <!-- Day columns -->
+            @foreach (var day in WeekDays)
+            {
+                <div class="week-day-column @(day == DateOnly.FromDateTime(DateTime.Today) ? "week-day-column-today" : "")">
+                    @foreach (var evt in GetEventsForDay(day))
+                    {
+                        <div class="week-event-tile" style="@GetEventTileStyle(evt)" @onclick="() => OnEventClick(evt)">
+                            <span class="week-event-title">@evt.Title</span>
+                        </div>
+                    }
+                    <!-- Red line for today only -->
+                    @if (day == DateOnly.FromDateTime(DateTime.Today))
+                    {
+                        <div class="week-red-line" style="top: @RedLineTopPercent%"></div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (IsLoading)
+{
+    <div class="loading-overlay">
+        <div class="spinner"></div>
+        <span>Loading events...</span>
+    </div>
+}
+
+@code {
+    [Parameter] public DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEventSelected { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnDaySelected { get; set; }
+
+    private List<DateOnly> WeekDays { get; set; } = new();
+    private List<CalendarSummaryViewModel>? Calendars { get; set; }
+    private List<CalendarEventViewModel>? Events { get; set; }
+    private double RedLineTopPercent { get; set; }
+    private bool IsLoading { get; set; } = true;
+    private System.Threading.Timer? _redLineTimer;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            StartRedLineTimer();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            // Recalculate week days
+            WeekDays = CalculateWeekDays(SelectedDate);
+
+            // Load calendars
+            var calendars = await CalendarApiService.GetCalendarsAsync();
+            Calendars = calendars?.ToList() ?? new List<CalendarSummaryViewModel>();
+
+            // Load events for the week
+            // Since there's no date-range API yet, load the month(s) that overlap with the week and filter client-side.
+            // Determine start and end dates of the week (Monday to Sunday)
+            var weekStart = WeekDays.First();
+            var weekEnd = WeekDays.Last();
+
+            // Load events for the month containing weekStart and month containing weekEnd (could be same month)
+            Events = new List<CalendarEventViewModel>();
+
+            // Load month view for start month
+            var startMonthViewModel = await CalendarApiService.GetEventsForMonthAsync(weekStart.Year, weekStart.Month);
+            // Load month view for end month if different
+            if (weekEnd.Month != weekStart.Month || weekEnd.Year != weekStart.Year)
+            {
+                var endMonthViewModel = await CalendarApiService.GetEventsForMonthAsync(weekEnd.Year, weekEnd.Month);
+                MergeMonthEvents(endMonthViewModel);
+            }
+            MergeMonthEvents(startMonthViewModel);
+        }
+        catch (Exception ex)
+        {
+            // In production, log error
+            Console.Error.WriteLine($"Error loading WeekView data: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void MergeMonthEvents(MonthViewModel monthViewModel)
+    {
+        if (monthViewModel?.Days == null) return;
+
+        foreach (var (dateKey, dayEvents) in monthViewModel.Days)
+        {
+            var date = DateOnly.ParseExact(dateKey, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (date >= WeekDays.First() && date <= WeekDays.Last())
+            {
+                Events?.AddRange(dayEvents);
+            }
+        }
+    }
+
+    private List<DateOnly> CalculateWeekDays(DateOnly date)
+    {
+        // Find Monday of the week containing 'date'
+        var dayOfWeek = (int)date.DayOfWeek;
+        var daysFromMonday = dayOfWeek == 0 ? 6 : dayOfWeek - 1; // Sunday = 0 in DayOfWeek
+        var monday = date.AddDays(-daysFromMonday);
+        return Enumerable.Range(0, 7).Select(i => monday.AddDays(i)).ToList();
+    }
+
+    private IEnumerable<CalendarEventViewModel> GetEventsForDay(DateOnly day)
+    {
+        return Events?.Where(e => DateOnly.FromDateTime(e.Start.LocalDateTime) == day) ?? Enumerable.Empty<CalendarEventViewModel>();
+    }
+
+    private string GetEventTileStyle(CalendarEventViewModel evt)
+    {
+        if (evt.IsAllDay)
+        {
+            // All-day events at top with fixed height
+            return "position: absolute; top: 0; height: 40px; left: 2px; right: 2px; border-radius: 4px; padding: 2px 4px; overflow: hidden; cursor: pointer;";
+        }
+
+        var startMinutes = evt.Start.Hour * 60 + evt.Start.Minute;
+        var endMinutes = evt.End.Hour * 60 + evt.End.Minute;
+        var topPercent = startMinutes / (24.0 * 60) * 100;
+        var heightPercent = Math.Max((endMinutes - startMinutes) / (24.0 * 60) * 100, 1.5);
+        return $"position: absolute; top: {topPercent:F2}%; height: {heightPercent:F2}%; left: 2px; right: 2px; border-radius: 4px; padding: 2px 4px; overflow: hidden; cursor: pointer;";
+    }
+
+    private double CalculateRedLinePercent()
+    {
+        var now = DateTime.Now;
+        return (now.Hour * 60 + now.Minute) / (24.0 * 60) * 100;
+    }
+
+    private void StartRedLineTimer()
+    {
+        if (!WeekDays.Contains(DateOnly.FromDateTime(DateTime.Today))) return;
+
+        RedLineTopPercent = CalculateRedLinePercent();
+        _redLineTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                RedLineTopPercent = CalculateRedLinePercent();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task OnEventClick(CalendarEventViewModel evt)
+    {
+        await OnEventSelected.InvokeAsync(evt);
+    }
+
+    private async Task OnDayClick(DateOnly day)
+    {
+        await OnDaySelected.InvokeAsync(day);
+    }
+
+    public void Dispose()
+    {
+        _redLineTimer?.Dispose();
+    }
+}

@@ -1,0 +1,43 @@
+@using FamilyHQ.WebUi.Models
+
+<div class="modal-backdrop">
+    <div class="modal-panel delete-confirm-modal">
+        <div class="modal-header">
+            <h2>Delete event</h2>
+        </div>
+        <div class="modal-body">
+            @if (IsRecurring)
+            {
+                <p class="recurrence-prompt-description">This event is part of a series. Which events do you want to delete?</p>
+                <div class="recurrence-options">
+                    <button class="recurrence-option-btn recurrence-option-danger" @onclick="() => OnConfirmed.InvokeAsync(RecurrenceEditScope.ThisInstance)">
+                        <span class="recurrence-option-title">This event only</span>
+                    </button>
+                    <button class="recurrence-option-btn recurrence-option-danger" @onclick="() => OnConfirmed.InvokeAsync(RecurrenceEditScope.ThisAndFollowing)">
+                        <span class="recurrence-option-title">This and following events</span>
+                    </button>
+                    <button class="recurrence-option-btn recurrence-option-danger" @onclick="() => OnConfirmed.InvokeAsync(RecurrenceEditScope.AllInSeries)">
+                        <span class="recurrence-option-title">All events in series</span>
+                    </button>
+                </div>
+            }
+            else
+            {
+                <p class="delete-confirm-message">Are you sure you want to delete this event? This cannot be undone.</p>
+            }
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" @onclick="OnCancel">Cancel</button>
+            @if (!IsRecurring)
+            {
+                <button class="btn-danger" @onclick="() => OnConfirmed.InvokeAsync(RecurrenceEditScope.ThisInstance)">Delete</button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool IsRecurring { get; set; }
+    [Parameter] public EventCallback<RecurrenceEditScope> OnConfirmed { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}

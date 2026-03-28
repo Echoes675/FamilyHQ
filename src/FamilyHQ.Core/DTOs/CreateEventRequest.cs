@@ -7,4 +7,5 @@ public record CreateEventRequest(
     DateTimeOffset End,
     bool IsAllDay,
     string? Location,
-    string? Description);
+    string? Description,
+    string? RecurrenceRule = null);

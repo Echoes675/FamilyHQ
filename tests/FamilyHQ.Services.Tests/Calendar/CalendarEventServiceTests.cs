@@ -20,7 +20,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task CreateAsync_SingleCalendar_CallsCreateEventOnlyNoPatch()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([calA]);
@@ -44,7 +44,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task CreateAsync_TwoCalendars_CallsCreateThenPatch()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var calB = Cal(CalBId, "cal-b@google.com");
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
@@ -70,7 +70,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task CreateAsync_UnknownCalendarId_ThrowsValidationException()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([Cal(CalAId, "cal-a@google.com")]);
 
@@ -83,7 +83,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task CreateAsync_DbFailureAfterGoogleSuccess_LogsReconciliationErrorAndRethrows()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
@@ -105,7 +105,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task UpdateAsync_CallsUpdateEventWithOwnerCalendar()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "old-gid", CalAId, calA);
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -127,7 +127,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task AddCalendarAsync_CallsPatchWithNewAttendee()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var calB = Cal(CalBId, "cal-b@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA); // only calA linked
@@ -148,7 +148,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task AddCalendarAsync_Idempotent_NoGoogleCallWhenAlreadyLinked()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA); // calA already linked
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -164,7 +164,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task RemoveCalendarAsync_NonOwner_CallsPatchWithoutRemovedCalendar()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var calB = Cal(CalBId, "cal-b@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA, calB); // owner=A, B is attendee
@@ -186,7 +186,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task RemoveCalendarAsync_OwnerWithOthers_MovesEventThenPatchesInOrder()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var calB = Cal(CalBId, "cal-b@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA, calB); // owner=A, removing A
@@ -215,7 +215,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task RemoveCalendarAsync_LastCalendar_DelegatesToDelete()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA); // only calendar
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -239,7 +239,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task DeleteAsync_NoExternalAttendees_CallsGoogleDelete()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA);
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -259,7 +259,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task DeleteAsync_ExternalAttendeePresent_SkipsGoogleDelete()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA);
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -278,7 +278,7 @@ public class CalendarEventServiceTests
     [Fact]
     public async Task DeleteAsync_GetEventReturnsNull_SkipsGoogleDeleteDeletesLocally()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, rrule, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var evt = Event(EventId, "gid-1", CalAId, calA);
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
@@ -311,11 +311,12 @@ public class CalendarEventServiceTests
             Calendars = cals.ToList()
         };
 
-    private static (Mock<IGoogleCalendarClient>, Mock<ICalendarRepository>, CalendarEventService) CreateSut()
+    private static (Mock<IGoogleCalendarClient>, Mock<ICalendarRepository>, Mock<IRruleExpander>, CalendarEventService) CreateSut()
     {
         var google = new Mock<IGoogleCalendarClient>();
         var repo   = new Mock<ICalendarRepository>();
+        var rrule  = new Mock<IRruleExpander>();
         var logger = new Mock<ILogger<CalendarEventService>>();
-        return (google, repo, new CalendarEventService(google.Object, repo.Object, logger.Object));
+        return (google, repo, rrule, new CalendarEventService(google.Object, repo.Object, rrule.Object, logger.Object));
     }
 }

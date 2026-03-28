@@ -66,6 +66,58 @@ public class EventsController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("range")]
+    public async Task<IActionResult> GetForRange(
+        [FromQuery] DateTimeOffset start,
+        [FromQuery] DateTimeOffset end,
+        CancellationToken cancellationToken)
+    {
+        var events = await _service.GetEventsForRangeAsync(start, end, cancellationToken);
+        return Ok(events);
+    }
+
+    [HttpPut("{masterEventId}/instances/{recurrenceId}/this")]
+    public async Task<IActionResult> UpdateInstance(Guid masterEventId, string recurrenceId, [FromBody] UpdateEventRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateInstanceAsync(masterEventId, recurrenceId, request, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPut("{masterEventId}/instances/{recurrenceId}/from")]
+    public async Task<IActionResult> UpdateSeriesFrom(Guid masterEventId, string recurrenceId, [FromBody] UpdateEventRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateSeriesFromAsync(masterEventId, recurrenceId, request, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPut("{masterEventId}/all")]
+    public async Task<IActionResult> UpdateAllInSeries(Guid masterEventId, [FromBody] UpdateEventRequest request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateAllInSeriesAsync(masterEventId, request, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpDelete("{masterEventId}/instances/{recurrenceId}/this")]
+    public async Task<IActionResult> DeleteInstance(Guid masterEventId, string recurrenceId, CancellationToken cancellationToken)
+    {
+        await _service.DeleteInstanceAsync(masterEventId, recurrenceId, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("{masterEventId}/instances/{recurrenceId}/from")]
+    public async Task<IActionResult> DeleteSeriesFrom(Guid masterEventId, string recurrenceId, CancellationToken cancellationToken)
+    {
+        await _service.DeleteSeriesFromAsync(masterEventId, recurrenceId, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("{masterEventId}/all")]
+    public async Task<IActionResult> DeleteAllInSeries(Guid masterEventId, CancellationToken cancellationToken)
+    {
+        await _service.DeleteAllInSeriesAsync(masterEventId, cancellationToken);
+        return NoContent();
+    }
+
     private static CalendarEventDto MapToDto(CalendarEvent e) => new(
         e.Id,
         e.GoogleEventId,
@@ -77,5 +129,9 @@ public class EventsController : ControllerBase
         e.Description,
         e.Calendars
             .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color))
-            .ToList());
+            .ToList(),
+        e.RecurrenceRule,
+        e.RecurrenceId,
+        e.IsRecurrenceException,
+        e.MasterEventId);
 }

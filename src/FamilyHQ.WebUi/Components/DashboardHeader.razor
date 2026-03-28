@@ -1,0 +1,177 @@
+@using System.Globalization
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Models
+@inject ICalendarApiService CalendarApiService
+
+<div class="dashboard-header">
+    <div class="header-left">
+        <div class="app-title">FamilyHQ</div>
+    </div>
+    <div class="header-center">
+        <div class="view-switcher">
+            <button class="view-tab @(ActiveView == ActiveViewType.Today ? "active" : "")"
+                    @onclick="() => SwitchView(ActiveViewType.Today)"
+                    aria-label="Today view">
+                Today
+            </button>
+            <button class="view-tab @(ActiveView == ActiveViewType.Week ? "active" : "")"
+                    @onclick="() => SwitchView(ActiveViewType.Week)"
+                    aria-label="Week view">
+                Week
+            </button>
+            <button class="view-tab @(ActiveView == ActiveViewType.Month ? "active" : "")"
+                    @onclick="() => SwitchView(ActiveViewType.Month)"
+                    aria-label="Month view">
+                Month
+            </button>
+        </div>
+    </div>
+    <div class="header-right">
+        <div class="month-navigation">
+            <button class="nav-button" @onclick="PreviousPeriod" aria-label="Previous period">
+                &lt;
+            </button>
+            <button class="month-year-label" @onclick="() => ShowMonthQuickJump = true">
+                @SelectedDate.ToString("MMMM yyyy", CultureInfo.InvariantCulture)
+            </button>
+            <button class="nav-button" @onclick="NextPeriod" aria-label="Next period">
+                &gt;
+            </button>
+        </div>
+        <button class="settings-btn" @onclick="() => ShowSettings = true" aria-label="Settings">
+            ⚙
+        </button>
+        <div class="weather-indicator">
+            <span class="weather-icon">☁</span>
+            <span class="weather-temp">—</span>
+        </div>
+    </div>
+</div>
+
+@if (ShowMonthQuickJump)
+{
+    <MonthQuickJumpModal @ref="monthQuickJumpModal"
+                         SelectedYear="@SelectedDate.Year"
+                         SelectedMonth="@SelectedDate.Month"
+                         OnDateSelected="HandleMonthSelected"
+                         OnClose="CloseMonthQuickJump" />
+}
+
+@if (ShowSettings)
+{
+    <SettingsPanel IsVisible="@ShowSettings"
+                   OnClose="() => ShowSettings = false"
+                   Calendars="@Calendars" />
+}
+
+@code {
+    private bool _showMonthQuickJump = false;
+    private bool _showSettings = false;
+    private MonthQuickJumpModal? monthQuickJumpModal;
+    private List<CalendarSummaryViewModel> Calendars = new();
+
+    [Parameter]
+    public ActiveViewType ActiveView { get; set; } = ActiveViewType.Today;
+
+    [Parameter]
+    public DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+
+    [Parameter]
+    public EventCallback<ActiveViewType> OnViewChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<DateOnly> OnDateChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<DateOnly> OnDaySelected { get; set; }
+
+    private bool ShowMonthQuickJump
+    {
+        get => _showMonthQuickJump;
+        set
+        {
+            if (_showMonthQuickJump != value)
+            {
+                _showMonthQuickJump = value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private bool ShowSettings
+    {
+        get => _showSettings;
+        set
+        {
+            if (_showSettings != value)
+            {
+                _showSettings = value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCalendars();
+    }
+
+    private async Task LoadCalendars()
+    {
+        try
+        {
+            var calendars = await CalendarApiService.GetCalendarsAsync();
+            Calendars = calendars.ToList();
+        }
+        catch
+        {
+            Calendars = new();
+        }
+    }
+
+    private void SwitchView(ActiveViewType view)
+    {
+        ActiveView = view;
+        OnViewChanged.InvokeAsync(view);
+    }
+
+    private void PreviousPeriod()
+    {
+        var newDate = ActiveView switch
+        {
+            ActiveViewType.Today => SelectedDate.AddDays(-1),
+            ActiveViewType.Week => SelectedDate.AddDays(-7),
+            ActiveViewType.Month => SelectedDate.AddMonths(-1),
+            _ => SelectedDate
+        };
+        SelectedDate = newDate;
+        OnDateChanged.InvokeAsync(newDate);
+    }
+
+    private void NextPeriod()
+    {
+        var newDate = ActiveView switch
+        {
+            ActiveViewType.Today => SelectedDate.AddDays(1),
+            ActiveViewType.Week => SelectedDate.AddDays(7),
+            ActiveViewType.Month => SelectedDate.AddMonths(1),
+            _ => SelectedDate
+        };
+        SelectedDate = newDate;
+        OnDateChanged.InvokeAsync(newDate);
+    }
+
+    private void HandleMonthSelected((int Year, int Month) date)
+    {
+        var newDate = new DateOnly(date.Year, date.Month, 1);
+        SelectedDate = newDate;
+        OnDateChanged.InvokeAsync(newDate);
+        ShowMonthQuickJump = false;
+    }
+
+    private void CloseMonthQuickJump()
+    {
+        ShowMonthQuickJump = false;
+    }
+}

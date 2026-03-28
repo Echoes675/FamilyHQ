@@ -4,9 +4,13 @@ using FamilyHQ.Data;
 using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Circadian;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Weather;
+using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
+using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -59,6 +63,24 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();
+
+// Weather services
+builder.Services.AddSingleton<IWeatherProvider, NullWeatherProvider>();
+builder.Services.AddSingleton<WeatherBackgroundService>();
+builder.Services.AddSingleton<IHostedService, WeatherBroadcastService>();
+
+// Kiosk options
+builder.Services.Configure<KioskOptions>(builder.Configuration.GetSection(KioskOptions.SectionName));
+
+// Circadian services
+builder.Services.AddSingleton<ISolarCalculator, SolarCalculator>();
+builder.Services.AddHostedService<CircadianStateService>();
+
+// RRULE services
+builder.Services.AddSingleton<IRruleExpander, FamilyHQ.Services.Calendar.RruleExpander>();
+
+// User preferences service
+builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
@@ -145,5 +167,6 @@ app.MapControllers();
 
 // Map SignalR Hub
 app.MapHub<CalendarHub>("/hubs/calendar");
+app.MapHub<WeatherHub>("/hubs/weather");
 
 app.Run();

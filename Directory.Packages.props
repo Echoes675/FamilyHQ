@@ -23,6 +23,7 @@
     <!-- Google -->
     <PackageVersion Include="Google.Apis.Calendar.v3" Version="1.69.0.3667" />
     <PackageVersion Include="Google.Apis.Auth" Version="1.69.0" />
+    <PackageVersion Include="Ical.Net" Version="4.2.0" />
     <!-- ASP.NET Core / Blazor -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.0" />
@@ -31,6 +32,8 @@
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+    <!-- Blazored LocalStorage -->
+    <PackageVersion Include="Blazored.LocalStorage" Version="4.5.0" />
     <!-- Testing -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

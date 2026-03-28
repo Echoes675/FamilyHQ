@@ -1,0 +1,345 @@
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Models
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@inject ICalendarApiService CalendarApiService
+
+@if (IsVisible)
+{
+    <div class="modal-backdrop" @onclick="HandleBackdropClick">
+        <div class="modal-panel event-modal" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>@(IsEditMode ? "Edit Event" : "New Event")</h2>
+                <button class="modal-close-btn" @onclick="OnClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <form @onsubmit="HandleSubmit" @onsubmit:preventDefault="true">
+                    <div class="form-group">
+                        <label class="form-label" for="event-title">Title</label>
+                        <input id="event-title" class="form-input" type="text" @bind="Title" @bind:event="oninput" required minlength="1" maxlength="200" />
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" for="event-date">Date</label>
+                            <input id="event-date" class="form-input" type="date" @bind="Date" @bind:format="yyyy-MM-dd" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="event-calendar">Calendar</label>
+                            <select id="event-calendar" class="form-select" @bind="SelectedCalendarId">
+                                <option value="">Select a calendar</option>
+                                @foreach (var calendar in Calendars)
+                                {
+                                    <option value="@calendar.Id">@calendar.DisplayName</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-checkbox-row">
+                        <input id="event-all-day" class="form-checkbox" type="checkbox" @bind="IsAllDay" />
+                        <label for="event-all-day" class="form-label">All day</label>
+                    </div>
+
+                    @if (!IsAllDay)
+                    {
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label" for="event-start-time">Start time</label>
+                                <input id="event-start-time" class="form-input" type="time" @bind="StartTime" @bind:format="HH:mm" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="event-end-time">End time</label>
+                                <input id="event-end-time" class="form-input" type="time" @bind="EndTime" @bind:format="HH:mm" />
+                            </div>
+                        </div>
+                    }
+
+                    <div class="form-group">
+                        <label class="form-label" for="event-description">Description (optional)</label>
+                        <textarea id="event-description" class="form-textarea" @bind="Description" rows="3"></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" for="event-recurrence">Recurrence</label>
+                            <select id="event-recurrence" class="form-select" @bind="RecurrenceRule">
+                                <option value="">None</option>
+                                <option value="DAILY">Daily</option>
+                                <option value="WEEKLY">Weekly</option>
+                                <option value="MONTHLY">Monthly</option>
+                                <option value="YEARLY">Yearly</option>
+                            </select>
+                        </div>
+                        @if (!string.IsNullOrEmpty(RecurrenceRule))
+                        {
+                            <div class="form-group">
+                                <label class="form-label" for="event-recurrence-end">Recurrence end</label>
+                                <input id="event-recurrence-end" class="form-input" type="date" @bind="RecurrenceEnd" @bind:format="yyyy-MM-dd" />
+                            </div>
+                        }
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn-secondary" @onclick="OnClose">Cancel</button>
+                        @if (IsEditMode)
+                        {
+                            <button type="button" class="btn-danger" @onclick="HandleDelete">Delete</button>
+                        }
+                        <button type="submit" class="btn-primary" disabled="@IsSaving">
+                            @(IsSaving ? "Saving..." : "Save")
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Recurrence edit prompt (shown when editing a recurring event) -->
+    @if (ShowRecurrencePrompt)
+    {
+        <RecurrenceEditPrompt OnSelected="HandleRecurrenceScope" OnCancel="CancelRecurrencePrompt" />
+    }
+    
+    <!-- Delete confirm modal -->
+    @if (ShowDeleteConfirm)
+    {
+        <DeleteConfirmModal IsRecurring="IsRecurringEvent"
+                           OnConfirmed="HandleDeleteConfirmed"
+                           OnCancel="CancelDelete" />
+    }
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public CalendarEventViewModel? EditingEvent { get; set; }
+    [Parameter] public DateOnly? DefaultDate { get; set; }
+    [Parameter] public List<CalendarSummaryViewModel> Calendars { get; set; } = new();
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<CalendarEventViewModel> OnSaved { get; set; }
+
+    private string Title { get; set; } = string.Empty;
+    private DateOnly Date { get; set; }
+    private TimeOnly StartTime { get; set; } = new TimeOnly(9, 0);
+    private TimeOnly EndTime { get; set; } = new TimeOnly(10, 0);
+    private bool IsAllDay { get; set; }
+    private Guid SelectedCalendarId { get; set; }
+    private string? Description { get; set; }
+    private string? RecurrenceRule { get; set; }
+    private DateOnly? RecurrenceEnd { get; set; }
+
+    private bool IsSaving { get; set; }
+    private bool ShowRecurrencePrompt { get; set; }
+    private bool ShowDeleteConfirm { get; set; }
+    private bool IsRecurringEvent => !string.IsNullOrEmpty(RecurrenceRule);
+
+    private bool IsEditMode => EditingEvent != null;
+
+    protected override void OnParametersSet()
+    {
+        if (IsEditMode && EditingEvent != null)
+        {
+            Title = EditingEvent.Title;
+            Date = DateOnly.FromDateTime(EditingEvent.Start.Date);
+            StartTime = TimeOnly.FromDateTime(EditingEvent.Start.DateTime);
+            EndTime = TimeOnly.FromDateTime(EditingEvent.End.DateTime);
+            IsAllDay = EditingEvent.IsAllDay;
+            SelectedCalendarId = EditingEvent.CalendarInfoId;
+            Description = EditingEvent.Description;
+            RecurrenceRule = EditingEvent.RecurrenceRule;
+            RecurrenceEnd = null;
+        }
+        else
+        {
+            Title = string.Empty;
+            Date = DefaultDate ?? DateOnly.FromDateTime(DateTime.Today);
+            StartTime = new TimeOnly(9, 0);
+            EndTime = new TimeOnly(10, 0);
+            IsAllDay = false;
+            SelectedCalendarId = Calendars.FirstOrDefault()?.Id ?? Guid.Empty;
+            Description = null;
+            RecurrenceRule = null;
+            RecurrenceEnd = null;
+        }
+    }
+
+    private void HandleBackdropClick()
+    {
+        OnClose.InvokeAsync();
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (string.IsNullOrWhiteSpace(Title) || SelectedCalendarId == Guid.Empty)
+        {
+            // TODO: show validation error
+            return;
+        }
+
+        var startDateTime = IsAllDay
+            ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+            : new DateTimeOffset(Date.ToDateTime(StartTime), TimeSpan.Zero);
+        var endDateTime = IsAllDay
+            ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+            : new DateTimeOffset(Date.ToDateTime(EndTime), TimeSpan.Zero);
+
+        if (IsEditMode)
+        {
+            // If editing a recurring event, show recurrence prompt
+            if (IsRecurringEvent)
+            {
+                ShowRecurrencePrompt = true;
+                return;
+            }
+
+            await UpdateEventAsync(startDateTime, endDateTime);
+        }
+        else
+        {
+            await CreateEventAsync(startDateTime, endDateTime);
+        }
+    }
+
+    private async Task CreateEventAsync(DateTimeOffset start, DateTimeOffset end)
+    {
+        IsSaving = true;
+        try
+        {
+            var request = new CreateEventRequest(
+                CalendarInfoIds: new List<Guid> { SelectedCalendarId },
+                Title: Title,
+                Start: start,
+                End: end,
+                IsAllDay: IsAllDay,
+                Location: null,
+                Description: Description
+            );
+
+            var created = await CalendarApiService.CreateEventAsync(request);
+            await OnSaved.InvokeAsync(created);
+            await OnClose.InvokeAsync();
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private async Task UpdateEventAsync(DateTimeOffset start, DateTimeOffset end)
+    {
+        IsSaving = true;
+        try
+        {
+            var request = new UpdateEventRequest(
+                Title: Title,
+                Start: start,
+                End: end,
+                IsAllDay: IsAllDay,
+                Location: null,
+                Description: Description
+            );
+
+            var updated = await CalendarApiService.UpdateEventAsync(EditingEvent!.Id, request);
+            await OnSaved.InvokeAsync(updated);
+            await OnClose.InvokeAsync();
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private async Task HandleRecurrenceScope(RecurrenceEditScope scope)
+    {
+        ShowRecurrencePrompt = false;
+        // Map scope to API endpoint suffix
+        var scopeString = scope switch
+        {
+            RecurrenceEditScope.ThisInstance => "this",
+            RecurrenceEditScope.ThisAndFollowing => "from",
+            RecurrenceEditScope.AllInSeries => "all",
+            _ => "all"
+        };
+
+        if (IsEditMode && EditingEvent != null)
+        {
+            // Update the event with the new recurrence rule
+            var startDateTime = IsAllDay
+                ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+                : new DateTimeOffset(Date.ToDateTime(StartTime), TimeSpan.Zero);
+            var endDateTime = IsAllDay
+                ? new DateTimeOffset(Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero)
+                : new DateTimeOffset(Date.ToDateTime(EndTime), TimeSpan.Zero);
+
+            var request = new UpdateEventRequest(
+                Title: Title,
+                Start: startDateTime,
+                End: endDateTime,
+                IsAllDay: IsAllDay,
+                Location: null,
+                Description: Description,
+                RecurrenceRule: RecurrenceRule
+            );
+
+            var updated = await CalendarApiService.UpdateEventInstanceAsync(
+                EditingEvent.Id,
+                EditingEvent.RecurrenceId ?? string.Empty,
+                scopeString,
+                request);
+            await OnSaved.InvokeAsync(updated);
+            await OnClose.InvokeAsync();
+        }
+    }
+
+    private void CancelRecurrencePrompt()
+    {
+        ShowRecurrencePrompt = false;
+    }
+
+    private void HandleDelete()
+    {
+        if (IsRecurringEvent)
+        {
+            ShowDeleteConfirm = true;
+        }
+        else
+        {
+            ShowDeleteConfirm = true;
+        }
+    }
+
+    private async Task HandleDeleteConfirmed(RecurrenceEditScope scope)
+    {
+        ShowDeleteConfirm = false;
+        IsSaving = true;
+        try
+        {
+            // Map scope to API endpoint suffix
+            var scopeString = scope switch
+            {
+                RecurrenceEditScope.ThisInstance => "this",
+                RecurrenceEditScope.ThisAndFollowing => "from",
+                RecurrenceEditScope.AllInSeries => "all",
+                _ => "all"
+            };
+
+            if (IsEditMode && EditingEvent != null)
+            {
+                await CalendarApiService.DeleteEventInstanceAsync(
+                    EditingEvent.Id,
+                    EditingEvent.RecurrenceId ?? string.Empty,
+                    scopeString);
+                await OnClose.InvokeAsync();
+            }
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void CancelDelete()
+    {
+        ShowDeleteConfirm = false;
+    }
+}

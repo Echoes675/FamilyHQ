@@ -109,6 +109,50 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<IEnumerable<CalendarEventViewModel>> GetEventsForRangeAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
+    {
+        var response = await httpClient.GetAsync($"api/events/range?start={start:o}&end={end:o}", ct);
+        response.EnsureSuccessStatusCode();
+
+        var dtos = await response.Content.ReadFromJsonAsync<List<CalendarEventDto>>(cancellationToken: ct)
+                   ?? new List<CalendarEventDto>();
+
+        return dtos.Select(MapToViewModel);
+    }
+
+    public async Task DeleteEventInstanceAsync(Guid masterEventId, string recurrenceId, string scope, CancellationToken ct = default)
+    {
+        var endpoint = scope switch
+        {
+            "this" => $"api/events/{masterEventId}/instances/{recurrenceId}/this",
+            "from" => $"api/events/{masterEventId}/instances/{recurrenceId}/from",
+            "all" => $"api/events/{masterEventId}/all",
+            _ => throw new ArgumentException($"Invalid scope: {scope}. Must be 'this', 'from', or 'all'.")
+        };
+
+        var response = await httpClient.DeleteAsync(endpoint, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<CalendarEventViewModel> UpdateEventInstanceAsync(Guid masterEventId, string recurrenceId, string scope, UpdateEventRequest request, CancellationToken ct = default)
+    {
+        var endpoint = scope switch
+        {
+            "this" => $"api/events/{masterEventId}/instances/{recurrenceId}/this",
+            "from" => $"api/events/{masterEventId}/instances/{recurrenceId}/from",
+            "all" => $"api/events/{masterEventId}/all",
+            _ => throw new ArgumentException($"Invalid scope: {scope}. Must be 'this', 'from', or 'all'.")
+        };
+
+        var response = await httpClient.PutAsJsonAsync(endpoint, request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for UpdateEventInstanceAsync.");
+
+        return MapToViewModel(dto);
+    }
+
     private static CalendarEventViewModel MapToViewModel(CalendarEventDto dto)
     {
         var allCalendars = dto.Calendars
@@ -128,6 +172,10 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             primary?.Id ?? Guid.Empty,
             primary?.DisplayName ?? string.Empty,
             primary?.Color,
-            allCalendars);
+            allCalendars,
+            dto.RecurrenceRule,
+            dto.RecurrenceId,
+            dto.IsRecurrenceException,
+            dto.MasterEventId);
     }
 }

@@ -1,0 +1,174 @@
+@using System.Globalization
+@using FamilyHQ.WebUi.ViewModels
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Models
+@inject ICalendarApiService CalendarApiService
+@implements IDisposable
+
+<div class="today-view">
+    <div class="today-view-grid">
+        <!-- Time axis column (left, fixed width ~80px) -->
+        <div class="time-axis">
+            @for (int hour = 0; hour < 24; hour++)
+            {
+                <div class="time-slot" style="height: var(--hour-height)">
+                    <span class="time-label">@($"{hour:D2}:00")</span>
+                </div>
+            }
+        </div>
+        
+        <!-- Calendar columns (one per calendar/family member) -->
+        @if (Calendars?.Any() == true)
+        {
+            @foreach (var calendar in Calendars)
+            {
+                <div class="calendar-column" style="border-left: 3px solid @calendar.Color">
+                    <div class="calendar-column-header">@calendar.DisplayName</div>
+                    <div class="calendar-column-body" style="height: calc(24 * var(--hour-height)); position: relative;">
+                        @foreach (var evt in GetEventsForCalendar(calendar.Id))
+                        {
+                            <div class="event-tile" style="@GetEventTileStyle(evt)" @onclick="() => OnEventClick(evt)">
+                                <span class="event-title">@evt.Title</span>
+                                <span class="event-time">@evt.Start.ToString("HH:mm")</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="no-calendars">
+                No calendars available.
+            </div>
+        }
+        
+        <!-- Red line overlay (current time indicator) -->
+        @if (ShowRedLine)
+        {
+            <div class="red-line" style="top: @RedLineTopPercent%; position: absolute; left: 80px; right: 0; height: 2px; background: #ef4444; z-index: 20;"></div>
+        }
+    </div>
+</div>
+
+@if (IsLoading)
+{
+    <div class="loading-overlay">
+        <div class="spinner"></div>
+        <span>Loading events...</span>
+    </div>
+}
+
+@code {
+    [Parameter] public DateOnly SelectedDate { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEventSelected { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnDaySelected { get; set; }
+
+    private List<CalendarSummaryViewModel>? Calendars { get; set; }
+    private List<CalendarEventViewModel>? Events { get; set; }
+    private double RedLineTopPercent { get; set; }
+    private bool ShowRedLine => SelectedDate == DateOnly.FromDateTime(DateTime.Today);
+    private bool IsLoading { get; set; } = true;
+    private System.Threading.Timer? _redLineTimer;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            StartRedLineTimer();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        IsLoading = true;
+        try
+        {
+            // Load calendars
+            var calendars = await CalendarApiService.GetCalendarsAsync();
+            Calendars = calendars?.ToList() ?? new List<CalendarSummaryViewModel>();
+
+            // Load month view and filter to selected date
+            var monthViewModel = await CalendarApiService.GetEventsForMonthAsync(SelectedDate.Year, SelectedDate.Month);
+            Events = new List<CalendarEventViewModel>();
+
+            // Extract events for the selected date
+            var dateKey = SelectedDate.ToString("yyyy-MM-dd");
+            if (monthViewModel.Days.TryGetValue(dateKey, out var dayEvents))
+            {
+                Events.AddRange(dayEvents);
+            }
+        }
+        catch (Exception ex)
+        {
+            // In production, log error
+            Console.Error.WriteLine($"Error loading TodayView data: {ex.Message}");
+        }
+        finally
+        {
+            IsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private IEnumerable<CalendarEventViewModel> GetEventsForCalendar(Guid calendarId)
+    {
+        return Events?.Where(e => e.CalendarInfoId == calendarId) ?? Enumerable.Empty<CalendarEventViewModel>();
+    }
+
+    private string GetEventTileStyle(CalendarEventViewModel evt)
+    {
+        if (evt.IsAllDay)
+        {
+            // All-day events at top with fixed height
+            return "position: absolute; top: 0; height: 40px; left: 4px; right: 4px; border-radius: 4px; padding: 4px; overflow: hidden; cursor: pointer;";
+        }
+
+        var startMinutes = evt.Start.Hour * 60 + evt.Start.Minute;
+        var endMinutes = evt.End.Hour * 60 + evt.End.Minute;
+        var topPercent = startMinutes / (24.0 * 60) * 100;
+        var heightPercent = Math.Max((endMinutes - startMinutes) / (24.0 * 60) * 100, 2.0); // min 2% height
+        return $"position: absolute; top: {topPercent:F2}%; height: {heightPercent:F2}%; left: 4px; right: 4px; border-radius: 4px; padding: 4px; overflow: hidden; cursor: pointer;";
+    }
+
+    private double CalculateRedLinePercent()
+    {
+        var now = DateTime.Now;
+        return (now.Hour * 60 + now.Minute) / (24.0 * 60) * 100;
+    }
+
+    private void StartRedLineTimer()
+    {
+        if (!ShowRedLine) return;
+
+        RedLineTopPercent = CalculateRedLinePercent();
+        _redLineTimer = new System.Threading.Timer(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                RedLineTopPercent = CalculateRedLinePercent();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    private async Task OnEventClick(CalendarEventViewModel evt)
+    {
+        await OnEventSelected.InvokeAsync(evt);
+    }
+
+    private async Task OnDayClick()
+    {
+        await OnDaySelected.InvokeAsync(SelectedDate);
+    }
+
+    public void Dispose()
+    {
+        _redLineTimer?.Dispose();
+    }
+}

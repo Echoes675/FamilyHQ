@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.Services.Auth;
 using FamilyHQ.WebUi.Services.Correlation;
+using Blazored.LocalStorage;
 
 namespace FamilyHQ.WebUi;
 
@@ -28,8 +29,11 @@ public class Program
         })
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
-        
+
+        builder.Services.AddBlazoredLocalStorage();
+        builder.Services.AddSingleton<IUserPreferencesService, UserPreferencesService>();
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
+        builder.Services.AddSingleton<IWeatherService, WeatherService>();
 
         await builder.Build().RunAsync();
     }
