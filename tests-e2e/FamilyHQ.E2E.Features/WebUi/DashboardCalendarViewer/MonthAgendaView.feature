@@ -186,6 +186,7 @@ Feature: Month Agenda View
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to "June 2026"
     And a new event "Synced Meeting" is added to Google Calendar on "2026-06-18" in "Work Calendar"
     And Google Calendar sends a webhook notification
     Then I see the event "Synced Meeting" in the "Work Calendar" column for "2026-06-18"

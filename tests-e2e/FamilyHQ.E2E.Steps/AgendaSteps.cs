@@ -153,8 +153,12 @@ public class AgendaSteps
     public async Task ThenIDoNotSeeInTheColumnFor(string text, string calendarName, string dateKey)
     {
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
-        var visible = await _dashboardPage.IsAgendaEventVisibleAsync(text, dateKey, calId);
-        visible.Should().BeFalse($"'{text}' should not be visible in {calendarName} on {dateKey}.");
+        // Use polling assertion to allow time for SignalR UI update after a webhook notification
+        await Assertions.Expect(
+            _page.GetByTestId($"agenda-cell-{dateKey}-{calId}")
+                 .GetByText(text, new() { Exact = false })
+                 .First)
+            .ToBeHiddenAsync(new() { Timeout = 10000 });
     }
 
     [Then(@"the event ""([^""]*)"" has no time prefix in the ""([^""]*)"" column for ""([^""]*)""")]
