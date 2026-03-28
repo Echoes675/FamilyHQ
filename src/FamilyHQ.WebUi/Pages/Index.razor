@@ -345,24 +345,11 @@
                 OnJumpToday="JumpToToday"
                 OnClose="CloseQuickJumpModal" />
 
-@if (_showDayPickerModal)
-{
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header pb-2">
-                    <h5 class="modal-title">Select Date</h5>
-                    <button type="button" class="btn-close" @onclick="CloseDayPickerModal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body text-center">
-                    <input type="date" class="form-control mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
-                    <button class="btn btn-primary w-100 mb-2" @onclick="JumpToPickedDay" data-testid="day-picker-go-btn">Go Context</button>
-                    <button class="btn btn-outline-secondary w-100" @onclick="JumpToTodayDayView" data-testid="day-picker-today-btn">Jump to Today</button>
-                </div>
-            </div>
-        </div>
-    </div>
-}
+<DayPickerModal IsVisible="_showDayPickerModal"
+                InitialDate="@(_selectedDate == default ? DateTime.Today : _selectedDate)"
+                OnDatePicked="JumpToPickedDay"
+                OnJumpToday="JumpToTodayDayView"
+                OnClose="CloseDayPickerModal" />
 
 @if (_showEventModal)
 {
@@ -479,7 +466,6 @@
 
     // Day Picker Modal State
     private bool _showDayPickerModal = false;
-    private DateTime _pickedDate = DateTime.Today;
 
     // Event Modal State
     private bool _showEventModal = false;
@@ -676,26 +662,18 @@
     }
 
     // Day Picker Modal Logic
-    private void OpenDayPickerModal()
-    {
-        _pickedDate = _selectedDate == default ? DateTime.Today : _selectedDate;
-        _showDayPickerModal = true;
-    }
+    private void OpenDayPickerModal() => _showDayPickerModal = true;
+    private void CloseDayPickerModal() => _showDayPickerModal = false;
 
-    private void CloseDayPickerModal()
+    private async Task JumpToPickedDay(DateTime date)
     {
         _showDayPickerModal = false;
-    }
-
-    private async Task JumpToPickedDay()
-    {
-        CloseDayPickerModal();
-        await SwitchToView(DashboardView.Day, _pickedDate);
+        await SwitchToView(DashboardView.Day, date);
     }
 
     private async Task JumpToTodayDayView()
     {
-        CloseDayPickerModal();
+        _showDayPickerModal = false;
         await SwitchToView(DashboardView.Day, DateTime.Today);
     }
 
