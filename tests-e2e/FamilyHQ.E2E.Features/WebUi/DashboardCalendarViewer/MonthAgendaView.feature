@@ -131,6 +131,39 @@ Feature: Month Agenda View
     Then I see the event "Team Meeting" in the "Work Calendar" column for "2026-06-20"
     And I see the event "Team Meeting" in the "Personal Calendar" column for "2026-06-20"
 
+  Scenario: All six calendar column headers are visible in the agenda view
+    Given I have a user like "SixCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "SixCalUser"
+    When I view the dashboard
+    And I click the "Agenda" tab
+    Then I see a column header for "Work Calendar"
+    And I see a column header for "Personal Calendar"
+    And I see a column header for "School Calendar"
+    And I see a column header for "Sports Calendar"
+    And I see a column header for "Health Calendar"
+    And I see a column header for "Hobbies Calendar"
+
+  Scenario: Events from all six calendars appear in their respective columns
+    Given I have a user like "SixCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And the user has an all-day event "Work Event" on "2026-06-10" in "Work Calendar"
+    And the user has an all-day event "Personal Event" on "2026-06-10" in "Personal Calendar"
+    And the user has an all-day event "School Event" on "2026-06-10" in "School Calendar"
+    And the user has an all-day event "Sports Event" on "2026-06-10" in "Sports Calendar"
+    And the user has an all-day event "Health Event" on "2026-06-10" in "Health Calendar"
+    And the user has an all-day event "Hobbies Event" on "2026-06-10" in "Hobbies Calendar"
+    And I login as the user "SixCalUser"
+    When I view the dashboard
+    And I click the "Agenda" tab
+    And I navigate the agenda to "June 2026"
+    Then I see the event "Work Event" in the "Work Calendar" column for "2026-06-10"
+    And I see the event "Personal Event" in the "Personal Calendar" column for "2026-06-10"
+    And I see the event "School Event" in the "School Calendar" column for "2026-06-10"
+    And I see the event "Sports Event" in the "Sports Calendar" column for "2026-06-10"
+    And I see the event "Health Event" in the "Health Calendar" column for "2026-06-10"
+    And I see the event "Hobbies Event" in the "Hobbies Calendar" column for "2026-06-10"
+
   # Interaction Scenarios
 
   Scenario: Tapping an event opens the edit modal

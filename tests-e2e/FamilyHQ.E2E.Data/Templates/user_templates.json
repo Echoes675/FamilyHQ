@@ -123,5 +123,40 @@
             }
         ],
         "Events": []
+    },
+    "SixCalUser": {
+        "Calendars": [
+            {
+                "Id": "template_sixcal_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_sixcal_personal",
+                "Summary": "Personal Calendar",
+                "BackgroundColor": "#34a853"
+            },
+            {
+                "Id": "template_sixcal_school",
+                "Summary": "School Calendar",
+                "BackgroundColor": "#fbbc04"
+            },
+            {
+                "Id": "template_sixcal_sports",
+                "Summary": "Sports Calendar",
+                "BackgroundColor": "#ff6d00"
+            },
+            {
+                "Id": "template_sixcal_health",
+                "Summary": "Health Calendar",
+                "BackgroundColor": "#9c27b0"
+            },
+            {
+                "Id": "template_sixcal_hobbies",
+                "Summary": "Hobbies Calendar",
+                "BackgroundColor": "#00acc1"
+            }
+        ],
+        "Events": []
     }
 }

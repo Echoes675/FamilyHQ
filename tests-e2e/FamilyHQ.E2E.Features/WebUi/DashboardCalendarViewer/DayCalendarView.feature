@@ -69,6 +69,14 @@ Feature: Day Calendar View
     And I see the timed event "Dentist Checkup" displayed in the Day View grid
     And the event "Dentist Checkup" has a height representing 90 minutes
 
+  Scenario: Day view shows 6 calendar columns for a user with 6 calendars
+    Given I have a user like "SixCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "SixCalUser"
+    When I view the dashboard
+    And I switch to the Day View tab
+    Then there are 6 calendar columns in the day view
+
   Scenario: Day View displays multi-day events
     Given I have a user like "MultiDayUser"
     And the "Family Events" calendar is the active calendar
