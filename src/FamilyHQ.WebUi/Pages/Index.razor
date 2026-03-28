@@ -314,8 +314,8 @@
                             + (isToday ? " agenda-today-row" : "");
 
                         <tr class="@rowCss">
-                            <td data-testid="@($"agenda-day-label-{dateKey}")" class="agenda-day-col">
-                                @date.ToString("ddd dd")
+                            <td data-testid="@($"agenda-day-label-{dateKey}")" class="agenda-day-col" style="cursor:pointer" @onclick="() => OpenAddEventModal(date)">
+                                @date.ToString("dd ddd")
                             </td>
                             @foreach (var cal in _calendars)
                             {
