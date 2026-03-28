@@ -166,7 +166,7 @@ Feature: Month Agenda View
 
   # Interaction Scenarios
 
-  Scenario: Tapping an event opens the edit modal
+  Scenario: Tapping a cell with events navigates to the Day view
     Given I have a user like "StandardUser"
     And the "Work Calendar" calendar is the active calendar
     And the user has a timed event "Standup" at "09:00" on "2026-06-15" in "Work Calendar"
@@ -174,9 +174,8 @@ Feature: Month Agenda View
     When I view the dashboard
     And I click the "Agenda" tab
     And I navigate the agenda to "June 2026"
-    And I tap the event "09:00 Standup" in the "Work Calendar" column for "2026-06-15"
-    Then I see the event modal
-    And I see the event details for "Standup"
+    And I tap the agenda cell in the "Work Calendar" column for "2026-06-15"
+    Then I see the Day View Container
 
   Scenario: Tapping an empty cell opens the create modal with correct date and calendar
     Given I have a user like "StandardUser"

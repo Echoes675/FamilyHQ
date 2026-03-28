@@ -204,6 +204,13 @@ public class AgendaSteps
         await _dashboardPage.TapAgendaCellAsync(dateKey, calId);
     }
 
+    [When(@"I tap the agenda cell in the ""([^""]*)"" column for ""([^""]*)""")]
+    public async Task WhenITapTheAgendaCellInTheColumnFor(string calendarName, string dateKey)
+    {
+        var calId = await ResolveCalendarIdFromPageAsync(calendarName);
+        await _dashboardPage.TapAgendaFilledCellAsync(dateKey, calId);
+    }
+
     [When(@"I tap the overflow indicator for ""([^""]*)"" in ""([^""]*)""")]
     public async Task WhenITapTheOverflowIndicatorFor(string dateKey, string calendarName)
     {

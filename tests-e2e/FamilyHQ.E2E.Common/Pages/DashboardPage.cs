@@ -195,6 +195,14 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
+    public async Task TapAgendaFilledCellAsync(string dateKey, Guid calendarId)
+    {
+        // Click a cell that contains events — navigates to Day view
+        await Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}").ClickAsync(
+            new() { Position = new Position { X = 5, Y = 5 } });
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
     public async Task TapAgendaOverflowAsync(string dateKey, Guid calendarId)
     {
         await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").ClickAsync();
