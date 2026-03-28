@@ -28,22 +28,7 @@
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 
-        @if (_currentView == DashboardView.MonthAgenda)
-        {
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div class="btn-group">
-                    <button class="btn btn-outline-primary" data-testid="agenda-prev-month" @onclick="GoToPreviousMonth">&lt; Prev</button>
-                    <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" data-testid="agenda-month-year-label" @onclick="OpenQuickJumpModal">
-                        @CurrentMonth.ToString("MMMM yyyy")
-                    </button>
-                    <button class="btn btn-outline-primary" data-testid="agenda-next-month" @onclick="GoToNextMonth">Next &gt;</button>
-                </div>
-                <button class="btn btn-primary ms-3" data-testid="agenda-create-button" @onclick="() => OpenAddEventModal(DateTime.Today)">
-                    <i class="bi bi-plus-circle"></i> Add Event
-                </button>
-            </div>
-        }
-        else if (_currentView == DashboardView.Day)
+        @if (_currentView == DashboardView.Day)
         {
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div class="btn-group">
@@ -185,77 +170,15 @@
     }
     else if (_currentView == DashboardView.MonthAgenda)
     {
-        <div class="agenda-view-container">
-            <table class="agenda-table">
-                <thead>
-                    <tr class="agenda-header-row">
-                        <th class="agenda-day-col">Day</th>
-                        @foreach (var cal in _calendars)
-                        {
-                            <th data-testid="@($"agenda-calendar-header-{cal.Id}")" class="agenda-cal-col">
-                                <span class="cal-color-dot" style="background-color: @(cal.Color ?? "#9e9e9e");"></span>
-                                @cal.DisplayName
-                            </th>
-                        }
-                    </tr>
-                </thead>
-                <tbody>
-                    @{
-                        var daysInMonth = DateTime.DaysInMonth(CurrentMonth.Year, CurrentMonth.Month);
-                    }
-                    @for (int d = 1; d <= daysInMonth; d++)
-                    {
-                        var date = new DateTime(CurrentMonth.Year, CurrentMonth.Month, d);
-                        var dateKey = date.ToString("yyyy-MM-dd");
-                        var isWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
-                        var isToday = date.Date == DateTime.Today;
-                        var rowCss = "agenda-day-row"
-                            + (isWeekend ? " agenda-weekend-row" : "")
-                            + (isToday ? " agenda-today-row" : "");
-
-                        <tr class="@rowCss">
-                            <td data-testid="@($"agenda-day-label-{dateKey}")" class="agenda-day-col" style="cursor:pointer" @onclick="() => OpenAddEventModal(date)">
-                                @date.ToString("dd ddd")
-                            </td>
-                            @foreach (var cal in _calendars)
-                            {
-                                var dayEvents = (_monthView.Days.TryGetValue(dateKey, out var dayList)
-                                        ? dayList
-                                        : new List<CalendarEventViewModel>())
-                                    .Where(e => e.CalendarInfoId == cal.Id)
-                                    .OrderBy(e => (e.IsAllDay || e.Start.Date < date.Date) ? 0 : 1)
-                                    .ThenBy(e => e.Start)
-                                    .ToList();
-
-                                <td data-testid="@($"agenda-cell-{dateKey}-{cal.Id}")"
-                                    class="agenda-cal-cell"
-                                    @onclick="async () => { if (dayEvents.Count > 0) await SwitchToView(DashboardView.Day, date); else OpenAddEventModal(date, cal.Id); }">
-                                    @foreach (var evt in dayEvents.Take(3))
-                                    {
-                                        var isContinuation = !evt.IsAllDay && evt.Start.Date < date.Date;
-                                        var displayText = (evt.IsAllDay || isContinuation)
-                                            ? evt.Title
-                                            : $"{evt.Start.LocalDateTime:HH:mm} {evt.Title}";
-
-                                        <div data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
-                                             class="agenda-event-line">
-                                            @displayText
-                                        </div>
-                                    }
-                                    @if (dayEvents.Count > 3)
-                                    {
-                                        <div data-testid="@($"agenda-overflow-{dateKey}-{cal.Id}")"
-                                             class="agenda-overflow-btn">
-                                            +@(dayEvents.Count - 3) more
-                                        </div>
-                                    }
-                                </td>
-                            }
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
+        <AgendaView CurrentMonth="CurrentMonth"
+                    MonthView="_monthView"
+                    Calendars="_calendars"
+                    OnPreviousMonth="GoToPreviousMonth"
+                    OnNextMonth="GoToNextMonth"
+                    OnOpenQuickJump="OpenQuickJumpModal"
+                    OnAddEvent="OnAgendaAddEvent"
+                    OnAddEventForCalendar="OnAgendaAddEventForCalendar"
+                    OnDayDrillDown="OnAgendaDrillDown" />
     }
     }
     }
@@ -433,6 +356,13 @@
     private Task OnMonthDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
     private void OnMonthAddEvent(DateTime date) => OpenAddEventModal(date);
+
+    private void OnAgendaAddEvent(DateTime date) => OpenAddEventModal(date);
+
+    private void OnAgendaAddEventForCalendar((DateTime Date, Guid CalendarId) args) =>
+        OpenAddEventModal(args.Date, args.CalendarId);
+
+    private Task OnAgendaDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
     // View Switching Logic
     private Task OnTabViewChanged(DashboardView view) => SwitchToView(view);
