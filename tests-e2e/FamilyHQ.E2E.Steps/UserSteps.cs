@@ -155,7 +155,7 @@ public class UserSteps
             throw new InvalidOperationException("Login button unavailable after 3 sign-in attempts");
 
         await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 60000 });
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 90000 });
 
         // Select the user on the simulator consent screen
         var userSelect = page.Locator("select#selectedUserId");

@@ -130,6 +130,8 @@ public class DashboardPage : BasePage
 
     public async Task<bool> WeekendRowsHaveClassAsync()
     {
+        // Wait for at least one row to be rendered before counting
+        await Page.Locator(".agenda-weekend-row").First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         // A month always has at least 8 weekend days
         return await Page.Locator(".agenda-weekend-row").CountAsync() >= 8;
     }
@@ -552,7 +554,7 @@ public class DashboardPage : BasePage
             new() { Timeout = 30000 });
 
         await SaveEventBtn.ClickAsync();
-        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
     }
