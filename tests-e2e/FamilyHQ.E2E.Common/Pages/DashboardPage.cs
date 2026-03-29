@@ -452,6 +452,24 @@ public class DashboardPage : BasePage
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
+    /// <summary>
+    /// Navigates to the next month only if <paramref name="date"/> falls outside the
+    /// currently-visible month grid. The grid spans from the Sunday on or before the
+    /// first of the current month to the Saturday on or after the last day of the month.
+    /// </summary>
+    public async Task NavigateToShowDateIfNeededAsync(DateTime date)
+    {
+        var today = DateTime.Today;
+        var lastDayOfMonth = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+        var daysUntilSaturday = ((int)DayOfWeek.Saturday - (int)lastDayOfMonth.DayOfWeek + 7) % 7;
+        var gridEnd = lastDayOfMonth.AddDays(daysUntilSaturday);
+
+        if (date > gridEnd)
+        {
+            await NavigateToNextMonthAsync();
+        }
+    }
+
     public async Task OpenEventForEditingAsync(string eventName)
     {
         await Page.GetByText(eventName).First.ClickAsync();
