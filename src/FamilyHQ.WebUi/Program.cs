@@ -38,6 +38,13 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddHttpClient<ISettingsApiService, SettingsApiService>(client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        })
+        .AddHttpMessageHandler<CorrelationIdMessageHandler>()
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+
         await builder.Build().RunAsync();
     }
 }

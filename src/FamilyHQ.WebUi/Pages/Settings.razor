@@ -1,0 +1,143 @@
+@page "/settings"
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Services.Auth
+@inject ISettingsApiService SettingsApiService
+@inject IAuthenticationService AuthService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<div class="settings-page">
+
+    <h2 class="settings-section__title">Location</h2>
+    <div class="settings-section">
+        @if (_locationSetting is not null)
+        {
+            <div class="settings-location-pill">
+                <span>@_locationSetting.PlaceName</span>
+                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")">
+                    @(_locationSetting.IsAutoDetected ? "Auto" : "Saved")
+                </span>
+            </div>
+        }
+        else
+        {
+            <p class="settings-hint">No location saved — using automatic detection.</p>
+        }
+
+        <div class="settings-input-container" @ref="_scrollContainer">
+            <label for="place-input" class="settings-label">Place name</label>
+            <input id="place-input"
+                   type="text"
+                   class="settings-input"
+                   @bind="_placeNameInput"
+                   @bind:event="oninput"
+                   @onfocus="OnInputFocus"
+                   placeholder="e.g. Edinburgh, Scotland" />
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_saveError))
+        {
+            <p class="settings-error">@_saveError</p>
+        }
+
+        <button class="settings-btn" @onclick="SaveLocationAsync" disabled="@_isSaving">
+            @(_isSaving ? "Saving…" : (_locationSetting is { IsAutoDetected: false } ? "Update Location" : "Save Location"))
+        </button>
+        <p class="settings-hint">Takes effect immediately.</p>
+    </div>
+
+    <h2 class="settings-section__title">Today's Theme Schedule</h2>
+    <div class="settings-section settings-theme-schedule">
+        @if (_todayTheme is not null)
+        {
+            <div class="theme-tile theme-tile--morning">
+                <span class="theme-tile__name">Morning</span>
+                <span class="theme-tile__time">@_todayTheme.MorningStart.ToString("HH:mm")</span>
+            </div>
+            <div class="theme-tile theme-tile--daytime">
+                <span class="theme-tile__name">Daytime</span>
+                <span class="theme-tile__time">@_todayTheme.DaytimeStart.ToString("HH:mm")</span>
+            </div>
+            <div class="theme-tile theme-tile--evening">
+                <span class="theme-tile__name">Evening</span>
+                <span class="theme-tile__time">@_todayTheme.EveningStart.ToString("HH:mm")</span>
+            </div>
+            <div class="theme-tile theme-tile--night">
+                <span class="theme-tile__name">Night</span>
+                <span class="theme-tile__time">@_todayTheme.NightStart.ToString("HH:mm")</span>
+            </div>
+        }
+    </div>
+
+    <h2 class="settings-section__title">Account</h2>
+    <div class="settings-section settings-account">
+        @if (_username is not null)
+        {
+            <div class="account-avatar">@GetInitials(_username)</div>
+            <p class="account-name">@_username</p>
+        }
+        <button class="settings-btn settings-btn--secondary" @onclick="OnSignOutClicked">Sign Out</button>
+    </div>
+
+</div>
+
+@code {
+    private LocationSettingDto? _locationSetting;
+    private DayThemeDto? _todayTheme;
+    private string? _username;
+    private string _placeNameInput = string.Empty;
+    private bool _isSaving;
+    private string? _saveError;
+    private ElementReference _scrollContainer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _username = await AuthService.GetUsernameAsync();
+        _locationSetting = await SettingsApiService.GetLocationAsync();
+        _todayTheme = await SettingsApiService.GetTodayThemeAsync();
+    }
+
+    private async Task OnInputFocus()
+    {
+        await JS.InvokeVoidAsync("eval",
+            "document.getElementById('place-input')?.scrollIntoView({ behavior: 'smooth', block: 'center' })");
+    }
+
+    private async Task SaveLocationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_placeNameInput)) return;
+
+        _isSaving = true;
+        _saveError = null;
+        try
+        {
+            _locationSetting = await SettingsApiService.SaveLocationAsync(_placeNameInput);
+            _placeNameInput = string.Empty;
+            _todayTheme = await SettingsApiService.GetTodayThemeAsync();
+        }
+        catch (Exception ex)
+        {
+            _saveError = $"Could not save location: {ex.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task OnSignOutClicked()
+    {
+        await AuthService.SignOutAsync();
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private static string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name[..Math.Min(2, name.Length)].ToUpperInvariant();
+    }
+}

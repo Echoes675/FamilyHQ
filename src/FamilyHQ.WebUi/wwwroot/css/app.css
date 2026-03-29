@@ -609,3 +609,187 @@ html, body {
     background: var(--theme-accent);
     color: var(--theme-on-accent);
 }
+/* =============================================
+   Settings page
+   ============================================= */
+.settings-page {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 24px 20px 80px;
+    overflow-y: auto;
+    /* Virtual keyboard inset */
+    padding-bottom: max(80px, env(keyboard-inset-height, 0px));
+}
+
+.settings-section__title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--theme-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 32px 0 12px;
+}
+
+.settings-section {
+    background: var(--theme-surface);
+    border: 1px solid var(--theme-border);
+    border-radius: 12px;
+    padding: 20px;
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out;
+}
+
+.settings-location-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--theme-accent);
+    color: #fff;
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 0.95rem;
+    margin-bottom: 16px;
+}
+
+.settings-location-pill__badge {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.25);
+}
+
+.settings-input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.settings-label {
+    font-size: 0.9rem;
+    color: var(--theme-text-muted);
+}
+
+.settings-input {
+    background: transparent;
+    border: 1px solid var(--theme-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 1rem;
+    color: var(--theme-text);
+    outline: none;
+    min-height: 48px;
+    transition: border-color 0.2s ease;
+}
+
+.settings-input:focus {
+    border-color: var(--theme-accent);
+}
+
+.settings-btn {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    background: var(--theme-accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background-color 0.2s ease;
+}
+
+.settings-btn:hover:not(:disabled) {
+    background: var(--theme-accent-hover);
+}
+
+.settings-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.settings-btn--secondary {
+    background: transparent;
+    border: 1px solid var(--theme-border);
+    color: var(--theme-text);
+    margin-top: 16px;
+}
+
+.settings-hint {
+    font-size: 0.85rem;
+    color: var(--theme-text-muted);
+    margin: 6px 0 0;
+}
+
+.settings-error {
+    color: #ef4444;
+    font-size: 0.9rem;
+    margin: 4px 0;
+}
+
+/* Theme schedule tiles */
+.settings-theme-schedule {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.theme-tile {
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.theme-tile--morning  { background: rgba(249,115,22,0.15);  }
+.theme-tile--daytime  { background: rgba(59,130,246,0.15);  }
+.theme-tile--evening  { background: rgba(192,132,252,0.15); }
+.theme-tile--night    { background: rgba(96,165,250,0.10);  }
+
+.theme-tile__name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--theme-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.theme-tile__time {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--theme-text);
+}
+
+/* Account section */
+.settings-account {
+    text-align: center;
+}
+
+.account-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    color: #fff;
+    font-size: 1.4rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 12px;
+}
+
+.account-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--theme-text);
+    margin: 0 0 4px;
+}
+
+.account-email {
+    font-size: 0.9rem;
+    color: var(--theme-text-muted);
+    margin: 0 0 16px;
+}

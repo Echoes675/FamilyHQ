@@ -66,8 +66,8 @@ public class AuthenticationSteps
         await page.WaitForURLAsync(config.BaseUrl + "/");
 
         // Wait for Blazor's auth check to complete and render the authenticated view
-        // so that subsequent steps (e.g. clicking Sign Out) find the expected UI.
-        await _dashboardPage.SignOutBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+        // (header is only rendered when authenticated).
+        await page.Locator(".dashboard-header").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
     }
 
     [When(@"I navigate to the dashboard")]
@@ -111,6 +111,10 @@ public class AuthenticationSteps
         }
         else if (buttonName == "Sign Out")
         {
+            // Sign Out button lives on the Settings page
+            var page = _scenarioContext.Get<IPage>();
+            var config = ConfigurationLoader.Load();
+            await page.GotoAsync(config.BaseUrl + "/settings");
             await _dashboardPage.SignOutBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         }
     }
@@ -118,15 +122,19 @@ public class AuthenticationSteps
     [Then(@"I see the username displayed")]
     public async Task ThenISeeTheUsernameDisplayed()
     {
-        await _dashboardPage.UserInfo.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        // Username is displayed in the Account section on the Settings page
+        var page = _scenarioContext.Get<IPage>();
+        var config = ConfigurationLoader.Load();
+        await page.GotoAsync(config.BaseUrl + "/settings");
+        await page.Locator(".account-name").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
     [Then(@"I do not see the username displayed")]
     public async Task ThenIDoNotSeeTheUsernameDisplayed()
     {
-        await _dashboardPage.UserInfo.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 10000 });
-        var userInfoVisible = await _dashboardPage.UserInfo.CountAsync() > 0;
-        userInfoVisible.Should().BeFalse("Username should not be displayed after sign out");
+        // After sign-out the user is on the home page; the dashboard-header is not rendered
+        var signedIn = await _dashboardPage.IsSignedInAsync();
+        signedIn.Should().BeFalse("User should not be signed in after sign out");
     }
 
     [Then(@"I do not see the calendar")]
