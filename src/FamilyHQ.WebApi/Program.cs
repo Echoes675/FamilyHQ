@@ -5,6 +5,7 @@ using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Theme;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
@@ -34,6 +35,19 @@ builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.Current
 
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
+
+// Register typed HttpClients for services that require an injected HttpClient
+builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
+builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
+{
+    client.BaseAddress = new Uri("https://nominatim.openstreetmap.org");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
 
 // Add Data Protection with database key storage and certificate-based key encryption
 var dataProtectionBuilder = builder.Services.AddDataProtection()
