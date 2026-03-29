@@ -1,6 +1,6 @@
 namespace FamilyHQ.WebUi.Services;
 
-public interface IThemeService
+public interface IThemeService : IAsyncDisposable
 {
     Task InitialiseAsync();
 }
