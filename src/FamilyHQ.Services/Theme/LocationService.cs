@@ -16,6 +16,9 @@ public class LocationService(ILocationSettingRepository repo, HttpClient httpCli
             "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon", ct)
             ?? throw new InvalidOperationException("IP geolocation returned null response.");
 
+        if (response.Status != "success")
+            throw new InvalidOperationException($"IP geolocation failed with status '{response.Status}'.");
+
         var placeName = $"{response.City}, {response.RegionName}, {response.Country}";
         return new LocationResult(placeName, response.Lat, response.Lon, IsAutoDetected: true);
     }
