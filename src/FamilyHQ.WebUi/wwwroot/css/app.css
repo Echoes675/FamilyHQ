@@ -12,6 +12,7 @@
 @property --theme-accent-hover{ syntax: '<color>'; inherits: true; initial-value: #EA580C; }
 @property --theme-today       { syntax: '<color>'; inherits: true; initial-value: rgba(249,115,22,0.15); }
 @property --theme-weekend     { syntax: '<color>'; inherits: true; initial-value: rgba(249,115,22,0.05); }
+@property --theme-on-accent   { syntax: '<color>'; inherits: true; initial-value: #fff; }
 
 /* =============================================
    Theme blocks — driven by data-theme on <body>
@@ -27,6 +28,7 @@
     --theme-accent-hover: #EA580C;
     --theme-today:        rgba(249,115,22,0.15);
     --theme-weekend:      rgba(249,115,22,0.05);
+    --theme-on-accent:    #fff;
 }
 
 [data-theme="daytime"] {
@@ -40,6 +42,7 @@
     --theme-accent-hover: #2563EB;
     --theme-today:        rgba(59,130,246,0.15);
     --theme-weekend:      rgba(59,130,246,0.05);
+    --theme-on-accent:    #fff;
 }
 
 [data-theme="evening"] {
@@ -53,6 +56,7 @@
     --theme-accent-hover: #A855F7;
     --theme-today:        rgba(192,132,252,0.2);
     --theme-weekend:      rgba(192,132,252,0.08);
+    --theme-on-accent:    #fff;
 }
 
 [data-theme="night"] {
@@ -66,6 +70,7 @@
     --theme-accent-hover: #3B82F6;
     --theme-today:        rgba(96,165,250,0.15);
     --theme-weekend:      rgba(96,165,250,0.05);
+    --theme-on-accent:    #fff;
 }
 
 /* =============================================
@@ -597,10 +602,10 @@ html, body {
     color: var(--theme-text);
     text-decoration: none;
     border-radius: 50%;
-    transition: background-color 0.2s ease;
+    transition: background-color 0.2s ease, color 45s ease-in-out;
 }
 
 .dashboard-header__settings:hover {
     background: var(--theme-accent);
-    color: #fff;
+    color: var(--theme-on-accent);
 }
