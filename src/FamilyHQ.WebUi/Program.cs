@@ -31,6 +31,13 @@ public class Program
         
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
 
+        builder.Services.AddHttpClient<IThemeService, ThemeService>(client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        })
+        .AddHttpMessageHandler<CorrelationIdMessageHandler>()
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+
         await builder.Build().RunAsync();
     }
 }
