@@ -1,22 +1,108 @@
-:root {
-    --primary: #4F46E5;
-    --primary-hover: #4338CA;
-    --background: #F3F4F6;
-    --surface: #FFFFFF;
-    --border: #E5E7EB;
-    --text-main: #111827;
-    --text-muted: #6B7280;
+/* =============================================
+   @property registrations — typed <color> values
+   allow browser to interpolate during transitions
+   ============================================= */
+@property --theme-bg-start    { syntax: '<color>'; inherits: true; initial-value: #FFF8F0; }
+@property --theme-bg-end      { syntax: '<color>'; inherits: true; initial-value: #FFD8A8; }
+@property --theme-surface     { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.75); }
+@property --theme-border      { syntax: '<color>'; inherits: true; initial-value: rgba(124,58,0,0.15); }
+@property --theme-text        { syntax: '<color>'; inherits: true; initial-value: #3B1800; }
+@property --theme-text-muted  { syntax: '<color>'; inherits: true; initial-value: #7C3A00; }
+@property --theme-accent      { syntax: '<color>'; inherits: true; initial-value: #F97316; }
+@property --theme-accent-hover{ syntax: '<color>'; inherits: true; initial-value: #EA580C; }
+@property --theme-today       { syntax: '<color>'; inherits: true; initial-value: rgba(249,115,22,0.15); }
+@property --theme-weekend     { syntax: '<color>'; inherits: true; initial-value: rgba(249,115,22,0.05); }
 
-    --weekend-bg: #F9FAFB;
-    --today-bg: #EEF2FF;
+/* =============================================
+   Theme blocks — driven by data-theme on <body>
+   ============================================= */
+[data-theme="morning"] {
+    --theme-bg-start:     #FFF8F0;
+    --theme-bg-end:       #FFD8A8;
+    --theme-surface:      rgba(255,255,255,0.75);
+    --theme-border:       rgba(124,58,0,0.15);
+    --theme-text:         #3B1800;
+    --theme-text-muted:   #7C3A00;
+    --theme-accent:       #F97316;
+    --theme-accent-hover: #EA580C;
+    --theme-today:        rgba(249,115,22,0.15);
+    --theme-weekend:      rgba(249,115,22,0.05);
 }
 
-body {
-    background-color: var(--background);
-    color: var(--text-main);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+[data-theme="daytime"] {
+    --theme-bg-start:     #E8F4FD;
+    --theme-bg-end:       #C8E6FA;
+    --theme-surface:      rgba(255,255,255,0.80);
+    --theme-border:       rgba(26,74,110,0.15);
+    --theme-text:         #0F2A40;
+    --theme-text-muted:   #1A4A6E;
+    --theme-accent:       #3B82F6;
+    --theme-accent-hover: #2563EB;
+    --theme-today:        rgba(59,130,246,0.15);
+    --theme-weekend:      rgba(59,130,246,0.05);
+}
+
+[data-theme="evening"] {
+    --theme-bg-start:     #2D1B4E;
+    --theme-bg-end:       #4A2060;
+    --theme-surface:      rgba(255,255,255,0.10);
+    --theme-border:       rgba(244,200,122,0.2);
+    --theme-text:         #F4E8D0;
+    --theme-text-muted:   #F4C87A;
+    --theme-accent:       #C084FC;
+    --theme-accent-hover: #A855F7;
+    --theme-today:        rgba(192,132,252,0.2);
+    --theme-weekend:      rgba(192,132,252,0.08);
+}
+
+[data-theme="night"] {
+    --theme-bg-start:     #0A0E1A;
+    --theme-bg-end:       #0F1628;
+    --theme-surface:      rgba(255,255,255,0.06);
+    --theme-border:       rgba(139,179,232,0.15);
+    --theme-text:         #E2EAF4;
+    --theme-text-muted:   #8BB3E8;
+    --theme-accent:       #60A5FA;
+    --theme-accent-hover: #3B82F6;
+    --theme-today:        rgba(96,165,250,0.15);
+    --theme-weekend:      rgba(96,165,250,0.05);
+}
+
+/* =============================================
+   DOM layer model
+   ============================================= */
+html, body {
     margin: 0;
     padding: 0;
+    height: 100%;
+    /* Background is handled by #theme-bg — do NOT set background here */
+    color: var(--theme-text);
+    transition: color 45s ease-in-out;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+#theme-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: linear-gradient(160deg, var(--theme-bg-start), var(--theme-bg-end));
+    transition:
+        --theme-bg-start 45s ease-in-out,
+        --theme-bg-end   45s ease-in-out;
+    pointer-events: none;
+}
+
+#weather-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+}
+
+#app {
+    position: relative;
+    z-index: 2;
+    min-height: 100vh;
 }
 
 .dashboard-container {
@@ -28,37 +114,39 @@ body {
 .month-table {
     width: 100%;
     border-collapse: collapse;
-    background: var(--surface);
+    background: var(--theme-surface);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     border-radius: 8px;
     overflow: hidden;
+    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
 }
 
 .month-table th,
 .month-table td {
-    border: 1px solid var(--border);
+    border: 1px solid var(--theme-border);
     padding: 0.75rem;
     text-align: left;
     vertical-align: top;
 }
 
 .month-table th {
-    background-color: var(--surface);
+    background-color: var(--theme-surface);
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
+    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
 }
 
 .weekend-cell {
-    background-color: var(--weekend-bg);
+    background-color: var(--theme-weekend);
 }
 
 .today-cell {
-    background-color: var(--today-bg);
-    border: 2px solid var(--primary);
+    background-color: var(--theme-today);
+    border: 2px solid var(--theme-accent);
 }
 
 .event-capsule {
-    background-color: var(--primary);
+    background-color: var(--theme-accent);
     color: white;
     padding: 4px 8px;
     border-radius: 4px;
@@ -76,7 +164,7 @@ body {
 }
 
 .overflow-indicator {
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
@@ -187,29 +275,30 @@ body {
     display: flex;
     flex-direction: column;
     height: 75vh;
-    border: 1px solid var(--border);
+    border: 1px solid var(--theme-border);
     border-radius: 8px;
-    background: var(--surface);
+    background: var(--theme-surface);
     overflow-y: auto;
+    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
 }
 
 .day-view-sticky-header {
     position: sticky;
     top: 0;
     z-index: 50;
-    background-color: var(--surface);
+    background-color: var(--theme-surface);
 }
 
 .day-header {
     display: flex;
-    border-bottom: 1px solid var(--border);
-    background-color: var(--surface);
+    border-bottom: 1px solid var(--theme-border);
+    background-color: var(--theme-surface);
 }
 
 .time-axis-header {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
 }
 
 .calendar-header-col {
@@ -218,7 +307,7 @@ body {
     text-align: center;
     padding: 0.5rem;
     font-weight: 600;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -229,26 +318,26 @@ body {
 
 .all-day-container {
     display: flex;
-    border-bottom: 2px solid var(--border);
-    background-color: var(--weekend-bg);
+    border-bottom: 2px solid var(--theme-border);
+    background-color: var(--theme-weekend);
 }
 
 .all-day-label {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
     display: flex;
     align-items: center;
     justify-content: flex-end;
     padding-right: 8px;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
     min-height: 40px;
 }
 
 .all-day-col {
     flex: 1;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
     padding: 4px;
     display: flex;
     flex-direction: column;
@@ -262,7 +351,7 @@ body {
     flex: 1;
     overflow-y: visible;
     position: relative;
-    background-color: var(--surface);
+    background-color: var(--theme-surface);
 }
 
 .current-time-line {
@@ -295,9 +384,9 @@ body {
 .time-axis {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
     position: relative;
-    background-color: var(--surface);
+    background-color: var(--theme-surface);
     z-index: 2; /* keep above horizontal lines */
 }
 
@@ -307,7 +396,7 @@ body {
     text-align: right;
     padding-right: 8px;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
     transform: translateY(-50%); /* Center the text vertically on the hour line */
 }
 
@@ -327,7 +416,7 @@ body {
     left: 0;
     right: 0;
     height: 1px;
-    background-color: var(--border);
+    background-color: var(--theme-border);
     opacity: 0.5;
 }
 
@@ -341,7 +430,7 @@ body {
 
 .calendar-col {
     flex: 1;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--theme-border);
     position: relative; /* absolute events position relative to this col */
     cursor: pointer; /* Click slot to add event here */
 }
@@ -377,10 +466,11 @@ body {
 /* ── Month Agenda View ─────────────────────────────────────────────────────── */
 
 .agenda-view-container {
-    background: var(--surface);
+    background: var(--theme-surface);
     border-radius: 8px;
     box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
     overflow: hidden;
+    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
 }
 
 .agenda-table {
@@ -391,17 +481,17 @@ body {
 
 .agenda-table th,
 .agenda-table td {
-    border: 1px solid var(--border);
+    border: 1px solid var(--theme-border);
     padding: 2px 4px;
     vertical-align: top;
     overflow: hidden;
 }
 
 .agenda-header-row th {
-    background-color: var(--surface);
+    background-color: var(--theme-surface);
     font-weight: 600;
     font-size: 0.8rem;
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
     text-align: center;
 }
 
@@ -410,7 +500,7 @@ body {
     white-space: nowrap;
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--text-main);
+    color: var(--theme-text);
 }
 
 .agenda-cal-col {
@@ -430,23 +520,23 @@ body {
 
 .agenda-weekend-row .agenda-day-col,
 .agenda-weekend-row .agenda-cal-cell {
-    background-color: var(--weekend-bg);
+    background-color: var(--theme-weekend);
 }
 
 .agenda-today-row .agenda-day-col {
-    color: var(--primary);
+    color: var(--theme-accent);
     font-weight: 700;
 }
 
 .agenda-today-row .agenda-cal-cell {
-    background-color: var(--today-bg);
+    background-color: var(--theme-today);
 }
 
 .agenda-event-line {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: var(--text-main);
+    color: var(--theme-text);
     font-size: 0.75rem;
     padding: 1px 2px;
     cursor: pointer;
@@ -458,14 +548,14 @@ body {
 }
 
 .agenda-overflow-btn {
-    color: var(--text-muted);
+    color: var(--theme-text-muted);
     font-size: 0.7rem;
     cursor: pointer;
     padding: 1px 2px;
 }
 
 .agenda-overflow-btn:hover {
-    color: var(--text-main);
+    color: var(--theme-text);
     text-decoration: underline;
 }
 
