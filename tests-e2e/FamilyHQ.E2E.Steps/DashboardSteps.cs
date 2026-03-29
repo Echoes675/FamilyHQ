@@ -104,6 +104,12 @@ public class DashboardSteps
         await _dashboardPage.NavigateToNextMonthAsync();
     }
 
+    [When(@"I navigate the month view to show a date in (\d+) days")]
+    public async Task WhenINavigateTheMonthViewToShowDateInDays(int days)
+    {
+        await _dashboardPage.NavigateToShowDateIfNeededAsync(DateTime.Today.AddDays(days));
+    }
+
     [Given(@"I change the event ""([^""]*)"" to calendar ""([^""]*)""")]
     public async Task GivenIChangeTheEventToCalendar(string eventName, string calendarName)
     {
