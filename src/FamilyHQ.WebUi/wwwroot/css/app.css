@@ -567,3 +567,40 @@ html, body {
     margin-right: 4px;
     vertical-align: middle;
 }
+
+/* =============================================
+   Dashboard header
+   ============================================= */
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: var(--theme-surface);
+    border-bottom: 1px solid var(--theme-border);
+    color: var(--theme-text);
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out, color 45s ease-in-out;
+}
+
+.dashboard-header__brand {
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.dashboard-header__settings {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    color: var(--theme-text);
+    text-decoration: none;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+}
+
+.dashboard-header__settings:hover {
+    background: var(--theme-accent);
+    color: #fff;
+}

@@ -1,4 +1,6 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@using FamilyHQ.WebUi.Services
+@inject IThemeService ThemeService
 
 <div class="page">
     <main>
@@ -7,3 +9,10 @@
         </article>
     </main>
 </div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        await ThemeService.InitialiseAsync();
+    }
+}
