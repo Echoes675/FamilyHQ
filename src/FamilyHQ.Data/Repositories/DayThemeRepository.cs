@@ -4,9 +4,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Data.Repositories;
 
-public class DayThemeRepository(FamilyHqDbContext context) : IDayThemeRepository
+public class DayThemeRepository : IDayThemeRepository
 {
-    private readonly FamilyHqDbContext _context = context;
+    private readonly FamilyHqDbContext _context;
+
+    public DayThemeRepository(FamilyHqDbContext context)
+    {
+        _context = context;
+    }
 
     public async Task<DayTheme?> GetByDateAsync(DateOnly date, CancellationToken ct = default)
         => await _context.DayThemes.FirstOrDefaultAsync(x => x.Date == date, ct);

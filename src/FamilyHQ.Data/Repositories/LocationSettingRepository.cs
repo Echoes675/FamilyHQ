@@ -4,9 +4,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Data.Repositories;
 
-public class LocationSettingRepository(FamilyHqDbContext context) : ILocationSettingRepository
+public class LocationSettingRepository : ILocationSettingRepository
 {
-    private readonly FamilyHqDbContext _context = context;
+    private readonly FamilyHqDbContext _context;
+
+    public LocationSettingRepository(FamilyHqDbContext context)
+    {
+        _context = context;
+    }
 
     public async Task<LocationSetting?> GetAsync(CancellationToken ct = default)
         => await _context.LocationSettings.FirstOrDefaultAsync(ct);
