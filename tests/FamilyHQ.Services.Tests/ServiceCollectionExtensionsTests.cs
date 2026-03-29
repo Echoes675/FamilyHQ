@@ -52,6 +52,12 @@ public class ServiceCollectionExtensionsTests
             sd.ImplementationType == typeof(SunCalculatorService) &&
             sd.Lifetime == ServiceLifetime.Singleton);
 
+        // Day Theme
+        services.Should().Contain(sd =>
+            sd.ServiceType == typeof(IDayThemeService) &&
+            sd.ImplementationType == typeof(DayThemeService) &&
+            sd.Lifetime == ServiceLifetime.Scoped);
+
         // Hosted Service
         // AddHostedService registers IHostedService with the implementation type
         services.Should().Contain(sd =>

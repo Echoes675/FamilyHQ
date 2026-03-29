@@ -56,7 +56,7 @@ public class DayThemeService(
         }, ct);
     }
 
-    public static TimeOfDayPeriod DeriveCurrentPeriod(DayTheme record)
+    private static TimeOfDayPeriod DeriveCurrentPeriod(DayTheme record)
     {
         var now = TimeOnly.FromDateTime(DateTime.Now);
         if (now >= record.NightStart) return TimeOfDayPeriod.Night;
