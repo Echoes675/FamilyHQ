@@ -1,0 +1,206 @@
+@inject IJSRuntime JSRuntime
+
+@* Day nav bar *@
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="btn-group">
+        <button class="btn btn-outline-primary" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(-1))">&lt; Prev</button>
+        <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenDayPicker" data-testid="day-picker-btn">
+            @SelectedDate.ToString("D")
+        </button>
+        <button class="btn btn-outline-primary" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(1))">Next &gt;</button>
+    </div>
+    <button class="btn btn-primary ms-3" @onclick="HandleAddEventClick" data-testid="add-event-btn">
+        <i class="bi bi-plus-circle"></i> Add Event
+    </button>
+</div>
+
+@* Day grid *@
+@{
+    var key = SelectedDate.ToString("yyyy-MM-dd");
+    var dayEvents = MonthView?.Days.TryGetValue(key, out var evts) == true ? evts : new List<CalendarEventViewModel>();
+}
+<div class="day-view-container" id="day-view-container">
+    <div class="day-view-sticky-header">
+        <div class="day-header">
+            <div class="time-axis-header"></div>
+            @foreach (var cal in Calendars)
+            {
+                <div class="calendar-header-col" title="@cal.DisplayName">@cal.DisplayName</div>
+            }
+        </div>
+        <div class="all-day-container">
+            <div class="all-day-label">All Day</div>
+            @foreach (var cal in Calendars)
+            {
+                var calAllDayEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id && e.IsAllDay).ToList();
+                <div class="all-day-col">
+                    @foreach (var evt in calAllDayEvents)
+                    {
+                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--primary)");"
+                             title="@evt.Title"
+                             @onclick="() => OnEditEvent.InvokeAsync(evt)">
+                            @evt.Title
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+    <div class="day-body-scrollable" id="day-body-scrollable">
+        <div class="day-body-flex">
+            @if (SelectedDate == DateTime.Today)
+            {
+                <div class="current-time-line" style="top: @GetCurrentTimeTopPosition()%" id="current-time-line"></div>
+            }
+            <div class="time-axis">
+                @for (int i = 0; i < 24; i++)
+                {
+                    var topPos = (i / 24.0) * 100;
+                    var label = i == 0 ? "12 AM" : i < 12 ? $"{i} AM" : i == 12 ? "12 PM" : $"{i - 12} PM";
+                    if (i > 0)
+                    {
+                        <div class="time-slot-label" style="top: @topPos%">@label</div>
+                    }
+                }
+            </div>
+            <div class="hour-lines-container">
+                @for (int i = 1; i < 24; i++)
+                {
+                    <div class="hour-line" style="top: @((i / 24.0) * 100)%"></div>
+                }
+            </div>
+            <div class="calendar-cols-container">
+                @foreach (var cal in Calendars)
+                {
+                    var calEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id).ToList();
+                    var placedEvents = GetPlacedEvents(calEvents);
+                    <div class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
+                        @foreach (var p in placedEvents)
+                        {
+                            <div class="day-event-block"
+                                 style="@GetEventStyle(p, SelectedDate)"
+                                 title="@($"{p.Event.Title}\n{p.Event.Start.LocalDateTime:t} - {p.Event.End.LocalDateTime:t}\n{p.Event.Location}")"
+                                 @onclick:stopPropagation="true"
+                                 @onclick="() => OnEditEvent.InvokeAsync(p.Event)">
+                                <div class="fw-bold">@p.Event.Title</div>
+                                <div>@p.Event.Start.LocalDateTime.ToString("h:mm tt")</div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public DateTime SelectedDate { get; set; }
+    [Parameter] public MonthViewModel? MonthView { get; set; }
+    [Parameter] public IReadOnlyList<CalendarSummaryViewModel> Calendars { get; set; } = Array.Empty<CalendarSummaryViewModel>();
+    [Parameter] public EventCallback<DateTime> OnNavigate { get; set; }
+    [Parameter] public EventCallback OnOpenDayPicker { get; set; }
+    [Parameter] public EventCallback<CalendarEventViewModel> OnEditEvent { get; set; }
+    [Parameter] public EventCallback<(DateTime Date, Guid CalendarId)> OnAddEvent { get; set; }
+
+    private DateTime? _lastScrolledDate;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (SelectedDate.Date == DateTime.Today && _lastScrolledDate != DateTime.Today)
+        {
+            _lastScrolledDate = DateTime.Today;
+            try
+            {
+                var currentMins = DateTime.Now.TimeOfDay.TotalMinutes;
+                await JSRuntime.InvokeVoidAsync("eval", $@"
+                    var c = document.getElementById('day-view-container');
+                    if(c) {{
+                        var target = ({currentMins} / 1440) * 1440;
+                        c.scrollTop = target - (c.clientHeight / 4);
+                    }}
+                ");
+            }
+            catch { }
+        }
+        else if (SelectedDate.Date != DateTime.Today)
+        {
+            _lastScrolledDate = null;
+        }
+    }
+
+    private void HandleAddEventClick()
+    {
+        var calId = Calendars.FirstOrDefault()?.Id ?? Guid.Empty;
+        OnAddEvent.InvokeAsync((SelectedDate, calId));
+    }
+
+    private void HandleGridClick(MouseEventArgs e, DateTime date, Guid calendarId)
+    {
+        int totalMinutes = (int)e.OffsetY;
+        int roundedMinutes = (totalMinutes / 30) * 30;
+        var startDateTime = date.Date.AddMinutes(roundedMinutes);
+        OnAddEvent.InvokeAsync((startDateTime, calendarId));
+    }
+
+    private double GetCurrentTimeTopPosition()
+    {
+        var now = DateTime.Now.TimeOfDay;
+        return (now.TotalMinutes / 1440.0) * 100;
+    }
+
+    private List<PlacedEvent> GetPlacedEvents(IEnumerable<CalendarEventViewModel> events)
+    {
+        var timedEvents = events.Where(e => !e.IsAllDay).OrderBy(e => e.Start).ThenByDescending(e => e.End).ToList();
+        var groups = new List<List<PlacedEvent>>();
+
+        foreach (var evt in timedEvents)
+        {
+            var pEvent = new PlacedEvent { Event = evt, ColumnIndex = 0, TotalColumns = 1 };
+            var overlappingGroup = groups.FirstOrDefault(g => g.Any(e => EventsOverlap(e.Event, evt)));
+            if (overlappingGroup != null)
+            {
+                var usedColumns = overlappingGroup.Where(e => EventsOverlap(e.Event, evt)).Select(e => e.ColumnIndex).ToHashSet();
+                int col = 0;
+                while (usedColumns.Contains(col)) col++;
+                pEvent.ColumnIndex = col;
+                overlappingGroup.Add(pEvent);
+                int maxCols = overlappingGroup.Max(e => e.ColumnIndex) + 1;
+                foreach (var e in overlappingGroup)
+                    e.TotalColumns = Math.Max(e.TotalColumns, maxCols);
+            }
+            else
+            {
+                groups.Add([pEvent]);
+            }
+        }
+
+        return groups.SelectMany(g => g).ToList();
+    }
+
+    private bool EventsOverlap(CalendarEventViewModel a, CalendarEventViewModel b) =>
+        a.Start < b.End && b.Start < a.End;
+
+    private string GetEventStyle(PlacedEvent p, DateTime expectedDate)
+    {
+        var localStart = p.Event.Start.LocalDateTime;
+        var localEnd = p.Event.End.LocalDateTime;
+        if (localStart < expectedDate.Date) localStart = expectedDate.Date;
+        if (localEnd > expectedDate.Date.AddDays(1)) localEnd = expectedDate.Date.AddDays(1);
+        var startMins = localStart.Hour * 60 + localStart.Minute;
+        var durationMins = (localEnd - localStart).TotalMinutes;
+        if (durationMins < 15) durationMins = 15;
+        if (startMins + durationMins > 1440) durationMins = 1440 - startMins;
+        var top = (startMins / 1440.0) * 100;
+        var height = (durationMins / 1440.0) * 100;
+        var width = 100.0 / p.TotalColumns;
+        var left = width * p.ColumnIndex;
+        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--primary)"};";
+    }
+
+    private class PlacedEvent
+    {
+        public CalendarEventViewModel Event { get; set; } = null!;
+        public int ColumnIndex { get; set; }
+        public int TotalColumns { get; set; }
+    }
+}
