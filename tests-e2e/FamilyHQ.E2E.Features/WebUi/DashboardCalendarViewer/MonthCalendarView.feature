@@ -63,6 +63,7 @@ Feature: Month Calendar View
     And the user has an all-day event "New Year's Day" in 7 days
     And I login as the user "AllDayEventsUser"
     When I view the dashboard
+    And I navigate the month view to show a date in 7 days
     Then I see the event "Christmas Day" displayed on the calendar
     And I see the event "New Year's Day" displayed on the calendar
 
