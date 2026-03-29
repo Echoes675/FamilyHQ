@@ -22,6 +22,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddHostedService<SyncOrchestrator>();
         services.AddSingleton<ISunCalculatorService, SunCalculatorService>();
+        services.AddScoped<IDayThemeService, DayThemeService>();
 
         return services;
     }
