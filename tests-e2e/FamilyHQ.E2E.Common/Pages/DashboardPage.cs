@@ -315,19 +315,23 @@ public class DashboardPage : BasePage
 
     public async Task SignOutAsync()
     {
-        // Check if sign-out button exists (user is authenticated)
-        if (await SignOutBtn.CountAsync() > 0)
+        // The sign-out button moved to the Settings page (Task 11).
+        // For test isolation, clear the auth token from localStorage directly
+        // and reload to force the unauthenticated state.
+        if (await IsSignedInAsync())
         {
-            await SignOutBtn.ClickAsync();
-            // Wait for the login button to appear, confirming sign-out is complete
-            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+            await Page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
+            await Page.GotoAsync(_config.BaseUrl + "/");
+            await Page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
+            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
         }
     }
 
     public async Task<bool> IsSignedInAsync()
     {
-        // Check if sign-out button or user info is visible
-        return await SignOutBtn.CountAsync() > 0 || await UserInfo.CountAsync() > 0;
+        // The dashboard header (brand + settings gear) is only rendered when authenticated.
+        // When not authenticated, only the Login to Google button is shown.
+        return await Page.Locator(".dashboard-header").CountAsync() > 0;
     }
 
     public async Task CreateEventAsync(string title)
