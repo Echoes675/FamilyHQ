@@ -12,7 +12,7 @@
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
 
-<div class="dashboard-container">
+<div class="dashboard-container" id="dashboard-container">
     @if (!_isAuthenticated)
     {
         <!-- Not Authenticated - Show centered login button -->
@@ -151,8 +151,14 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Pixel orbit init added in Task 10
-        await Task.CompletedTask;
+        if (firstRender)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("pixelOrbit.init", "dashboard-container");
+            }
+            catch { /* JS interop not available on pre-render */ }
+        }
     }
 
     private void RefreshDataFromSignalR()
