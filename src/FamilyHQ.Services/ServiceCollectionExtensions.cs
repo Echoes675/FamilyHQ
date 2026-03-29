@@ -23,6 +23,9 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<SyncOrchestrator>();
         services.AddSingleton<ISunCalculatorService, SunCalculatorService>();
         services.AddScoped<IDayThemeService, DayThemeService>();
+        services.AddSingleton<DayThemeSchedulerService>();
+        services.AddHostedService(sp => sp.GetRequiredService<DayThemeSchedulerService>());
+        services.AddSingleton<IDayThemeScheduler>(sp => sp.GetRequiredService<DayThemeSchedulerService>());
 
         return services;
     }
