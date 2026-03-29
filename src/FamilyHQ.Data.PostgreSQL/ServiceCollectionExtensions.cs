@@ -20,6 +20,8 @@ public static class ServiceCollectionExtensions
             options.UseNpgsql(connectionString, x => x.MigrationsAssembly(typeof(ServiceCollectionExtensions).Assembly.FullName)));
 
         services.AddScoped<ICalendarRepository, CalendarRepository>();
+        services.AddScoped<IDayThemeRepository, DayThemeRepository>();
+        services.AddScoped<ILocationSettingRepository, LocationSettingRepository>();
 
         return services;
     }
