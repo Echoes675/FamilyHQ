@@ -13,12 +13,32 @@ public class SunCalculatorService : ISunCalculatorService
 
         var sunTimes = SunCalc.GetSunPhases(utcDate, latitude, longitude);
 
-        var civilDawn = TimeOnly.FromDateTime(sunTimes.First(x => x.Name.Value == SunPhaseName.Dawn.Value).PhaseTime);
-        var sunrise   = TimeOnly.FromDateTime(sunTimes.First(x => x.Name.Value == SunPhaseName.Sunrise.Value).PhaseTime);
-        var sunset    = TimeOnly.FromDateTime(sunTimes.First(x => x.Name.Value == SunPhaseName.Sunset.Value).PhaseTime);
-        var civilDusk = TimeOnly.FromDateTime(sunTimes.First(x => x.Name.Value == SunPhaseName.Dusk.Value).PhaseTime);
+        var dawnPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Dawn.Value)
+            ?? throw new InvalidOperationException(
+                $"Sun phase 'Dawn' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                "This may occur for polar locations where the sun does not rise or set.");
 
-        var eveningStart = sunset.Add(TimeSpan.FromHours(-1));
+        var sunrisePhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Sunrise.Value)
+            ?? throw new InvalidOperationException(
+                $"Sun phase 'Sunrise' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                "This may occur for polar locations where the sun does not rise or set.");
+
+        var sunsetPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Sunset.Value)
+            ?? throw new InvalidOperationException(
+                $"Sun phase 'Sunset' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                "This may occur for polar locations where the sun does not rise or set.");
+
+        var duskPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Dusk.Value)
+            ?? throw new InvalidOperationException(
+                $"Sun phase 'Dusk' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                "This may occur for polar locations where the sun does not rise or set.");
+
+        var civilDawn = TimeOnly.FromDateTime(dawnPhase.PhaseTime);
+        var sunrise = TimeOnly.FromDateTime(sunrisePhase.PhaseTime);
+        var sunset = TimeOnly.FromDateTime(sunsetPhase.PhaseTime);
+        var civilDusk = TimeOnly.FromDateTime(duskPhase.PhaseTime);
+
+        var eveningStart = sunset.AddHours(-1);
 
         return Task.FromResult(new DayThemeBoundaries(civilDawn, sunrise, eveningStart, civilDusk));
     }

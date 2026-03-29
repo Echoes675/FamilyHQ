@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Theme;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,11 +46,17 @@ public class ServiceCollectionExtensionsTests
             sd.ImplementationType == typeof(CalendarSyncService) && 
             sd.Lifetime == ServiceLifetime.Scoped);
 
+        // Sun Calculator
+        services.Should().Contain(sd =>
+            sd.ServiceType == typeof(ISunCalculatorService) &&
+            sd.ImplementationType == typeof(SunCalculatorService) &&
+            sd.Lifetime == ServiceLifetime.Singleton);
+
         // Hosted Service
         // AddHostedService registers IHostedService with the implementation type
-        services.Should().Contain(sd => 
-            sd.ServiceType == typeof(IHostedService) && 
-            sd.ImplementationType == typeof(SyncOrchestrator) && 
+        services.Should().Contain(sd =>
+            sd.ServiceType == typeof(IHostedService) &&
+            sd.ImplementationType == typeof(SyncOrchestrator) &&
             sd.Lifetime == ServiceLifetime.Singleton);
     }
 }
