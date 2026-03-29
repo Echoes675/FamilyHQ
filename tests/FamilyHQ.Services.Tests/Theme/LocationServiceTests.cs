@@ -48,6 +48,20 @@ public class LocationServiceTests
         result.Latitude.Should().NotBe(0);
     }
 
+    [Fact]
+    public async Task GetEffectiveLocationAsync_ThrowsInvalidOperationException_WhenIpApiStatusFails()
+    {
+        var repoMock = new Mock<ILocationSettingRepository>();
+        repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
+
+        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiFailureHandler()));
+
+        var act = () => sut.GetEffectiveLocationAsync();
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*fail*");
+    }
+
     private class NoOpHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -59,6 +73,18 @@ public class LocationServiceTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var json = """{"status":"success","city":"London","regionName":"England","country":"United Kingdom","lat":51.5074,"lon":-0.1278}""";
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private class FakeIpApiFailureHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var json = """{"status":"fail","message":"private range","query":"192.168.1.1"}""";
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json")
