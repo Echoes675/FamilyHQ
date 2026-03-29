@@ -1,0 +1,22 @@
+<ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+        <button data-testid="month-tab"
+                class="nav-link @(CurrentView == DashboardView.Month ? "active" : "")"
+                @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Month)">Month View</button>
+    </li>
+    <li class="nav-item">
+        <button data-testid="agenda-tab"
+                class="nav-link @(CurrentView == DashboardView.MonthAgenda ? "active" : "")"
+                @onclick="() => OnViewChanged.InvokeAsync(DashboardView.MonthAgenda)">Agenda</button>
+    </li>
+    <li class="nav-item">
+        <button data-testid="day-tab"
+                class="nav-link @(CurrentView == DashboardView.Day ? "active" : "")"
+                @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Day)">Day View</button>
+    </li>
+</ul>
+
+@code {
+    [Parameter] public DashboardView CurrentView { get; set; }
+    [Parameter] public EventCallback<DashboardView> OnViewChanged { get; set; }
+}

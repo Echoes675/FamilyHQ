@@ -1,0 +1,54 @@
+@if (IsVisible)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-sm modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-0 pb-0">
+                    <h5 class="modal-title w-100 text-center">Jump to Date</h5>
+                    <button type="button" class="btn-close" @onclick="OnClose" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _jumpYear--">&lt;</button>
+                        <span class="fs-5 fw-bold">@_jumpYear</span>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => _jumpYear++">&gt;</button>
+                    </div>
+                    <div class="row g-2">
+                        @for (int i = 1; i <= 12; i++)
+                        {
+                            var month = i;
+                            <div class="col-4">
+                                <button class="btn w-100 @(IsSelectedMonth(month) ? "btn-primary" : "btn-outline-primary")"
+                                        @onclick="() => OnJump.InvokeAsync((_jumpYear, month))">
+                                    @(new DateTime(2000, month, 1).ToString("MMM"))
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0 justify-content-center">
+                    <button class="btn btn-link text-decoration-none" @onclick="OnJumpToday">Go to Today</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public DateTime CurrentMonth { get; set; }
+    [Parameter] public EventCallback<(int Year, int Month)> OnJump { get; set; }
+    [Parameter] public EventCallback OnJumpToday { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private int _jumpYear;
+
+    protected override void OnParametersSet()
+    {
+        if (IsVisible)
+            _jumpYear = CurrentMonth.Year;
+    }
+
+    private bool IsSelectedMonth(int month) =>
+        month == CurrentMonth.Month && _jumpYear == CurrentMonth.Year;
+}
