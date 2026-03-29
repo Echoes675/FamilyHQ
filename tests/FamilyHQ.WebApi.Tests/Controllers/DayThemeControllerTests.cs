@@ -3,27 +3,42 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.WebApi.Controllers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace FamilyHQ.WebApi.Tests.Controllers;
 
 public class DayThemeControllerTests
 {
-    private readonly Mock<IDayThemeService> _serviceMock = new();
-
     [Fact]
     public async Task GetToday_ReturnsOk_WithDayThemeDto()
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-        var dto = new DayThemeDto(today,
+        // Arrange
+        var (sut, serviceMock) = CreateSut();
+
+        var date = new DateOnly(2026, 6, 15);
+        var dto = new DayThemeDto(date,
             new TimeOnly(5, 30), new TimeOnly(6, 45), new TimeOnly(20, 15), new TimeOnly(21, 30),
             "Daytime");
-        _serviceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>())).ReturnsAsync(dto);
+        serviceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>())).ReturnsAsync(dto);
 
-        var controller = new DayThemeController(_serviceMock.Object);
-        var result = await controller.GetToday(CancellationToken.None);
+        // Act
+        var result = await sut.GetToday(CancellationToken.None);
 
+        // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         ok.Value.Should().Be(dto);
+    }
+
+    private static (DayThemeController sut, Mock<IDayThemeService> serviceMock) CreateSut()
+    {
+        var serviceMock = new Mock<IDayThemeService>();
+        var loggerMock = new Mock<ILogger<DayThemeController>>();
+
+        var sut = new DayThemeController(
+            serviceMock.Object,
+            loggerMock.Object);
+
+        return (sut, serviceMock);
     }
 }
