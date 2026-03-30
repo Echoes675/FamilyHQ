@@ -1,14 +1,14 @@
 @* Month nav bar *@
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="flex justify-between items-center mb-4">
     <div class="btn-group">
-        <button class="btn btn-outline-primary" @onclick="OnPreviousMonth">&lt; Prev</button>
-        <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenQuickJump">
+        <button class="btn btn-ghost" @onclick="OnPreviousMonth">&#8249; Prev</button>
+        <button class="btn btn-glass" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenQuickJump">
             @CurrentMonth.ToString("MMMM yyyy")
         </button>
-        <button class="btn btn-outline-primary" @onclick="OnNextMonth">Next &gt;</button>
+        <button class="btn btn-ghost" @onclick="OnNextMonth">Next &#8250;</button>
     </div>
-    <button class="btn btn-primary ms-3" @onclick="() => OnAddEvent.InvokeAsync(DateTime.Today)" data-testid="add-event-btn">
-        <i class="bi bi-plus-circle"></i> Add Event
+    <button class="btn btn-primary" style="margin-left: 16px;" @onclick="() => OnAddEvent.InvokeAsync(DateTime.Today)" data-testid="add-event-btn">
+        + Add Event
     </button>
 </div>
 
@@ -36,14 +36,14 @@
                     var isWeekend = day.Date.DayOfWeek == DayOfWeek.Saturday || day.Date.DayOfWeek == DayOfWeek.Sunday;
 
                     var cssClass = "calendar-cell";
-                    if (!isCurrentMonth) cssClass += " text-muted bg-light";
+                    if (!isCurrentMonth) cssClass += " calendar-cell--other-month";
                     if (isToday) cssClass += " today-cell";
                     else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
 
                     <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
-                        <div class="d-flex justify-content-between align-items-center">
+                        <div class="flex justify-between items-center">
                             <span style="font-weight: @(isToday ? "700" : "400")">@day.Date.Day</span>
-                            <button class="btn btn-sm btn-link p-0 text-muted shadow-none" title="Add event on this day"
+                            <button class="btn btn-ghost btn-sm" title="Add event on this day"
                                     @onclick="() => OnAddEvent.InvokeAsync(day.Date)">
                                 <span style="font-size: 1.2rem; line-height: 1;">+</span>
                             </button>
