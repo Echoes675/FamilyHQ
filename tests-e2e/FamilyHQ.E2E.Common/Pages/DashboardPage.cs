@@ -26,8 +26,8 @@ public class DashboardPage : BasePage
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
-    private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
-    private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "< Prev" });
+    private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next ›" });
+    private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "‹ Prev" });
     private ILocator AddEventBtn => Page.GetByTestId("add-event-btn");
 
     // Modal Locators
@@ -38,7 +38,7 @@ public class DashboardPage : BasePage
     private ILocator DayPickerBtn => Page.GetByTestId("day-picker-btn");
     private ILocator DayPickerInput => Page.GetByTestId("day-picker-input");
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
-    private ILocator DayPickerModal => Page.Locator(".modal").Filter(new() { HasText = "Select Date" });
+    private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
     // Actions
 
