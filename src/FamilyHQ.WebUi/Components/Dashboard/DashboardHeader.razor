@@ -4,7 +4,7 @@
     @if (BackUrl is null)
     {
         <span class="dashboard-header__brand">FamilyHQ</span>
-        <a href="/settings" class="dashboard-header__settings" aria-label="Settings">
+        <a href="/settings" class="dashboard-header__settings glass-surface" aria-label="Settings">
             <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
                  fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="3"/>
@@ -22,7 +22,7 @@
     }
     else
     {
-        <div class="d-flex align-items-center gap-2">
+        <div class="flex items-center gap-2">
             <a href="@BackUrl" class="dashboard-header__back" aria-label="Back">
                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
