@@ -114,10 +114,12 @@ html, body {
     max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
+    overflow-x: hidden;
 }
 
 .month-table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse;
     background: var(--theme-surface);
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
