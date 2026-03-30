@@ -22,6 +22,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICalendarRepository, CalendarRepository>();
         services.AddScoped<IDayThemeRepository, DayThemeRepository>();
         services.AddScoped<ILocationSettingRepository, LocationSettingRepository>();
+        services.AddScoped<IDisplaySettingRepository, DisplaySettingRepository>();
 
         return services;
     }

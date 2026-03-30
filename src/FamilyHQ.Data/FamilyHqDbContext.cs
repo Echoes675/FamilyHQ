@@ -17,6 +17,7 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<UserToken> UserTokens => Set<UserToken>();
     public DbSet<DayTheme> DayThemes => Set<DayTheme>();
     public DbSet<LocationSetting> LocationSettings => Set<LocationSetting>();
+    public DbSet<DisplaySetting> DisplaySettings => Set<DisplaySetting>();
 
     /// <summary>
     /// Required for ASP.NET Core Data Protection key storage in the database.
