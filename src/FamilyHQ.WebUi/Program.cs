@@ -45,6 +45,8 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
+
         await builder.Build().RunAsync();
     }
 }
