@@ -1,18 +1,16 @@
 @inherits LayoutComponentBase
 @using FamilyHQ.WebUi.Services
 @inject IThemeService ThemeService
+@inject IDisplaySettingService DisplaySettingService
 
 <div class="page">
-    <main>
-        <article class="content px-4">
-            @Body
-        </article>
-    </main>
+    @Body
 </div>
 
 @code {
     protected override async Task OnInitializedAsync()
     {
         await ThemeService.InitialiseAsync();
+        await DisplaySettingService.InitialiseAsync();
     }
 }
