@@ -1,16 +1,16 @@
 @if (IsVisible)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-backdrop modal-sm" tabindex="-1">
+        <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header pb-2">
                     <h5 class="modal-title">Select Date</h5>
                     <button type="button" class="btn-close" @onclick="OnClose" aria-label="Close"></button>
                 </div>
                 <div class="modal-body text-center">
-                    <input type="date" class="form-control mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
-                    <button class="btn btn-primary w-100 mb-2" @onclick="HandleGo" data-testid="day-picker-go-btn">Go Context</button>
-                    <button class="btn btn-outline-secondary w-100" @onclick="OnJumpToday" data-testid="day-picker-today-btn">Jump to Today</button>
+                    <input type="date" class="form-input mb-3" @bind="_pickedDate" data-testid="day-picker-input" />
+                    <button class="btn btn-primary w-full mb-2" @onclick="HandleGo" data-testid="day-picker-go-btn">Go Context</button>
+                    <button class="btn btn-secondary w-full" @onclick="OnJumpToday" data-testid="day-picker-today-btn">Jump to Today</button>
                 </div>
             </div>
         </div>
