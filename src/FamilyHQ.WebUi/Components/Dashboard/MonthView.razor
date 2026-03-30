@@ -52,7 +52,7 @@
                             @foreach (var evt in day.Events.Take(3))
                             {
                                 <div class="event-capsule"
-                                     style="background-color: @(evt.CalendarColor ?? "var(--primary)"); cursor: pointer;"
+                                     style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)"); cursor: pointer;"
                                      title="@evt.Title (@evt.Start.ToString("t")) - @evt.Location"
                                      @onclick="() => OnEditEvent.InvokeAsync(evt)">
                                     @if (evt.IsAllDay)

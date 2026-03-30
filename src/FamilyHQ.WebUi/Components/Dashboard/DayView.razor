@@ -36,7 +36,7 @@
                 <div class="all-day-col">
                     @foreach (var evt in calAllDayEvents)
                     {
-                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--primary)");"
+                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
                              title="@evt.Title"
                              @onclick="() => OnEditEvent.InvokeAsync(evt)">
                             @evt.Title
@@ -194,7 +194,7 @@
         var height = (durationMins / 1440.0) * 100;
         var width = 100.0 / p.TotalColumns;
         var left = width * p.ColumnIndex;
-        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--primary)"};";
+        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--theme-accent)"};";
     }
 
     private class PlacedEvent
