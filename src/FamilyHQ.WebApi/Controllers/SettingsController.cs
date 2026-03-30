@@ -1,6 +1,7 @@
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Validators;
 using FamilyHQ.WebApi.Hubs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,7 @@ public class SettingsController : ControllerBase
     private readonly IDayThemeScheduler _scheduler;
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ILogger<SettingsController> _logger;
+    private readonly IDisplaySettingRepository _displayRepo;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -27,7 +29,8 @@ public class SettingsController : ControllerBase
         IDayThemeService dayThemeService,
         IDayThemeScheduler scheduler,
         IHubContext<CalendarHub> hubContext,
-        ILogger<SettingsController> logger)
+        ILogger<SettingsController> logger,
+        IDisplaySettingRepository displayRepo)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -35,6 +38,7 @@ public class SettingsController : ControllerBase
         _scheduler = scheduler;
         _hubContext = hubContext;
         _logger = logger;
+        _displayRepo = displayRepo;
     }
 
     [HttpGet("location")]
@@ -69,5 +73,39 @@ public class SettingsController : ControllerBase
         await _scheduler.TriggerRecalculationAsync();
 
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
+    }
+
+    [HttpGet("display")]
+    public async Task<IActionResult> GetDisplay(CancellationToken ct)
+    {
+        var setting = await _displayRepo.GetAsync(ct);
+        if (setting is null)
+            return Ok(new DisplaySettingDto(1.0, false, 15));
+
+        return Ok(new DisplaySettingDto(
+            setting.SurfaceMultiplier,
+            setting.OpaqueSurfaces,
+            setting.TransitionDurationSecs));
+    }
+
+    [HttpPut("display")]
+    public async Task<IActionResult> PutDisplay([FromBody] DisplaySettingDto dto, CancellationToken ct)
+    {
+        var validator = new DisplaySettingDtoValidator();
+        var validation = await validator.ValidateAsync(dto, ct);
+        if (!validation.IsValid)
+            return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
+
+        var setting = new DisplaySetting
+        {
+            SurfaceMultiplier = dto.SurfaceMultiplier,
+            OpaqueSurfaces = dto.OpaqueSurfaces,
+            TransitionDurationSecs = dto.TransitionDurationSecs,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        await _displayRepo.UpsertAsync(setting, ct);
+
+        return Ok(dto);
     }
 }

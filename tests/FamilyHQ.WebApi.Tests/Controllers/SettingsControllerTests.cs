@@ -16,7 +16,7 @@ public class SettingsControllerTests
     public async Task GetLocation_Returns404_WhenNotSet()
     {
         // Arrange
-        var (sut, locationRepoMock, _, _, _, _) = CreateSut();
+        var (sut, locationRepoMock, _, _, _, _, _) = CreateSut();
         locationRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((LocationSetting?)null);
 
@@ -31,7 +31,7 @@ public class SettingsControllerTests
     public async Task GetLocation_ReturnsOk_WhenSet()
     {
         // Arrange
-        var (sut, locationRepoMock, _, _, _, _) = CreateSut();
+        var (sut, locationRepoMock, _, _, _, _, _) = CreateSut();
         locationRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LocationSetting { PlaceName = "Edinburgh, Scotland", Latitude = 55.9, Longitude = -3.2 });
 
@@ -48,7 +48,7 @@ public class SettingsControllerTests
     public async Task SaveLocation_Geocodes_SavesPersists_AndTriggers()
     {
         // Arrange
-        var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock) = CreateSut();
+        var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, _) = CreateSut();
 
         geocodingMock.Setup(x => x.GeocodeAsync("Edinburgh, Scotland", It.IsAny<CancellationToken>()))
             .ReturnsAsync((55.9533, -3.1883));
@@ -80,7 +80,8 @@ public class SettingsControllerTests
         Mock<IGeocodingService> geocodingMock,
         Mock<IDayThemeService> dayThemeServiceMock,
         Mock<IDayThemeScheduler> schedulerMock,
-        Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>> hubMock) CreateSut()
+        Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>> hubMock,
+        Mock<IDisplaySettingRepository> displayRepoMock) CreateSut()
     {
         var locationRepoMock = new Mock<ILocationSettingRepository>();
         var geocodingMock = new Mock<IGeocodingService>();
@@ -88,6 +89,7 @@ public class SettingsControllerTests
         var schedulerMock = new Mock<IDayThemeScheduler>();
         var hubMock = new Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
         var loggerMock = new Mock<ILogger<SettingsController>>();
+        var displayRepoMock = new Mock<IDisplaySettingRepository>();
 
         var sut = new SettingsController(
             locationRepoMock.Object,
@@ -95,8 +97,9 @@ public class SettingsControllerTests
             dayThemeServiceMock.Object,
             schedulerMock.Object,
             hubMock.Object,
-            loggerMock.Object);
+            loggerMock.Object,
+            displayRepoMock.Object);
 
-        return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock);
+        return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock);
     }
 }
