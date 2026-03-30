@@ -609,6 +609,23 @@ html, body {
     background: var(--theme-accent);
     color: var(--theme-on-accent);
 }
+
+.dashboard-header__back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    color: var(--theme-text);
+    text-decoration: none;
+    border-radius: 50%;
+    transition: background-color 0.2s ease, color 45s ease-in-out;
+}
+
+.dashboard-header__back:hover {
+    background: var(--theme-accent);
+    color: var(--theme-on-accent);
+}
 /* =============================================
    Settings page
    ============================================= */

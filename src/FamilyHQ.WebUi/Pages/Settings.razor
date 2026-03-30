@@ -7,6 +7,8 @@
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
 
+<DashboardHeader BackUrl="/" />
+
 <div class="settings-page">
 
     <h2 class="settings-section__title">Location</h2>
@@ -41,7 +43,7 @@
             <p class="settings-error">@_saveError</p>
         }
 
-        <button class="settings-btn" @onclick="SaveLocationAsync" disabled="@_isSaving">
+        <button class="settings-btn" data-testid="save-location-btn" @onclick="SaveLocationAsync" disabled="@_isSaving">
             @(_isSaving ? "Saving…" : (_locationSetting is { IsAutoDetected: false } ? "Update Location" : "Save Location"))
         </button>
         <p class="settings-hint">Takes effect immediately.</p>
@@ -93,6 +95,12 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (!await AuthService.IsAuthenticatedAsync())
+        {
+            Navigation.NavigateTo("/");
+            return;
+        }
+
         _username = await AuthService.GetUsernameAsync();
         _locationSetting = await SettingsApiService.GetLocationAsync();
         _todayTheme = await SettingsApiService.GetTodayThemeAsync();
