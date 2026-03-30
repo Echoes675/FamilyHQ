@@ -812,3 +812,69 @@ html, body {
     color: var(--theme-text-muted);
     margin: 0 0 16px;
 }
+
+/* =============================================
+   Bootstrap button theme overrides
+   Bootstrap 5 CSS custom properties are overridden here.
+   app.css loads after bootstrap.min.css so these cascade correctly.
+   All colour transitions participate in the 45-second theme crossfade.
+   .btn-outline-danger is intentionally excluded (red = destructive intent).
+   ============================================= */
+
+.btn-primary {
+    --bs-btn-color: var(--theme-on-accent);
+    --bs-btn-bg: var(--theme-accent);
+    --bs-btn-border-color: var(--theme-accent);
+    --bs-btn-hover-color: var(--theme-on-accent);
+    --bs-btn-hover-bg: var(--theme-accent-hover);
+    --bs-btn-hover-border-color: var(--theme-accent-hover);
+    --bs-btn-active-color: var(--theme-on-accent);
+    --bs-btn-active-bg: var(--theme-accent-hover);
+    --bs-btn-active-border-color: var(--theme-accent-hover);
+    --bs-btn-disabled-color: var(--theme-on-accent);
+    --bs-btn-disabled-bg: var(--theme-accent);
+    --bs-btn-disabled-border-color: var(--theme-accent);
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
+                color 45s ease-in-out, box-shadow .15s ease-in-out;
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--theme-accent);
+    --bs-btn-border-color: var(--theme-accent);
+    --bs-btn-hover-color: var(--theme-on-accent);
+    --bs-btn-hover-bg: var(--theme-accent);
+    --bs-btn-hover-border-color: var(--theme-accent);
+    --bs-btn-active-color: var(--theme-on-accent);
+    --bs-btn-active-bg: var(--theme-accent);
+    --bs-btn-active-border-color: var(--theme-accent);
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
+                color 45s ease-in-out, box-shadow .15s ease-in-out;
+}
+
+.btn-light {
+    --bs-btn-color: var(--theme-text);
+    --bs-btn-bg: var(--theme-surface);
+    --bs-btn-border-color: var(--theme-border);
+    --bs-btn-hover-color: var(--theme-text);
+    --bs-btn-hover-bg: var(--theme-surface);
+    --bs-btn-hover-border-color: var(--theme-accent);
+    --bs-btn-active-color: var(--theme-text);
+    --bs-btn-active-bg: var(--theme-surface);
+    --bs-btn-active-border-color: var(--theme-accent);
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
+                color 45s ease-in-out, box-shadow .15s ease-in-out;
+}
+
+.btn-secondary {
+    --bs-btn-color: var(--theme-text-muted);
+    --bs-btn-bg: var(--theme-surface);
+    --bs-btn-border-color: var(--theme-border);
+    --bs-btn-hover-color: var(--theme-text);
+    --bs-btn-hover-bg: var(--theme-surface);
+    --bs-btn-hover-border-color: var(--theme-border);
+    --bs-btn-active-color: var(--theme-text);
+    --bs-btn-active-bg: var(--theme-surface);
+    --bs-btn-active-border-color: var(--theme-border);
+    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
+                color 45s ease-in-out, box-shadow .15s ease-in-out;
+}
