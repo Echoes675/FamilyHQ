@@ -1,7 +1,18 @@
 /* =============================================
-   @property registrations — typed <color> values
-   allow browser to interpolate during transitions
+   Section 1 — @font-face (DM Sans)
    ============================================= */
+@font-face { font-family: 'DM Sans'; src: url('../fonts/DMSans-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'DM Sans'; src: url('../fonts/DMSans-Medium.woff2') format('woff2'); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'DM Sans'; src: url('../fonts/DMSans-SemiBold.woff2') format('woff2'); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: 'DM Sans'; src: url('../fonts/DMSans-Bold.woff2') format('woff2'); font-weight: 700; font-style: normal; font-display: swap; }
+
+/* =============================================
+   Section 2 — @property registrations
+   Typed <color> values allow browser to
+   interpolate during transitions.
+   ============================================= */
+
+/* Original 11 */
 @property --theme-bg-start    { syntax: '<color>'; inherits: true; initial-value: #FFF8F0; }
 @property --theme-bg-end      { syntax: '<color>'; inherits: true; initial-value: #FFD8A8; }
 @property --theme-surface     { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.75); }
@@ -14,86 +25,154 @@
 @property --theme-weekend     { syntax: '<color>'; inherits: true; initial-value: rgba(249,115,22,0.05); }
 @property --theme-on-accent   { syntax: '<color>'; inherits: true; initial-value: #fff; }
 
+/* 5 new glass properties */
+@property --theme-glass-border    { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.6); }
+@property --theme-glass-ring      { syntax: '<color>'; inherits: true; initial-value: rgba(124,58,0,0.06); }
+@property --theme-glass-shadow    { syntax: '<color>'; inherits: true; initial-value: rgba(0,0,0,0.04); }
+@property --theme-glass-highlight { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.7); }
+@property --theme-glass-divider   { syntax: '<color>'; inherits: true; initial-value: rgba(124,58,0,0.1); }
+
 /* =============================================
-   Theme blocks — driven by data-theme on <body>
+   Section 3 — CSS Reset
+   ============================================= */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+    height: 100%;
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    color: var(--theme-text);
+    transition: color var(--theme-transition-duration, 15s) ease-in-out;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* =============================================
+   Section 4 — Theme blocks
+   Driven by data-theme attribute on <body>
    ============================================= */
 [data-theme="morning"] {
-    --theme-bg-start:     #FFF8F0;
-    --theme-bg-end:       #FFD8A8;
-    --theme-surface:      rgba(255,255,255,0.75);
-    --theme-border:       rgba(124,58,0,0.15);
-    --theme-text:         #3B1800;
-    --theme-text-muted:   #7C3A00;
-    --theme-accent:       #F97316;
-    --theme-accent-hover: #EA580C;
-    --theme-today:        rgba(249,115,22,0.15);
-    --theme-weekend:      rgba(249,115,22,0.05);
-    --theme-on-accent:    #fff;
+    --theme-bg-start:          #FFF8F0;
+    --theme-bg-end:            #FFD8A8;
+    --theme-surface:           rgba(255,255,255,0.75);
+    --theme-border:            rgba(124,58,0,0.15);
+    --theme-text:              #3B1800;
+    --theme-text-muted:        #7C3A00;
+    --theme-accent:            #F97316;
+    --theme-accent-hover:      #EA580C;
+    --theme-today:             rgba(249,115,22,0.15);
+    --theme-weekend:           rgba(249,115,22,0.05);
+    --theme-on-accent:         #fff;
+    --theme-surface-opacity:   0.55;
+    --theme-glass-border:      rgba(255,255,255,0.6);
+    --theme-glass-ring:        rgba(124,58,0,0.06);
+    --theme-glass-shadow:      rgba(0,0,0,0.04);
+    --theme-glass-highlight:   rgba(255,255,255,0.7);
+    --theme-glass-divider:     rgba(124,58,0,0.1);
 }
 
 [data-theme="daytime"] {
-    --theme-bg-start:     #E8F4FD;
-    --theme-bg-end:       #C8E6FA;
-    --theme-surface:      rgba(255,255,255,0.80);
-    --theme-border:       rgba(26,74,110,0.15);
-    --theme-text:         #0F2A40;
-    --theme-text-muted:   #1A4A6E;
-    --theme-accent:       #3B82F6;
-    --theme-accent-hover: #2563EB;
-    --theme-today:        rgba(59,130,246,0.15);
-    --theme-weekend:      rgba(59,130,246,0.05);
-    --theme-on-accent:    #fff;
+    --theme-bg-start:          #E8F4FD;
+    --theme-bg-end:            #C8E6FA;
+    --theme-surface:           rgba(255,255,255,0.80);
+    --theme-border:            rgba(26,74,110,0.15);
+    --theme-text:              #0F2A40;
+    --theme-text-muted:        #1A4A6E;
+    --theme-accent:            #3B82F6;
+    --theme-accent-hover:      #2563EB;
+    --theme-today:             rgba(59,130,246,0.15);
+    --theme-weekend:           rgba(59,130,246,0.05);
+    --theme-on-accent:         #fff;
+    --theme-surface-opacity:   0.55;
+    --theme-glass-border:      rgba(255,255,255,0.5);
+    --theme-glass-ring:        rgba(26,74,110,0.06);
+    --theme-glass-shadow:      rgba(0,0,0,0.06);
+    --theme-glass-highlight:   rgba(255,255,255,0.6);
+    --theme-glass-divider:     rgba(26,74,110,0.1);
 }
 
 [data-theme="evening"] {
-    --theme-bg-start:     #2D1B4E;
-    --theme-bg-end:       #4A2060;
-    --theme-surface:      rgba(255,255,255,0.10);
-    --theme-border:       rgba(244,200,122,0.2);
-    --theme-text:         #F4E8D0;
-    --theme-text-muted:   #F4C87A;
-    --theme-accent:       #C084FC;
-    --theme-accent-hover: #A855F7;
-    --theme-today:        rgba(192,132,252,0.2);
-    --theme-weekend:      rgba(192,132,252,0.08);
-    --theme-on-accent:    #fff;
+    --theme-bg-start:          #2D1B4E;
+    --theme-bg-end:            #4A2060;
+    --theme-surface:           rgba(255,255,255,0.10);
+    --theme-border:            rgba(244,200,122,0.2);
+    --theme-text:              #F4E8D0;
+    --theme-text-muted:        #F4C87A;
+    --theme-accent:            #C084FC;
+    --theme-accent-hover:      #A855F7;
+    --theme-today:             rgba(192,132,252,0.2);
+    --theme-weekend:           rgba(192,132,252,0.08);
+    --theme-on-accent:         #fff;
+    --theme-surface-opacity:   0.12;
+    --theme-glass-border:      rgba(244,200,122,0.15);
+    --theme-glass-ring:        rgba(244,200,122,0.06);
+    --theme-glass-shadow:      rgba(0,0,0,0.2);
+    --theme-glass-highlight:   rgba(255,255,255,0.08);
+    --theme-glass-divider:     rgba(244,200,122,0.1);
 }
 
 [data-theme="night"] {
-    --theme-bg-start:     #0A0E1A;
-    --theme-bg-end:       #0F1628;
-    --theme-surface:      rgba(255,255,255,0.06);
-    --theme-border:       rgba(139,179,232,0.15);
-    --theme-text:         #E2EAF4;
-    --theme-text-muted:   #8BB3E8;
-    --theme-accent:       #60A5FA;
-    --theme-accent-hover: #3B82F6;
-    --theme-today:        rgba(96,165,250,0.15);
-    --theme-weekend:      rgba(96,165,250,0.05);
-    --theme-on-accent:    #fff;
+    --theme-bg-start:          #0A0E1A;
+    --theme-bg-end:            #0F1628;
+    --theme-surface:           rgba(255,255,255,0.06);
+    --theme-border:            rgba(139,179,232,0.15);
+    --theme-text:              #E2EAF4;
+    --theme-text-muted:        #8BB3E8;
+    --theme-accent:            #60A5FA;
+    --theme-accent-hover:      #3B82F6;
+    --theme-today:             rgba(96,165,250,0.15);
+    --theme-weekend:           rgba(96,165,250,0.05);
+    --theme-on-accent:         #fff;
+    --theme-surface-opacity:   0.08;
+    --theme-glass-border:      rgba(139,179,232,0.12);
+    --theme-glass-ring:        rgba(139,179,232,0.04);
+    --theme-glass-shadow:      rgba(0,0,0,0.3);
+    --theme-glass-highlight:   rgba(255,255,255,0.04);
+    --theme-glass-divider:     rgba(139,179,232,0.08);
 }
 
 /* =============================================
-   DOM layer model
+   Section 5 — Layout utilities
+   Custom Bootstrap replacements
    ============================================= */
-html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    /* Background is handled by #theme-bg — do NOT set background here */
-    color: var(--theme-text);
-    transition: color 45s ease-in-out;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-}
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center { justify-content: center; }
+.text-center { text-align: center; }
+.hidden { display: none; }
+.block { display: block; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+.text-danger { color: #ef4444; }
+.mb-1 { margin-bottom: 4px; } .mb-2 { margin-bottom: 8px; }
+.mb-3 { margin-bottom: 16px; } .mb-4 { margin-bottom: 24px; }
+.mb-5 { margin-bottom: 40px; }
+.mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 16px; } .mt-4 { margin-top: 24px; }
+.ms-1 { margin-left: 4px; } .ms-2 { margin-left: 8px; }
+.me-1 { margin-right: 4px; } .me-2 { margin-right: 8px; }
+.px-2 { padding-left: 8px; padding-right: 8px; }
+.px-3 { padding-left: 16px; padding-right: 16px; }
+.py-2 { padding-top: 8px; padding-bottom: 8px; }
+.py-3 { padding-top: 16px; padding-bottom: 16px; }
+.p-2 { padding: 8px; } .p-3 { padding: 16px; } .p-4 { padding: 24px; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 16px; }
+.w-full { width: 100%; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.fw-bold { font-weight: 700; }
+.fw-semibold { font-weight: 600; }
+.text-sm { font-size: 13px; }
 
+/* =============================================
+   Section 6 — DOM layer model
+   ============================================= */
 #theme-bg {
     position: fixed;
     inset: 0;
     z-index: 0;
     background: linear-gradient(160deg, var(--theme-bg-start), var(--theme-bg-end));
     transition:
-        --theme-bg-start 45s ease-in-out,
-        --theme-bg-end   45s ease-in-out;
+        --theme-bg-start var(--theme-transition-duration, 15s) ease-in-out,
+        --theme-bg-end   var(--theme-transition-duration, 15s) ease-in-out;
     pointer-events: none;
 }
 
@@ -110,6 +189,109 @@ html, body {
     min-height: 100vh;
 }
 
+/* =============================================
+   Section 7 — Glass surface mixin class
+   ============================================= */
+.glass-surface {
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    border: 1px solid var(--theme-glass-border);
+    border-radius: 8px;
+    box-shadow:
+        0 0 0 1px var(--theme-glass-ring),
+        0 8px 24px var(--theme-glass-shadow),
+        inset 0 1px 0 var(--theme-glass-highlight);
+    transition:
+        background-color var(--theme-transition-duration, 15s) ease-in-out,
+        border-color var(--theme-transition-duration, 15s) ease-in-out,
+        box-shadow var(--theme-transition-duration, 15s) ease-in-out;
+}
+
+/* =============================================
+   Section 8 — Buttons
+   ============================================= */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 48px; padding: 10px 20px; font-size: 14px;
+    font-family: inherit; font-weight: 500; border-radius: 6px;
+    cursor: pointer; border: none;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
+}
+
+.btn:active { filter: brightness(0.95); }
+
+.btn-primary {
+    background: var(--theme-accent); color: var(--theme-on-accent); font-weight: 600;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--theme-accent) 20%, transparent);
+}
+
+.btn-secondary, .btn-glass {
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    color: var(--theme-text); border: 1px solid var(--theme-glass-border);
+    box-shadow: inset 0 1px 0 var(--theme-glass-highlight);
+}
+
+.btn-ghost { background: transparent; color: var(--theme-text-muted); padding: 10px; min-height: auto; }
+.btn-danger { background: transparent; color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+.btn-lg { padding: 14px 28px; font-size: 16px; }
+.btn-sm { padding: 6px 12px; font-size: 12px; min-height: 36px; }
+.btn-close { background: transparent; border: none; color: var(--theme-text-muted); font-size: 20px; cursor: pointer; padding: 8px; line-height: 1; }
+.btn-group { display: inline-flex; gap: 4px; }
+
+/* =============================================
+   Section 9 — View tabs (clean underline)
+   ============================================= */
+.view-tabs { display: flex; border-bottom: 2px solid var(--theme-glass-divider); list-style: none; transition: border-color var(--theme-transition-duration, 15s) ease-in-out; }
+.view-tab { padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--theme-text-muted); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; min-height: 48px; transition: color var(--theme-transition-duration, 15s) ease-in-out, border-color var(--theme-transition-duration, 15s) ease-in-out; }
+.view-tab.active { font-weight: 600; color: var(--theme-text); border-bottom-color: var(--theme-accent); }
+
+/* =============================================
+   Section 10 — Modals
+   ============================================= */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.modal-dialog { width: 100%; max-width: 500px; padding: 16px; }
+.modal-sm .modal-dialog { max-width: 360px; }
+.modal-content {
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    border: 1px solid var(--theme-glass-border); border-radius: 8px;
+    box-shadow: 0 0 0 1px var(--theme-glass-ring), 0 16px 48px var(--theme-glass-shadow), inset 0 1px 0 var(--theme-glass-highlight);
+    color: var(--theme-text);
+}
+.modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--theme-glass-divider); }
+.modal-title { font-size: 18px; font-weight: 600; }
+.modal-body { padding: 20px; }
+.modal-footer { display: flex; justify-content: space-between; padding: 16px 20px; border-top: 1px solid var(--theme-glass-divider); gap: 8px; }
+
+/* =============================================
+   Section 11 — Forms
+   ============================================= */
+.form-label { display: block; font-size: 13px; font-weight: 500; color: var(--theme-text-muted); margin-bottom: 6px; }
+.form-input { width: 100%; background: transparent; border: 1px solid var(--theme-glass-border); border-radius: 6px; color: var(--theme-text); padding: 10px 14px; font-size: 14px; font-family: inherit; transition: border-color var(--theme-transition-duration, 15s) ease-in-out, color var(--theme-transition-duration, 15s) ease-in-out; }
+.form-input:focus { outline: none; border-color: var(--theme-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accent) 20%, transparent); }
+.form-check { display: flex; align-items: center; gap: 8px; }
+.form-check-input { accent-color: var(--theme-accent); width: 20px; height: 20px; }
+.form-check-label { font-size: 14px; color: var(--theme-text); }
+
+/* =============================================
+   Section 12 — Alerts
+   ============================================= */
+.alert { padding: 12px 16px; border-radius: 6px; font-size: 14px; }
+.alert-warning { background: rgba(234, 179, 8, 0.15); color: var(--theme-text); border: 1px solid rgba(234, 179, 8, 0.3); }
+.alert-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+/* =============================================
+   Section 13 — Spinner
+   ============================================= */
+.spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid var(--theme-glass-divider); border-top-color: var(--theme-accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+.spinner-sm { width: 16px; height: 16px; border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* =============================================
+   Section 14 — Calendar components
+   ============================================= */
+
+/* ── Dashboard container ──────────────────────────────────────────────── */
 .dashboard-container {
     max-width: 1400px;
     margin: 0 auto;
@@ -117,30 +299,35 @@ html, body {
     overflow-x: hidden;
 }
 
+/* ── Month table ──────────────────────────────────────────────────────── */
 .month-table {
     width: 100%;
     table-layout: fixed;
     border-collapse: collapse;
-    background: var(--theme-surface);
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     border-radius: 8px;
     overflow: hidden;
-    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .month-table th,
 .month-table td {
-    border: 1px solid var(--theme-border);
+    border: 1px solid var(--theme-glass-divider);
     padding: 0.75rem;
     text-align: left;
     vertical-align: top;
 }
 
 .month-table th {
-    background-color: var(--theme-surface);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     font-weight: 600;
     color: var(--theme-text-muted);
-    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .weekend-cell {
@@ -152,6 +339,7 @@ html, body {
     border: 2px solid var(--theme-accent);
 }
 
+/* ── Event capsule ────────────────────────────────────────────────────── */
 .event-capsule {
     background-color: var(--theme-accent);
     color: white;
@@ -178,7 +366,6 @@ html, body {
 }
 
 /* ── Calendar chip selector ─────────────────────────────────────────── */
-
 .chip-selector {
     display: flex;
     flex-wrap: wrap;
@@ -255,57 +442,37 @@ html, body {
     color: #dc3545;
 }
 
-/* ── End chip selector ──────────────────────────────────────────────── */
-
-#blazor-error-ui {
-    background: lightyellow;
-    bottom: 0;
-    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
-    display: none;
-    left: 0;
-    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
-    position: fixed;
-    width: 100%;
-    z-index: 1000;
-}
-
-#blazor-error-ui .dismiss {
-    cursor: pointer;
-    position: absolute;
-    right: 0.75rem;
-    top: 0.5rem;
-}
-
-/* ── Day View Grid ────────────────────────────────────────────── */
-
+/* ── Day View Grid ────────────────────────────────────────────────────── */
 .day-view-container {
     display: flex;
     flex-direction: column;
     height: 75vh;
-    border: 1px solid var(--theme-border);
+    border: 1px solid var(--theme-glass-divider);
     border-radius: 8px;
-    background: var(--theme-surface);
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     overflow-y: auto;
-    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .day-view-sticky-header {
     position: sticky;
     top: 0;
     z-index: 50;
-    background-color: var(--theme-surface);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
 }
 
 .day-header {
     display: flex;
-    border-bottom: 1px solid var(--theme-border);
-    background-color: var(--theme-surface);
+    border-bottom: 1px solid var(--theme-glass-divider);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
 }
 
 .time-axis-header {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
 }
 
 .calendar-header-col {
@@ -314,7 +481,7 @@ html, body {
     text-align: center;
     padding: 0.5rem;
     font-weight: 600;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -325,14 +492,14 @@ html, body {
 
 .all-day-container {
     display: flex;
-    border-bottom: 2px solid var(--theme-border);
+    border-bottom: 2px solid var(--theme-glass-divider);
     background-color: var(--theme-weekend);
 }
 
 .all-day-label {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -344,7 +511,7 @@ html, body {
 
 .all-day-col {
     flex: 1;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
     padding: 4px;
     display: flex;
     flex-direction: column;
@@ -358,7 +525,7 @@ html, body {
     flex: 1;
     overflow-y: visible;
     position: relative;
-    background-color: var(--theme-surface);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
 }
 
 .current-time-line {
@@ -366,7 +533,7 @@ html, body {
     left: 60px;
     right: 0;
     height: 2px;
-    background-color: #0d6efd;
+    background-color: var(--theme-accent);
     z-index: 20;
     pointer-events: none;
 }
@@ -378,7 +545,7 @@ html, body {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background-color: #0d6efd;
+    background-color: var(--theme-accent);
 }
 
 .day-body-flex {
@@ -391,9 +558,9 @@ html, body {
 .time-axis {
     width: 60px;
     flex-shrink: 0;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
     position: relative;
-    background-color: var(--theme-surface);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     z-index: 2; /* keep above horizontal lines */
 }
 
@@ -423,7 +590,7 @@ html, body {
     left: 0;
     right: 0;
     height: 1px;
-    background-color: var(--theme-border);
+    background-color: var(--theme-glass-divider);
     opacity: 0.5;
 }
 
@@ -437,7 +604,7 @@ html, body {
 
 .calendar-col {
     flex: 1;
-    border-right: 1px solid var(--theme-border);
+    border-right: 1px solid var(--theme-glass-divider);
     position: relative; /* absolute events position relative to this col */
     cursor: pointer; /* Click slot to add event here */
 }
@@ -470,14 +637,15 @@ html, body {
     z-index: 50 !important; /* Bring to front on hover */
 }
 
-/* ── Month Agenda View ─────────────────────────────────────────────────────── */
-
+/* ── Agenda View ──────────────────────────────────────────────────────── */
 .agenda-view-container {
-    background: var(--theme-surface);
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     border-radius: 8px;
     box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
     overflow: hidden;
-    transition: background-color 45s ease-in-out, color 45s ease-in-out, border-color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .agenda-table {
@@ -488,14 +656,14 @@ html, body {
 
 .agenda-table th,
 .agenda-table td {
-    border: 1px solid var(--theme-border);
+    border: 1px solid var(--theme-glass-divider);
     padding: 2px 4px;
     vertical-align: top;
     overflow: hidden;
 }
 
 .agenda-header-row th {
-    background-color: var(--theme-surface);
+    background-color: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
     font-weight: 600;
     font-size: 0.8rem;
     color: var(--theme-text-muted);
@@ -576,17 +744,19 @@ html, body {
 }
 
 /* =============================================
-   Dashboard header
+   Section 15 — Dashboard header
    ============================================= */
 .dashboard-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 12px 20px;
-    background: var(--theme-surface);
-    border-bottom: 1px solid var(--theme-border);
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    border-bottom: 1px solid var(--theme-glass-divider);
     color: var(--theme-text);
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out, color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .dashboard-header__brand {
@@ -604,7 +774,7 @@ html, body {
     color: var(--theme-text);
     text-decoration: none;
     border-radius: 50%;
-    transition: background-color 0.2s ease, color 45s ease-in-out;
+    transition: background-color 0.2s ease, color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .dashboard-header__settings:hover {
@@ -621,15 +791,16 @@ html, body {
     color: var(--theme-text);
     text-decoration: none;
     border-radius: 50%;
-    transition: background-color 0.2s ease, color 45s ease-in-out;
+    transition: background-color 0.2s ease, color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .dashboard-header__back:hover {
     background: var(--theme-accent);
     color: var(--theme-on-accent);
 }
+
 /* =============================================
-   Settings page
+   Section 16 — Settings page
    ============================================= */
 .settings-page {
     max-width: 700px;
@@ -650,11 +821,12 @@ html, body {
 }
 
 .settings-section {
-    background: var(--theme-surface);
-    border: 1px solid var(--theme-border);
+    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    border: 1px solid var(--theme-glass-divider);
     border-radius: 12px;
     padding: 20px;
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
 .settings-location-pill {
@@ -690,7 +862,7 @@ html, body {
 
 .settings-input {
     background: transparent;
-    border: 1px solid var(--theme-border);
+    border: 1px solid var(--theme-glass-divider);
     border-radius: 8px;
     padding: 12px 14px;
     font-size: 1rem;
@@ -730,7 +902,7 @@ html, body {
 
 .settings-btn--secondary {
     background: transparent;
-    border: 1px solid var(--theme-border);
+    border: 1px solid var(--theme-glass-divider);
     color: var(--theme-text);
     margin-top: 16px;
 }
@@ -814,67 +986,23 @@ html, body {
 }
 
 /* =============================================
-   Bootstrap button theme overrides
-   Bootstrap 5 CSS custom properties are overridden here.
-   app.css loads after bootstrap.min.css so these cascade correctly.
-   All colour transitions participate in the 45-second theme crossfade.
-   .btn-outline-danger is intentionally excluded (red = destructive intent).
+   Section 17 — Blazor error UI
    ============================================= */
-
-.btn-primary {
-    --bs-btn-color: var(--theme-on-accent);
-    --bs-btn-bg: var(--theme-accent);
-    --bs-btn-border-color: var(--theme-accent);
-    --bs-btn-hover-color: var(--theme-on-accent);
-    --bs-btn-hover-bg: var(--theme-accent-hover);
-    --bs-btn-hover-border-color: var(--theme-accent-hover);
-    --bs-btn-active-color: var(--theme-on-accent);
-    --bs-btn-active-bg: var(--theme-accent-hover);
-    --bs-btn-active-border-color: var(--theme-accent-hover);
-    --bs-btn-disabled-color: var(--theme-on-accent);
-    --bs-btn-disabled-bg: var(--theme-accent);
-    --bs-btn-disabled-border-color: var(--theme-accent);
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
-                color 45s ease-in-out, box-shadow .15s ease-in-out;
+#blazor-error-ui {
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
 }
 
-.btn-outline-primary {
-    --bs-btn-color: var(--theme-accent);
-    --bs-btn-border-color: var(--theme-accent);
-    --bs-btn-hover-color: var(--theme-on-accent);
-    --bs-btn-hover-bg: var(--theme-accent);
-    --bs-btn-hover-border-color: var(--theme-accent);
-    --bs-btn-active-color: var(--theme-on-accent);
-    --bs-btn-active-bg: var(--theme-accent);
-    --bs-btn-active-border-color: var(--theme-accent);
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
-                color 45s ease-in-out, box-shadow .15s ease-in-out;
-}
-
-.btn-light {
-    --bs-btn-color: var(--theme-text);
-    --bs-btn-bg: var(--theme-surface);
-    --bs-btn-border-color: var(--theme-border);
-    --bs-btn-hover-color: var(--theme-text);
-    --bs-btn-hover-bg: var(--theme-surface);
-    --bs-btn-hover-border-color: var(--theme-accent);
-    --bs-btn-active-color: var(--theme-text);
-    --bs-btn-active-bg: var(--theme-surface);
-    --bs-btn-active-border-color: var(--theme-accent);
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
-                color 45s ease-in-out, box-shadow .15s ease-in-out;
-}
-
-.btn-secondary {
-    --bs-btn-color: var(--theme-text-muted);
-    --bs-btn-bg: var(--theme-surface);
-    --bs-btn-border-color: var(--theme-border);
-    --bs-btn-hover-color: var(--theme-text);
-    --bs-btn-hover-bg: var(--theme-surface);
-    --bs-btn-hover-border-color: var(--theme-border);
-    --bs-btn-active-color: var(--theme-text);
-    --bs-btn-active-bg: var(--theme-surface);
-    --bs-btn-active-border-color: var(--theme-border);
-    transition: background-color 45s ease-in-out, border-color 45s ease-in-out,
-                color 45s ease-in-out, box-shadow .15s ease-in-out;
+#blazor-error-ui .dismiss {
+    cursor: pointer;
+    position: absolute;
+    right: 0.75rem;
+    top: 0.5rem;
 }
