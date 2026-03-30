@@ -17,6 +17,8 @@ Load this skill for any task that touches CSS, Blazor components, layout, or the
 4. **Min touch target: 48 × 48 px** — all buttons, links, tabs, chips, and interactive elements.
 5. **Portrait-first layout** — the display is 1080 × 1920. Design for vertical space, not horizontal. Scrollable containers are preferred over horizontal layouts on small screens.
 6. **Never add content inside `#theme-bg` or `#weather-overlay`** — these are reserved visual layers.
+7. **No Bootstrap** — Bootstrap has been fully removed. Do not re-add Bootstrap classes or the Bootstrap stylesheet. All styles live in `wwwroot/css/app.css`.
+8. **Use `.glass-surface` for all panels/cards/modals** — it wires up background, border, and box-shadow to the glass variable system automatically.
 
 ## Theme Variables Quick Reference
 
@@ -24,24 +26,65 @@ Use these on every component:
 
 | Purpose | Variable |
 |---|---|
-| Page/card background | `var(--theme-surface)` |
-| Card/panel border | `var(--theme-border)` |
+| Page/card background | `.glass-surface` class (preferred) or `var(--theme-surface)` |
+| Card/panel border | `var(--theme-glass-border)` (via `.glass-surface`) |
 | Body text | `var(--theme-text)` |
 | Labels, secondary text | `var(--theme-text-muted)` |
 | Buttons, active states, event pills | `var(--theme-accent)` |
 | Hover state | `var(--theme-accent-hover)` |
 | Today cell | `var(--theme-today)` |
 | Weekend cell | `var(--theme-weekend)` |
+| Surface opacity (glass level) | `var(--theme-surface-opacity)` × `var(--user-surface-multiplier)` |
+| Theme transition speed | `var(--theme-transition-duration)` (default `15s`) |
+| Dividers inside panels | `var(--theme-glass-divider)` |
 
 The background gradient is handled by `#theme-bg` automatically — **do not set background on `body` or `#app`**.
 
+### Glass Surface Variables
+
+The glass system adds these per-theme variables (set inside each `[data-theme="..."]` block):
+
+| Variable | Purpose |
+|---|---|
+| `--theme-surface-opacity` | Base opacity for glass surfaces (morning/daytime: 0.55, evening: 0.12, night: 0.08) |
+| `--theme-glass-border` | 1px white-tinted border colour |
+| `--theme-glass-ring` | Outer glow ring (box-shadow layer 1) |
+| `--theme-glass-shadow` | Drop shadow (box-shadow layer 2) |
+| `--theme-glass-highlight` | Top-edge highlight (box-shadow layer 3, inset) |
+| `--theme-glass-divider` | Divider lines inside panels |
+
+### Shape Language
+
+| Element | Border Radius |
+|---|---|
+| Cards, panels, modals | `8px` |
+| Buttons | `6px` |
+| Table cells | `4px` |
+
+### Available Component Classes
+
+Defined in `wwwroot/css/app.css` — use these instead of Bootstrap equivalents:
+
+- **Buttons**: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`
+- **Tabs**: `.view-tabs` (container), `.view-tab`, `.view-tab.active`
+- **Modals**: `.modal-overlay`, `.modal-container`, `.modal-header`, `.modal-body`, `.modal-footer`
+- **Forms**: `.form-group`, `.form-label`, `.form-input`, `.form-select`
+- **Alerts**: `.alert-info`, `.alert-success`, `.alert-warning`, `.alert-error`
+- **Spinner**: `.spinner`
+- **Flex utilities**: `.flex`, `.flex-col`, `.items-center`, `.items-start`, `.items-end`, `.justify-between`, `.justify-center`, `.justify-end`
+- **Spacing**: `.mb-1`–`.mb-5`, `.mt-1`–`.mt-5`, `.gap-1`–`.gap-4`
+- **Misc**: `.w-full`, `.text-center`, `.text-right`
+
 ## Adding a New Themed Component — Checklist
 
-- [ ] Uses only CSS variables from the table above
-- [ ] Has `transition: background-color 45s ease-in-out, color 45s ease-in-out` if always visible
+- [ ] Uses only CSS variables from the table above — no hardcoded colours
+- [ ] Surfaces use `.glass-surface` class (handles background, border, and shadows)
+- [ ] Border radius: `8px` cards/panels, `6px` buttons, `4px` cells
+- [ ] Has `transition: background-color var(--theme-transition-duration) ease-in-out, color var(--theme-transition-duration) ease-in-out` if always visible
 - [ ] Touch targets ≥ 48 × 48 px
 - [ ] Tested visually in all 4 themes (morning / daytime / evening / night)
 - [ ] No `backdrop-filter` or heavy filter effects
+- [ ] No Bootstrap classes
 
 ## Input Fields & Virtual Keyboard
 

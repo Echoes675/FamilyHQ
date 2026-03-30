@@ -253,6 +253,7 @@ Current entities using this pattern:
 
 - [`CalendarEvent`](../../src/FamilyHQ.Core/Models/CalendarEvent.cs) - `Start`, `End`
 - [`SyncState`](../../src/FamilyHQ.Core/Models/SyncState.cs) - `LastSyncedAt`, `SyncWindowStart`, `SyncWindowEnd`
+- [`DisplaySetting`](../../src/FamilyHQ.Core/Models/DisplaySetting.cs) - no `DateTimeOffset` properties (SurfaceMultiplier, OpaqueSurfaces, TransitionDurationSecs are primitive types)
 
 ## References
 

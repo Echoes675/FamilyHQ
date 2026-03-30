@@ -117,6 +117,89 @@ All four themes are derived from the "Warm & Natural" direction. Text contrast i
 | `--theme-today` | `rgba(96,165,250,0.15)` | |
 | `--theme-weekend` | `rgba(96,165,250,0.05)` | |
 
+### Glass Surface System
+
+Bootstrap has been removed entirely. All UI is built with custom CSS in `app.css`. The design language is **glassmorphism-lite**: semi-transparent surfaces with white border glow and layered shadows — no blur effects (Pi 3B+ GPU constraint).
+
+#### Glass CSS Variables (per theme)
+
+Each theme block defines these additional glass surface variables:
+
+| Variable | Purpose |
+|---|---|
+| `--theme-surface-opacity` | Base opacity multiplier for glass surfaces |
+| `--theme-glass-border` | 1px white-tinted border on glass panels |
+| `--theme-glass-ring` | Outer glow ring (box-shadow layer 1) |
+| `--theme-glass-shadow` | Drop shadow (box-shadow layer 2) |
+| `--theme-glass-highlight` | Top edge highlight (box-shadow layer 3) |
+| `--theme-glass-divider` | Subtle divider line colour inside panels |
+
+Default `--theme-surface-opacity` per theme:
+- **Morning**: `0.55`
+- **Daytime**: `0.55`
+- **Evening**: `0.12`
+- **Night**: `0.08`
+
+#### User-Controlled Display Variables
+
+| Variable | Default | Range | Purpose |
+|---|---|---|---|
+| `--user-surface-multiplier` | `1` | `0`–`2` | Scales surface opacity (set via JS interop from `DisplaySettingService`) |
+| `--theme-transition-duration` | `15s` | — | Background gradient transition speed (was 45s) |
+
+`DisplaySettingService` / `IDisplaySettingService` is the Blazor service that applies these at runtime via JS interop (`window.displaySettings.applySettings(multiplier, transitionDuration)`).
+
+#### `.glass-surface` Class
+
+The canonical surface class. All panels, cards, modals, and containers use it:
+```css
+.glass-surface {
+  background: rgba(255,255,255, calc(var(--theme-surface-opacity) * var(--user-surface-multiplier)));
+  border: 1px solid var(--theme-glass-border);
+  box-shadow:
+    0 0 0 1px var(--theme-glass-ring),
+    0 4px 24px var(--theme-glass-shadow),
+    inset 0 1px 0 var(--theme-glass-highlight);
+  color: var(--theme-text);
+}
+```
+
+No hardcoded hex colours on any component. Always reference theme variables.
+
+#### Shape Language
+
+| Element | Border Radius |
+|---|---|
+| Cards, panels, modals | `8px` |
+| Buttons | `6px` |
+| Table cells | `4px` |
+
+#### Typography
+
+**DM Sans** is self-hosted (weights 400 / 500 / 600 / 700). No external font CDN dependency.
+
+### Component Classes
+
+Bootstrap utility classes have been replaced with custom equivalents in `app.css`:
+
+**Buttons**: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`
+
+**View tabs**: `.view-tabs` (container), `.view-tab` (individual tab), `.view-tab.active`
+
+**Modals**: `.modal-overlay`, `.modal-container`, `.modal-header`, `.modal-body`, `.modal-footer`
+
+**Forms**: `.form-group`, `.form-label`, `.form-input`, `.form-select`
+
+**Alerts**: `.alert-info`, `.alert-success`, `.alert-warning`, `.alert-error`
+
+**Spinner**: `.spinner`
+
+**Utility layout** (replace Bootstrap grid/flex utilities):
+- `.flex`, `.flex-col`, `.items-center`, `.items-start`, `.items-end`
+- `.justify-between`, `.justify-center`, `.justify-end`
+- `.mb-1` through `.mb-5`, `.mt-1` through `.mt-5`, `.gap-1` through `.gap-4`
+- `.w-full`, `.text-center`, `.text-right`
+
 ### CSS Architecture
 
 #### Registered custom properties (@property)
@@ -133,10 +216,10 @@ Register colour variables as typed `<color>` values so the browser can interpola
 
 #### Theme blocks
 ```css
-[data-theme="morning"]  { --theme-bg-start: #FFF8F0; /* ... */ }
-[data-theme="daytime"]  { --theme-bg-start: #E8F4FD; /* ... */ }
-[data-theme="evening"]  { --theme-bg-start: #2D1B4E; /* ... */ }
-[data-theme="night"]    { --theme-bg-start: #0A0E1A; /* ... */ }
+[data-theme="morning"]  { --theme-bg-start: #FFF8F0; --theme-surface-opacity: 0.55; /* ... */ }
+[data-theme="daytime"]  { --theme-bg-start: #E8F4FD; --theme-surface-opacity: 0.55; /* ... */ }
+[data-theme="evening"]  { --theme-bg-start: #2D1B4E; --theme-surface-opacity: 0.12; /* ... */ }
+[data-theme="night"]    { --theme-bg-start: #0A0E1A; --theme-surface-opacity: 0.08; /* ... */ }
 ```
 
 #### Background layer
@@ -147,29 +230,20 @@ Register colour variables as typed `<color>` values so the browser can interpola
   z-index: 0;
   background: linear-gradient(160deg, var(--theme-bg-start), var(--theme-bg-end));
   transition:
-    --theme-bg-start 45s ease-in-out,
-    --theme-bg-end   45s ease-in-out;
+    --theme-bg-start var(--theme-transition-duration) ease-in-out,
+    --theme-bg-end   var(--theme-transition-duration) ease-in-out;
   pointer-events: none;
 }
 ```
 
-#### Surface components
-All panels, cards, modals, and the day-view container use:
-```css
-background: var(--theme-surface);
-border: 1px solid var(--theme-border);
-color: var(--theme-text);
-```
-No hardcoded hex colours on any component. Always reference theme variables.
-
 #### Transition on text/accent colours
 ```css
 body {
-  transition: color 45s ease-in-out;
+  transition: color var(--theme-transition-duration) ease-in-out;
   color: var(--theme-text);
 }
 .accent-element {
-  transition: background-color 45s ease-in-out, color 45s ease-in-out;
+  transition: background-color var(--theme-transition-duration) ease-in-out, color var(--theme-transition-duration) ease-in-out;
 }
 ```
 
@@ -178,17 +252,18 @@ body {
 1. On page load, `ThemeService.InitialiseAsync()` calls `GET /api/daytheme/today`, derives the current period, and calls JS interop `theme.setTheme(period)`.
 2. `SignalRService.OnThemeChanged` fires when the server pushes a `ThemeChanged` message. `ThemeService` calls `theme.setTheme(newPeriod)`.
 3. `theme.js` sets `document.body.setAttribute('data-theme', period.toLowerCase())`.
-4. CSS takes over — `@property` transitions interpolate all colours over 45 seconds with no further JS involvement.
+4. CSS takes over — `@property` transitions interpolate all colours over the configured transition duration with no further JS involvement.
+5. `DisplaySettingService.InitialiseAsync()` calls `GET /api/settings/display` and applies `--user-surface-multiplier` and `--theme-transition-duration` via JS interop.
 
 ### Adding a New Themed Component
 
 1. Use only CSS custom properties from the table above — no hardcoded colours.
-2. Background → `var(--theme-surface)`
-3. Borders → `var(--theme-border)`
-4. Body text → `var(--theme-text)`
-5. Labels / secondary text → `var(--theme-text-muted)`
-6. Interactive / highlighted elements → `var(--theme-accent)` / `var(--theme-accent-hover)`
-7. Add `transition: background-color 45s ease-in-out, color 45s ease-in-out` if the element is always visible (not inside a modal that opens/closes).
+2. Surface background → `.glass-surface` class (handles background, border, and box-shadow automatically)
+3. Body text → `var(--theme-text)`
+4. Labels / secondary text → `var(--theme-text-muted)`
+5. Interactive / highlighted elements → `var(--theme-accent)` / `var(--theme-accent-hover)`
+6. Add `transition: background-color var(--theme-transition-duration) ease-in-out, color var(--theme-transition-duration) ease-in-out` if the element is always visible (not inside a modal that opens/closes).
+7. Border radius: `8px` for cards/panels, `6px` for buttons, `4px` for cells.
 
 ## DOM Layer Model
 
@@ -214,7 +289,8 @@ The `#weather-overlay` div is intentionally empty. Future weather integration wi
 
 Sections in order (top to bottom):
 1. **Location** — current location pill (Auto / Saved badge), place name input, Save button
-2. **Today's Theme Schedule** — 4 period tiles showing boundary times
-3. **Account** — avatar initials, display name, email, Sign Out button *(at bottom — used infrequently)*
+2. **Display** — transparency slider (`--user-surface-multiplier`, 0–2), opaque toggle (forces multiplier to max), transition speed slider (`--theme-transition-duration`). Changes applied in real time via `DisplaySettingService`.
+3. **Today's Theme Schedule** — 4 period tiles showing boundary times
+4. **Account** — avatar initials, display name, email, Sign Out button *(at bottom — used infrequently)*
 
-Header contains only: brand name + settings gear icon. User name is **not** shown in the header.
+Header contains only: brand name + back arrow. User name is **not** shown in the header.

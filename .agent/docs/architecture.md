@@ -30,6 +30,7 @@
 - **CalendarEvent**: Google Calendar event data.
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). A single row; when absent, the API falls back to IP-based geolocation.
+- **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double`, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`). A single row. Controls the glassmorphism surface opacity and theme transition speed at runtime.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
@@ -37,11 +38,14 @@
 - **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists. Loops using Task.Delay to wake at each period boundary and broadcast `ThemeChanged(periodName)` to all SignalR clients via IHubContext<CalendarHub>.
 - **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback.
 - **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required.
+- **IDisplaySettingService / DisplaySettingService** (Blazor WASM): Loads display preferences from `GET /api/settings/display` on startup and applies `--user-surface-multiplier` and `--theme-transition-duration` CSS custom properties via JS interop. Saves changes via `PUT /api/settings/display`.
 
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
 - `GET  /api/settings/location` → LocationSettingDto or 404
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
+- `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier, OpaqueSurfaces, TransitionDurationSecs) — returns defaults if no row exists
+- `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs }` → upserts the single DisplaySetting row, returns DisplaySettingDto
 
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
@@ -58,11 +62,13 @@ The DOM is structured in three stacked layers to support time-of-day theming and
 </body>
 ```
 
-Theme switching is driven by the `data-theme` attribute on `<body>`. CSS custom properties registered via `@property` (typed as `<color>`) allow the browser to smoothly interpolate gradient colours over 45 seconds. See `.agent/docs/ui-design-system.md` for full CSS variable reference.
+Theme switching is driven by the `data-theme` attribute on `<body>`. CSS custom properties registered via `@property` (typed as `<color>`) allow the browser to smoothly interpolate gradient colours over a user-configurable duration (default 15s, controlled by `--theme-transition-duration`). See `.agent/docs/ui-design-system.md` for full CSS variable reference.
+
+The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface` components with white border glow and layered box-shadows. Bootstrap has been removed; all styles live in `wwwroot/css/app.css`. The DM Sans font is self-hosted.
 
 ## Pages & Navigation
 - `/` — Dashboard (Month / Day / Agenda views)
-- `/settings` — Settings page (Location, Today's Theme Schedule, Account / Sign Out)
+- `/settings` — Settings page (Location, Display, Today's Theme Schedule, Account / Sign Out)
 - Settings accessed via a gear icon (⚙️) in the DashboardHeader. User name and sign-out are on the Settings page, not the header.
 
 ## Performance Targets
