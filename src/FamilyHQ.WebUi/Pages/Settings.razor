@@ -4,6 +4,7 @@
 @using FamilyHQ.WebUi.Services.Auth
 @inject ISettingsApiService SettingsApiService
 @inject IAuthenticationService AuthService
+@inject IDisplaySettingService DisplaySettingService
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
 
@@ -72,6 +73,40 @@
         }
     </div>
 
+    <h2 class="settings-section__title">Display</h2>
+    <div class="settings-section">
+        <div class="mb-4">
+            <label class="settings-label">Surface Transparency</label>
+            <div class="flex items-center gap-3">
+                <input type="range" min="0" max="200" step="10"
+                       value="@(_surfaceMultiplierPercent)"
+                       @oninput="OnSurfaceMultiplierChanged"
+                       disabled="@_opaqueSurfaces"
+                       class="settings-slider"
+                       style="accent-color: var(--theme-accent); flex: 1;" />
+                <span class="settings-slider-value">@(_surfaceMultiplierPercent)%</span>
+            </div>
+        </div>
+
+        <div class="form-check mb-4">
+            <input type="checkbox" class="form-check-input" id="opaque-toggle"
+                   checked="@_opaqueSurfaces" @onchange="OnOpaqueToggled" />
+            <label class="form-check-label" for="opaque-toggle">Opaque surfaces (disable transparency)</label>
+        </div>
+
+        <div>
+            <label class="settings-label">Theme Transition Speed</label>
+            <div class="flex items-center gap-3">
+                <input type="range" min="0" max="60" step="5"
+                       value="@_transitionDurationSecs"
+                       @oninput="OnTransitionDurationChanged"
+                       class="settings-slider"
+                       style="accent-color: var(--theme-accent); flex: 1;" />
+                <span class="settings-slider-value">@(_transitionDurationSecs)s</span>
+            </div>
+        </div>
+    </div>
+
     <h2 class="settings-section__title">Account</h2>
     <div class="settings-section settings-account">
         @if (_username is not null)
@@ -92,6 +127,9 @@
     private bool _isSaving;
     private string? _saveError;
     private ElementReference _scrollContainer;
+    private int _surfaceMultiplierPercent = 100;
+    private bool _opaqueSurfaces;
+    private int _transitionDurationSecs = 15;
 
     protected override async Task OnInitializedAsync()
     {
@@ -104,6 +142,11 @@
         _username = await AuthService.GetUsernameAsync();
         _locationSetting = await SettingsApiService.GetLocationAsync();
         _todayTheme = await SettingsApiService.GetTodayThemeAsync();
+
+        var displaySettings = DisplaySettingService.CurrentSettings;
+        _surfaceMultiplierPercent = (int)(displaySettings.SurfaceMultiplier * 100);
+        _opaqueSurfaces = displaySettings.OpaqueSurfaces;
+        _transitionDurationSecs = displaySettings.TransitionDurationSecs;
     }
 
     private async Task OnInputFocus()
@@ -131,6 +174,43 @@
         finally
         {
             _isSaving = false;
+        }
+    }
+
+    private async Task OnSurfaceMultiplierChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var percent))
+        {
+            _surfaceMultiplierPercent = percent;
+            var multiplier = percent / 100.0;
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
+            await DisplaySettingService.SaveAsync(new DisplaySettingDto(multiplier, _opaqueSurfaces, _transitionDurationSecs));
+        }
+    }
+
+    private async Task OnOpaqueToggled(ChangeEventArgs e)
+    {
+        _opaqueSurfaces = (bool)(e.Value ?? false);
+        var multiplier = _surfaceMultiplierPercent / 100.0;
+        if (_opaqueSurfaces)
+        {
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", "100");
+        }
+        else
+        {
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
+        }
+        await DisplaySettingService.SaveAsync(new DisplaySettingDto(multiplier, _opaqueSurfaces, _transitionDurationSecs));
+    }
+
+    private async Task OnTransitionDurationChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var secs))
+        {
+            _transitionDurationSecs = secs;
+            await DisplaySettingService.UpdatePropertyAsync("--theme-transition-duration", $"{secs}s");
+            var multiplier = _surfaceMultiplierPercent / 100.0;
+            await DisplaySettingService.SaveAsync(new DisplaySettingDto(multiplier, _opaqueSurfaces, _transitionDurationSecs));
         }
     }
 

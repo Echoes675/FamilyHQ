@@ -985,6 +985,34 @@ html, body {
     margin: 0 0 16px;
 }
 
+/* Settings sliders */
+.settings-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--theme-glass-divider);
+    outline: none;
+}
+.settings-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    cursor: pointer;
+    border: 2px solid var(--theme-on-accent);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--theme-accent) 30%, transparent);
+}
+.settings-slider-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--theme-text);
+    min-width: 50px;
+    text-align: right;
+}
+
 /* =============================================
    Section 17 — Blazor error UI
    ============================================= */
