@@ -35,28 +35,27 @@
                     </div>
                     <div class="grid-2 mb-3">
                         <div>
-                            <label class="form-label">Start</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-input" @bind="@_eventModelStartDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-input" @bind="_eventModel.Start" />
-                            }
+                            <label class="form-label">Start Date</label>
+                            <input type="date" class="form-input" @bind="_startDate" />
                         </div>
                         <div>
-                            <label class="form-label">End</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-input" @bind="@_eventModelEndDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-input" @bind="_eventModel.End" />
-                            }
+                            <label class="form-label">End Date</label>
+                            <input type="date" class="form-input" @bind="_endDate" />
                         </div>
                     </div>
+                    @if (!_eventModel.IsAllDay)
+                    {
+                        <div class="grid-2 mb-3">
+                            <div>
+                                <label class="form-label">Start Time</label>
+                                <input type="time" class="form-input" @bind="_startTime" />
+                            </div>
+                            <div>
+                                <label class="form-label">End Time</label>
+                                <input type="time" class="form-input" @bind="_endTime" />
+                            </div>
+                        </div>
+                    }
                     <div class="mb-3">
                         <label class="form-label">Location (Optional)</label>
                         <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
@@ -105,16 +104,60 @@
     private string? _modalError;
     private bool _isSaving;
 
-    private DateTime _eventModelStartDate
+    private DateTime _startDate
     {
         get => _eventModel.Start.LocalDateTime.Date;
-        set => _eventModel.Start = new DateTimeOffset(value.Date, TimeSpan.Zero);
+        set
+        {
+            var time = _eventModel.Start.LocalDateTime.TimeOfDay;
+            var dt = value.Date + time;
+            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            SyncEndDateIfNeeded();
+        }
     }
 
-    private DateTime _eventModelEndDate
+    private DateTime _endDate
     {
-        get => _eventModel.End.LocalDateTime.Date;
-        set => _eventModel.End = new DateTimeOffset(value.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
+        get => _eventModel.IsAllDay
+            ? _eventModel.End.LocalDateTime.Date
+            : _eventModel.End.LocalDateTime.Date;
+        set
+        {
+            var time = _eventModel.End.LocalDateTime.TimeOfDay;
+            var dt = _eventModel.IsAllDay
+                ? value.Date.AddDays(1).AddTicks(-1)
+                : value.Date + time;
+            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private TimeOnly _startTime
+    {
+        get => TimeOnly.FromTimeSpan(_eventModel.Start.LocalDateTime.TimeOfDay);
+        set
+        {
+            var dt = _eventModel.Start.LocalDateTime.Date + value.ToTimeSpan();
+            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private TimeOnly _endTime
+    {
+        get => TimeOnly.FromTimeSpan(_eventModel.End.LocalDateTime.TimeOfDay);
+        set
+        {
+            var dt = _eventModel.End.LocalDateTime.Date + value.ToTimeSpan();
+            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private void SyncEndDateIfNeeded()
+    {
+        if (_eventModel.End < _eventModel.Start)
+        {
+            var duration = TimeSpan.FromHours(1);
+            _eventModel.End = _eventModel.Start + duration;
+        }
     }
 
     public void OpenForCreate(DateTime date, Guid? calendarId = null)

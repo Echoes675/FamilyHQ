@@ -219,9 +219,8 @@ public class DashboardPage : BasePage
 
     public async Task<string> GetModalStartDateValueAsync()
     {
-        // Timed events use input[type='datetime-local'], value format: "yyyy-MM-ddTHH:mm"
-        // Use .First to target the Start input (modal has both Start and End datetime-local inputs)
-        var input = EventModal.Locator("input[type='datetime-local']").First;
+        // Start date is the first date input in the modal, value format: "yyyy-MM-dd"
+        var input = EventModal.Locator("input[type='date']").First;
         return await input.InputValueAsync();
     }
 
