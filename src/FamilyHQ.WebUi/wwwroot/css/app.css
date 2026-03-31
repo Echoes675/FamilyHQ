@@ -31,6 +31,7 @@
 @property --theme-glass-shadow    { syntax: '<color>'; inherits: true; initial-value: rgba(0,0,0,0.04); }
 @property --theme-glass-highlight { syntax: '<color>'; inherits: true; initial-value: rgba(255,255,255,0.7); }
 @property --theme-glass-divider   { syntax: '<color>'; inherits: true; initial-value: rgba(124,58,0,0.1); }
+@property --theme-modal-bg       { syntax: '<color>'; inherits: true; initial-value: #FFF6EC; }
 
 /* =============================================
    Section 3 — CSS Reset
@@ -67,6 +68,7 @@ html, body {
     --theme-glass-shadow:      rgba(0,0,0,0.04);
     --theme-glass-highlight:   rgba(255,255,255,0.7);
     --theme-glass-divider:     rgba(124,58,0,0.1);
+    --theme-modal-bg:          #FFF6EC;
 }
 
 [data-theme="daytime"] {
@@ -87,6 +89,7 @@ html, body {
     --theme-glass-shadow:      rgba(0,0,0,0.06);
     --theme-glass-highlight:   rgba(255,255,255,0.6);
     --theme-glass-divider:     rgba(26,74,110,0.1);
+    --theme-modal-bg:          #EDF4FA;
 }
 
 [data-theme="evening"] {
@@ -107,6 +110,7 @@ html, body {
     --theme-glass-shadow:      rgba(0,0,0,0.2);
     --theme-glass-highlight:   rgba(255,255,255,0.08);
     --theme-glass-divider:     rgba(244,200,122,0.1);
+    --theme-modal-bg:          #2A1A42;
 }
 
 [data-theme="night"] {
@@ -127,6 +131,7 @@ html, body {
     --theme-glass-shadow:      rgba(0,0,0,0.3);
     --theme-glass-highlight:   rgba(255,255,255,0.04);
     --theme-glass-divider:     rgba(139,179,232,0.08);
+    --theme-modal-bg:          #121A2E;
 }
 
 /* =============================================
@@ -257,10 +262,11 @@ html, body {
 .modal-dialog { width: 100%; max-width: 500px; padding: 16px; }
 .modal-sm .modal-dialog { max-width: 360px; }
 .modal-content {
-    background: rgba(255, 255, 255, calc(var(--theme-surface-opacity, 0.55) * var(--user-surface-multiplier, 1)));
+    background: var(--theme-modal-bg);
     border: 1px solid var(--theme-glass-border); border-radius: 8px;
     box-shadow: 0 0 0 1px var(--theme-glass-ring), 0 16px 48px var(--theme-glass-shadow), inset 0 1px 0 var(--theme-glass-highlight);
     color: var(--theme-text);
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out, border-color var(--theme-transition-duration, 15s) ease-in-out, color var(--theme-transition-duration, 15s) ease-in-out;
 }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--theme-glass-divider); }
 .modal-title { font-size: 18px; font-weight: 600; }

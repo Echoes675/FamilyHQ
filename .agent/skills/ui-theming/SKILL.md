@@ -18,7 +18,7 @@ Load this skill for any task that touches CSS, Blazor components, layout, or the
 5. **Portrait-first layout** — the display is 1080 × 1920. Design for vertical space, not horizontal. Scrollable containers are preferred over horizontal layouts on small screens.
 6. **Never add content inside `#theme-bg` or `#weather-overlay`** — these are reserved visual layers.
 7. **No Bootstrap** — Bootstrap has been fully removed. Do not re-add Bootstrap classes or the Bootstrap stylesheet. All styles live in `wwwroot/css/app.css`.
-8. **Use `.glass-surface` for all panels/cards/modals** — it wires up background, border, and box-shadow to the glass variable system automatically.
+8. **Use `.glass-surface` for all panels/cards** — it wires up background, border, and box-shadow to the glass variable system automatically. **Modals use `--theme-modal-bg` instead** (solid, theme-matched background for readability).
 
 ## Theme Variables Quick Reference
 
@@ -37,6 +37,7 @@ Use these on every component:
 | Surface opacity (glass level) | `var(--theme-surface-opacity)` × `var(--user-surface-multiplier)` |
 | Theme transition speed | `var(--theme-transition-duration)` (default `15s`) |
 | Dividers inside panels | `var(--theme-glass-divider)` |
+| Modal background | `var(--theme-modal-bg)` (solid, not glass) |
 
 The background gradient is handled by `#theme-bg` automatically — **do not set background on `body` or `#app`**.
 

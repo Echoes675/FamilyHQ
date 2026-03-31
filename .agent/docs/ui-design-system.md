@@ -133,6 +133,7 @@ Each theme block defines these additional glass surface variables:
 | `--theme-glass-shadow` | Drop shadow (box-shadow layer 2) |
 | `--theme-glass-highlight` | Top edge highlight (box-shadow layer 3) |
 | `--theme-glass-divider` | Subtle divider line colour inside panels |
+| `--theme-modal-bg` | Solid theme-matched background for modals (not glass) |
 
 Default `--theme-surface-opacity` per theme:
 - **Morning**: `0.55`
@@ -151,7 +152,7 @@ Default `--theme-surface-opacity` per theme:
 
 #### `.glass-surface` Class
 
-The canonical surface class. All panels, cards, modals, and containers use it:
+The canonical surface class. All panels, cards, and containers use it. **Modals use `--theme-modal-bg` instead** (solid, theme-matched background for readability):
 ```css
 .glass-surface {
   background: rgba(255,255,255, calc(var(--theme-surface-opacity) * var(--user-surface-multiplier)));
