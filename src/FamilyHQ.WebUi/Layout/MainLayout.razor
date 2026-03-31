@@ -4,13 +4,33 @@
 @inject IDisplaySettingService DisplaySettingService
 
 <div class="page">
-    @Body
+    <ErrorBoundary @ref="_errorBoundary">
+        <ChildContent>
+            @Body
+        </ChildContent>
+        <ErrorContent>
+            <div class="error-boundary-container">
+                <div class="glass-surface error-boundary-card">
+                    <h2>Something went wrong</h2>
+                    <p>An unexpected error occurred. Please try again.</p>
+                    <button class="btn btn-primary" @onclick="Recover">Reload</button>
+                </div>
+            </div>
+        </ErrorContent>
+    </ErrorBoundary>
 </div>
 
 @code {
+    private ErrorBoundary? _errorBoundary;
+
     protected override async Task OnInitializedAsync()
     {
         await ThemeService.InitialiseAsync();
         await DisplaySettingService.InitialiseAsync();
+    }
+
+    private void Recover()
+    {
+        _errorBoundary?.Recover();
     }
 }

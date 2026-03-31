@@ -1018,7 +1018,37 @@ html, body {
 }
 
 /* =============================================
-   Section 17 — Blazor error UI
+   Section 17 — Error boundary
+   ============================================= */
+.error-boundary-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 60vh;
+    padding: 2rem;
+}
+
+.error-boundary-card {
+    text-align: center;
+    padding: 2.5rem;
+    max-width: 420px;
+    width: 100%;
+}
+
+.error-boundary-card h2 {
+    color: var(--theme-text);
+    margin: 0 0 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.error-boundary-card p {
+    color: var(--theme-text-muted);
+    margin: 0 0 1.5rem;
+}
+
+/* =============================================
+   Section 18 — Blazor error UI
    ============================================= */
 #blazor-error-ui {
     background: lightyellow;

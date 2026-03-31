@@ -24,9 +24,16 @@ public class ThemeService : IThemeService, IAsyncDisposable
 
     public async Task InitialiseAsync()
     {
-        var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
-        if (dto is not null)
-            await SetThemeAsync(dto.CurrentPeriod);
+        try
+        {
+            var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
+            if (dto is not null)
+                await SetThemeAsync(dto.CurrentPeriod);
+        }
+        catch (HttpRequestException)
+        {
+            // Theme is non-critical — fall back to default if API is unreachable or returns an error
+        }
     }
 
     private async Task SetThemeAsync(string period)

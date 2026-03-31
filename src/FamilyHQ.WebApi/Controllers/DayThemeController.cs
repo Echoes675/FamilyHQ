@@ -21,6 +21,7 @@ public class DayThemeController : ControllerBase
         _logger = logger;
     }
 
+    [AllowAnonymous]
     [HttpGet("today")]
     public async Task<IActionResult> GetToday(CancellationToken ct)
     {

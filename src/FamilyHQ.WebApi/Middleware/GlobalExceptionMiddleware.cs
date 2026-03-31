@@ -1,35 +1,32 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Middleware;
 
-public class GlobalExceptionMiddleware
+public class GlobalExceptionMiddleware(
+    RequestDelegate next,
+    ILogger<GlobalExceptionMiddleware> logger,
+    IHostEnvironment environment)
 {
-    private readonly RequestDelegate _next;
-    private readonly ILogger<GlobalExceptionMiddleware> _logger;
-
-    public GlobalExceptionMiddleware(RequestDelegate next, ILogger<GlobalExceptionMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
-
     public async Task InvokeAsync(HttpContext context)
     {
         try
         {
-            await _next(context);
+            await next(context);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An unhandled exception occurred processing {Method} {Path}", context.Request.Method, context.Request.Path);
-            
+            logger.LogError(ex, "Unhandled exception processing {Method} {Path}", context.Request.Method, context.Request.Path);
+
             context.Response.StatusCode = StatusCodes.Status500InternalServerError;
             context.Response.ContentType = "application/json";
 
-            var response = new { error = "An internal server error occurred.", details = ex.Message }; // In prod, don't expose details
-            await context.Response.WriteAsync(JsonSerializer.Serialize(response));
+            var details = environment.IsDevelopment() ? ex.Message : null;
+            var payload = new { error = "An internal server error occurred.", details };
+
+            await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
         }
     }
 }
