@@ -35,3 +35,8 @@ Feature: Authentication
     When I view the dashboard
     Then I see the calendar displayed
     And I see the event "School Holiday" displayed on the calendar
+
+  Scenario: Settings page requires authentication
+    Given I am not authenticated
+    When I navigate to the settings page
+    Then I see the "Login to Google" button

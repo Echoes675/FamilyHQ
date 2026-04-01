@@ -1,16 +1,16 @@
 @inject IJSRuntime JSRuntime
 
 @* Day nav bar *@
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="flex justify-between items-center mb-4">
     <div class="btn-group">
-        <button class="btn btn-outline-primary" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(-1))">&lt; Prev</button>
-        <button class="btn btn-light" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenDayPicker" data-testid="day-picker-btn">
+        <button class="btn btn-ghost" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(-1))">&#8249; Prev</button>
+        <button class="btn btn-glass" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenDayPicker" data-testid="day-picker-btn">
             @SelectedDate.ToString("D")
         </button>
-        <button class="btn btn-outline-primary" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(1))">Next &gt;</button>
+        <button class="btn btn-ghost" @onclick="() => OnNavigate.InvokeAsync(SelectedDate.AddDays(1))">Next &#8250;</button>
     </div>
-    <button class="btn btn-primary ms-3" @onclick="HandleAddEventClick" data-testid="add-event-btn">
-        <i class="bi bi-plus-circle"></i> Add Event
+    <button class="btn btn-primary" style="margin-left: 16px;" @onclick="HandleAddEventClick" data-testid="add-event-btn">
+        + Add Event
     </button>
 </div>
 
@@ -36,7 +36,7 @@
                 <div class="all-day-col">
                     @foreach (var evt in calAllDayEvents)
                     {
-                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--primary)");"
+                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
                              title="@evt.Title"
                              @onclick="() => OnEditEvent.InvokeAsync(evt)">
                             @evt.Title
@@ -194,7 +194,7 @@
         var height = (durationMins / 1440.0) * 100;
         var width = 100.0 / p.TotalColumns;
         var left = width * p.ColumnIndex;
-        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--primary)"};";
+        return $"top: {top}%; height: {height}%; width: calc({width}% - 1px); left: {left}%; background-color: {p.Event.CalendarColor ?? "var(--theme-accent)"};";
     }
 
     private class PlacedEvent

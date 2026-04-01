@@ -1,15 +1,39 @@
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div class="d-flex align-items-center gap-3">
-        <h1>Family HQ Dashboard</h1>
-    </div>
-    <div class="d-flex align-items-center gap-3">
-        <span class="text-muted">Signed in as: <strong>@(Username ?? UserId ?? "Unknown")</strong></span>
-        <button class="btn btn-outline-danger btn-sm" @onclick="OnSignOut">Sign Out</button>
-    </div>
-</div>
+@using Microsoft.AspNetCore.Components.Routing
+
+<header class="dashboard-header">
+    @if (BackUrl is null)
+    {
+        <span class="dashboard-header__brand">FamilyHQ</span>
+        <a href="/settings" class="dashboard-header__settings glass-surface" aria-label="Settings">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
+                         a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
+                         A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
+                         l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+                         A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
+                         l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+                         a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
+                         l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+                         a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+        </a>
+    }
+    else
+    {
+        <div class="flex items-center gap-2">
+            <a href="@BackUrl" class="dashboard-header__back" aria-label="Back">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+            </a>
+            <span class="dashboard-header__brand">Settings</span>
+        </div>
+    }
+</header>
 
 @code {
-    [Parameter] public string? Username { get; set; }
-    [Parameter] public string? UserId { get; set; }
-    [Parameter] public EventCallback OnSignOut { get; set; }
+    [Parameter] public string? BackUrl { get; set; }
 }

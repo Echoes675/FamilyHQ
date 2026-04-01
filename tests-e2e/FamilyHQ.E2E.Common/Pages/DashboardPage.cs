@@ -26,8 +26,8 @@ public class DashboardPage : BasePage
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
-    private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next >" });
-    private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "< Prev" });
+    private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next ›" });
+    private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "‹ Prev" });
     private ILocator AddEventBtn => Page.GetByTestId("add-event-btn");
 
     // Modal Locators
@@ -38,7 +38,7 @@ public class DashboardPage : BasePage
     private ILocator DayPickerBtn => Page.GetByTestId("day-picker-btn");
     private ILocator DayPickerInput => Page.GetByTestId("day-picker-input");
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
-    private ILocator DayPickerModal => Page.Locator(".modal").Filter(new() { HasText = "Select Date" });
+    private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
     // Actions
 
@@ -130,6 +130,8 @@ public class DashboardPage : BasePage
 
     public async Task<bool> WeekendRowsHaveClassAsync()
     {
+        // Wait for at least one row to be rendered before counting
+        await Page.Locator(".agenda-weekend-row").First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         // A month always has at least 8 weekend days
         return await Page.Locator(".agenda-weekend-row").CountAsync() >= 8;
     }
@@ -217,9 +219,8 @@ public class DashboardPage : BasePage
 
     public async Task<string> GetModalStartDateValueAsync()
     {
-        // Timed events use input[type='datetime-local'], value format: "yyyy-MM-ddTHH:mm"
-        // Use .First to target the Start input (modal has both Start and End datetime-local inputs)
-        var input = EventModal.Locator("input[type='datetime-local']").First;
+        // Start date is the first date input in the modal, value format: "yyyy-MM-dd"
+        var input = EventModal.Locator("input[type='date']").First;
         return await input.InputValueAsync();
     }
 
@@ -313,19 +314,23 @@ public class DashboardPage : BasePage
 
     public async Task SignOutAsync()
     {
-        // Check if sign-out button exists (user is authenticated)
-        if (await SignOutBtn.CountAsync() > 0)
+        // The sign-out button moved to the Settings page (Task 11).
+        // For test isolation, clear the auth token from localStorage directly
+        // and reload to force the unauthenticated state.
+        if (await IsSignedInAsync())
         {
-            await SignOutBtn.ClickAsync();
-            // Wait for the login button to appear, confirming sign-out is complete
-            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+            await Page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
+            await Page.GotoAsync(_config.BaseUrl + "/");
+            await Page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
+            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
         }
     }
 
     public async Task<bool> IsSignedInAsync()
     {
-        // Check if sign-out button or user info is visible
-        return await SignOutBtn.CountAsync() > 0 || await UserInfo.CountAsync() > 0;
+        // The dashboard header (brand + settings gear) is only rendered when authenticated.
+        // When not authenticated, only the Login to Google button is shown.
+        return await Page.Locator(".dashboard-header").CountAsync() > 0;
     }
 
     public async Task CreateEventAsync(string title)
@@ -552,7 +557,7 @@ public class DashboardPage : BasePage
             new() { Timeout = 30000 });
 
         await SaveEventBtn.ClickAsync();
-        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
     }

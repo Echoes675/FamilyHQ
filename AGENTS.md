@@ -32,6 +32,7 @@ Dashboard app that displays a family calendar events
 ## Progressive Disclosure Links
 Refer to these files in the .agent/ directory for specific implementation details:
 - Project Architecture & Structure: `.agent/docs/architecture.md`
+- UI Design System (themes, CSS variables, layer model, touch rules): `.agent/docs/ui-design-system.md`
 
 ## Skills
 Read the relevant skill file before starting any task of that type:
@@ -47,6 +48,7 @@ Read the relevant skill file before starting any task of that type:
 - **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
 - **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`
 - **Frontend UI development**: Read `.agent/skills/frontend-design/SKILL.md`
+- **Any CSS, component, layout, or page changes**: Read `.agent/skills/ui-theming/SKILL.md` (project-specific theme rules — takes precedence over frontend-design for colour and animation decisions)
 
 ### Skill Registration Rule
 When creating a new skill:

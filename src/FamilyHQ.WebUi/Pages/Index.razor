@@ -16,15 +16,15 @@
     @if (!_isAuthenticated)
     {
         <!-- Not Authenticated - Show centered login button -->
-        <div class="d-flex flex-column align-items-center justify-content-center" style="min-height: 60vh;">
+        <div class="flex flex-col items-center justify-center" style="min-height: 60vh;">
             <h1 class="mb-4">Family HQ Dashboard</h1>
-            <p class="text-muted mb-4">Please sign in to view your calendar</p>
-            <button class="btn btn-success btn-lg" @onclick="OnLoginClicked">Login to Google</button>
+            <p style="color: var(--theme-text-muted);" class="mb-4">Please sign in to view your calendar</p>
+            <button class="btn btn-primary btn-lg" @onclick="OnLoginClicked">Login to Google</button>
         </div>
     }
     else
     {
-        <DashboardHeader Username="@_username" UserId="@_userId" OnSignOut="OnSignOutClicked" />
+        <DashboardHeader />
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 
@@ -34,11 +34,11 @@
     {
     @if (IsLoading)
     {
-        <div class="text-center py-5">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
+        <div class="text-center" style="padding-top: 40px; padding-bottom: 40px;">
+            <div class="spinner" role="status">
+                <span class="sr-only">Loading...</span>
             </div>
-            <p class="mt-2 text-muted">Synchronizing Calendar...</p>
+            <p class="mt-2" style="color: var(--theme-text-muted);">Synchronizing Calendar...</p>
         </div>
     }
     else if (_monthView == null)

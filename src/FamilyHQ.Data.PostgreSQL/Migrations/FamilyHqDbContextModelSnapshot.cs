@@ -127,6 +127,89 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("Calendars", (string)null);
                 });
 
+            modelBuilder.Entity("FamilyHQ.Core.Models.DayTheme", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<TimeOnly>("DaytimeStart")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<TimeOnly>("EveningStart")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<TimeOnly>("MorningStart")
+                        .HasColumnType("time without time zone");
+
+                    b.Property<TimeOnly>("NightStart")
+                        .HasColumnType("time without time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date")
+                        .IsUnique();
+
+                    b.ToTable("DayThemes");
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.DisplaySetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("OpaqueSurfaces")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("SurfaceMultiplier")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("TransitionDurationSecs")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DisplaySettings");
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.LocationSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("PlaceName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("LocationSettings");
+                });
+
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncState", b =>
                 {
                     b.Property<Guid>("Id")

@@ -4,8 +4,8 @@
 
 @if (_showEventModal)
 {
-    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
-        <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-backdrop" tabindex="-1">
+        <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">@(_isEditingEvent ? "Edit Event" : "Create Event")</h5>
@@ -27,50 +27,49 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Event Title</label>
-                        <input type="text" class="form-control" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
+                        <input type="text" class="form-input" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
                     </div>
                     <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" id="allDayCheck" @bind="_eventModel.IsAllDay">
                         <label class="form-check-label" for="allDayCheck">All Day Event</label>
                     </div>
-                    <div class="row mb-3">
-                        <div class="col-6">
-                            <label class="form-label">Start</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-control" @bind="@_eventModelStartDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.Start" />
-                            }
+                    <div class="grid-2 mb-3">
+                        <div>
+                            <label class="form-label">Start Date</label>
+                            <input type="date" class="form-input" @bind="_startDate" />
                         </div>
-                        <div class="col-6">
-                            <label class="form-label">End</label>
-                            @if (_eventModel.IsAllDay)
-                            {
-                                <input type="date" class="form-control" @bind="@_eventModelEndDate" />
-                            }
-                            else
-                            {
-                                <input type="datetime-local" class="form-control" @bind="_eventModel.End" />
-                            }
+                        <div>
+                            <label class="form-label">End Date</label>
+                            <input type="date" class="form-input" @bind="_endDate" />
                         </div>
                     </div>
+                    @if (!_eventModel.IsAllDay)
+                    {
+                        <div class="grid-2 mb-3">
+                            <div>
+                                <label class="form-label">Start Time</label>
+                                <input type="time" class="form-input" @bind="_startTime" />
+                            </div>
+                            <div>
+                                <label class="form-label">End Time</label>
+                                <input type="time" class="form-input" @bind="_endTime" />
+                            </div>
+                        </div>
+                    }
                     <div class="mb-3">
                         <label class="form-label">Location (Optional)</label>
-                        <input type="text" class="form-control" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
+                        <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
                     </div>
                     @if (!string.IsNullOrEmpty(_modalError))
                     {
-                        <div class="alert alert-danger p-2 mb-0">@_modalError</div>
+                        <div class="alert alert-danger">@_modalError</div>
                     }
                 </div>
-                <div class="modal-footer d-flex justify-content-between">
+                <div class="modal-footer flex justify-between">
                     <div>
                         @if (_isEditingEvent)
                         {
-                            <button type="button" class="btn btn-outline-danger" @onclick="DeleteEvent">Delete</button>
+                            <button type="button" class="btn btn-danger" @onclick="DeleteEvent">Delete</button>
                         }
                     </div>
                     <div>
@@ -78,8 +77,8 @@
                         <button type="button" class="btn btn-primary" @onclick="SaveEvent" disabled="@_isSaving">
                             @if (_isSaving)
                             {
-                                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                                <span class="visually-hidden">Saving...</span>
+                                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                                <span class="sr-only">Saving...</span>
                             }
                             else
                             {
@@ -105,16 +104,60 @@
     private string? _modalError;
     private bool _isSaving;
 
-    private DateTime _eventModelStartDate
+    private DateTime _startDate
     {
         get => _eventModel.Start.LocalDateTime.Date;
-        set => _eventModel.Start = new DateTimeOffset(value.Date, TimeSpan.Zero);
+        set
+        {
+            var time = _eventModel.Start.LocalDateTime.TimeOfDay;
+            var dt = value.Date + time;
+            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            SyncEndDateIfNeeded();
+        }
     }
 
-    private DateTime _eventModelEndDate
+    private DateTime _endDate
     {
-        get => _eventModel.End.LocalDateTime.Date;
-        set => _eventModel.End = new DateTimeOffset(value.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
+        get => _eventModel.IsAllDay
+            ? _eventModel.End.LocalDateTime.Date
+            : _eventModel.End.LocalDateTime.Date;
+        set
+        {
+            var time = _eventModel.End.LocalDateTime.TimeOfDay;
+            var dt = _eventModel.IsAllDay
+                ? value.Date.AddDays(1).AddTicks(-1)
+                : value.Date + time;
+            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private TimeOnly _startTime
+    {
+        get => TimeOnly.FromTimeSpan(_eventModel.Start.LocalDateTime.TimeOfDay);
+        set
+        {
+            var dt = _eventModel.Start.LocalDateTime.Date + value.ToTimeSpan();
+            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private TimeOnly _endTime
+    {
+        get => TimeOnly.FromTimeSpan(_eventModel.End.LocalDateTime.TimeOfDay);
+        set
+        {
+            var dt = _eventModel.End.LocalDateTime.Date + value.ToTimeSpan();
+            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+        }
+    }
+
+    private void SyncEndDateIfNeeded()
+    {
+        if (_eventModel.End < _eventModel.Start)
+        {
+            var duration = TimeSpan.FromHours(1);
+            _eventModel.End = _eventModel.Start + duration;
+        }
     }
 
     public void OpenForCreate(DateTime date, Guid? calendarId = null)

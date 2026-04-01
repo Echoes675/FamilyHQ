@@ -6,6 +6,7 @@ public class SignalRService : IAsyncDisposable
 {
     private readonly HubConnection _hubConnection;
     public event Action? OnEventsUpdated;
+    public event Action<string>? OnThemeChanged;
 
     public SignalRService(string backendUrl)
     {
@@ -18,6 +19,8 @@ public class SignalRService : IAsyncDisposable
         {
             OnEventsUpdated?.Invoke();
         });
+
+        _hubConnection.On<string>("ThemeChanged", period => OnThemeChanged?.Invoke(period));
     }
 
     public async Task StartAsync()
