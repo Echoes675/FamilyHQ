@@ -252,7 +252,7 @@ html, body {
    Section 9 — View tabs (clean underline)
    ============================================= */
 .view-tabs { display: flex; border-bottom: 2px solid var(--theme-glass-divider); list-style: none; transition: border-color var(--theme-transition-duration, 15s) ease-in-out; }
-.view-tab { padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--theme-text-muted); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; min-height: 48px; transition: color var(--theme-transition-duration, 15s) ease-in-out, border-color var(--theme-transition-duration, 15s) ease-in-out; }
+.view-tab { padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--theme-text-muted); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; min-height: 48px; transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out; }
 .view-tab.active { font-weight: 600; color: var(--theme-text); border-bottom-color: var(--theme-accent); }
 
 /* =============================================
