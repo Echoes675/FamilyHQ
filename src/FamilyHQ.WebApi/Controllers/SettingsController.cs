@@ -55,7 +55,15 @@ public class SettingsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.PlaceName))
             return BadRequest("PlaceName is required.");
 
-        var (lat, lon) = await _geocodingService.GeocodeAsync(request.PlaceName, ct);
+        double lat, lon;
+        try
+        {
+            (lat, lon) = await _geocodingService.GeocodeAsync(request.PlaceName, ct);
+        }
+        catch (InvalidOperationException)
+        {
+            return BadRequest("Location not found. Please check the spelling and try again.");
+        }
 
         await _locationRepo.UpsertAsync(new LocationSetting
         {
@@ -73,6 +81,21 @@ public class SettingsController : ControllerBase
         await _scheduler.TriggerRecalculationAsync();
 
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
+    }
+
+    [HttpDelete("location")]
+    public async Task<IActionResult> DeleteLocation(CancellationToken ct)
+    {
+        await _locationRepo.DeleteAsync(ct);
+
+        await _dayThemeService.RecalculateForTodayAsync(ct);
+
+        var dto = await _dayThemeService.GetTodayAsync(ct);
+        await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
+
+        await _scheduler.TriggerRecalculationAsync();
+
+        return NoContent();
     }
 
     [AllowAnonymous]

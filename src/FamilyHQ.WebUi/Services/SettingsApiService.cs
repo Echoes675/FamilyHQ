@@ -23,8 +23,21 @@ public class SettingsApiService : ISettingsApiService
     public async Task<LocationSettingDto> SaveLocationAsync(string placeName)
     {
         var response = await _httpClient.PostAsJsonAsync("api/settings/location", new SaveLocationRequest(placeName));
+
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(body);
+        }
+
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<LocationSettingDto>())!;
+    }
+
+    public async Task DeleteLocationAsync()
+    {
+        var response = await _httpClient.DeleteAsync("api/settings/location");
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<DayThemeDto> GetTodayThemeAsync()

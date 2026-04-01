@@ -67,7 +67,19 @@ public class AgendaSteps
     {
         // Navigate prev/next until the label shows the target month
         var target = DateTime.ParseExact(targetMonthYear, "MMMM yyyy", CultureInfo.InvariantCulture);
-        for (var i = 0; i < 24; i++) // max 24 steps to avoid infinite loop
+        await NavigateAgendaToMonthAsync(target);
+    }
+
+    [When(@"I navigate the agenda to show a date in (\d+) days")]
+    public async Task WhenINavigateTheAgendaToShowADateInDays(int days)
+    {
+        var target = DateTime.Today.AddDays(days);
+        await NavigateAgendaToMonthAsync(target);
+    }
+
+    private async Task NavigateAgendaToMonthAsync(DateTime target)
+    {
+        for (var i = 0; i < 24; i++)
         {
             var current = DateTime.ParseExact(
                 await _dashboardPage.GetAgendaMonthYearTextAsync(), "MMMM yyyy", CultureInfo.InvariantCulture);
@@ -139,8 +151,9 @@ public class AgendaSteps
     }
 
     [Then(@"I see the event ""([^""]*)"" in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task ThenISeeTheEventInTheColumnFor(string expectedText, string calendarName, string dateKey)
+    public async Task ThenISeeTheEventInTheColumnFor(string expectedText, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         await Assertions.Expect(
             _page.GetByTestId($"agenda-cell-{dateKey}-{calId}")
@@ -150,8 +163,9 @@ public class AgendaSteps
     }
 
     [Then(@"I do not see ""([^""]*)"" in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task ThenIDoNotSeeInTheColumnFor(string text, string calendarName, string dateKey)
+    public async Task ThenIDoNotSeeInTheColumnFor(string text, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         // Use polling assertion to allow time for SignalR UI update after a webhook notification
         await Assertions.Expect(
@@ -162,8 +176,9 @@ public class AgendaSteps
     }
 
     [Then(@"the event ""([^""]*)"" has no time prefix in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task ThenTheEventHasNoTimePrefixInTheColumnFor(string title, string calendarName, string dateKey)
+    public async Task ThenTheEventHasNoTimePrefixInTheColumnFor(string title, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var cell = _page.GetByTestId($"agenda-cell-{dateKey}-{calId}");
         var eventLine = cell.GetByText(title, new() { Exact = false }).First;
@@ -173,16 +188,18 @@ public class AgendaSteps
     }
 
     [Then(@"I see (\d+) event lines in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task ThenISeeEventLinesInTheColumnFor(int count, string calendarName, string dateKey)
+    public async Task ThenISeeEventLinesInTheColumnFor(int count, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var actual = await _dashboardPage.GetAgendaEventLineCountAsync(dateKey, calId);
         actual.Should().Be(count, $"Expected {count} event lines in {calendarName} on {dateKey}.");
     }
 
     [Then(@"I see a ""\+(\d+) more"" indicator in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task ThenISeeAPlusNMoreIndicator(int n, string calendarName, string dateKey)
+    public async Task ThenISeeAPlusNMoreIndicator(int n, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var overflowText = await _dashboardPage.GetAgendaOverflowTextAsync(dateKey, calId);
         overflowText.Trim().Should().Be($"+{n} more");
@@ -191,29 +208,33 @@ public class AgendaSteps
     // ─── Interactions ────────────────────────────────────────────────────────────
 
     [When(@"I tap the event ""([^""]*)"" in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task WhenITapTheEventInTheColumnFor(string eventText, string calendarName, string dateKey)
+    public async Task WhenITapTheEventInTheColumnFor(string eventText, string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         await _dashboardPage.TapAgendaEventAsync(eventText, dateKey, calId);
     }
 
     [When(@"I tap the empty cell in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task WhenITapTheEmptyCellInTheColumnFor(string calendarName, string dateKey)
+    public async Task WhenITapTheEmptyCellInTheColumnFor(string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         await _dashboardPage.TapAgendaCellAsync(dateKey, calId);
     }
 
     [When(@"I tap the agenda cell in the ""([^""]*)"" column for ""([^""]*)""")]
-    public async Task WhenITapTheAgendaCellInTheColumnFor(string calendarName, string dateKey)
+    public async Task WhenITapTheAgendaCellInTheColumnFor(string calendarName, string dateExpr)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         await _dashboardPage.TapAgendaFilledCellAsync(dateKey, calId);
     }
 
     [When(@"I tap the overflow indicator for ""([^""]*)"" in ""([^""]*)""")]
-    public async Task WhenITapTheOverflowIndicatorFor(string dateKey, string calendarName)
+    public async Task WhenITapTheOverflowIndicatorFor(string dateExpr, string calendarName)
     {
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         await _dashboardPage.TapAgendaOverflowAsync(dateKey, calId);
     }
@@ -231,8 +252,9 @@ public class AgendaSteps
     }
 
     [Then(@"the modal start date contains ""([^""]*)""")]
-    public async Task ThenTheModalStartDateContains(string dateStr)
+    public async Task ThenTheModalStartDateContains(string dateExpr)
     {
+        var dateStr = DateExpressionResolver.Resolve(dateExpr);
         var value = await _dashboardPage.GetModalStartDateValueAsync();
         value.Should().Contain(dateStr, $"The modal start datetime should contain '{dateStr}'.");
     }

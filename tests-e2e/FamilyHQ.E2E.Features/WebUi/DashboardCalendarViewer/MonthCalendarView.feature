@@ -30,12 +30,12 @@ Feature: Month Calendar View
 
   Scenario: View events from all 6 calendars on the month view
     Given I have a user like "SixCalUser"
-    And the user has an all-day event "Work Event" on "2026-03-05" in "Work Calendar"
-    And the user has an all-day event "Personal Event" on "2026-03-10" in "Personal Calendar"
-    And the user has an all-day event "School Event" on "2026-03-15" in "School Calendar"
-    And the user has an all-day event "Sports Event" on "2026-03-20" in "Sports Calendar"
-    And the user has an all-day event "Health Event" on "2026-03-25" in "Health Calendar"
-    And the user has an all-day event "Hobbies Event" on "2026-03-29" in "Hobbies Calendar"
+    And the user has an all-day event "Work Event" tomorrow in "Work Calendar"
+    And the user has an all-day event "Personal Event" tomorrow in "Personal Calendar"
+    And the user has an all-day event "School Event" tomorrow in "School Calendar"
+    And the user has an all-day event "Sports Event" tomorrow in "Sports Calendar"
+    And the user has an all-day event "Health Event" tomorrow in "Health Calendar"
+    And the user has an all-day event "Hobbies Event" tomorrow in "Hobbies Calendar"
     And I login as the user "SixCalUser"
     When I view the dashboard
     Then I see the event "Work Event" displayed on the calendar

@@ -6,4 +6,5 @@ public interface ILocationSettingRepository
 {
     Task<LocationSetting?> GetAsync(CancellationToken ct = default);
     Task<LocationSetting> UpsertAsync(LocationSetting locationSetting, CancellationToken ct = default);
+    Task DeleteAsync(CancellationToken ct = default);
 }

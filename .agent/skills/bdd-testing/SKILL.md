@@ -290,7 +290,36 @@ describes the intent.
 
 ---
 
-## Rule 9: Then Steps Must Assert on Page Content — Not Just URLs
+## Rule 9: Never Use Hardcoded Dates in Feature Files
+
+Feature files must use **relative date expressions** (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month.
+
+**Wrong:**
+```gherkin
+And the user has an all-day event "Meeting" on "2026-06-15" in "Work Calendar"
+Then I see the event "Meeting" in the "Work Calendar" column for "2026-06-15"
+```
+
+**Right:**
+```gherkin
+And the user has an all-day event "Meeting" tomorrow in "Work Calendar"
+Then I see the event "Meeting" in the "Work Calendar" column for "tomorrow"
+```
+
+Supported expressions (resolved at runtime by `DateExpressionResolver`):
+- `"today"` — current date
+- `"tomorrow"` — current date + 1
+- `"in N days"` — current date + N (e.g. `"in 3 days"`)
+
+When an agenda scenario uses `"in N days"`, add a navigation step to ensure the month containing that date is visible:
+```gherkin
+And I navigate the agenda to show a date in 5 days
+And I tap the empty cell in the "Work Calendar" column for "in 5 days"
+```
+
+---
+
+## Rule 10: Then Steps Must Assert on Page Content — Not Just URLs
 
 A `[Then]` step must verify an **observable business outcome** on the page — a visible
 element, a status badge, a message, a value in the DOM. Checking the URL alone is not

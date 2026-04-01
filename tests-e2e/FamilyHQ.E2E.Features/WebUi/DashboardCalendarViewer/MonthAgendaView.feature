@@ -43,12 +43,11 @@ Feature: Month Agenda View
   Scenario: Tapping "+N more" navigates to the day view for the correct date
     Given I have a user like "OverflowUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has 4 events on "2026-06-15" in "Work Calendar"
+    And the user has 4 events on "tomorrow" in "Work Calendar"
     And I login as the user "OverflowUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    And I tap the overflow indicator for "2026-06-15" in "Work Calendar"
+    And I tap the overflow indicator for "tomorrow" in "Work Calendar"
     Then I see the Day View Container
 
   # Display Scenarios
@@ -90,46 +89,42 @@ Feature: Month Agenda View
   Scenario: Timed events display in 24hr HH:mm format
     Given I have a user like "StandardUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has a timed event "Standup" at "14:30" on "2026-06-15" in "Work Calendar"
+    And the user has a timed event "Standup" at "14:30" on "tomorrow" in "Work Calendar"
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    Then I see the event "14:30 Standup" in the "Work Calendar" column for "2026-06-15"
+    Then I see the event "14:30 Standup" in the "Work Calendar" column for "tomorrow"
 
   Scenario: All-day events display title only with no time prefix
     Given I have a user like "StandardUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has an all-day event "Bank Holiday" on "2026-06-17" in "Work Calendar"
+    And the user has an all-day event "Bank Holiday" tomorrow in "Work Calendar"
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    Then I see the event "Bank Holiday" in the "Work Calendar" column for "2026-06-17"
-    And the event "Bank Holiday" has no time prefix in the "Work Calendar" column for "2026-06-17"
+    Then I see the event "Bank Holiday" in the "Work Calendar" column for "tomorrow"
+    And the event "Bank Holiday" has no time prefix in the "Work Calendar" column for "tomorrow"
 
   Scenario: A day with more than 3 events shows 3 lines and a "+N more" indicator
     Given I have a user like "OverflowUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has 4 events on "2026-06-15" in "Work Calendar"
+    And the user has 4 events on "tomorrow" in "Work Calendar"
     And I login as the user "OverflowUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    Then I see 3 event lines in the "Work Calendar" column for "2026-06-15"
-    And I see a "+1 more" indicator in the "Work Calendar" column for "2026-06-15"
+    Then I see 3 event lines in the "Work Calendar" column for "tomorrow"
+    And I see a "+1 more" indicator in the "Work Calendar" column for "tomorrow"
 
   Scenario: An event in two calendars appears in both columns
     Given I have a user like "MultiCalUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has an all-day event "Team Meeting" on "2026-06-20" in "Work Calendar"
+    And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And the user has the event "Team Meeting" also in "Personal Calendar"
     And I login as the user "MultiCalUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    Then I see the event "Team Meeting" in the "Work Calendar" column for "2026-06-20"
-    And I see the event "Team Meeting" in the "Personal Calendar" column for "2026-06-20"
+    Then I see the event "Team Meeting" in the "Work Calendar" column for "tomorrow"
+    And I see the event "Team Meeting" in the "Personal Calendar" column for "tomorrow"
 
   Scenario: All six calendar column headers are visible in the agenda view
     Given I have a user like "SixCalUser"
@@ -147,34 +142,32 @@ Feature: Month Agenda View
   Scenario: Events from all six calendars appear in their respective columns
     Given I have a user like "SixCalUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has an all-day event "Work Event" on "2026-06-10" in "Work Calendar"
-    And the user has an all-day event "Personal Event" on "2026-06-10" in "Personal Calendar"
-    And the user has an all-day event "School Event" on "2026-06-10" in "School Calendar"
-    And the user has an all-day event "Sports Event" on "2026-06-10" in "Sports Calendar"
-    And the user has an all-day event "Health Event" on "2026-06-10" in "Health Calendar"
-    And the user has an all-day event "Hobbies Event" on "2026-06-10" in "Hobbies Calendar"
+    And the user has an all-day event "Work Event" tomorrow in "Work Calendar"
+    And the user has an all-day event "Personal Event" tomorrow in "Personal Calendar"
+    And the user has an all-day event "School Event" tomorrow in "School Calendar"
+    And the user has an all-day event "Sports Event" tomorrow in "Sports Calendar"
+    And the user has an all-day event "Health Event" tomorrow in "Health Calendar"
+    And the user has an all-day event "Hobbies Event" tomorrow in "Hobbies Calendar"
     And I login as the user "SixCalUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    Then I see the event "Work Event" in the "Work Calendar" column for "2026-06-10"
-    And I see the event "Personal Event" in the "Personal Calendar" column for "2026-06-10"
-    And I see the event "School Event" in the "School Calendar" column for "2026-06-10"
-    And I see the event "Sports Event" in the "Sports Calendar" column for "2026-06-10"
-    And I see the event "Health Event" in the "Health Calendar" column for "2026-06-10"
-    And I see the event "Hobbies Event" in the "Hobbies Calendar" column for "2026-06-10"
+    Then I see the event "Work Event" in the "Work Calendar" column for "tomorrow"
+    And I see the event "Personal Event" in the "Personal Calendar" column for "tomorrow"
+    And I see the event "School Event" in the "School Calendar" column for "tomorrow"
+    And I see the event "Sports Event" in the "Sports Calendar" column for "tomorrow"
+    And I see the event "Health Event" in the "Health Calendar" column for "tomorrow"
+    And I see the event "Hobbies Event" in the "Hobbies Calendar" column for "tomorrow"
 
   # Interaction Scenarios
 
   Scenario: Tapping a cell with events navigates to the Day view
     Given I have a user like "StandardUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has a timed event "Standup" at "09:00" on "2026-06-15" in "Work Calendar"
+    And the user has a timed event "Standup" at "09:00" on "tomorrow" in "Work Calendar"
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    And I tap the agenda cell in the "Work Calendar" column for "2026-06-15"
+    And I tap the agenda cell in the "Work Calendar" column for "tomorrow"
     Then I see the Day View Container
 
   Scenario: Tapping an empty cell opens the create modal with correct date and calendar
@@ -183,10 +176,10 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    And I tap the empty cell in the "Work Calendar" column for "2026-06-25"
+    And I navigate the agenda to show a date in 5 days
+    And I tap the empty cell in the "Work Calendar" column for "in 5 days"
     Then I see the event modal
-    And the modal start date contains "2026-06-25"
+    And the modal start date contains "in 5 days"
     And the "Work Calendar" chip is pre-selected
 
   Scenario: Tapping the create button opens the modal with today's date
@@ -205,10 +198,10 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    And I tap the empty cell in the "Work Calendar" column for "2026-06-20"
+    And I navigate the agenda to show a date in 3 days
+    And I tap the empty cell in the "Work Calendar" column for "in 3 days"
     And I fill in and save the event "New Meeting"
-    Then I see the event "New Meeting" in the "Work Calendar" column for "2026-06-20"
+    Then I see the event "New Meeting" in the "Work Calendar" column for "in 3 days"
 
   # Sync Scenarios
 
@@ -218,32 +211,32 @@ Feature: Month Agenda View
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
-    And a new event "Synced Meeting" is added to Google Calendar on "2026-06-18" in "Work Calendar"
+    And I navigate the agenda to show a date in 2 days
+    And a new event "Synced Meeting" is added to Google Calendar on "in 2 days" in "Work Calendar"
     And Google Calendar sends a webhook notification
-    Then I see the event "Synced Meeting" in the "Work Calendar" column for "2026-06-18"
+    Then I see the event "Synced Meeting" in the "Work Calendar" column for "in 2 days"
 
   Scenario: A synced event deletion removes the event from the agenda view
     Given I have a user like "SyncUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has a timed event "Standup" at "09:00" on "2026-06-18" in "Work Calendar"
+    And the user has a timed event "Standup" at "09:00" on "in 2 days" in "Work Calendar"
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
+    And I navigate the agenda to show a date in 2 days
     And the event "Standup" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
-    Then I do not see "Standup" in the "Work Calendar" column for "2026-06-18"
+    Then I do not see "Standup" in the "Work Calendar" column for "in 2 days"
 
   Scenario: A synced event update is reflected in the agenda view
     Given I have a user like "SyncUser"
     And the "Work Calendar" calendar is the active calendar
-    And the user has a timed event "Old Title" at "09:00" on "2026-06-18" in "Work Calendar"
+    And the user has a timed event "Old Title" at "09:00" on "in 2 days" in "Work Calendar"
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to "June 2026"
+    And I navigate the agenda to show a date in 2 days
     And the event "Old Title" is updated to "New Title" in Google Calendar
     And Google Calendar sends a webhook notification
-    Then I see the event "New Title" in the "Work Calendar" column for "2026-06-18"
-    And I do not see "Old Title" in the "Work Calendar" column for "2026-06-18"
+    Then I see the event "New Title" in the "Work Calendar" column for "in 2 days"
+    And I do not see "Old Title" in the "Work Calendar" column for "in 2 days"

@@ -33,4 +33,14 @@ public class LocationSettingRepository : ILocationSettingRepository
         await _context.SaveChangesAsync(ct);
         return existing;
     }
+
+    public async Task DeleteAsync(CancellationToken ct = default)
+    {
+        var existing = await GetAsync(ct);
+        if (existing is not null)
+        {
+            _context.LocationSettings.Remove(existing);
+            await _context.SaveChangesAsync(ct);
+        }
+    }
 }

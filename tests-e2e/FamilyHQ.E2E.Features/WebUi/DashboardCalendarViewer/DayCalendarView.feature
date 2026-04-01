@@ -33,7 +33,7 @@ Feature: Day Calendar View
   Scenario: Navigate via Day Picker
     When I view the dashboard
     And I switch to the Day View tab
-    And I select the date "2026-12-25" using the day picker
+    And I select the date "in 10 days" using the day picker
     Then I see the Day View Container
 
   Scenario: Create an event by clicking a grid slot

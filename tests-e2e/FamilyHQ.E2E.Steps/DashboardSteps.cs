@@ -179,12 +179,9 @@ public class DashboardSteps
     }
 
     [StepDefinition(@"I select the date ""([^""]*)"" using the day picker")]
-    public async Task WhenISelectTheDateUsingTheDayPicker(string dateString)
+    public async Task WhenISelectTheDateUsingTheDayPicker(string dateExpr)
     {
-        string yyyyMmDd = dateString.ToLower() == "tomorrow" 
-            ? DateTime.Today.AddDays(1).ToString("yyyy-MM-dd")
-            : dateString;
-            
+        var yyyyMmDd = DateExpressionResolver.Resolve(dateExpr);
         await _dashboardPage.OpenDayPickerAndGoAsync(yyyyMmDd);
     }
 

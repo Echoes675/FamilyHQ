@@ -929,6 +929,31 @@ html, body {
     margin: 4px 0;
 }
 
+.settings-field-error {
+    color: #ef4444;
+    font-size: 0.82rem;
+    margin: 4px 0 0;
+}
+
+.settings-input--error {
+    border-color: #ef4444;
+}
+
+.settings-btn--ghost {
+    background: transparent;
+    border: none;
+    color: var(--theme-text-muted);
+    font-size: 0.85rem;
+    padding: 8px 0;
+    cursor: pointer;
+    text-decoration: underline;
+    min-height: 48px;
+}
+
+.settings-btn--ghost:hover {
+    color: var(--theme-text);
+}
+
 /* Theme schedule tiles */
 .settings-theme-schedule {
     display: grid;

@@ -384,3 +384,4 @@ Update E2E tests in these scenarios:
 - **Maintain the page object pattern** - Don't expose Playwright locators in step definitions
 - **Keep scenarios focused** - One scenario per behavior being tested
 - **Update templates carefully** - User templates affect multiple scenarios
+- **Never use hardcoded dates** - Use relative expressions (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month. The `DateExpressionResolver` class in `FamilyHQ.E2E.Steps` converts these expressions to `yyyy-MM-dd` at runtime. All step definitions that accept date parameters already support both formats.
