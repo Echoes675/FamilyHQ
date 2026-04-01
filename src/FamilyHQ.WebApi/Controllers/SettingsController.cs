@@ -75,6 +75,7 @@ public class SettingsController : ControllerBase
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }
 
+    [AllowAnonymous]
     [HttpGet("display")]
     public async Task<IActionResult> GetDisplay(CancellationToken ct)
     {
