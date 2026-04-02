@@ -40,8 +40,8 @@ Feature: Weather Integration
     And the weather overlay has class "weather-windy"
 
   Scenario: Agenda view shows temperatures per day
-    When I switch to the Agenda View tab
-    And I wait for weather data to load
+    When I wait for weather data to load
+    And I switch to the Agenda View tab
     Then the agenda row for "today" shows weather temperatures
     And the agenda row for "tomorrow" shows weather temperatures
 
@@ -51,8 +51,8 @@ Feature: Weather Integration
       | 08:00 | 3    | 10   | 12   |
       | 09:00 | 3    | 11   | 11   |
       | 10:00 | 61   | 12   | 15   |
-    When I switch to the Day View tab
-    And I wait for weather data to load
+    When I wait for weather data to load
+    And I switch to the Day View tab
     Then I see hourly temperatures in the day view
 
   Scenario: Disabling weather hides the weather strip

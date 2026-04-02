@@ -12,10 +12,17 @@ public class BackdoorWeatherController(SimContext db) : ControllerBase
     [HttpPost]
     public async Task<IActionResult> SetWeather([FromBody] SetWeatherRequest request, CancellationToken ct)
     {
-        // Remove existing data for this location (using approximate coordinate matching)
+        // Only remove data types that are being replaced, so multiple seed calls
+        // (e.g., current then daily) don't clobber each other.
+        var typesToReplace = new List<string>();
+        if (request.Current is not null) typesToReplace.Add("current");
+        if (request.Hourly is not null) typesToReplace.Add("hourly");
+        if (request.Daily is not null) typesToReplace.Add("daily");
+
         var existing = await db.SimulatedWeather
             .Where(w => Math.Abs(w.Latitude - request.Latitude) < 0.001
-                     && Math.Abs(w.Longitude - request.Longitude) < 0.001)
+                     && Math.Abs(w.Longitude - request.Longitude) < 0.001
+                     && typesToReplace.Contains(w.DataType))
             .ToListAsync(ct);
         db.SimulatedWeather.RemoveRange(existing);
 

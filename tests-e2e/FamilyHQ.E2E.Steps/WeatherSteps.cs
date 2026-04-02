@@ -209,14 +209,16 @@ public class WeatherSteps
         _scenarioContext["OriginalPollInterval"] =
             await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
 
-        // Simulate real user input: click, select all, type new value, tab to
-        // blur. The native 'change' event fires on blur, which Blazor's
-        // @onchange binding picks up reliably.
-        await _weatherSettingsPage.PollIntervalInput.ClickAsync();
-        await _weatherSettingsPage.PollIntervalInput.PressAsync("Control+a");
-        await _weatherSettingsPage.PollIntervalInput.PressSequentiallyAsync(
-            interval.ToString(), new() { Delay = 50 });
-        await _weatherSettingsPage.PollIntervalInput.PressAsync("Tab");
+        // Use Playwright's fill (which dispatches input+change events) then
+        // also manually dispatch a change event and blur to ensure Blazor WASM's
+        // @onchange binding fires on <input type="number">.
+        await _weatherSettingsPage.PollIntervalInput.FillAsync(interval.ToString());
+        var page = _scenarioContext.Get<IPage>();
+        await page.EvaluateAsync(@"() => {
+            const input = document.getElementById('poll-interval');
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.blur();
+        }");
     }
 
     [When(@"I click the weather settings link")]
