@@ -45,12 +45,20 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
-        builder.Services.AddHttpClient<IWeatherUiService, WeatherUiService>(client =>
+        builder.Services.AddHttpClient("Weather", client =>
         {
             client.BaseAddress = new Uri(backendUrl);
         })
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+
+        builder.Services.AddScoped<IWeatherUiService>(sp =>
+        {
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var client = factory.CreateClient("Weather");
+            var signalR = sp.GetRequiredService<SignalRService>();
+            return new WeatherUiService(client, signalR);
+        });
 
         builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
 

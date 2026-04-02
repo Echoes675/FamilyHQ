@@ -209,18 +209,14 @@ public class WeatherSteps
         _scenarioContext["OriginalPollInterval"] =
             await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
 
-        // Blazor WASM @onchange listens for native DOM 'change' events.
-        // Use JavaScript to set the value and dispatch the event directly,
-        // because Playwright's FillAsync/TypeAsync don't reliably trigger
-        // the native change event on <input type="number">.
-        var page = _scenarioContext.Get<IPage>();
-        await page.EvaluateAsync(@"(value) => {
-            const input = document.getElementById('poll-interval');
-            const nativeSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value').set;
-            nativeSetter.call(input, value.toString());
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }", interval);
+        // Simulate real user input: click, select all, type new value, tab to
+        // blur. The native 'change' event fires on blur, which Blazor's
+        // @onchange binding picks up reliably.
+        await _weatherSettingsPage.PollIntervalInput.ClickAsync();
+        await _weatherSettingsPage.PollIntervalInput.PressAsync("Control+a");
+        await _weatherSettingsPage.PollIntervalInput.PressSequentiallyAsync(
+            interval.ToString(), new() { Delay = 50 });
+        await _weatherSettingsPage.PollIntervalInput.PressAsync("Tab");
     }
 
     [When(@"I click the weather settings link")]
