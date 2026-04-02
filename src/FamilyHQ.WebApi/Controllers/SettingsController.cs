@@ -22,6 +22,7 @@ public class SettingsController : ControllerBase
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ILogger<SettingsController> _logger;
     private readonly IDisplaySettingRepository _displayRepo;
+    private readonly IWeatherService _weatherService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -30,7 +31,8 @@ public class SettingsController : ControllerBase
         IDayThemeScheduler scheduler,
         IHubContext<CalendarHub> hubContext,
         ILogger<SettingsController> logger,
-        IDisplaySettingRepository displayRepo)
+        IDisplaySettingRepository displayRepo,
+        IWeatherService weatherService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -39,6 +41,7 @@ public class SettingsController : ControllerBase
         _hubContext = hubContext;
         _logger = logger;
         _displayRepo = displayRepo;
+        _weatherService = weatherService;
     }
 
     [HttpGet("location")]
@@ -131,5 +134,23 @@ public class SettingsController : ControllerBase
         await _displayRepo.UpsertAsync(setting, ct);
 
         return Ok(dto);
+    }
+
+    [HttpGet("weather")]
+    public async Task<IActionResult> GetWeatherSettings(CancellationToken ct)
+    {
+        var dto = await _weatherService.GetSettingsAsync(ct);
+        return Ok(dto);
+    }
+
+    [HttpPut("weather")]
+    public async Task<IActionResult> UpdateWeatherSettings([FromBody] WeatherSettingDto dto, CancellationToken ct)
+    {
+        var validator = new WeatherSettingDtoValidator();
+        var validationResult = await validator.ValidateAsync(dto, ct);
+        if (!validationResult.IsValid)
+            return BadRequest(validationResult.Errors);
+        var updated = await _weatherService.UpdateSettingsAsync(dto, ct);
+        return Ok(updated);
     }
 }
