@@ -5,6 +5,7 @@ Feature: Weather Integration
 
   Background:
     Given I have a user like "TestFamilyMember"
+    And I am signed in as the user "TestFamilyMember"
     And the user has a saved location "TestCity" at 55.95, -3.19
     And weather data is seeded for the location:
       | Current Temp | Current Code | Wind Speed |
@@ -14,7 +15,6 @@ Feature: Weather Integration
       | today     | 61   | 14   | 8   | 20      |
       | tomorrow  | 3    | 16   | 9   | 10      |
       | in 2 days | 0    | 18   | 11  | 5       |
-    And I am signed in as the user "TestFamilyMember"
 
   Scenario: Weather strip shows current temperature and condition
     When I wait for weather data to load

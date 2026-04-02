@@ -175,6 +175,7 @@ public class WeatherSteps
 
         await _weatherSettingsPage.PollIntervalInput.ClearAsync();
         await _weatherSettingsPage.PollIntervalInput.FillAsync(interval.ToString());
+        await _weatherSettingsPage.PollIntervalInput.PressAsync("Tab");
     }
 
     [When(@"I click the weather settings link")]

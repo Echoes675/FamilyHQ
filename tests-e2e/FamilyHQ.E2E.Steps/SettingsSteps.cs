@@ -27,6 +27,14 @@ public class SettingsSteps
         await _settingsPage.NavigateAndWaitAsync();
     }
 
+    [Then(@"I am on the settings page")]
+    public async Task ThenIAmOnTheSettingsPage()
+    {
+        var page = _scenarioContext.Get<IPage>();
+        page.Url.Should().EndWith("/settings");
+        await Assertions.Expect(_settingsPage.AccountName).ToBeVisibleAsync(new() { Timeout = 10000 });
+    }
+
     [When(@"I navigate to the settings page")]
     public async Task WhenINavigateToTheSettingsPage()
     {
