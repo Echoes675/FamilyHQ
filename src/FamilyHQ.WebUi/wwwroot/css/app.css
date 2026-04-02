@@ -1256,14 +1256,15 @@ html, body {
     content: '';
     position: absolute;
     inset: 0;
-    background: rgba(255, 255, 255, 0);
+    background: rgba(255, 255, 255, 0.15);
+    opacity: 0;
     animation: weather-lightning 4s ease-in-out infinite;
 }
 
 @keyframes weather-lightning {
-    0%, 92%, 94%, 96%, 100% { background: rgba(255, 255, 255, 0); }
-    93% { background: rgba(255, 255, 255, 0.15); }
-    95% { background: rgba(255, 255, 255, 0.1); }
+    0%, 92%, 94%, 96%, 100% { opacity: 0; }
+    93% { opacity: 1; }
+    95% { opacity: 0.67; }
 }
 
 /* Snow — falling dots */
@@ -1351,6 +1352,26 @@ html, body {
 @keyframes weather-fog-pulse {
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
+}
+
+/* GPU layer promotion for Pi 3B+ */
+.weather-lightrain::before,
+.weather-heavyrain::before,
+.weather-drizzle::before,
+.weather-thunder::before,
+.weather-snow::before,
+.weather-sleet::before {
+    will-change: transform;
+}
+
+.weather-partlycloudy::before,
+.weather-cloudy::before {
+    will-change: transform, opacity;
+}
+
+.weather-fog::before,
+.weather-thunder::after {
+    will-change: opacity;
 }
 
 /* Wind modifier — tilts particle animations */
