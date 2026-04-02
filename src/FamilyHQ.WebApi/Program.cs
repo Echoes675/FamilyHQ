@@ -74,6 +74,7 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 // Add SignalR Configuration
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IThemeBroadcaster, FamilyHQ.WebApi.Hubs.SignalRThemeBroadcaster>();
+builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IWeatherBroadcaster, FamilyHQ.WebApi.Hubs.SignalRWeatherBroadcaster>();
 
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
