@@ -34,6 +34,21 @@ For E2E test isolation, the simulator exposes `POST/DELETE /api/simulator/backdo
 | `POST /api/simulator/configure` | Configure user templates |
 | `POST /api/simulator/backdoor/events` | Seed calendar events |
 
+## Seeded Locations
+
+The simulator seeds the following locations on startup for manual testing. Enter any of these place names on the Settings page to save a location and see weather data.
+
+| Place Name | Latitude | Longitude |
+|---|---|---|
+| Edinburgh, Scotland | 55.9533 | -3.1883 |
+| London, England | 51.5074 | -0.1278 |
+| Dublin, Ireland | 53.3498 | -6.2603 |
+| New York, USA | 40.7128 | -74.0060 |
+| Tokyo, Japan | 35.6762 | 139.6503 |
+| Sydney, Australia | -33.8688 | 151.2093 |
+
+The geocoding controller uses fuzzy matching (`ILIKE %q%`), so partial names like "Edinburgh" or "Tokyo" will also work.
+
 ## Adding a New External Dependency
 
 1. Create an interface in `FamilyHQ.Core`

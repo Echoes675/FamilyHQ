@@ -84,12 +84,14 @@ public class DataSeeder
 
         if (!db.SimulatedLocations.Any())
         {
-            db.SimulatedLocations.Add(new SimulatedLocation
-            {
-                PlaceName = "Edinburgh, Scotland",
-                Latitude = 55.9533,
-                Longitude = -3.1883
-            });
+            db.SimulatedLocations.AddRange(
+                new SimulatedLocation { PlaceName = "Edinburgh, Scotland", Latitude = 55.9533, Longitude = -3.1883 },
+                new SimulatedLocation { PlaceName = "London, England", Latitude = 51.5074, Longitude = -0.1278 },
+                new SimulatedLocation { PlaceName = "Dublin, Ireland", Latitude = 53.3498, Longitude = -6.2603 },
+                new SimulatedLocation { PlaceName = "New York, USA", Latitude = 40.7128, Longitude = -74.0060 },
+                new SimulatedLocation { PlaceName = "Tokyo, Japan", Latitude = 35.6762, Longitude = 139.6503 },
+                new SimulatedLocation { PlaceName = "Sydney, Australia", Latitude = -33.8688, Longitude = 151.2093 }
+            );
             db.SaveChanges();
         }
     }
