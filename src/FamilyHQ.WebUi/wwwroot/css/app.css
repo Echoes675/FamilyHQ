@@ -1190,3 +1190,10 @@ html, body {
     font-size: 11px;
     color: var(--theme-text-muted);
 }
+
+/* Day View Hourly Weather */
+.day-hour-temp {
+    font-size: 12px;
+    opacity: 0.8;
+    color: var(--theme-text-muted);
+}
