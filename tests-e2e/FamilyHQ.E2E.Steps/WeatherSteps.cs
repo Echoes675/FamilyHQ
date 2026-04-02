@@ -227,8 +227,8 @@ public class WeatherSteps
         var current = await _weatherSettingsPage.TemperatureUnitSelect.InputValueAsync();
         _scenarioContext["OriginalTemperatureUnit"] = current;
 
-        // Toggle between Celsius (0) and Fahrenheit (1)
-        var newValue = current == "0" ? "1" : "0";
+        // Toggle between Celsius and Fahrenheit
+        var newValue = current == "Celsius" ? "Fahrenheit" : "Celsius";
         await _weatherSettingsPage.TemperatureUnitSelect.SelectOptionAsync(newValue);
     }
 
