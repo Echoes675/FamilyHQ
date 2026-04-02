@@ -130,6 +130,10 @@ public class WeatherSteps
     public async Task WhenIWaitForWeatherDataToLoad()
     {
         await _webApiClient.TriggerWeatherRefreshAsync();
+
+        // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
+        // the freshly-stored data instead of relying on SignalR timing.
+        await _dashboardPage.NavigateAndWaitAsync();
         await _dashboardPage.WaitForWeatherStripAsync();
     }
 
@@ -173,8 +177,12 @@ public class WeatherSteps
         _scenarioContext["OriginalPollInterval"] =
             await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
 
-        await _weatherSettingsPage.PollIntervalInput.FillAsync(interval.ToString());
-        await _weatherSettingsPage.PollIntervalInput.DispatchEventAsync("change");
+        // Blazor WASM @onchange only fires from native DOM interactions.
+        // Click into the field, select all, type new value, then blur.
+        await _weatherSettingsPage.PollIntervalInput.ClickAsync(new() { ClickCount = 3 });
+        var page = _scenarioContext.Get<IPage>();
+        await page.Keyboard.TypeAsync(interval.ToString());
+        await page.Keyboard.PressAsync("Tab");
     }
 
     [When(@"I click the weather settings link")]
