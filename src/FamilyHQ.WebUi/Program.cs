@@ -45,6 +45,13 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddHttpClient<IWeatherUiService, WeatherUiService>(client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        })
+        .AddHttpMessageHandler<CorrelationIdMessageHandler>()
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+
         builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
 
         await builder.Build().RunAsync();

@@ -2,6 +2,7 @@
 @using FamilyHQ.WebUi.Services
 @inject IThemeService ThemeService
 @inject IDisplaySettingService DisplaySettingService
+@inject IWeatherUiService WeatherUiService
 
 <div class="page">
     <ErrorBoundary @ref="_errorBoundary">
@@ -27,6 +28,7 @@
     {
         await ThemeService.InitialiseAsync();
         await DisplaySettingService.InitialiseAsync();
+        await WeatherUiService.InitialiseAsync();
     }
 
     private void Recover()
