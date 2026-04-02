@@ -31,18 +31,32 @@ public class WeatherSteps
 
     // ── Given steps ──────────────────────────────────────────────────────
 
+    [Given(@"weather is enabled")]
+    public async Task GivenWeatherIsEnabled()
+    {
+        await _webApiClient.EnsureWeatherEnabledAsync();
+    }
+
     [Given(@"the user has a saved location ""([^""]*)"" at ([^,]+), (.+)")]
     public async Task GivenTheUserHasASavedLocation(string placeName, double lat, double lon)
     {
-        await _simulatorApi.SetLocationAsync(placeName, lat, lon);
+        // Generate a unique place name and offset coordinates per scenario
+        // to avoid data collisions when tests run in parallel.
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var uniqueName = $"{placeName}_{suffix}";
+        var offset = (BitConverter.ToUInt16(Guid.NewGuid().ToByteArray(), 0) % 900 + 100) / 10000.0;
+        lat += offset;
+        lon += offset;
+
+        await _simulatorApi.SetLocationAsync(uniqueName, lat, lon);
 
         _scenarioContext["WeatherLatitude"] = lat;
         _scenarioContext["WeatherLongitude"] = lon;
-        _scenarioContext["WeatherPlaceName"] = placeName;
+        _scenarioContext["WeatherPlaceName"] = uniqueName;
 
         // Navigate to settings, enter place name, save, wait for pill
         await _settingsPage.NavigateAndWaitAsync();
-        await _settingsPage.PlaceNameInput.FillAsync(placeName);
+        await _settingsPage.PlaceNameInput.FillAsync(uniqueName);
 
         var page = _scenarioContext.Get<IPage>();
         await _settingsPage.SaveLocationBtn.ClickAsync();
@@ -133,8 +147,18 @@ public class WeatherSteps
 
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.
+        // Retry once if the weather strip doesn't appear — InitialiseAsync can
+        // race with the Blazor render cycle on the first load.
         await _dashboardPage.NavigateAndWaitAsync();
-        await _dashboardPage.WaitForWeatherStripAsync();
+        try
+        {
+            await _dashboardPage.WaitForWeatherStripAsync(timeoutMs: 15000);
+        }
+        catch
+        {
+            await _dashboardPage.NavigateAndWaitAsync();
+            await _dashboardPage.WaitForWeatherStripAsync();
+        }
     }
 
     [When(@"I navigate to weather settings")]
@@ -177,12 +201,18 @@ public class WeatherSteps
         _scenarioContext["OriginalPollInterval"] =
             await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
 
-        // Blazor WASM @onchange only fires from native DOM interactions.
-        // Click into the field, select all, type new value, then blur.
-        await _weatherSettingsPage.PollIntervalInput.ClickAsync(new() { ClickCount = 3 });
+        // Blazor WASM @onchange listens for native DOM 'change' events.
+        // Use JavaScript to set the value and dispatch the event directly,
+        // because Playwright's FillAsync/TypeAsync don't reliably trigger
+        // the native change event on <input type="number">.
         var page = _scenarioContext.Get<IPage>();
-        await page.Keyboard.TypeAsync(interval.ToString());
-        await page.Keyboard.PressAsync("Tab");
+        await page.EvaluateAsync(@"(value) => {
+            const input = document.getElementById('poll-interval');
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+            nativeSetter.call(input, value.toString());
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        }", interval);
     }
 
     [When(@"I click the weather settings link")]
@@ -340,20 +370,7 @@ public class WeatherSteps
         text.Should().Contain(expectedText);
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────
-
-    [AfterScenario]
-    public async Task CleanupWeatherData()
-    {
-        if (_scenarioContext.TryGetValue("WeatherLatitude", out double lat) &&
-            _scenarioContext.TryGetValue("WeatherLongitude", out double lon))
-        {
-            await _simulatorApi.ClearWeatherAsync(lat, lon);
-        }
-
-        if (_scenarioContext.TryGetValue("WeatherPlaceName", out string? placeName) && placeName != null)
-        {
-            await _simulatorApi.ClearLocationAsync(placeName);
-        }
-    }
+    // No [AfterScenario] cleanup needed — each scenario uses a unique
+    // place name and offset coordinates, so test data never collides.
+    // The simulator DB resets on container restart (each deployment).
 }

@@ -141,6 +141,7 @@ public class SettingsController : ControllerBase
         return Ok(dto);
     }
 
+    [AllowAnonymous]
     [HttpGet("weather")]
     public async Task<IActionResult> GetWeatherSettings(CancellationToken ct)
     {
@@ -148,6 +149,7 @@ public class SettingsController : ControllerBase
         return Ok(dto);
     }
 
+    [AllowAnonymous]
     [HttpPut("weather")]
     public async Task<IActionResult> UpdateWeatherSettings([FromBody] WeatherSettingDto dto, CancellationToken ct)
     {

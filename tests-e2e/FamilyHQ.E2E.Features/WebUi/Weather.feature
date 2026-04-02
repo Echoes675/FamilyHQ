@@ -6,6 +6,7 @@ Feature: Weather Integration
   Background:
     Given I have a user like "TestFamilyMember"
     And I am signed in as the user "TestFamilyMember"
+    And weather is enabled
     And the user has a saved location "TestCity" at 55.95, -3.19
     And weather data is seeded for the location:
       | Current Temp | Current Code | Wind Speed |

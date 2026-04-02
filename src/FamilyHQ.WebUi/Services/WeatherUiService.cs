@@ -34,6 +34,7 @@ public class WeatherUiService : IWeatherUiService
             if (Settings?.Enabled != true) return;
             CurrentWeather = await GetOrDefaultAsync<CurrentWeatherDto>("api/weather/current");
             DailyForecast = await GetOrDefaultAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
+            OnWeatherChanged?.Invoke();
         }
         catch (HttpRequestException)
         {
