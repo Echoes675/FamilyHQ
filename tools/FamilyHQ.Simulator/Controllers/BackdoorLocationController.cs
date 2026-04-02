@@ -31,6 +31,9 @@ public class BackdoorLocationController(SimContext db) : ControllerBase
     [HttpDelete]
     public async Task<IActionResult> ClearLocation([FromQuery] string placeName, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(placeName))
+            return BadRequest("placeName is required.");
+
         var existing = await db.SimulatedLocations
             .Where(l => l.PlaceName == placeName)
             .ToListAsync(ct);

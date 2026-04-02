@@ -54,6 +54,13 @@ public class SimContext : DbContext
             entity.HasIndex(e => new { e.EventId, e.AttendeeCalendarId }).IsUnique();
         });
 
+        modelBuilder.Entity<SimulatedLocation>(entity =>
+        {
+            entity.ToTable("SimulatedLocations");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.PlaceName).IsRequired().HasMaxLength(500);
+        });
+
         // Universal UTC conversion for all DateTime properties
         var dateTimeConverter = new ValueConverter<DateTime, DateTime>(
             v => v.ToUniversalTime(),
