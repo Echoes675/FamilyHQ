@@ -1,0 +1,49 @@
+@namespace FamilyHQ.WebUi.Components.Weather
+@using FamilyHQ.WebUi.Services
+@implements IAsyncDisposable
+@inject IWeatherUiService WeatherService
+@inject IJSRuntime JsRuntime
+
+@code {
+    private IJSObjectReference? _module;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/weather.js");
+            WeatherService.OnWeatherChanged += HandleWeatherChanged;
+            await UpdateOverlay();
+        }
+    }
+
+    private async void HandleWeatherChanged()
+    {
+        await InvokeAsync(async () => await UpdateOverlay());
+    }
+
+    private async Task UpdateOverlay()
+    {
+        if (_module is null) return;
+
+        if (!WeatherService.IsEnabled || WeatherService.CurrentWeather is null)
+        {
+            await _module.InvokeVoidAsync("clearWeatherOverlay");
+            return;
+        }
+
+        var condition = WeatherService.CurrentWeather.Condition.ToString();
+        var isWindy = WeatherService.CurrentWeather.IsWindy;
+        await _module.InvokeVoidAsync("setWeatherOverlay", condition, isWindy);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        WeatherService.OnWeatherChanged -= HandleWeatherChanged;
+        if (_module is not null)
+        {
+            await _module.InvokeVoidAsync("clearWeatherOverlay");
+            await _module.DisposeAsync();
+        }
+    }
+}
