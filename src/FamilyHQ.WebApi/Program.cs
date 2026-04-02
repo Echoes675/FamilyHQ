@@ -46,7 +46,7 @@ var geocodingBaseUrl = builder.Configuration["Geocoding:BaseUrl"]
     ?? "https://nominatim.openstreetmap.org";
 builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
 {
-    client.BaseAddress = new Uri(geocodingBaseUrl);
+    client.BaseAddress = new Uri(geocodingBaseUrl.TrimEnd('/') + "/");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
     client.Timeout = TimeSpan.FromSeconds(10);
 });

@@ -34,7 +34,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IWeatherProvider, OpenMeteoWeatherProvider>((sp, client) =>
         {
             var options = sp.GetRequiredService<IOptions<WeatherOptions>>().Value;
-            client.BaseAddress = new Uri(options.BaseUrl);
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 

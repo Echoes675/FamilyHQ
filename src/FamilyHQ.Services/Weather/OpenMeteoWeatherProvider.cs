@@ -13,7 +13,7 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
         var lat = latitude.ToString(CultureInfo.InvariantCulture);
         var lon = longitude.ToString(CultureInfo.InvariantCulture);
 
-        var url = $"/v1/forecast?latitude={lat}&longitude={lon}"
+        var url = $"v1/forecast?latitude={lat}&longitude={lon}"
             + "&current=temperature_2m,weather_code,wind_speed_10m"
             + "&hourly=temperature_2m,weather_code,wind_speed_10m"
             + "&daily=weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max"
