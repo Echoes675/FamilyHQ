@@ -25,7 +25,8 @@ services:
       - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
       - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
       - FrontendBaseUrl=${FrontendBaseUrl}
-      - Geocoding__BaseUrl=http://familyhq-simulator-staging:8080
+      - Weather__BaseUrl=http://simulator:8080
+      - Geocoding__BaseUrl=http://simulator:8080
       - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
       - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
       - ReverseProxy__Enabled=true

@@ -173,8 +173,9 @@ public class WeatherSteps
         _scenarioContext["OriginalPollInterval"] =
             await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
 
-        await _weatherSettingsPage.PollIntervalInput.ClearAsync();
-        await _weatherSettingsPage.PollIntervalInput.FillAsync(interval.ToString());
+        await _weatherSettingsPage.PollIntervalInput.ClickAsync();
+        await _weatherSettingsPage.PollIntervalInput.PressAsync("Control+a");
+        await _weatherSettingsPage.PollIntervalInput.PressSequentiallyAsync(interval.ToString());
         await _weatherSettingsPage.PollIntervalInput.PressAsync("Tab");
     }
 
