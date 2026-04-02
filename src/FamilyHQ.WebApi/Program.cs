@@ -42,9 +42,11 @@ builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
+var geocodingBaseUrl = builder.Configuration["Geocoding:BaseUrl"]
+    ?? "https://nominatim.openstreetmap.org";
 builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
 {
-    client.BaseAddress = new Uri("https://nominatim.openstreetmap.org");
+    client.BaseAddress = new Uri(geocodingBaseUrl);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
