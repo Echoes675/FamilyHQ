@@ -110,6 +110,7 @@ public class DisplaySettingsControllerTests
         var loggerMock = new Mock<ILogger<SettingsController>>();
         var displayRepoMock = new Mock<IDisplaySettingRepository>();
         var weatherServiceMock = new Mock<IWeatherService>();
+        var weatherRefreshServiceMock = new Mock<IWeatherRefreshService>();
 
         var sut = new SettingsController(
             locationRepoMock.Object,
@@ -119,7 +120,8 @@ public class DisplaySettingsControllerTests
             hubMock.Object,
             loggerMock.Object,
             displayRepoMock.Object,
-            weatherServiceMock.Object);
+            weatherServiceMock.Object,
+            weatherRefreshServiceMock.Object);
 
         return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock);
     }
