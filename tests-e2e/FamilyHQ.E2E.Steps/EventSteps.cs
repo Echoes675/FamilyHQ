@@ -41,6 +41,28 @@ public class EventSteps
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
 
+    [Given(@"the user has an all-day event ""([^""]*)"" on ""([^""]*)""")]
+    public async Task GivenTheUserHasAnAllDayEventOn(string eventName, string dateExpr)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendarId = _scenarioContext.GetCurrentCalendarId();
+
+        var eventDate = DateTime.ParseExact(
+            DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", null);
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendarId,
+            Summary = eventName,
+            StartTime = eventDate,
+            EndTime = eventDate.AddDays(1),
+            IsAllDay = true
+        });
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
     [Given(@"the user has an all-day event ""([^""]*)"" in (\d+) days")]
     public async Task GivenTheUserHasAnAllDayEventInDays(string eventName, int days)
     {

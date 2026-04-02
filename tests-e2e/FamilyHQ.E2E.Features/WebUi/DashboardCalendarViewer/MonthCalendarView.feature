@@ -108,7 +108,7 @@ Feature: Month Calendar View
   Scenario: Navigate to next month
     Given I have a user like "TestFamilyMember"
     And the "Family Events" calendar is the active calendar
-    And the user has an all-day event "Next Month Event" in 30 days
+    And the user has an all-day event "Next Month Event" on "next month"
     And I login as the user "TestFamilyMember"
     And I view the dashboard
     When I navigate to the next month
