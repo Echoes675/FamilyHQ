@@ -110,7 +110,7 @@ public class WeatherSteps
 
         var hourlyItems = table.Rows.Select(row => new
         {
-            DateTime = $"{resolvedDate}T{int.Parse(row["Hour"]):D2}:00",
+            Time = $"{resolvedDate}T{row["Hour"]}",
             WeatherCode = int.Parse(row["Code"]),
             Temperature = double.Parse(row["Temp"]),
             WindSpeed = double.Parse(row["Wind"])
