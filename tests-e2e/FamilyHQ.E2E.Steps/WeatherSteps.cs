@@ -300,6 +300,10 @@ public class WeatherSteps
     [Then(@"I see hourly temperatures in the day view")]
     public async Task ThenISeeHourlyTemperaturesInTheDayView()
     {
+        // DayView loads hourly data asynchronously after tab switch, so wait
+        // for at least one element to appear before counting.
+        await _dashboardPage.DayHourTemps.First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
         var count = await _dashboardPage.DayHourTemps.CountAsync();
         count.Should().BeGreaterThan(0, "at least one hourly temperature should be displayed");
     }
@@ -339,7 +343,8 @@ public class WeatherSteps
     [Then(@"the save button is visible")]
     public async Task ThenTheSaveButtonIsVisible()
     {
-        await Assertions.Expect(_weatherSettingsPage.SaveBtn).ToBeVisibleAsync();
+        await Assertions.Expect(_weatherSettingsPage.SaveBtn).ToBeVisibleAsync(
+            new() { Timeout = 10000 });
     }
 
     [Then(@"the save button is not visible")]
