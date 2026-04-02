@@ -31,6 +31,8 @@
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). A single row; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double`, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`). A single row. Controls the glassmorphism surface opacity and theme transition speed at runtime.
+- **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp.
+- **WeatherSetting**: Stores weather preferences (enabled, poll interval, temperature unit, wind threshold). Single row.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
@@ -39,6 +41,10 @@
 - **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback.
 - **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required.
 - **IDisplaySettingService / DisplaySettingService** (Blazor WASM): Loads display preferences from `GET /api/settings/display` on startup and applies `--user-surface-multiplier` and `--theme-transition-duration` CSS custom properties via JS interop. Saves changes via `PUT /api/settings/display`.
+- **IWeatherProvider / OpenMeteoWeatherProvider**: Fetches weather data from Open-Meteo (or simulator). Base URL from config — same code in all environments.
+- **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
+- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR.
+- **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
@@ -46,10 +52,16 @@
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
 - `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier, OpaqueSurfaces, TransitionDurationSecs) — returns defaults if no row exists
 - `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs }` → upserts the single DisplaySetting row, returns DisplaySettingDto
+- `GET  /api/weather/current` → CurrentWeatherDto (condition, temperature, wind)
+- `GET  /api/weather/hourly?date=yyyy-MM-dd` → List<HourlyForecastItemDto>
+- `GET  /api/weather/forecast?days=5` → List<DailyForecastItemDto>
+- `GET  /api/settings/weather` → WeatherSettingDto
+- `PUT  /api/settings/weather` → upserts weather settings
 
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
-- **ThemeChanged(string period)**: new — pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
+- **ThemeChanged(string period)**: pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
+- **WeatherUpdated**: pushed by WeatherPollerService when new weather data is stored. No parameters — UI fetches fresh data via HTTP.
 
 ## UI Layer Architecture
 The DOM is structured in three stacked layers to support time-of-day theming and future weather overlays:
@@ -68,7 +80,8 @@ The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface
 
 ## Pages & Navigation
 - `/` — Dashboard (Month / Day / Agenda views)
-- `/settings` — Settings page (Location, Display, Today's Theme Schedule, Account / Sign Out)
+- `/settings` — Settings page (Location, Weather, Today's Theme Schedule, Display, Account / Sign Out)
+- `/settings/weather` — Weather settings sub-page (enable/disable, temperature unit, poll interval, wind threshold)
 - Settings accessed via a gear icon (⚙️) in the DashboardHeader. User name and sign-out are on the Settings page, not the header.
 
 ## Performance Targets
