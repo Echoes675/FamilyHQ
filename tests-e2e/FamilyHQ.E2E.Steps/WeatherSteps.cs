@@ -221,6 +221,17 @@ public class WeatherSteps
         }");
     }
 
+    [When(@"I change the temperature unit")]
+    public async Task WhenIChangeTheTemperatureUnit()
+    {
+        var current = await _weatherSettingsPage.TemperatureUnitSelect.InputValueAsync();
+        _scenarioContext["OriginalTemperatureUnit"] = current;
+
+        // Toggle between Celsius (0) and Fahrenheit (1)
+        var newValue = current == "0" ? "1" : "0";
+        await _weatherSettingsPage.TemperatureUnitSelect.SelectOptionAsync(newValue);
+    }
+
     [When(@"I click the weather settings link")]
     public async Task WhenIClickTheWeatherSettingsLink()
     {
@@ -368,6 +379,17 @@ public class WeatherSteps
             : "5";
 
         var current = await _weatherSettingsPage.PollIntervalInput.InputValueAsync();
+        current.Should().Be(original);
+    }
+
+    [Then(@"the temperature unit shows the original value")]
+    public async Task ThenTheTemperatureUnitShowsTheOriginalValue()
+    {
+        var original = _scenarioContext.TryGetValue("OriginalTemperatureUnit", out string? stored)
+            ? stored ?? "0"
+            : "0";
+
+        var current = await _weatherSettingsPage.TemperatureUnitSelect.InputValueAsync();
         current.Should().Be(original);
     }
 

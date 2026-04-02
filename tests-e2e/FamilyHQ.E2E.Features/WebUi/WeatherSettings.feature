@@ -22,15 +22,15 @@ Feature: Weather Settings
   Scenario: Save and cancel buttons appear only after changes
     When I navigate to weather settings
     Then the save button is not visible
-    When I change the poll interval to 2
+    When I change the temperature unit
     Then the save button is visible
     And the cancel button is visible
 
   Scenario: Cancel reverts unsaved changes
     When I navigate to weather settings
-    And I change the poll interval to 2
+    And I change the temperature unit
     And I click cancel on weather settings
-    Then the poll interval shows the original value
+    Then the temperature unit shows the original value
 
   Scenario: Saving settings shows success message
     When I navigate to weather settings
