@@ -1177,3 +1177,16 @@ html, body {
 .weather-icon__wind {
     opacity: 0.6;
 }
+
+/* Agenda Weather */
+.agenda-weather {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.agenda-weather__temps {
+    font-size: 11px;
+    color: var(--theme-text-muted);
+}
