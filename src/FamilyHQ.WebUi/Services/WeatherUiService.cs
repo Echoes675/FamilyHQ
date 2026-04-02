@@ -32,8 +32,8 @@ public class WeatherUiService : IWeatherUiService
         {
             Settings = await _httpClient.GetFromJsonAsync<WeatherSettingDto>("api/settings/weather");
             if (Settings?.Enabled != true) return;
-            CurrentWeather = await _httpClient.GetFromJsonAsync<CurrentWeatherDto>("api/weather/current");
-            DailyForecast = await _httpClient.GetFromJsonAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
+            CurrentWeather = await GetOrDefaultAsync<CurrentWeatherDto>("api/weather/current");
+            DailyForecast = await GetOrDefaultAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
         }
         catch (HttpRequestException)
         {
@@ -54,8 +54,8 @@ public class WeatherUiService : IWeatherUiService
                 OnWeatherChanged?.Invoke();
                 return;
             }
-            CurrentWeather = await _httpClient.GetFromJsonAsync<CurrentWeatherDto>("api/weather/current");
-            DailyForecast = await _httpClient.GetFromJsonAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
+            CurrentWeather = await GetOrDefaultAsync<CurrentWeatherDto>("api/weather/current");
+            DailyForecast = await GetOrDefaultAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
             OnWeatherChanged?.Invoke();
         }
         catch (HttpRequestException) { }
@@ -96,6 +96,14 @@ public class WeatherUiService : IWeatherUiService
         Settings = await response.Content.ReadFromJsonAsync<WeatherSettingDto>();
         OnWeatherChanged?.Invoke();
         return Settings!;
+    }
+
+    private async Task<T?> GetOrDefaultAsync<T>(string url) where T : class
+    {
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            return default;
+        return await response.Content.ReadFromJsonAsync<T>();
     }
 
     public ValueTask DisposeAsync()
