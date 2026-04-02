@@ -23,6 +23,7 @@ public class SettingsController : ControllerBase
     private readonly ILogger<SettingsController> _logger;
     private readonly IDisplaySettingRepository _displayRepo;
     private readonly IWeatherService _weatherService;
+    private readonly IWeatherRefreshService _weatherRefreshService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -32,7 +33,8 @@ public class SettingsController : ControllerBase
         IHubContext<CalendarHub> hubContext,
         ILogger<SettingsController> logger,
         IDisplaySettingRepository displayRepo,
-        IWeatherService weatherService)
+        IWeatherService weatherService,
+        IWeatherRefreshService weatherRefreshService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -42,6 +44,7 @@ public class SettingsController : ControllerBase
         _logger = logger;
         _displayRepo = displayRepo;
         _weatherService = weatherService;
+        _weatherRefreshService = weatherRefreshService;
     }
 
     [HttpGet("location")]
@@ -82,6 +85,8 @@ public class SettingsController : ControllerBase
         await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
 
         await _scheduler.TriggerRecalculationAsync();
+
+        await _weatherRefreshService.RefreshAsync(ct);
 
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }

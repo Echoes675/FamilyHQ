@@ -7,8 +7,18 @@ using Microsoft.AspNetCore.Mvc;
 [Authorize]
 [ApiController]
 [Route("api/[controller]")]
-public class WeatherController(IWeatherService weatherService) : ControllerBase
+public class WeatherController(
+    IWeatherService weatherService,
+    IWeatherRefreshService weatherRefreshService) : ControllerBase
 {
+    [AllowAnonymous]
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh(CancellationToken ct)
+    {
+        await weatherRefreshService.RefreshAsync(ct);
+        return Ok(new { message = "Weather refreshed" });
+    }
+
     [AllowAnonymous]
     [HttpGet("current")]
     public async Task<IActionResult> GetCurrent(CancellationToken ct)

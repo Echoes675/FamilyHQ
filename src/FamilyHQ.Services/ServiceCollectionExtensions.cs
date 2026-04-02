@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         });
 
         services.AddScoped<IWeatherService, WeatherService>();
+        services.AddScoped<IWeatherRefreshService, WeatherRefreshService>();
         services.AddHostedService<WeatherPollerService>();
 
         return services;
