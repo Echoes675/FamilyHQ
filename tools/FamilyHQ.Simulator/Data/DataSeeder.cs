@@ -79,6 +79,16 @@ public class DataSeeder
             }
         );
 
+        if (!db.SimulatedLocations.Any())
+        {
+            db.SimulatedLocations.Add(new SimulatedLocation
+            {
+                PlaceName = "Edinburgh, Scotland",
+                Latitude = 55.9533,
+                Longitude = -3.1883
+            });
+        }
+
         db.SaveChanges();
         Console.WriteLine("[SIM] Data seeded.");
     }
