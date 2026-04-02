@@ -145,6 +145,14 @@ public class WeatherSteps
     {
         await _webApiClient.TriggerWeatherRefreshAsync();
 
+        // Verify the API has weather data before loading the page.
+        // If this returns 204 NoContent, the refresh didn't store data.
+        var status = await _webApiClient.GetWeatherCurrentStatusAsync();
+        if (status != 200)
+            throw new InvalidOperationException(
+                $"Weather API returned {status} after refresh — expected 200. " +
+                "The refresh may have failed to store data.");
+
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.
         // Retry once if the weather strip doesn't appear — InitialiseAsync can

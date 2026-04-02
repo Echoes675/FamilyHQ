@@ -27,6 +27,16 @@ public class WebApiClient : IDisposable
     }
 
     /// <summary>
+    /// Checks whether the weather current API returns data (200) or no content (204).
+    /// Returns the status code for diagnostic purposes.
+    /// </summary>
+    public async Task<int> GetWeatherCurrentStatusAsync()
+    {
+        var response = await _httpClient.GetAsync("api/weather/current");
+        return (int)response.StatusCode;
+    }
+
+    /// <summary>
     /// Ensures weather is enabled. Reads current settings and updates if disabled.
     /// </summary>
     public async Task EnsureWeatherEnabledAsync()
