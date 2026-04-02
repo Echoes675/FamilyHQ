@@ -23,7 +23,7 @@
 
 ## Technical Principles
 - Clean Architecture: Ensure the WebApi and WebUi projects only depend on Services or Core.
-- Infrastructure Isolation: External integrations (e.g., Google Calendar) must be abstracted behind interfaces.
+- Infrastructure Isolation: External integrations (e.g., Google Calendar) must be abstracted behind interfaces. See `.agent/docs/simulator-external-dependencies.md` for the external dependency mocking strategy.
 - Shared Validation: Use FluentValidation in FamilyHQ.Core so it can be executed on both the Blazor client and the ASP.NET server.
 
 ## Key Entities
@@ -39,11 +39,12 @@
 - **IDayThemeService / DayThemeService**: Calculates and persists today's DayTheme boundaries.
 - **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists. Loops using Task.Delay to wake at each period boundary and broadcast `ThemeChanged(periodName)` to all SignalR clients via IHubContext<CalendarHub>.
 - **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback.
-- **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required.
+- **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required. Base URL is config-driven — Nominatim in production, simulator in dev/staging.
 - **IDisplaySettingService / DisplaySettingService** (Blazor WASM): Loads display preferences from `GET /api/settings/display` on startup and applies `--user-surface-multiplier` and `--theme-transition-duration` CSS custom properties via JS interop. Saves changes via `PUT /api/settings/display`.
 - **IWeatherProvider / OpenMeteoWeatherProvider**: Fetches weather data from Open-Meteo (or simulator). Base URL from config — same code in all environments.
 - **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
-- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR.
+- **IWeatherRefreshService**: Shared between WeatherPollerService and the refresh endpoint. Extracts the poll logic (fetch, store, broadcast) into a reusable service.
+- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
 ## API Endpoints
@@ -57,6 +58,7 @@
 - `GET  /api/weather/forecast?days=5` → List<DailyForecastItemDto>
 - `GET  /api/settings/weather` → WeatherSettingDto
 - `PUT  /api/settings/weather` → upserts weather settings
+- `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
 
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
