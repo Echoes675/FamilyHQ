@@ -11,6 +11,7 @@ public class SimContext : DbContext
     public DbSet<SimulatedCalendar> Calendars => Set<SimulatedCalendar>();
     public DbSet<SimulatedUser> Users => Set<SimulatedUser>();
     public DbSet<SimulatedEventAttendee> EventAttendees => Set<SimulatedEventAttendee>();
+    public DbSet<SimulatedWeather> SimulatedWeather => Set<SimulatedWeather>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
