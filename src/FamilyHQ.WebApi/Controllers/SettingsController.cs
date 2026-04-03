@@ -22,6 +22,8 @@ public class SettingsController : ControllerBase
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ILogger<SettingsController> _logger;
     private readonly IDisplaySettingRepository _displayRepo;
+    private readonly IWeatherService _weatherService;
+    private readonly IWeatherRefreshService _weatherRefreshService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -30,7 +32,9 @@ public class SettingsController : ControllerBase
         IDayThemeScheduler scheduler,
         IHubContext<CalendarHub> hubContext,
         ILogger<SettingsController> logger,
-        IDisplaySettingRepository displayRepo)
+        IDisplaySettingRepository displayRepo,
+        IWeatherService weatherService,
+        IWeatherRefreshService weatherRefreshService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -39,6 +43,8 @@ public class SettingsController : ControllerBase
         _hubContext = hubContext;
         _logger = logger;
         _displayRepo = displayRepo;
+        _weatherService = weatherService;
+        _weatherRefreshService = weatherRefreshService;
     }
 
     [HttpGet("location")]
@@ -79,6 +85,8 @@ public class SettingsController : ControllerBase
         await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
 
         await _scheduler.TriggerRecalculationAsync();
+
+        await _weatherRefreshService.RefreshAsync(ct);
 
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }
@@ -131,5 +139,25 @@ public class SettingsController : ControllerBase
         await _displayRepo.UpsertAsync(setting, ct);
 
         return Ok(dto);
+    }
+
+    [AllowAnonymous]
+    [HttpGet("weather")]
+    public async Task<IActionResult> GetWeatherSettings(CancellationToken ct)
+    {
+        var dto = await _weatherService.GetSettingsAsync(ct);
+        return Ok(dto);
+    }
+
+    [AllowAnonymous]
+    [HttpPut("weather")]
+    public async Task<IActionResult> UpdateWeatherSettings([FromBody] WeatherSettingDto dto, CancellationToken ct)
+    {
+        var validator = new WeatherSettingDtoValidator();
+        var validationResult = await validator.ValidateAsync(dto, ct);
+        if (!validationResult.IsValid)
+            return BadRequest(validationResult.Errors);
+        var updated = await _weatherService.UpdateSettingsAsync(dto, ct);
+        return Ok(updated);
     }
 }

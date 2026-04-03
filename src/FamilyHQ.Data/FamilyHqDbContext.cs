@@ -18,6 +18,8 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<DayTheme> DayThemes => Set<DayTheme>();
     public DbSet<LocationSetting> LocationSettings => Set<LocationSetting>();
     public DbSet<DisplaySetting> DisplaySettings => Set<DisplaySetting>();
+    public DbSet<WeatherDataPoint> WeatherDataPoints => Set<WeatherDataPoint>();
+    public DbSet<WeatherSetting> WeatherSettings => Set<WeatherSetting>();
 
     /// <summary>
     /// Required for ASP.NET Core Data Protection key storage in the database.

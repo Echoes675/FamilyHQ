@@ -1,9 +1,12 @@
 @inherits LayoutComponentBase
 @using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Components.Weather
 @inject IThemeService ThemeService
 @inject IDisplaySettingService DisplaySettingService
+@inject IWeatherUiService WeatherUiService
 
 <div class="page">
+    <WeatherOverlay />
     <ErrorBoundary @ref="_errorBoundary">
         <ChildContent>
             @Body
@@ -27,6 +30,7 @@
     {
         await ThemeService.InitialiseAsync();
         await DisplaySettingService.InitialiseAsync();
+        await WeatherUiService.InitialiseAsync();
     }
 
     private void Recover()

@@ -142,7 +142,7 @@ pipeline {
                         def url = ep.url
                         def isPost = ep.isPost
                         branches[name] = {
-                            def maxRetries = 18
+                            def maxRetries = 36
                             for (int i = 0; i < maxRetries; i++) {
                                 if (isPost) {
                                     // POST to the configure endpoint to verify DB connectivity is ready
@@ -167,7 +167,7 @@ pipeline {
                                 echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
                                 sleep(time: 10, unit: 'SECONDS')
                             }
-                            error "${name} not ready after 3 minutes"
+                            error "${name} not ready after 6 minutes"
                         }
                     }
                     parallel branches
