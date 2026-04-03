@@ -19,6 +19,7 @@ public class DisplaySettingDtoValidator : AbstractValidator<DisplaySettingDto>
             .WithMessage("Transition duration must be between 0 and 60 seconds.");
 
         RuleFor(x => x.ThemeSelection)
+            .NotNull()
             .Must(v => ValidThemeSelections.Contains(v))
             .WithMessage("ThemeSelection must be one of: auto, morning, daytime, evening, night.");
     }
