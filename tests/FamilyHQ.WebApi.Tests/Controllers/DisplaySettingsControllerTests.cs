@@ -109,8 +109,6 @@ public class DisplaySettingsControllerTests
         var hubMock = new Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
         var loggerMock = new Mock<ILogger<SettingsController>>();
         var displayRepoMock = new Mock<IDisplaySettingRepository>();
-        var weatherServiceMock = new Mock<IWeatherService>();
-        var weatherRefreshServiceMock = new Mock<IWeatherRefreshService>();
 
         var sut = new SettingsController(
             locationRepoMock.Object,
@@ -119,9 +117,7 @@ public class DisplaySettingsControllerTests
             schedulerMock.Object,
             hubMock.Object,
             loggerMock.Object,
-            displayRepoMock.Object,
-            weatherServiceMock.Object,
-            weatherRefreshServiceMock.Object);
+            displayRepoMock.Object);
 
         return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock);
     }

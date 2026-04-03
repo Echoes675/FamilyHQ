@@ -23,7 +23,7 @@
 
 ## Technical Principles
 - Clean Architecture: Ensure the WebApi and WebUi projects only depend on Services or Core.
-- Infrastructure Isolation: External integrations (e.g., Google Calendar) must be abstracted behind interfaces. See `.agent/docs/simulator-external-dependencies.md` for the external dependency mocking strategy.
+- Infrastructure Isolation: External integrations (e.g., Google Calendar) must be abstracted behind interfaces.
 - Shared Validation: Use FluentValidation in FamilyHQ.Core so it can be executed on both the Blazor client and the ASP.NET server.
 
 ## Key Entities
@@ -31,21 +31,14 @@
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). A single row; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double`, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`). A single row. Controls the glassmorphism surface opacity and theme transition speed at runtime.
-- **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp.
-- **WeatherSetting**: Stores weather preferences (enabled, poll interval, temperature unit, wind threshold). Single row.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
 - **IDayThemeService / DayThemeService**: Calculates and persists today's DayTheme boundaries.
 - **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists. Loops using Task.Delay to wake at each period boundary and broadcast `ThemeChanged(periodName)` to all SignalR clients via IHubContext<CalendarHub>.
 - **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback.
-- **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required. Base URL is config-driven — Nominatim in production, simulator in dev/staging.
+- **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required.
 - **IDisplaySettingService / DisplaySettingService** (Blazor WASM): Loads display preferences from `GET /api/settings/display` on startup and applies `--user-surface-multiplier` and `--theme-transition-duration` CSS custom properties via JS interop. Saves changes via `PUT /api/settings/display`.
-- **IWeatherProvider / OpenMeteoWeatherProvider**: Fetches weather data from Open-Meteo (or simulator). Base URL from config — same code in all environments.
-- **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
-- **IWeatherRefreshService**: Shared between WeatherPollerService and the refresh endpoint. Extracts the poll logic (fetch, store, broadcast) into a reusable service.
-- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving.
-- **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
@@ -53,17 +46,10 @@
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
 - `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier, OpaqueSurfaces, TransitionDurationSecs) — returns defaults if no row exists
 - `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs }` → upserts the single DisplaySetting row, returns DisplaySettingDto
-- `GET  /api/weather/current` → CurrentWeatherDto (condition, temperature, wind)
-- `GET  /api/weather/hourly?date=yyyy-MM-dd` → List<HourlyForecastItemDto>
-- `GET  /api/weather/forecast?days=5` → List<DailyForecastItemDto>
-- `GET  /api/settings/weather` → WeatherSettingDto
-- `PUT  /api/settings/weather` → upserts weather settings
-- `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
 
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
-- **ThemeChanged(string period)**: pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
-- **WeatherUpdated**: pushed by WeatherPollerService when new weather data is stored. No parameters — UI fetches fresh data via HTTP.
+- **ThemeChanged(string period)**: new — pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
 
 ## UI Layer Architecture
 The DOM is structured in three stacked layers to support time-of-day theming and future weather overlays:
@@ -82,8 +68,7 @@ The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface
 
 ## Pages & Navigation
 - `/` — Dashboard (Month / Day / Agenda views)
-- `/settings` — Settings page (Location, Weather, Today's Theme Schedule, Display, Account / Sign Out)
-- `/settings/weather` — Weather settings sub-page (enable/disable, temperature unit, poll interval, wind threshold)
+- `/settings` — Settings page (Location, Display, Today's Theme Schedule, Account / Sign Out)
 - Settings accessed via a gear icon (⚙️) in the DashboardHeader. User name and sign-out are on the Settings page, not the header.
 
 ## Performance Targets
