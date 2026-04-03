@@ -1,6 +1,7 @@
 @page "/"
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.Services.Auth
+@using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.Core.DTOs
 @implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
@@ -25,6 +26,7 @@
     else
     {
         <DashboardHeader />
+        <WeatherStrip ActiveView="@(_currentView == DashboardView.Day ? "Day" : _currentView == DashboardView.MonthAgenda ? "Agenda" : "Month")" />
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 

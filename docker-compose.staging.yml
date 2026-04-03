@@ -25,6 +25,8 @@ services:
       - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
       - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
       - FrontendBaseUrl=${FrontendBaseUrl}
+      - Weather__BaseUrl=${Weather__BaseUrl}
+      - Geocoding__BaseUrl=${Geocoding__BaseUrl}
       - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
       - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
       - ReverseProxy__Enabled=true

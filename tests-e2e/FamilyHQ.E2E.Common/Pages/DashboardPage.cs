@@ -40,6 +40,19 @@ public class DashboardPage : BasePage
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
     private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
+    // Weather Locators
+    public ILocator WeatherStrip => Page.Locator(".weather-strip");
+    public ILocator WeatherStripTemp => Page.Locator(".weather-strip__temp");
+    public ILocator WeatherStripCondition => Page.Locator(".weather-strip__condition");
+    public ILocator WeatherStripForecastDays => Page.Locator(".weather-strip__forecast-day");
+    public ILocator WeatherOverlay => Page.Locator("#weather-overlay");
+
+    public ILocator AgendaWeatherForDate(string dateKey) =>
+        Page.GetByTestId($"agenda-day-label-{dateKey}").Locator(".agenda-weather");
+    public ILocator AgendaWeatherTemps(string dateKey) =>
+        Page.GetByTestId($"agenda-day-label-{dateKey}").Locator(".agenda-weather__temps");
+    public ILocator DayHourTemps => Page.Locator(".day-hour-temp");
+
     // Actions
 
     /// <summary>
@@ -299,6 +312,12 @@ public class DashboardPage : BasePage
             r => r.Url.Contains("api/calendars/events"),
             new() { Timeout = 30000 });
         await WaitForCalendarVisibleAsync();
+    }
+
+    public async Task WaitForWeatherStripAsync(int timeoutMs = 60000)
+    {
+        await Assertions.Expect(WeatherStrip).ToBeVisibleAsync(
+            new() { Timeout = timeoutMs });
     }
 
     public async Task LoginAsync(string userName)

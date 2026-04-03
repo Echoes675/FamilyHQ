@@ -26,6 +26,7 @@ public class SettingsPage : BasePage
     public ILocator AccountName => Page.Locator(".account-name");
     public ILocator SignOutBtn => Page.Locator(".settings-account")
         .GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
+    public ILocator WeatherSettingsLink => Page.Locator(".settings-section").Filter(new() { HasText = "Weather settings" });
 
     public async Task NavigateAndWaitAsync()
     {

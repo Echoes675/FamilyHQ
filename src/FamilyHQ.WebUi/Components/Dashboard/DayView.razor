@@ -1,4 +1,8 @@
+@using FamilyHQ.WebUi.Components.Weather
+@using FamilyHQ.WebUi.Services
 @inject IJSRuntime JSRuntime
+@inject IWeatherUiService WeatherService
+@implements IDisposable
 
 @* Day nav bar *@
 <div class="flex justify-between items-center mb-4">
@@ -59,7 +63,16 @@
                     var label = i == 0 ? "12 AM" : i < 12 ? $"{i} AM" : i == 12 ? "12 PM" : $"{i - 12} PM";
                     if (i > 0)
                     {
-                        <div class="time-slot-label" style="top: @topPos%">@label</div>
+                        var hourWeather = WeatherService.HourlyForecast
+                            .FirstOrDefault(h => h.Hour.Hour == i);
+                        <div class="time-slot-label" style="top: @topPos%">
+                            @label
+                            @if (hourWeather is not null && WeatherService.IsEnabled)
+                            {
+                                <WeatherIcon IconName="@hourWeather.IconName" IsWindy="@hourWeather.IsWindy" Size="14" />
+                                <span class="day-hour-temp">@($"{hourWeather.Temperature:F0}°")</span>
+                            }
+                        </div>
                     }
                 }
             </div>
@@ -103,6 +116,29 @@
     [Parameter] public EventCallback<(DateTime Date, Guid CalendarId)> OnAddEvent { get; set; }
 
     private DateTime? _lastScrolledDate;
+    private DateOnly _lastLoadedDate;
+
+    protected override void OnInitialized()
+    {
+        WeatherService.OnWeatherChanged += HandleWeatherChanged;
+    }
+
+    private void HandleWeatherChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        WeatherService.OnWeatherChanged -= HandleWeatherChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var currentDate = DateOnly.FromDateTime(SelectedDate);
+        if (currentDate != _lastLoadedDate)
+        {
+            _lastLoadedDate = currentDate;
+            await WeatherService.LoadHourlyAsync(currentDate);
+        }
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

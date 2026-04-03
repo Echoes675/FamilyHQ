@@ -1,0 +1,192 @@
+@page "/settings/weather"
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.Core.Enums
+@using FamilyHQ.WebUi.Services
+@inject IWeatherUiService WeatherService
+@inject NavigationManager Navigation
+
+<DashboardHeader BackUrl="/settings" />
+
+<div class="settings-page">
+
+    <h2 class="settings-section__title">Weather</h2>
+    <div class="settings-section">
+
+        @if (_isLoading)
+        {
+            <p class="settings-hint">Loading…</p>
+        }
+        else
+        {
+            <div class="form-check mb-4">
+                <input type="checkbox" class="form-check-input" id="weather-enabled-toggle"
+                       checked="@_enabled" @onchange="OnEnabledToggled" />
+                <label class="form-check-label" for="weather-enabled-toggle">Enable weather display</label>
+            </div>
+
+            <div class="mb-4">
+                <label class="settings-label" for="temperature-unit">Temperature Unit</label>
+                <select id="temperature-unit"
+                        class="settings-input"
+                        value="@_temperatureUnit"
+                        @onchange="OnTemperatureUnitChanged">
+                    <option value="@TemperatureUnit.Celsius">Celsius (°C)</option>
+                    <option value="@TemperatureUnit.Fahrenheit">Fahrenheit (°F)</option>
+                </select>
+            </div>
+
+            <div class="settings-input-container mb-4">
+                <label class="settings-label" for="poll-interval">Poll Interval (minutes)</label>
+                <input id="poll-interval"
+                       type="number"
+                       class="settings-input"
+                       min="1"
+                       value="@_pollIntervalMinutes"
+                       @onchange="OnPollIntervalChanged" />
+                <p class="settings-hint">How often weather data is refreshed.</p>
+            </div>
+
+            <div class="settings-input-container mb-4">
+                <label class="settings-label" for="wind-threshold">Wind Alert Threshold (km/h)</label>
+                <input id="wind-threshold"
+                       type="number"
+                       class="settings-input"
+                       min="1"
+                       value="@_windThresholdKmh"
+                       @onchange="OnWindThresholdChanged" />
+                <p class="settings-hint">Wind speeds above this value will trigger a wind alert.</p>
+            </div>
+
+            @if (_hasChanges)
+            {
+                <button class="settings-btn" @onclick="SaveAsync" disabled="@_isSaving">
+                    @(_isSaving ? "Saving…" : "Save")
+                </button>
+                <button class="settings-btn settings-btn--ghost" @onclick="CancelChanges" disabled="@_isSaving">
+                    Cancel
+                </button>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_successMessage))
+            {
+                <p class="settings-hint" style="color: var(--theme-accent);">@_successMessage</p>
+            }
+            @if (!string.IsNullOrWhiteSpace(_errorMessage))
+            {
+                <p class="settings-field-error">@_errorMessage</p>
+            }
+        }
+
+    </div>
+
+</div>
+
+@code {
+    private WeatherSettingDto? _original;
+    private bool _enabled;
+    private int _pollIntervalMinutes;
+    private TemperatureUnit _temperatureUnit;
+    private double _windThresholdKmh;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private bool _hasChanges;
+    private string? _successMessage;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _original = await WeatherService.LoadSettingsAsync();
+        ApplyFromOriginal();
+        _isLoading = false;
+    }
+
+    private void ApplyFromOriginal()
+    {
+        if (_original is null) return;
+        _enabled = _original.Enabled;
+        _pollIntervalMinutes = _original.PollIntervalMinutes;
+        _temperatureUnit = _original.TemperatureUnit;
+        _windThresholdKmh = _original.WindThresholdKmh;
+        _hasChanges = false;
+    }
+
+    private void OnEnabledToggled(ChangeEventArgs e)
+    {
+        _enabled = (bool)(e.Value ?? false);
+        UpdateHasChanges();
+    }
+
+    private void OnTemperatureUnitChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<TemperatureUnit>(e.Value?.ToString(), out var unit))
+        {
+            _temperatureUnit = unit;
+            UpdateHasChanges();
+        }
+    }
+
+    private void OnPollIntervalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var minutes) && minutes >= 1)
+        {
+            _pollIntervalMinutes = minutes;
+            UpdateHasChanges();
+        }
+    }
+
+    private void OnWindThresholdChanged(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var threshold) && threshold >= 1)
+        {
+            _windThresholdKmh = threshold;
+            UpdateHasChanges();
+        }
+    }
+
+    private void UpdateHasChanges()
+    {
+        if (_original is null)
+        {
+            _hasChanges = false;
+            return;
+        }
+
+        _hasChanges = _enabled != _original.Enabled
+            || _pollIntervalMinutes != _original.PollIntervalMinutes
+            || _temperatureUnit != _original.TemperatureUnit
+            || _windThresholdKmh != _original.WindThresholdKmh;
+    }
+
+    private async Task SaveAsync()
+    {
+        _isSaving = true;
+        _successMessage = null;
+        _errorMessage = null;
+        try
+        {
+            var dto = new WeatherSettingDto(
+                _enabled,
+                _pollIntervalMinutes,
+                _temperatureUnit,
+                _windThresholdKmh,
+                _original?.ApiKey);
+
+            _original = await WeatherService.SaveSettingsAsync(dto);
+            _hasChanges = false;
+            _successMessage = "Settings saved.";
+        }
+        catch (Exception)
+        {
+            _errorMessage = "Could not save settings. Please try again.";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void CancelChanges()
+    {
+        ApplyFromOriginal();
+    }
+}
