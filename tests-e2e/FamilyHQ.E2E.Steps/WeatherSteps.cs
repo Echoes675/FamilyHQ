@@ -1,4 +1,3 @@
-using FamilyHQ.E2E.Common.Configuration;
 using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
@@ -16,13 +15,11 @@ public class WeatherSteps
     private readonly SettingsPage _settingsPage;
     private readonly WeatherSettingsPage _weatherSettingsPage;
     private readonly SimulatorApiClient _simulatorApi;
-    private readonly WebApiClient _webApiClient;
 
     public WeatherSteps(ScenarioContext scenarioContext, SimulatorApiClient simulatorApi)
     {
         _scenarioContext = scenarioContext;
         _simulatorApi = simulatorApi;
-        _webApiClient = new WebApiClient();
         var page = scenarioContext.Get<IPage>();
         _dashboardPage = new DashboardPage(page);
         _settingsPage = new SettingsPage(page);
@@ -179,8 +176,14 @@ public class WeatherSteps
         }");
 
         // Verify the API has weather data before loading the page.
+        // api/weather/current is user-scoped, so the check must carry the JWT.
         // If this returns 204 NoContent, the refresh didn't store data.
-        var status = await _webApiClient.GetWeatherCurrentStatusAsync();
+        var status = await page.EvaluateAsync<int>(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+            const resp = await fetch('/api/weather/current', { headers });
+            return resp.status;
+        }");
         if (status != 200)
             throw new InvalidOperationException(
                 $"Weather API returned {status} after refresh — expected 200. " +
