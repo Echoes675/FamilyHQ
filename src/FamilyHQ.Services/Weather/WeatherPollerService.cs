@@ -44,14 +44,26 @@ public class WeatherPollerService(
         var options = scope.ServiceProvider.GetRequiredService<IOptions<WeatherOptions>>().Value;
 
         var allSettings = await weatherSettingRepo.GetAllAsync(stoppingToken);
+        var enabledSettings = allSettings.Where(s => s.Enabled).ToList();
 
-        foreach (var setting in allSettings)
+        foreach (var setting in enabledSettings)
         {
-            await refreshService.RefreshAsync(setting.UserId, stoppingToken);
+            try
+            {
+                await refreshService.RefreshAsync(setting.UserId, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Weather refresh failed for user {UserId}.", setting.UserId);
+            }
         }
 
-        var minInterval = allSettings.Count > 0
-            ? allSettings.Min(s => s.PollIntervalMinutes)
+        var minInterval = enabledSettings.Count > 0
+            ? enabledSettings.Min(s => s.PollIntervalMinutes)
             : options.MinPollIntervalMinutes;
 
         var pollInterval = TimeSpan.FromMinutes(
