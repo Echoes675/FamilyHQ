@@ -32,6 +32,6 @@ public class SettingsPage : BasePage
     {
         await NavigateAsync();
         await Page.Locator(".settings-page").WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 }

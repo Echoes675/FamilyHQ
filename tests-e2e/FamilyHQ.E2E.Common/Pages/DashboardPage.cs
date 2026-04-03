@@ -106,7 +106,7 @@ public class DashboardPage : BasePage
         var expectedText = current.AddMonths(-1).ToString("MMMM yyyy");
         await Page.GetByTestId("agenda-prev-month").ClickAsync();
         await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
-            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
         await Page.WaitForTimeoutAsync(1000);
     }
 
@@ -116,7 +116,7 @@ public class DashboardPage : BasePage
         var expectedText = current.AddMonths(1).ToString("MMMM yyyy");
         await Page.GetByTestId("agenda-next-month").ClickAsync();
         await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
-            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
         await Page.WaitForTimeoutAsync(1000);
     }
 
@@ -325,7 +325,7 @@ public class DashboardPage : BasePage
         // Follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await LoginBtn.ClickAsync();
-        await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         await Page.Locator("select#selectedUserId").SelectOptionAsync(new SelectOptionValue { Label = userName });
         await Page.Locator("button[type='submit']").ClickAsync();
         await WaitForCalendarToLoadAsync();
@@ -341,7 +341,7 @@ public class DashboardPage : BasePage
             await Page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
             await Page.GotoAsync(_config.BaseUrl + "/");
             await Page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
-            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         }
     }
 

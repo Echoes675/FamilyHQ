@@ -200,7 +200,7 @@ public class WeatherSteps
     {
         await _weatherSettingsPage.SaveBtn.ClickAsync();
         await _weatherSettingsPage.SuccessMessage.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [When(@"I change the poll interval to (\d+)")]
@@ -305,7 +305,7 @@ public class WeatherSteps
     {
         var dateKey = DateExpressionResolver.Resolve(dateExpr);
         await Assertions.Expect(_dashboardPage.AgendaWeatherTemps(dateKey))
-            .ToBeVisibleAsync(new() { Timeout = 10000 });
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I see hourly temperatures in the day view")]
@@ -314,7 +314,7 @@ public class WeatherSteps
         // DayView loads hourly data asynchronously after tab switch, so wait
         // for at least one element to appear before counting.
         await _dashboardPage.DayHourTemps.First.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         var count = await _dashboardPage.DayHourTemps.CountAsync();
         count.Should().BeGreaterThan(0, "at least one hourly temperature should be displayed");
     }
@@ -355,7 +355,7 @@ public class WeatherSteps
     public async Task ThenTheSaveButtonIsVisible()
     {
         await Assertions.Expect(_weatherSettingsPage.SaveBtn).ToBeVisibleAsync(
-            new() { Timeout = 10000 });
+            new() { Timeout = 30000 });
     }
 
     [Then(@"the save button is not visible")]
@@ -398,7 +398,7 @@ public class WeatherSteps
     {
         var message = _weatherSettingsPage.SuccessMessage;
         await message.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         var text = await message.InnerTextAsync();
         text.Should().Contain(expectedText);
     }

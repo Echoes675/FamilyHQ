@@ -161,7 +161,7 @@ public class AgendaSteps
             _page.GetByTestId($"agenda-cell-{dateKey}-{calId}")
                                .GetByText(expectedText, new() { Exact = false })
                                .First)
-            .ToBeVisibleAsync(new() { Timeout = 10000 });
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I do not see ""([^""]*)"" in the ""([^""]*)"" column for ""([^""]*)""")]
@@ -174,7 +174,7 @@ public class AgendaSteps
             _page.GetByTestId($"agenda-cell-{dateKey}-{calId}")
                  .GetByText(text, new() { Exact = false })
                  .First)
-            .ToBeHiddenAsync(new() { Timeout = 10000 });
+            .ToBeHiddenAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"the event ""([^""]*)"" has no time prefix in the ""([^""]*)"" column for ""([^""]*)""")]

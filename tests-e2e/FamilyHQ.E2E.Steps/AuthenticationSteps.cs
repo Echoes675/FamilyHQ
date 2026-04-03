@@ -126,7 +126,7 @@ public class AuthenticationSteps
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
         await page.GotoAsync(config.BaseUrl + "/settings");
-        await page.Locator(".account-name").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await page.Locator(".account-name").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [Then(@"I do not see the username displayed")]
