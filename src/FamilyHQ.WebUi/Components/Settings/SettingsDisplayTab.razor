@@ -15,13 +15,13 @@
                 Surface Transparency
             </label>
             <div class="flex items-center gap-3">
-                <input type="range" min="0" max="200" step="10"
-                       value="@(_opaqueSurfaces ? 100 : _surfaceMultiplierPercent)"
+                <input type="range" min="0" max="100" step="10"
+                       value="@(_opaqueSurfaces ? 100 : _surfaceOpacityPercent)"
                        @oninput="OnSurfaceOpacityChanged"
                        disabled="@_opaqueSurfaces"
                        class="settings-slider"
                        style="accent-color: var(--theme-accent); flex: 1;" />
-                <span class="settings-slider-value">@(_opaqueSurfaces ? 100 : _surfaceMultiplierPercent)%</span>
+                <span class="settings-slider-value">@(_opaqueSurfaces ? 100 : _surfaceOpacityPercent)%</span>
             </div>
         </div>
 
@@ -99,8 +99,8 @@
         new("night",   "Night"),
     ];
 
-    private int _surfaceMultiplierPercent = 100;
-    private int _prevSurfaceMultiplierPercent = 100;
+    private int _surfaceOpacityPercent = 100;
+    private int _prevSurfaceOpacityPercent = 100;
     private bool _opaqueSurfaces;
     private bool _isAutoTheme = true;
     private string _selectedTheme = "daytime";
@@ -110,8 +110,8 @@
     protected override async Task OnInitializedAsync()
     {
         var settings = DisplaySettingService.CurrentSettings;
-        _surfaceMultiplierPercent = (int)(settings.SurfaceMultiplier * 100);
-        _prevSurfaceMultiplierPercent = _surfaceMultiplierPercent;
+        _surfaceOpacityPercent = (int)(settings.SurfaceMultiplier * 100);
+        _prevSurfaceOpacityPercent = _surfaceOpacityPercent;
         _opaqueSurfaces = settings.OpaqueSurfaces;
         _transitionDurationSecs = settings.TransitionDurationSecs;
         _isAutoTheme = settings.ThemeSelection == "auto";
@@ -133,8 +133,8 @@
     {
         if (int.TryParse(e.Value?.ToString(), out var percent))
         {
-            _surfaceMultiplierPercent = percent;
-            _prevSurfaceMultiplierPercent = percent;
+            _surfaceOpacityPercent = percent;
+            _prevSurfaceOpacityPercent = percent;
             var multiplier = percent / 100.0;
             await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
             await SaveDisplayAsync();
@@ -146,12 +146,12 @@
         _opaqueSurfaces = (bool)(e.Value ?? false);
         if (_opaqueSurfaces)
         {
-            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", "100");
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", "1.00");
         }
         else
         {
-            var multiplier = _prevSurfaceMultiplierPercent / 100.0;
-            _surfaceMultiplierPercent = _prevSurfaceMultiplierPercent;
+            var multiplier = _prevSurfaceOpacityPercent / 100.0;
+            _surfaceOpacityPercent = _prevSurfaceOpacityPercent;
             await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
         }
         await SaveDisplayAsync();
@@ -189,7 +189,7 @@
 
     private async Task SaveDisplayAsync(string? themeSelectionOverride = null)
     {
-        var multiplier = _surfaceMultiplierPercent / 100.0;
+        var multiplier = _surfaceOpacityPercent / 100.0;
         var themeSelection = themeSelectionOverride ?? (_isAutoTheme ? "auto" : _selectedTheme);
         await DisplaySettingService.SaveAsync(new DisplaySettingDto(
             multiplier, _opaqueSurfaces, _transitionDurationSecs, themeSelection));
