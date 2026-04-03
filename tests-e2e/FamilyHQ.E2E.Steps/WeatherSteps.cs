@@ -245,9 +245,9 @@ public class WeatherSteps
     [When(@"I click the weather settings link")]
     public async Task WhenIClickTheWeatherSettingsLink()
     {
-        await _settingsPage.WeatherSettingsLink.ClickAsync();
-        var page = _scenarioContext.Get<IPage>();
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await _settingsPage.WeatherTab.ClickAsync();
+        await _settingsPage.WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
     [When(@"I click cancel on weather settings")]
