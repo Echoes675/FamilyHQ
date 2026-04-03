@@ -54,8 +54,8 @@ public class WeatherSteps
         _scenarioContext["WeatherLongitude"] = lon;
         _scenarioContext["WeatherPlaceName"] = uniqueName;
 
-        // Navigate to settings, enter place name, save, wait for pill
-        await _settingsPage.NavigateAndWaitAsync();
+        // Navigate to settings location tab, enter place name, save, wait for pill
+        await _settingsPage.NavigateToLocationTabAsync();
         await _settingsPage.PlaceNameInput.FillAsync(uniqueName);
 
         var page = _scenarioContext.Get<IPage>();
@@ -333,8 +333,8 @@ public class WeatherSteps
     public async Task ThenIAmOnTheWeatherSettingsPage()
     {
         var page = _scenarioContext.Get<IPage>();
-        page.Url.Should().Contain("/settings/weather");
-        await Assertions.Expect(_weatherSettingsPage.EnabledToggle).ToBeVisibleAsync();
+        page.Url.Should().Contain("/settings");
+        await Assertions.Expect(_weatherSettingsPage.EnabledToggle).ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I see the weather enabled toggle")]

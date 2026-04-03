@@ -44,6 +44,30 @@ public class SettingsSteps
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
     }
 
+    [When(@"I navigate to the location tab")]
+    public async Task WhenINavigateToTheLocationTab()
+    {
+        await _settingsPage.LocationTab.ClickAsync();
+        await _settingsPage.PlaceNameInput.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [When(@"I navigate to the weather tab")]
+    public async Task WhenINavigateToTheWeatherTab()
+    {
+        await _settingsPage.WeatherTab.ClickAsync();
+        await _settingsPage.WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [When(@"I navigate to the display tab")]
+    public async Task WhenINavigateToTheDisplayTab()
+    {
+        await _settingsPage.DisplayTab.ClickAsync();
+        await _settingsPage.MorningTile.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
     [When(@"I click the back button")]
     public async Task WhenIClickTheBackButton()
     {
