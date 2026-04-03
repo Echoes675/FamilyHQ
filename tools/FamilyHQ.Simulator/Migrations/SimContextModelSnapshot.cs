@@ -117,6 +117,30 @@ namespace FamilyHQ.Simulator.Migrations
                     b.ToTable("SimulatedEventAttendees", (string)null);
                 });
 
+            modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedLocation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("PlaceName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SimulatedLocations", (string)null);
+                });
+
             modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedUser", b =>
                 {
                     b.Property<string>("Id")
@@ -131,6 +155,51 @@ namespace FamilyHQ.Simulator.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SimulatedUsers", (string)null);
+                });
+
+            modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedWeather", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("DataType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Temperature")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("TemperatureMax")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("TemperatureMin")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Time")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("WeatherCode")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("WindSpeed")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("WindSpeedMax")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SimulatedWeather");
                 });
 #pragma warning restore 612, 618
         }

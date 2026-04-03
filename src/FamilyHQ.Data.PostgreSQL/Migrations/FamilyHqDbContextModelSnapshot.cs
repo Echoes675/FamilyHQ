@@ -205,7 +205,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
                     b.ToTable("LocationSettings");
                 });
@@ -281,6 +289,88 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("UserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("FamilyHQ.Core.Models.WeatherDataPoint", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("Condition")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("DataType")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("HighCelsius")
+                        .HasColumnType("double precision");
+
+                    b.Property<bool>("IsWindy")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("LocationSettingId")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("LowCelsius")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset>("RetrievedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("TemperatureCelsius")
+                        .HasColumnType("double precision");
+
+                    b.Property<DateTimeOffset>("Timestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("WindSpeedKmh")
+                        .HasColumnType("double precision");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LocationSettingId", "DataType", "Timestamp");
+
+                    b.ToTable("WeatherDataPoints");
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.WeatherSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ApiKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("Enabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<int>("PollIntervalMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(30);
+
+                    b.Property<int>("TemperatureUnit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<double>("WindThresholdKmh")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("double precision")
+                        .HasDefaultValue(30.0);
+
+                    b.HasKey("Id");
+
+                    b.ToTable("WeatherSettings");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
                 {
                     b.Property<int>("Id")
@@ -333,6 +423,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .IsRequired();
 
                     b.Navigation("CalendarInfo");
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.WeatherDataPoint", b =>
+                {
+                    b.HasOne("FamilyHQ.Core.Models.LocationSetting", null)
+                        .WithMany()
+                        .HasForeignKey("LocationSettingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.CalendarInfo", b =>

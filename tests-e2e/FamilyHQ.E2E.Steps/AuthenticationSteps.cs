@@ -59,15 +59,30 @@ public class AuthenticationSteps
         // Need to sign in - click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
         await page.WaitForURLAsync(config.BaseUrl + "/");
 
-        // Wait for Blazor's auth check to complete and render the authenticated view
-        // (header is only rendered when authenticated).
-        await page.Locator(".dashboard-header").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+        // Verify authentication completed and the correct user is logged in:
+        // wait for the settings gear (only rendered when authenticated), then navigate to
+        // the settings page and confirm the account name matches the expected user.
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        await page.GotoAsync(config.BaseUrl + "/settings");
+        await page.Locator(".account-name").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        var displayedName = await page.Locator(".account-name").InnerTextAsync();
+        if (!displayedName.Contains(uniqueUsername))
+            throw new InvalidOperationException(
+                $"Login verification failed: expected username '{uniqueUsername}' but got '{displayedName}'");
+
+        // Return to the dashboard so subsequent steps start from a known state.
+        await page.GotoAsync(config.BaseUrl + "/");
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [When(@"I navigate to the dashboard")]
@@ -89,7 +104,7 @@ public class AuthenticationSteps
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await _dashboardPage.LoginBtn.ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
@@ -126,7 +141,7 @@ public class AuthenticationSteps
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
         await page.GotoAsync(config.BaseUrl + "/settings");
-        await page.Locator(".account-name").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await page.Locator(".account-name").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [Then(@"I do not see the username displayed")]

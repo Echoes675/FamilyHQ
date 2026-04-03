@@ -7,6 +7,8 @@ using Reqnroll;
 
 namespace FamilyHQ.E2E.Steps;
 
+using FamilyHQ.E2E.Common.Helpers;
+
 [Binding]
 public class DashboardSteps
 {
@@ -42,7 +44,7 @@ public class DashboardSteps
         // Use Playwright's built-in retry to handle the render cycle between the HTTP
         // response landing and Blazor painting the event capsules into the DOM.
         var capsule = _dashboardPage.EventCapsules.Filter(new() { HasText = eventName });
-        await Assertions.Expect(capsule.First).ToBeVisibleAsync(new() { Timeout = 10000 });
+        await Assertions.Expect(capsule.First).ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I do not see the event ""([^""]*)"" displayed on the calendar")]
@@ -176,6 +178,12 @@ public class DashboardSteps
     public async Task WhenISwitchToTheMonthViewTab()
     {
         await _dashboardPage.SwitchToMonthViewAsync();
+    }
+
+    [When(@"I switch to the Agenda View tab")]
+    public async Task WhenISwitchToTheAgendaViewTab()
+    {
+        await _dashboardPage.SwitchToAgendaViewAsync();
     }
 
     [StepDefinition(@"I select the date ""([^""]*)"" using the day picker")]

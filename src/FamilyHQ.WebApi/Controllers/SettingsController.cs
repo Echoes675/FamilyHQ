@@ -22,6 +22,9 @@ public class SettingsController : ControllerBase
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ILogger<SettingsController> _logger;
     private readonly IDisplaySettingRepository _displayRepo;
+    private readonly IWeatherService _weatherService;
+    private readonly IWeatherRefreshService _weatherRefreshService;
+    private readonly ICurrentUserService _currentUser;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -30,7 +33,10 @@ public class SettingsController : ControllerBase
         IDayThemeScheduler scheduler,
         IHubContext<CalendarHub> hubContext,
         ILogger<SettingsController> logger,
-        IDisplaySettingRepository displayRepo)
+        IDisplaySettingRepository displayRepo,
+        IWeatherService weatherService,
+        IWeatherRefreshService weatherRefreshService,
+        ICurrentUserService currentUser)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -39,12 +45,16 @@ public class SettingsController : ControllerBase
         _hubContext = hubContext;
         _logger = logger;
         _displayRepo = displayRepo;
+        _weatherService = weatherService;
+        _weatherRefreshService = weatherRefreshService;
+        _currentUser = currentUser;
     }
 
     [HttpGet("location")]
     public async Task<IActionResult> GetLocation(CancellationToken ct)
     {
-        var setting = await _locationRepo.GetAsync(ct);
+        var userId = _currentUser.UserId!;
+        var setting = await _locationRepo.GetAsync(userId, ct);
         if (setting is null) return NotFound();
         return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
     }
@@ -65,7 +75,8 @@ public class SettingsController : ControllerBase
             return BadRequest("Location not found. Please check the spelling and try again.");
         }
 
-        await _locationRepo.UpsertAsync(new LocationSetting
+        var userId = _currentUser.UserId!;
+        await _locationRepo.UpsertAsync(userId, new LocationSetting
         {
             PlaceName = request.PlaceName,
             Latitude = lat,
@@ -80,13 +91,16 @@ public class SettingsController : ControllerBase
 
         await _scheduler.TriggerRecalculationAsync();
 
+        await _weatherRefreshService.RefreshAsync(userId, ct);
+
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }
 
     [HttpDelete("location")]
     public async Task<IActionResult> DeleteLocation(CancellationToken ct)
     {
-        await _locationRepo.DeleteAsync(ct);
+        var userId = _currentUser.UserId!;
+        await _locationRepo.DeleteAsync(userId, ct);
 
         await _dayThemeService.RecalculateForTodayAsync(ct);
 
@@ -131,5 +145,25 @@ public class SettingsController : ControllerBase
         await _displayRepo.UpsertAsync(setting, ct);
 
         return Ok(dto);
+    }
+
+    [AllowAnonymous]
+    [HttpGet("weather")]
+    public async Task<IActionResult> GetWeatherSettings(CancellationToken ct)
+    {
+        var dto = await _weatherService.GetSettingsAsync(ct);
+        return Ok(dto);
+    }
+
+    [AllowAnonymous]
+    [HttpPut("weather")]
+    public async Task<IActionResult> UpdateWeatherSettings([FromBody] WeatherSettingDto dto, CancellationToken ct)
+    {
+        var validator = new WeatherSettingDtoValidator();
+        var validationResult = await validator.ValidateAsync(dto, ct);
+        if (!validationResult.IsValid)
+            return BadRequest(validationResult.Errors);
+        var updated = await _weatherService.UpdateSettingsAsync(dto, ct);
+        return Ok(updated);
     }
 }

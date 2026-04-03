@@ -101,12 +101,13 @@ Any `<input>` or form field must:
 - Called by `ThemeService` on load (from `/api/daytheme/today`) and on `SignalRService.OnThemeChanged`.
 - CSS `@property` transitions handle the 45-second colour bleed automatically.
 
-## Weather Overlay Extension Point
+## Weather Overlay
 
-Future weather animations go in `<div id="weather-overlay">`. Rules:
-- CSS-only or minimal JS animations.
+The `#weather-overlay` div renders CSS-only weather animations via `WeatherOverlay.razor` + `weather.js`. Classes like `.weather-lightrain`, `.weather-snow`, `.weather-thunder`, etc. are applied based on current conditions. The `.weather-windy` modifier tilts particle animations. All animations use `transform`/`opacity` only with `will-change` for GPU compositing. Rules:
+- CSS-only animations (no canvas/WebGL).
 - `pointer-events: none` always.
 - Must not interfere with `#theme-bg` or `#app`.
+- Never place content inside `#weather-overlay` — pseudo-elements handle all visuals.
 
 ## When This Skill Does NOT Apply
 
