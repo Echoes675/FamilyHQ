@@ -9,16 +9,16 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
     private readonly IJSRuntime _jsRuntime;
     private IJSObjectReference? _module;
 
-    public DisplaySettingDto CurrentSettings { get; private set; } =
-        new(1.0, false, 15, "auto");
-
-    public bool IsAutoTheme => CurrentSettings.ThemeSelection == "auto";
-
     public DisplaySettingService(ISettingsApiService settingsApi, IJSRuntime jsRuntime)
     {
         _settingsApi = settingsApi;
         _jsRuntime = jsRuntime;
     }
+
+    public DisplaySettingDto CurrentSettings { get; private set; } =
+        new(1.0, false, 15, "auto");
+
+    public bool IsAutoTheme => CurrentSettings.ThemeSelection == "auto";
 
     public async Task InitialiseAsync()
     {
@@ -56,7 +56,7 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
     {
         var module = await GetModuleAsync();
 
-        var multiplier = CurrentSettings.OpaqueSurfaces ? "100" : CurrentSettings.SurfaceMultiplier.ToString("F2");
+        var multiplier = CurrentSettings.OpaqueSurfaces ? "1.0" : CurrentSettings.SurfaceMultiplier.ToString("F2");
         await module.InvokeVoidAsync("setDisplayProperty", "--user-surface-multiplier", multiplier);
 
         var duration = $"{CurrentSettings.TransitionDurationSecs}s";
