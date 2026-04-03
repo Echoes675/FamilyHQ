@@ -159,4 +159,40 @@ public class SettingsSteps
         var text = await _settingsPage.AccountName.InnerTextAsync();
         text.Trim().Should().NotBeEmpty("Account section should display the signed-in username");
     }
+
+    [When(@"I disable auto-change theme")]
+    public async Task WhenIDisableAutoChangeTheme()
+    {
+        var isChecked = await _settingsPage.AutoThemeToggle.IsCheckedAsync();
+        if (isChecked)
+        {
+            await _settingsPage.AutoThemeToggle.ClickAsync();
+            // Wait for the hint that confirms manual mode is active
+            var page = _scenarioContext.Get<IPage>();
+            await page.Locator(".settings-hint").Filter(new() { HasText = "Tap a theme to apply it instantly" })
+                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        }
+    }
+
+    [When(@"I select the ""([^""]*)"" theme tile")]
+    public async Task WhenISelectTheThemeTile(string themeName)
+    {
+        await _settingsPage.ThemeTile(themeName).ClickAsync();
+    }
+
+    [Then(@"the theme tiles are not selectable")]
+    public async Task ThenTheThemeTilesAreNotSelectable()
+    {
+        var classes = await _settingsPage.MorningTile.GetAttributeAsync("class") ?? "";
+        classes.Should().Contain("theme-tile--readonly",
+            "tiles should be read-only when auto-change is enabled");
+    }
+
+    [Then(@"the ""([^""]*)"" theme tile is selected")]
+    public async Task ThenTheThemeTileIsSelected(string themeName)
+    {
+        var classes = await _settingsPage.ThemeTile(themeName).GetAttributeAsync("class") ?? "";
+        classes.Should().Contain("theme-tile--selected",
+            $"the {themeName} tile should show as selected after being clicked");
+    }
 }

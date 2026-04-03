@@ -42,11 +42,16 @@ public class SettingsPage : BasePage
     public ILocator WeatherCancelBtn      => Page.Locator(".settings-btn--ghost");
     public ILocator WeatherSuccessMessage => Page.Locator(".settings-hint").Filter(new() { HasText = "Settings saved." });
 
+    // Display tab — auto-change toggle
+    public ILocator AutoThemeToggle => Page.Locator("#auto-theme-toggle");
+
     // Display tab — theme tiles
     public ILocator MorningTile => Page.GetByTestId("theme-tile-morning");
     public ILocator DaytimeTile => Page.GetByTestId("theme-tile-daytime");
     public ILocator EveningTile => Page.GetByTestId("theme-tile-evening");
     public ILocator NightTile   => Page.GetByTestId("theme-tile-night");
+
+    public ILocator ThemeTile(string name) => Page.GetByTestId($"theme-tile-{name.ToLower()}");
 
     public async Task NavigateAndWaitAsync()
     {

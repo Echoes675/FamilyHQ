@@ -36,3 +36,13 @@ Feature: Settings Page
   Scenario: User can sign out from the settings page
     When I click the sign out button on the settings page
     Then I see the "Login to Google" button
+
+  Scenario: Theme tiles are not selectable when auto-change is enabled
+    When I navigate to the display tab
+    Then the theme tiles are not selectable
+
+  Scenario: Selecting a theme tile applies it when auto-change is disabled
+    When I navigate to the display tab
+    And I disable auto-change theme
+    And I select the "Night" theme tile
+    Then the "Night" theme tile is selected
