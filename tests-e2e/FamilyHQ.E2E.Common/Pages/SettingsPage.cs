@@ -33,5 +33,10 @@ public class SettingsPage : BasePage
         await NavigateAsync();
         await Page.Locator(".settings-page").WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        // Wait for OnInitializedAsync to complete: the API calls (GetLocation,
+        // GetTodayTheme) fire immediately after the page becomes visible. Network
+        // idle confirms they have all resolved so that subsequent assertions see
+        // the fully-initialized page state rather than default null values.
+        await Page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 30000 });
     }
 }

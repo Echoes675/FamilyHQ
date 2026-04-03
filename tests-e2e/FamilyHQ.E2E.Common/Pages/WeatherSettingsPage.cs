@@ -27,6 +27,7 @@ public class WeatherSettingsPage : BasePage
     {
         await NavigateAsync();
         await Page.Locator(".settings-page").WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 30000 });
     }
 }
