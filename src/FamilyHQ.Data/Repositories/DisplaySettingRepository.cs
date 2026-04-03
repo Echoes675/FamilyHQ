@@ -4,33 +4,29 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Data.Repositories;
 
-public class DisplaySettingRepository : IDisplaySettingRepository
+public class DisplaySettingRepository(FamilyHqDbContext context) : IDisplaySettingRepository
 {
-    private readonly FamilyHqDbContext _context;
+    public async Task<DisplaySetting?> GetAsync(string userId, CancellationToken ct = default)
+        => await context.DisplaySettings
+            .FirstOrDefaultAsync(x => x.UserId == userId, ct);
 
-    public DisplaySettingRepository(FamilyHqDbContext context)
+    public async Task<DisplaySetting> UpsertAsync(string userId, DisplaySetting setting, CancellationToken ct = default)
     {
-        _context = context;
-    }
-
-    public async Task<DisplaySetting?> GetAsync(CancellationToken ct = default)
-        => await _context.DisplaySettings.FirstOrDefaultAsync(ct);
-
-    public async Task<DisplaySetting> UpsertAsync(DisplaySetting setting, CancellationToken ct = default)
-    {
-        var existing = await GetAsync(ct);
+        var existing = await GetAsync(userId, ct);
         if (existing is null)
         {
-            _context.DisplaySettings.Add(setting);
-            await _context.SaveChangesAsync(ct);
+            setting.UserId = userId;
+            context.DisplaySettings.Add(setting);
+            await context.SaveChangesAsync(ct);
             return setting;
         }
 
         existing.SurfaceMultiplier = setting.SurfaceMultiplier;
         existing.OpaqueSurfaces = setting.OpaqueSurfaces;
         existing.TransitionDurationSecs = setting.TransitionDurationSecs;
+        existing.ThemeSelection = setting.ThemeSelection;
         existing.UpdatedAt = setting.UpdatedAt;
-        await _context.SaveChangesAsync(ct);
+        await context.SaveChangesAsync(ct);
         return existing;
     }
 }

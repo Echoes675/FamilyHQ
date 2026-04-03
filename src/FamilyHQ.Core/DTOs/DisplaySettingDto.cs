@@ -3,4 +3,5 @@ namespace FamilyHQ.Core.DTOs;
 public record DisplaySettingDto(
     double SurfaceMultiplier,
     bool OpaqueSurfaces,
-    int TransitionDurationSecs);
+    int TransitionDurationSecs,
+    string ThemeSelection = "auto");

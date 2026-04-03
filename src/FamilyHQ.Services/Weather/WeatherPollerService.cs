@@ -40,14 +40,35 @@ public class WeatherPollerService(
     {
         using var scope = serviceProvider.CreateScope();
         var refreshService = scope.ServiceProvider.GetRequiredService<IWeatherRefreshService>();
-        await refreshService.RefreshAsync(stoppingToken);
-
-        // Get poll interval for the delay
-        var options = scope.ServiceProvider.GetRequiredService<IOptions<WeatherOptions>>().Value;
         var weatherSettingRepo = scope.ServiceProvider.GetRequiredService<IWeatherSettingRepository>();
-        var weatherSetting = await weatherSettingRepo.GetOrCreateAsync(stoppingToken);
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<WeatherOptions>>().Value;
+
+        var allSettings = await weatherSettingRepo.GetAllAsync(stoppingToken);
+        var enabledSettings = allSettings.Where(s => s.Enabled).ToList();
+
+        foreach (var setting in enabledSettings)
+        {
+            try
+            {
+                await refreshService.RefreshAsync(setting.UserId, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Weather refresh failed for user {UserId}.", setting.UserId);
+            }
+        }
+
+        var minInterval = enabledSettings.Count > 0
+            ? enabledSettings.Min(s => s.PollIntervalMinutes)
+            : options.MinPollIntervalMinutes;
+
         var pollInterval = TimeSpan.FromMinutes(
-            Math.Max(options.MinPollIntervalMinutes, weatherSetting.PollIntervalMinutes));
+            Math.Max(options.MinPollIntervalMinutes, minInterval));
+
         await Task.Delay(pollInterval, stoppingToken);
     }
 }

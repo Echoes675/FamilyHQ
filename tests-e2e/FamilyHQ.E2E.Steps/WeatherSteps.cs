@@ -1,4 +1,3 @@
-using FamilyHQ.E2E.Common.Configuration;
 using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
@@ -16,13 +15,11 @@ public class WeatherSteps
     private readonly SettingsPage _settingsPage;
     private readonly WeatherSettingsPage _weatherSettingsPage;
     private readonly SimulatorApiClient _simulatorApi;
-    private readonly WebApiClient _webApiClient;
 
     public WeatherSteps(ScenarioContext scenarioContext, SimulatorApiClient simulatorApi)
     {
         _scenarioContext = scenarioContext;
         _simulatorApi = simulatorApi;
-        _webApiClient = new WebApiClient();
         var page = scenarioContext.Get<IPage>();
         _dashboardPage = new DashboardPage(page);
         _settingsPage = new SettingsPage(page);
@@ -34,7 +31,30 @@ public class WeatherSteps
     [Given(@"weather is enabled")]
     public async Task GivenWeatherIsEnabled()
     {
-        await _webApiClient.EnsureWeatherEnabledAsync();
+        // Use the authenticated browser session so the request carries the JWT.
+        // WebApiClient has no auth token and the endpoint now requires authentication.
+        var page = _scenarioContext.Get<IPage>();
+        await page.EvaluateAsync(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const resp = await fetch('/api/settings/weather', { headers });
+            if (!resp.ok) return;
+            const settings = await resp.json();
+            if (settings.enabled) return;
+
+            await fetch('/api/settings/weather', {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({
+                    enabled: true,
+                    pollIntervalMinutes: settings.pollIntervalMinutes,
+                    temperatureUnit: settings.temperatureUnit,
+                    windThresholdKmh: settings.windThresholdKmh
+                })
+            });
+        }");
     }
 
     [Given(@"the user has a saved location ""([^""]*)"" at ([^,]+), (.+)")]
@@ -54,8 +74,8 @@ public class WeatherSteps
         _scenarioContext["WeatherLongitude"] = lon;
         _scenarioContext["WeatherPlaceName"] = uniqueName;
 
-        // Navigate to settings, enter place name, save, wait for pill
-        await _settingsPage.NavigateAndWaitAsync();
+        // Navigate to settings location tab, enter place name, save, wait for pill
+        await _settingsPage.NavigateToLocationTabAsync();
         await _settingsPage.PlaceNameInput.FillAsync(uniqueName);
 
         var page = _scenarioContext.Get<IPage>();
@@ -156,8 +176,14 @@ public class WeatherSteps
         }");
 
         // Verify the API has weather data before loading the page.
+        // api/weather/current is user-scoped, so the check must carry the JWT.
         // If this returns 204 NoContent, the refresh didn't store data.
-        var status = await _webApiClient.GetWeatherCurrentStatusAsync();
+        var status = await page.EvaluateAsync<int>(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+            const resp = await fetch('/api/weather/current', { headers });
+            return resp.status;
+        }");
         if (status != 200)
             throw new InvalidOperationException(
                 $"Weather API returned {status} after refresh — expected 200. " +
@@ -245,9 +271,9 @@ public class WeatherSteps
     [When(@"I click the weather settings link")]
     public async Task WhenIClickTheWeatherSettingsLink()
     {
-        await _settingsPage.WeatherSettingsLink.ClickAsync();
-        var page = _scenarioContext.Get<IPage>();
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+        await _settingsPage.WeatherTab.ClickAsync();
+        await _settingsPage.WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
     [When(@"I click cancel on weather settings")]
@@ -333,8 +359,8 @@ public class WeatherSteps
     public async Task ThenIAmOnTheWeatherSettingsPage()
     {
         var page = _scenarioContext.Get<IPage>();
-        page.Url.Should().Contain("/settings/weather");
-        await Assertions.Expect(_weatherSettingsPage.EnabledToggle).ToBeVisibleAsync();
+        page.Url.Should().Contain("/settings");
+        await Assertions.Expect(_weatherSettingsPage.EnabledToggle).ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I see the weather enabled toggle")]

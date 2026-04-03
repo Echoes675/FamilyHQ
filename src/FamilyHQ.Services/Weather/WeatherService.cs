@@ -17,7 +17,7 @@ public class WeatherService(
         if (locationId is null)
             return null;
 
-        var setting = await weatherSettingRepository.GetOrCreateAsync(ct);
+        var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
         var dataPoint = await weatherDataPointRepository.GetCurrentAsync(locationId.Value, ct);
         if (dataPoint is null)
             return null;
@@ -31,7 +31,7 @@ public class WeatherService(
         if (locationId is null)
             return [];
 
-        var setting = await weatherSettingRepository.GetOrCreateAsync(ct);
+        var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
         var dataPoints = await weatherDataPointRepository.GetHourlyAsync(locationId.Value, date, ct);
 
         return dataPoints
@@ -45,7 +45,7 @@ public class WeatherService(
         if (locationId is null)
             return [];
 
-        var setting = await weatherSettingRepository.GetOrCreateAsync(ct);
+        var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
         var dataPoints = await weatherDataPointRepository.GetDailyAsync(locationId.Value, days, ct);
 
         return dataPoints
@@ -55,13 +55,13 @@ public class WeatherService(
 
     public async Task<WeatherSettingDto> GetSettingsAsync(CancellationToken ct = default)
     {
-        var setting = await weatherSettingRepository.GetOrCreateAsync(ct);
+        var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
         return MapToDto(setting, maskApiKey: true);
     }
 
     public async Task<WeatherSettingDto> UpdateSettingsAsync(WeatherSettingDto dto, CancellationToken ct = default)
     {
-        var existing = await weatherSettingRepository.GetOrCreateAsync(ct);
+        var existing = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
 
         existing.Enabled = dto.Enabled;
         existing.PollIntervalMinutes = dto.PollIntervalMinutes;
@@ -72,16 +72,13 @@ public class WeatherService(
         if (dto.ApiKey is not null)
             existing.ApiKey = dto.ApiKey;
 
-        var updated = await weatherSettingRepository.UpsertAsync(existing, ct);
+        var updated = await weatherSettingRepository.UpsertAsync(currentUserService.UserId!, existing, ct);
         return MapToDto(updated, maskApiKey: true);
     }
 
     private async Task<int?> GetLocationSettingIdAsync(CancellationToken ct)
     {
-        var userId = currentUserService.UserId;
-        var location = userId is not null
-            ? await locationSettingRepository.GetAsync(userId, ct)
-            : await locationSettingRepository.GetAsync(ct);
+        var location = await locationSettingRepository.GetAsync(currentUserService.UserId!, ct);
         return location?.Id;
     }
 

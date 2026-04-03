@@ -29,10 +29,10 @@
 ## Key Entities
 - **CalendarEvent**: Google Calendar event data.
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
-- **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). A single row; when absent, the API falls back to IP-based geolocation.
-- **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double`, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`). A single row. Controls the glassmorphism surface opacity and theme transition speed at runtime.
+- **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
+- **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
 - **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp.
-- **WeatherSetting**: Stores weather preferences (enabled, poll interval, temperature unit, wind threshold). Single row.
+- **WeatherSetting**: Stores weather preferences (Enabled, PollIntervalMinutes, TemperatureUnit, WindThresholdKmh). One row per UserId.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
@@ -51,13 +51,13 @@
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
 - `GET  /api/settings/location` → LocationSettingDto or 404
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
-- `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier, OpaqueSurfaces, TransitionDurationSecs) — returns defaults if no row exists
-- `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs }` → upserts the single DisplaySetting row, returns DisplaySettingDto
+- `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier 0–1.0, OpaqueSurfaces, TransitionDurationSecs, ThemeSelection) — requires auth; returns defaults if no row exists for the user
+- `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs, themeSelection }` → upserts the user's DisplaySetting row; requires auth
 - `GET  /api/weather/current` → CurrentWeatherDto (condition, temperature, wind)
 - `GET  /api/weather/hourly?date=yyyy-MM-dd` → List<HourlyForecastItemDto>
 - `GET  /api/weather/forecast?days=5` → List<DailyForecastItemDto>
-- `GET  /api/settings/weather` → WeatherSettingDto
-- `PUT  /api/settings/weather` → upserts weather settings
+- `GET  /api/settings/weather` → WeatherSettingDto — requires auth; scoped to current user
+- `PUT  /api/settings/weather` → upserts user's weather settings; requires auth
 - `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
 
 ## SignalR (CalendarHub — /hubs/calendar)
@@ -82,8 +82,11 @@ The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface
 
 ## Pages & Navigation
 - `/` — Dashboard (Month / Day / Agenda views)
-- `/settings` — Settings page (Location, Weather, Today's Theme Schedule, Display, Account / Sign Out)
-- `/settings/weather` — Weather settings sub-page (enable/disable, temperature unit, poll interval, wind threshold)
+- `/settings` — Settings page — tabbed layout (General, Location, Weather, Display). Settings cog only shown when authenticated.
+  - **General tab**: signed-in username, Sign Out button.
+  - **Location tab**: current location with Auto/Saved badge, override input.
+  - **Weather tab**: replaces the old `/settings/weather` sub-page.
+  - **Display tab**: Surface Opacity (0–100%), Opaque surfaces toggle, Theme subsection (auto/manual selection, theme tiles, transition speed).
 - Settings accessed via a gear icon (⚙️) in the DashboardHeader. User name and sign-out are on the Settings page, not the header.
 
 ## Performance Targets

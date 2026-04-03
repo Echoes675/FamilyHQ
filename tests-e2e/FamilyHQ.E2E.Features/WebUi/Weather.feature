@@ -62,7 +62,6 @@ Feature: Weather Integration
     And I disable weather
     And I save weather settings
     And I click the back button
-    And I click the back button
     Then the weather strip is not visible
 
   Scenario: Disabling weather clears the overlay
@@ -71,6 +70,5 @@ Feature: Weather Integration
     When I navigate to weather settings
     And I disable weather
     And I save weather settings
-    And I click the back button
     And I click the back button
     Then the weather overlay has no condition class

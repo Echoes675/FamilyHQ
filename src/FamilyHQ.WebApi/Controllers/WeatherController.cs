@@ -17,10 +17,9 @@ public class WeatherController(
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
         var userId = currentUser.UserId;
-        if (userId is not null)
-            await weatherRefreshService.RefreshAsync(userId, ct);
-        else
-            await weatherRefreshService.RefreshAsync(ct);
+        if (userId is null)
+            return Unauthorized();
+        await weatherRefreshService.RefreshAsync(userId, ct);
         return Ok(new { message = "Weather refreshed" });
     }
 

@@ -7,12 +7,12 @@ Feature: Weather Settings
     Given I have a user like "TestFamilyMember"
     And I am signed in as the user "TestFamilyMember"
 
-  Scenario: Navigate to weather settings from settings page
+  Scenario: Weather settings are accessible from the settings page
     Given I am on the settings page
-    When I click the weather settings link
-    Then I am on the weather settings page
+    When I navigate to the weather tab
+    Then I see the weather enabled toggle
 
-  Scenario: Weather settings page shows all form fields
+  Scenario: Weather settings tab shows all form fields
     When I navigate to weather settings
     Then I see the weather enabled toggle
     And I see the temperature unit selector
@@ -38,7 +38,7 @@ Feature: Weather Settings
     And I save weather settings
     Then I see the "Settings saved." confirmation
 
-  Scenario: Back button returns to settings page
+  Scenario: Back button returns to dashboard
     When I navigate to weather settings
     And I click the back button
-    Then I am on the settings page
+    Then I see the calendar displayed

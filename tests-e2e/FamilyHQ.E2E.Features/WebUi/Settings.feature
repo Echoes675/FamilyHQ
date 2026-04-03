@@ -12,24 +12,37 @@ Feature: Settings Page
     When I click the back button
     Then I see the calendar displayed
 
-  Scenario: Location section shows no saved location hint
+  Scenario: Location tab shows no saved location hint
+    When I navigate to the location tab
     Then I see the no saved location hint
 
   Scenario: User can save a location
-    When I enter "Edinburgh, Scotland" as the place name
+    When I navigate to the location tab
+    And I enter "Edinburgh, Scotland" as the place name
     And I click save location
     Then I see the location pill displaying "Edinburgh, Scotland"
     And I see the "Saved" badge on the location pill
 
-  Scenario: Theme schedule shows all four time-of-day periods
+  Scenario: Theme tiles are visible on the display tab
+    When I navigate to the display tab
     Then I see the Morning theme tile with a time
     And I see the Daytime theme tile with a time
     And I see the Evening theme tile with a time
     And I see the Night theme tile with a time
 
-  Scenario: Account section shows the signed-in username
+  Scenario: General tab shows the signed-in username
     Then I see the username in the account section
 
   Scenario: User can sign out from the settings page
     When I click the sign out button on the settings page
     Then I see the "Login to Google" button
+
+  Scenario: Theme tiles are not selectable when auto-change is enabled
+    When I navigate to the display tab
+    Then the theme tiles are not selectable
+
+  Scenario: Selecting a theme tile applies it when auto-change is disabled
+    When I navigate to the display tab
+    And I disable auto-change theme
+    And I select the "Night" theme tile
+    Then the "Night" theme tile is selected

@@ -1,17 +1,11 @@
-@page "/settings/weather"
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.Core.Enums
 @using FamilyHQ.WebUi.Services
 @inject IWeatherUiService WeatherService
-@inject NavigationManager Navigation
 
-<DashboardHeader BackUrl="/settings" />
-
-<div class="settings-page">
-
+<div class="settings-section-content">
     <h2 class="settings-section__title">Weather</h2>
     <div class="settings-section">
-
         @if (_isLoading)
         {
             <p class="settings-hint">Loading…</p>
@@ -76,9 +70,7 @@
                 <p class="settings-field-error">@_errorMessage</p>
             }
         }
-
     </div>
-
 </div>
 
 @code {
@@ -145,12 +137,7 @@
 
     private void UpdateHasChanges()
     {
-        if (_original is null)
-        {
-            _hasChanges = false;
-            return;
-        }
-
+        if (_original is null) { _hasChanges = false; return; }
         _hasChanges = _enabled != _original.Enabled
             || _pollIntervalMinutes != _original.PollIntervalMinutes
             || _temperatureUnit != _original.TemperatureUnit
@@ -165,12 +152,8 @@
         try
         {
             var dto = new WeatherSettingDto(
-                _enabled,
-                _pollIntervalMinutes,
-                _temperatureUnit,
-                _windThresholdKmh,
-                _original?.ApiKey);
-
+                _enabled, _pollIntervalMinutes, _temperatureUnit,
+                _windThresholdKmh, _original?.ApiKey);
             _original = await WeatherService.SaveSettingsAsync(dto);
             _hasChanges = false;
             _successMessage = "Settings saved.";
@@ -185,8 +168,5 @@
         }
     }
 
-    private void CancelChanges()
-    {
-        ApplyFromOriginal();
-    }
+    private void CancelChanges() => ApplyFromOriginal();
 }

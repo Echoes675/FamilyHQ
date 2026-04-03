@@ -9,14 +9,16 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
     private readonly IJSRuntime _jsRuntime;
     private IJSObjectReference? _module;
 
-    public DisplaySettingDto CurrentSettings { get; private set; } =
-        new(1.0, false, 15);
-
     public DisplaySettingService(ISettingsApiService settingsApi, IJSRuntime jsRuntime)
     {
         _settingsApi = settingsApi;
         _jsRuntime = jsRuntime;
     }
+
+    public DisplaySettingDto CurrentSettings { get; private set; } =
+        new(1.0, false, 15, "auto");
+
+    public bool IsAutoTheme => CurrentSettings.ThemeSelection == "auto";
 
     public async Task InitialiseAsync()
     {
@@ -44,15 +46,29 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
         await ApplyAllPropertiesAsync();
     }
 
+    public async Task ApplyManualThemeAsync(string themeName)
+    {
+        var module = await GetModuleAsync();
+        // Manual selection is always instant — no transition when auto is OFF.
+        await module.InvokeVoidAsync("setDisplayProperty", "--theme-transition-duration", "0s");
+        await module.InvokeVoidAsync("setTheme", themeName);
+    }
+
     private async Task ApplyAllPropertiesAsync()
     {
         var module = await GetModuleAsync();
 
-        var multiplier = CurrentSettings.OpaqueSurfaces ? "100" : CurrentSettings.SurfaceMultiplier.ToString("F2");
+        var multiplier = CurrentSettings.OpaqueSurfaces ? "1.0" : CurrentSettings.SurfaceMultiplier.ToString("F2");
         await module.InvokeVoidAsync("setDisplayProperty", "--user-surface-multiplier", multiplier);
 
-        var duration = $"{CurrentSettings.TransitionDurationSecs}s";
+        // Transition speed applies only when auto-change is ON.
+        // Manual theme selection is always instant.
+        var duration = IsAutoTheme ? $"{CurrentSettings.TransitionDurationSecs}s" : "0s";
         await module.InvokeVoidAsync("setDisplayProperty", "--theme-transition-duration", duration);
+
+        // Apply manual theme if set
+        if (!IsAutoTheme)
+            await module.InvokeVoidAsync("setTheme", CurrentSettings.ThemeSelection);
     }
 
     private async Task<IJSObjectReference> GetModuleAsync()

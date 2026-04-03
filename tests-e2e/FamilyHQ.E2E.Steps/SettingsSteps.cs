@@ -44,6 +44,30 @@ public class SettingsSteps
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
     }
 
+    [When(@"I navigate to the location tab")]
+    public async Task WhenINavigateToTheLocationTab()
+    {
+        await _settingsPage.LocationTab.ClickAsync();
+        await _settingsPage.PlaceNameInput.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [When(@"I navigate to the weather tab")]
+    public async Task WhenINavigateToTheWeatherTab()
+    {
+        await _settingsPage.WeatherTab.ClickAsync();
+        await _settingsPage.WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [When(@"I navigate to the display tab")]
+    public async Task WhenINavigateToTheDisplayTab()
+    {
+        await _settingsPage.DisplayTab.ClickAsync();
+        await _settingsPage.MorningTile.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
     [When(@"I click the back button")]
     public async Task WhenIClickTheBackButton()
     {
@@ -134,5 +158,41 @@ public class SettingsSteps
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         var text = await _settingsPage.AccountName.InnerTextAsync();
         text.Trim().Should().NotBeEmpty("Account section should display the signed-in username");
+    }
+
+    [When(@"I disable auto-change theme")]
+    public async Task WhenIDisableAutoChangeTheme()
+    {
+        var isChecked = await _settingsPage.AutoThemeToggle.IsCheckedAsync();
+        if (isChecked)
+        {
+            await _settingsPage.AutoThemeToggle.ClickAsync();
+            // Wait for the hint that confirms manual mode is active
+            var page = _scenarioContext.Get<IPage>();
+            await page.Locator(".settings-hint").Filter(new() { HasText = "Tap a theme to apply it instantly" })
+                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        }
+    }
+
+    [When(@"I select the ""([^""]*)"" theme tile")]
+    public async Task WhenISelectTheThemeTile(string themeName)
+    {
+        await _settingsPage.ThemeTile(themeName).ClickAsync();
+    }
+
+    [Then(@"the theme tiles are not selectable")]
+    public async Task ThenTheThemeTilesAreNotSelectable()
+    {
+        var classes = await _settingsPage.MorningTile.GetAttributeAsync("class") ?? "";
+        classes.Should().Contain("theme-tile--readonly",
+            "tiles should be read-only when auto-change is enabled");
+    }
+
+    [Then(@"the ""([^""]*)"" theme tile is selected")]
+    public async Task ThenTheThemeTileIsSelected(string themeName)
+    {
+        var classes = await _settingsPage.ThemeTile(themeName).GetAttributeAsync("class") ?? "";
+        classes.Should().Contain("theme-tile--selected",
+            $"the {themeName} tile should show as selected after being clicked");
     }
 }
