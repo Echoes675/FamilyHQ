@@ -28,8 +28,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await DisplaySettingService.InitialiseAsync();  // must run first so ThemeService can read ThemeSelection
         await ThemeService.InitialiseAsync();
-        await DisplaySettingService.InitialiseAsync();
         await WeatherUiService.InitialiseAsync();
     }
 

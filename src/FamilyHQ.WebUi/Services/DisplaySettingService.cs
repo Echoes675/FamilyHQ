@@ -10,7 +10,9 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
     private IJSObjectReference? _module;
 
     public DisplaySettingDto CurrentSettings { get; private set; } =
-        new(1.0, false, 15);
+        new(1.0, false, 15, "auto");
+
+    public bool IsAutoTheme => CurrentSettings.ThemeSelection == "auto";
 
     public DisplaySettingService(ISettingsApiService settingsApi, IJSRuntime jsRuntime)
     {
@@ -44,6 +46,12 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
         await ApplyAllPropertiesAsync();
     }
 
+    public async Task ApplyManualThemeAsync(string themeName)
+    {
+        var module = await GetModuleAsync();
+        await module.InvokeVoidAsync("setTheme", themeName);
+    }
+
     private async Task ApplyAllPropertiesAsync()
     {
         var module = await GetModuleAsync();
@@ -53,6 +61,10 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
 
         var duration = $"{CurrentSettings.TransitionDurationSecs}s";
         await module.InvokeVoidAsync("setDisplayProperty", "--theme-transition-duration", duration);
+
+        // Apply manual theme if set
+        if (!IsAutoTheme)
+            await module.InvokeVoidAsync("setTheme", CurrentSettings.ThemeSelection);
     }
 
     private async Task<IJSObjectReference> GetModuleAsync()
