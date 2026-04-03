@@ -8,7 +8,7 @@ public class GeocodingService(HttpClient httpClient) : IGeocodingService
     public async Task<(double Latitude, double Longitude)> GeocodeAsync(string placeName, CancellationToken ct = default)
     {
         var encoded = Uri.EscapeDataString(placeName);
-        var url = $"search?q={encoded}&format=json&limit=1";
+        var url = $"/search?q={encoded}&format=json&limit=1";
 
         var results = await httpClient.GetFromJsonAsync<NominatimResult[]>(url, ct);
         if (results is null || results.Length == 0)

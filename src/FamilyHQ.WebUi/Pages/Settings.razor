@@ -55,14 +55,6 @@
         <p class="settings-hint">Takes effect immediately.</p>
     </div>
 
-    <h2 class="settings-section__title">Weather</h2>
-    <div class="settings-section" style="cursor: pointer;" @onclick='() => Navigation.NavigateTo("/settings/weather")'>
-        <div class="flex justify-between items-center">
-            <span>Weather settings</span>
-            <span style="opacity: 0.5; font-size: 18px;">›</span>
-        </div>
-    </div>
-
     <h2 class="settings-section__title">Today's Theme Schedule</h2>
     <div class="settings-section settings-theme-schedule">
         @if (_todayTheme is not null)

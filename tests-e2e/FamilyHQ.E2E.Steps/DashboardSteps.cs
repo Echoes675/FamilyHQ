@@ -7,8 +7,6 @@ using Reqnroll;
 
 namespace FamilyHQ.E2E.Steps;
 
-using FamilyHQ.E2E.Common.Helpers;
-
 [Binding]
 public class DashboardSteps
 {
@@ -178,12 +176,6 @@ public class DashboardSteps
     public async Task WhenISwitchToTheMonthViewTab()
     {
         await _dashboardPage.SwitchToMonthViewAsync();
-    }
-
-    [When(@"I switch to the Agenda View tab")]
-    public async Task WhenISwitchToTheAgendaViewTab()
-    {
-        await _dashboardPage.SwitchToAgendaViewAsync();
     }
 
     [StepDefinition(@"I select the date ""([^""]*)"" using the day picker")]
