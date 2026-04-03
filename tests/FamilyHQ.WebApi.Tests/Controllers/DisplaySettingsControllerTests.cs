@@ -17,7 +17,7 @@ public class DisplaySettingsControllerTests
     {
         // Arrange
         var (sut, _, _, _, _, _, displayRepoMock) = CreateSut();
-        displayRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
+        displayRepoMock.Setup(x => x.GetAsync("test-user-123", It.IsAny<CancellationToken>()))
             .ReturnsAsync((DisplaySetting?)null);
 
         // Act
@@ -29,6 +29,7 @@ public class DisplaySettingsControllerTests
         dto.SurfaceMultiplier.Should().Be(1.0);
         dto.OpaqueSurfaces.Should().BeFalse();
         dto.TransitionDurationSecs.Should().Be(15);
+        dto.ThemeSelection.Should().Be("auto");
     }
 
     [Fact]
@@ -36,12 +37,14 @@ public class DisplaySettingsControllerTests
     {
         // Arrange
         var (sut, _, _, _, _, _, displayRepoMock) = CreateSut();
-        displayRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
+        displayRepoMock.Setup(x => x.GetAsync("test-user-123", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DisplaySetting
             {
+                UserId = "test-user-123",
                 SurfaceMultiplier = 0.8,
                 OpaqueSurfaces = true,
-                TransitionDurationSecs = 30
+                TransitionDurationSecs = 30,
+                ThemeSelection = "evening"
             });
 
         // Act
@@ -53,6 +56,7 @@ public class DisplaySettingsControllerTests
         dto.SurfaceMultiplier.Should().Be(0.8);
         dto.OpaqueSurfaces.Should().BeTrue();
         dto.TransitionDurationSecs.Should().Be(30);
+        dto.ThemeSelection.Should().Be("evening");
     }
 
     [Fact]
@@ -60,10 +64,10 @@ public class DisplaySettingsControllerTests
     {
         // Arrange
         var (sut, _, _, _, _, _, displayRepoMock) = CreateSut();
-        displayRepoMock.Setup(x => x.UpsertAsync(It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((DisplaySetting ds, CancellationToken _) => ds);
+        displayRepoMock.Setup(x => x.UpsertAsync("test-user-123", It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, DisplaySetting ds, CancellationToken _) => ds);
 
-        var dto = new DisplaySettingDto(0.8, false, 20, "auto");
+        var dto = new DisplaySettingDto(0.8, false, 20, "morning");
 
         // Act
         var result = await sut.PutDisplay(dto, CancellationToken.None);
@@ -72,10 +76,12 @@ public class DisplaySettingsControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         ok.Value.Should().BeOfType<DisplaySettingDto>();
         displayRepoMock.Verify(x => x.UpsertAsync(
+            "test-user-123",
             It.Is<DisplaySetting>(ds =>
                 ds.SurfaceMultiplier == 0.8 &&
                 ds.TransitionDurationSecs == 20 &&
-                !ds.OpaqueSurfaces),
+                !ds.OpaqueSurfaces &&
+                ds.ThemeSelection == "morning"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
