@@ -65,9 +65,24 @@ public class AuthenticationSteps
         await page.Locator("button[type='submit']").ClickAsync();
         await page.WaitForURLAsync(config.BaseUrl + "/");
 
-        // Wait for Blazor's auth check to complete and render the authenticated view
-        // (header is only rendered when authenticated).
-        await page.Locator(".dashboard-header").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        // Verify authentication completed and the correct user is logged in:
+        // wait for the settings gear (only rendered when authenticated), then navigate to
+        // the settings page and confirm the account name matches the expected user.
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        await page.GotoAsync(config.BaseUrl + "/settings");
+        await page.Locator(".account-name").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        var displayedName = await page.Locator(".account-name").InnerTextAsync();
+        if (!displayedName.Contains(uniqueUsername))
+            throw new InvalidOperationException(
+                $"Login verification failed: expected username '{uniqueUsername}' but got '{displayedName}'");
+
+        // Return to the dashboard so subsequent steps start from a known state.
+        await page.GotoAsync(config.BaseUrl + "/");
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [When(@"I navigate to the dashboard")]
