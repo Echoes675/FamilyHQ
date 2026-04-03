@@ -34,7 +34,30 @@ public class WeatherSteps
     [Given(@"weather is enabled")]
     public async Task GivenWeatherIsEnabled()
     {
-        await _webApiClient.EnsureWeatherEnabledAsync();
+        // Use the authenticated browser session so the request carries the JWT.
+        // WebApiClient has no auth token and the endpoint now requires authentication.
+        var page = _scenarioContext.Get<IPage>();
+        await page.EvaluateAsync(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+
+            const resp = await fetch('/api/settings/weather', { headers });
+            if (!resp.ok) return;
+            const settings = await resp.json();
+            if (settings.enabled) return;
+
+            await fetch('/api/settings/weather', {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({
+                    enabled: true,
+                    pollIntervalMinutes: settings.pollIntervalMinutes,
+                    temperatureUnit: settings.temperatureUnit,
+                    windThresholdKmh: settings.windThresholdKmh
+                })
+            });
+        }");
     }
 
     [Given(@"the user has a saved location ""([^""]*)"" at ([^,]+), (.+)")]
