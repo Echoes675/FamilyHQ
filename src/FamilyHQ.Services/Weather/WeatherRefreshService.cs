@@ -14,7 +14,13 @@ public class WeatherRefreshService(
     IWeatherBroadcaster weatherBroadcaster,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
-    public async Task RefreshAsync(CancellationToken ct = default)
+    public Task RefreshAsync(CancellationToken ct = default)
+        => RefreshCoreAsync(null, ct);
+
+    public Task RefreshAsync(string userId, CancellationToken ct = default)
+        => RefreshCoreAsync(userId, ct);
+
+    private async Task RefreshCoreAsync(string? userId, CancellationToken ct)
     {
         var weatherSetting = await weatherSettingRepo.GetOrCreateAsync(ct);
 
@@ -24,7 +30,9 @@ public class WeatherRefreshService(
             return;
         }
 
-        var location = await locationRepo.GetAsync(ct);
+        var location = userId is not null
+            ? await locationRepo.GetAsync(userId, ct)
+            : await locationRepo.GetAsync(ct);
 
         if (location is null)
         {

@@ -143,7 +143,17 @@ public class WeatherSteps
     [When(@"I wait for weather data to load")]
     public async Task WhenIWaitForWeatherDataToLoad()
     {
-        await _webApiClient.TriggerWeatherRefreshAsync();
+        // Use the authenticated browser to trigger a user-scoped weather refresh.
+        // The browser holds the JWT in localStorage, so the API can scope the
+        // refresh to this user's saved location — preventing parallel-test pollution.
+        var page = _scenarioContext.Get<IPage>();
+        await page.EvaluateAsync(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            await fetch('/api/weather/refresh', {
+                method: 'POST',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+        }");
 
         // Verify the API has weather data before loading the page.
         // If this returns 204 NoContent, the refresh didn't store data.

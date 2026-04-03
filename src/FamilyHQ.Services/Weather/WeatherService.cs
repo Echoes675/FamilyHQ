@@ -8,7 +8,8 @@ using FamilyHQ.Core.Models;
 public class WeatherService(
     IWeatherDataPointRepository weatherDataPointRepository,
     IWeatherSettingRepository weatherSettingRepository,
-    ILocationSettingRepository locationSettingRepository) : IWeatherService
+    ILocationSettingRepository locationSettingRepository,
+    ICurrentUserService currentUserService) : IWeatherService
 {
     public async Task<CurrentWeatherDto?> GetCurrentAsync(CancellationToken ct = default)
     {
@@ -77,7 +78,10 @@ public class WeatherService(
 
     private async Task<int?> GetLocationSettingIdAsync(CancellationToken ct)
     {
-        var location = await locationSettingRepository.GetAsync(ct);
+        var userId = currentUserService.UserId;
+        var location = userId is not null
+            ? await locationSettingRepository.GetAsync(userId, ct)
+            : await locationSettingRepository.GetAsync(ct);
         return location?.Id;
     }
 

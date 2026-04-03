@@ -9,13 +9,18 @@ using Microsoft.AspNetCore.Mvc;
 [Route("api/[controller]")]
 public class WeatherController(
     IWeatherService weatherService,
-    IWeatherRefreshService weatherRefreshService) : ControllerBase
+    IWeatherRefreshService weatherRefreshService,
+    ICurrentUserService currentUser) : ControllerBase
 {
     [AllowAnonymous]
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
-        await weatherRefreshService.RefreshAsync(ct);
+        var userId = currentUser.UserId;
+        if (userId is not null)
+            await weatherRefreshService.RefreshAsync(userId, ct);
+        else
+            await weatherRefreshService.RefreshAsync(ct);
         return Ok(new { message = "Weather refreshed" });
     }
 

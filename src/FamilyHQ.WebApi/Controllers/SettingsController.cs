@@ -91,7 +91,7 @@ public class SettingsController : ControllerBase
 
         await _scheduler.TriggerRecalculationAsync();
 
-        await _weatherRefreshService.RefreshAsync(ct);
+        await _weatherRefreshService.RefreshAsync(userId, ct);
 
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }

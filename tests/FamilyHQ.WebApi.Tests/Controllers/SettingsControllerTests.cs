@@ -51,7 +51,7 @@ public class SettingsControllerTests
     {
         // Arrange
         var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock) = CreateSut();
-        weatherRefreshServiceMock.Setup(x => x.RefreshAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        weatherRefreshServiceMock.Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         geocodingMock.Setup(x => x.GeocodeAsync("Edinburgh, Scotland", It.IsAny<CancellationToken>()))
             .ReturnsAsync((55.9533, -3.1883));
@@ -75,7 +75,7 @@ public class SettingsControllerTests
         result.Should().BeOfType<OkObjectResult>();
         schedulerMock.Verify(x => x.TriggerRecalculationAsync(), Times.Once);
         clientMock.Verify(x => x.SendCoreAsync("ThemeChanged", It.Is<object[]>(o => o.Length > 0), It.IsAny<CancellationToken>()), Times.Once);
-        weatherRefreshServiceMock.Verify(x => x.RefreshAsync(It.IsAny<CancellationToken>()), Times.Once);
+        weatherRefreshServiceMock.Verify(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static (
