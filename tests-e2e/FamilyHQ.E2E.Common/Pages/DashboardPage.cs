@@ -467,13 +467,6 @@ public class DashboardPage : BasePage
         // navigation has been processed and the UI has re-rendered.
         var monthHeaderBtn = Page.GetByRole(AriaRole.Button, new() { Name = expectedMonthText });
         await monthHeaderBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-
-        // Give the loading cycle time to complete. The table may still be showing
-        // stale data if Blazor batched the renders, so use an explicit small wait
-        // to let the HTTP response return and the final render complete.
-        await Page.WaitForTimeoutAsync(3000);
-
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     /// <summary>

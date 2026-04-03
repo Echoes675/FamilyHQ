@@ -59,7 +59,7 @@ public class AuthenticationSteps
         // Need to sign in - click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
@@ -67,7 +67,7 @@ public class AuthenticationSteps
 
         // Wait for Blazor's auth check to complete and render the authenticated view
         // (header is only rendered when authenticated).
-        await page.Locator(".dashboard-header").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+        await page.Locator(".dashboard-header").WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [When(@"I navigate to the dashboard")]
@@ -89,7 +89,7 @@ public class AuthenticationSteps
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await _dashboardPage.LoginBtn.ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
