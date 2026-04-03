@@ -49,6 +49,8 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
     public async Task ApplyManualThemeAsync(string themeName)
     {
         var module = await GetModuleAsync();
+        // Manual selection is always instant — no transition when auto is OFF.
+        await module.InvokeVoidAsync("setDisplayProperty", "--theme-transition-duration", "0s");
         await module.InvokeVoidAsync("setTheme", themeName);
     }
 
@@ -59,7 +61,9 @@ public class DisplaySettingService : IDisplaySettingService, IAsyncDisposable
         var multiplier = CurrentSettings.OpaqueSurfaces ? "1.0" : CurrentSettings.SurfaceMultiplier.ToString("F2");
         await module.InvokeVoidAsync("setDisplayProperty", "--user-surface-multiplier", multiplier);
 
-        var duration = $"{CurrentSettings.TransitionDurationSecs}s";
+        // Transition speed applies only when auto-change is ON.
+        // Manual theme selection is always instant.
+        var duration = IsAutoTheme ? $"{CurrentSettings.TransitionDurationSecs}s" : "0s";
         await module.InvokeVoidAsync("setDisplayProperty", "--theme-transition-duration", duration);
 
         // Apply manual theme if set
