@@ -39,7 +39,7 @@ public class DisplaySettingsControllerTests
         displayRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DisplaySetting
             {
-                SurfaceMultiplier = 1.5,
+                SurfaceMultiplier = 0.8,
                 OpaqueSurfaces = true,
                 TransitionDurationSecs = 30
             });
@@ -50,7 +50,7 @@ public class DisplaySettingsControllerTests
         // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var dto = ok.Value.Should().BeOfType<DisplaySettingDto>().Subject;
-        dto.SurfaceMultiplier.Should().Be(1.5);
+        dto.SurfaceMultiplier.Should().Be(0.8);
         dto.OpaqueSurfaces.Should().BeTrue();
         dto.TransitionDurationSecs.Should().Be(30);
     }
