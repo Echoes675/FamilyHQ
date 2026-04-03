@@ -1,0 +1,197 @@
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Services
+@inject IDisplaySettingService DisplaySettingService
+@inject ISettingsApiService SettingsApiService
+@inject IThemeService ThemeService
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">Display</h2>
+
+    <!-- Appearance subsection -->
+    <h3 class="settings-subsection__title">Appearance</h3>
+    <div class="settings-section">
+        <div class="mb-4">
+            <label class="settings-label @(_opaqueSurfaces ? "settings-label--muted" : "")">
+                Surface Transparency
+            </label>
+            <div class="flex items-center gap-3">
+                <input type="range" min="0" max="200" step="10"
+                       value="@(_opaqueSurfaces ? 100 : _surfaceMultiplierPercent)"
+                       @oninput="OnSurfaceOpacityChanged"
+                       disabled="@_opaqueSurfaces"
+                       class="settings-slider"
+                       style="accent-color: var(--theme-accent); flex: 1;" />
+                <span class="settings-slider-value">@(_opaqueSurfaces ? 100 : _surfaceMultiplierPercent)%</span>
+            </div>
+        </div>
+
+        <div class="form-check mb-4">
+            <input type="checkbox" class="form-check-input" id="opaque-toggle"
+                   checked="@_opaqueSurfaces" @onchange="OnOpaqueToggled" />
+            <label class="form-check-label" for="opaque-toggle">Opaque surfaces — lock at 100%</label>
+        </div>
+    </div>
+
+    <!-- Theme subsection -->
+    <h3 class="settings-subsection__title">Theme</h3>
+    <div class="settings-section">
+        <div class="settings-toggle-row">
+            <span class="settings-label">Auto-change with time of day</span>
+            <input type="checkbox" class="settings-toggle-input" id="auto-theme-toggle"
+                   checked="@_isAutoTheme" @onchange="OnAutoThemeToggled" />
+            <label class="settings-toggle-label" for="auto-theme-toggle"></label>
+        </div>
+
+        @if (_isAutoTheme)
+        {
+            <p class="settings-hint">Theme changes automatically at each period boundary.</p>
+        }
+        else
+        {
+            <p class="settings-hint">Tap a theme to apply it instantly.</p>
+        }
+
+        <div class="settings-theme-grid">
+            @foreach (var theme in _themes)
+            {
+                var isSelected = !_isAutoTheme && _selectedTheme == theme.Key;
+                <div class="theme-tile theme-tile--@theme.Key @(isSelected ? "theme-tile--selected" : "") @(_isAutoTheme ? "theme-tile--readonly" : "theme-tile--selectable")"
+                     data-testid="theme-tile-@theme.Key"
+                     @onclick="() => OnThemeTileClicked(theme.Key)">
+                    @if (isSelected)
+                    {
+                        <span class="theme-tile__tick" aria-hidden="true">✓</span>
+                    }
+                    <span class="theme-tile__name">@theme.Label</span>
+                    @if (_todayTheme is not null)
+                    {
+                        <span class="theme-tile__time">@GetThemeTime(theme.Key)</span>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="mb-4">
+            <label class="settings-label @(!_isAutoTheme ? "settings-label--muted" : "")">
+                Theme Transition Speed
+            </label>
+            <div class="flex items-center gap-3">
+                <input type="range" min="0" max="60" step="5"
+                       value="@_transitionDurationSecs"
+                       @oninput="OnTransitionDurationChanged"
+                       disabled="@(!_isAutoTheme)"
+                       class="settings-slider"
+                       style="accent-color: var(--theme-accent); flex: 1;" />
+                <span class="settings-slider-value">@(_transitionDurationSecs)s</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private record ThemeOption(string Key, string Label);
+
+    private static readonly ThemeOption[] _themes =
+    [
+        new("morning", "Morning"),
+        new("daytime", "Daytime"),
+        new("evening", "Evening"),
+        new("night",   "Night"),
+    ];
+
+    private int _surfaceMultiplierPercent = 100;
+    private int _prevSurfaceMultiplierPercent = 100;
+    private bool _opaqueSurfaces;
+    private bool _isAutoTheme = true;
+    private string _selectedTheme = "daytime";
+    private int _transitionDurationSecs = 15;
+    private DayThemeDto? _todayTheme;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = DisplaySettingService.CurrentSettings;
+        _surfaceMultiplierPercent = (int)(settings.SurfaceMultiplier * 100);
+        _prevSurfaceMultiplierPercent = _surfaceMultiplierPercent;
+        _opaqueSurfaces = settings.OpaqueSurfaces;
+        _transitionDurationSecs = settings.TransitionDurationSecs;
+        _isAutoTheme = settings.ThemeSelection == "auto";
+        _selectedTheme = _isAutoTheme ? "daytime" : settings.ThemeSelection;
+
+        _todayTheme = await SettingsApiService.GetTodayThemeAsync();
+    }
+
+    private string GetThemeTime(string key) => key switch
+    {
+        "morning" => _todayTheme!.MorningStart.ToString("HH:mm"),
+        "daytime" => _todayTheme!.DaytimeStart.ToString("HH:mm"),
+        "evening" => _todayTheme!.EveningStart.ToString("HH:mm"),
+        "night"   => _todayTheme!.NightStart.ToString("HH:mm"),
+        _ => string.Empty
+    };
+
+    private async Task OnSurfaceOpacityChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var percent))
+        {
+            _surfaceMultiplierPercent = percent;
+            _prevSurfaceMultiplierPercent = percent;
+            var multiplier = percent / 100.0;
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
+            await SaveDisplayAsync();
+        }
+    }
+
+    private async Task OnOpaqueToggled(ChangeEventArgs e)
+    {
+        _opaqueSurfaces = (bool)(e.Value ?? false);
+        if (_opaqueSurfaces)
+        {
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", "100");
+        }
+        else
+        {
+            var multiplier = _prevSurfaceMultiplierPercent / 100.0;
+            _surfaceMultiplierPercent = _prevSurfaceMultiplierPercent;
+            await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", multiplier.ToString("F2"));
+        }
+        await SaveDisplayAsync();
+    }
+
+    private async Task OnAutoThemeToggled(ChangeEventArgs e)
+    {
+        _isAutoTheme = (bool)(e.Value ?? false);
+        var themeSelection = _isAutoTheme ? "auto" : _selectedTheme;
+        await SaveDisplayAsync(themeSelection);
+
+        if (_isAutoTheme)
+            await ThemeService.ApplyCurrentPeriodAsync();
+        else
+            await DisplaySettingService.ApplyManualThemeAsync(_selectedTheme);
+    }
+
+    private async Task OnThemeTileClicked(string themeName)
+    {
+        if (_isAutoTheme) return;
+        _selectedTheme = themeName;
+        await DisplaySettingService.ApplyManualThemeAsync(themeName);
+        await SaveDisplayAsync(themeName);
+    }
+
+    private async Task OnTransitionDurationChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var secs))
+        {
+            _transitionDurationSecs = secs;
+            await DisplaySettingService.UpdatePropertyAsync("--theme-transition-duration", $"{secs}s");
+            await SaveDisplayAsync();
+        }
+    }
+
+    private async Task SaveDisplayAsync(string? themeSelectionOverride = null)
+    {
+        var multiplier = _surfaceMultiplierPercent / 100.0;
+        var themeSelection = themeSelectionOverride ?? (_isAutoTheme ? "auto" : _selectedTheme);
+        await DisplaySettingService.SaveAsync(new DisplaySettingDto(
+            multiplier, _opaqueSurfaces, _transitionDurationSecs, themeSelection));
+    }
+}

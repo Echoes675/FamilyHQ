@@ -1051,6 +1051,166 @@ html, body {
 }
 
 /* =============================================
+   Section 16b — Settings tabbed layout
+   ============================================= */
+.settings-page--tabbed {
+    display: flex;
+    min-height: calc(100vh - 64px);
+}
+
+.settings-tab-strip {
+    width: 100px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: rgba(255,255,255,0.12);
+    border-right: 1px solid var(--theme-border);
+    padding: 12px 0;
+    gap: 2px;
+}
+
+.settings-tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 14px 8px;
+    min-height: 62px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--theme-text-muted);
+    text-align: center;
+    position: relative;
+    transition: background 0.15s;
+}
+
+.settings-tab:hover {
+    background: rgba(var(--theme-accent-rgb, 249,115,22), 0.06);
+}
+
+.settings-tab--active {
+    background: rgba(var(--theme-accent-rgb, 249,115,22), 0.12);
+    color: var(--theme-accent);
+    font-weight: 700;
+}
+
+.settings-tab--active::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 20%;
+    height: 60%;
+    width: 3px;
+    background: var(--theme-accent);
+    border-radius: 2px 0 0 2px;
+}
+
+.settings-tab__icon {
+    font-size: 1.25rem;
+    line-height: 1;
+}
+
+.settings-tab__label {
+    line-height: 1.2;
+}
+
+.settings-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.settings-section-content {
+    padding: 16px 14px;
+}
+
+.settings-subsection__title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--theme-text-muted);
+    opacity: 0.7;
+    margin: 16px 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.settings-subsection__title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--theme-border);
+}
+
+.settings-theme-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.theme-tile--selectable {
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.theme-tile--selectable:hover {
+    transform: scale(1.02);
+}
+
+.theme-tile--readonly {
+    cursor: default;
+    opacity: 0.85;
+}
+
+.theme-tile--selected {
+    border-color: white !important;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
+}
+
+.theme-tile__tick {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    font-size: 0.85rem;
+}
+
+.settings-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid var(--theme-border);
+    border-radius: 8px;
+}
+
+.settings-label--muted {
+    opacity: 0.4;
+}
+
+/* Theme tile colour palettes — override base opacity-only backgrounds */
+.settings-theme-grid .theme-tile--morning  { background: linear-gradient(135deg, #FFF8F0, #FFD8A8); }
+.settings-theme-grid .theme-tile--daytime  { background: linear-gradient(135deg, #E8F4FD, #C8E6FA); }
+.settings-theme-grid .theme-tile--evening  { background: linear-gradient(135deg, #2D1B4E, #4A2060); }
+.settings-theme-grid .theme-tile--night    { background: linear-gradient(135deg, #0A0E1A, #0F1628); }
+
+.settings-theme-grid .theme-tile--morning .theme-tile__name,
+.settings-theme-grid .theme-tile--morning .theme-tile__time { color: #3B1800; }
+.settings-theme-grid .theme-tile--daytime .theme-tile__name,
+.settings-theme-grid .theme-tile--daytime .theme-tile__time { color: #0F2A40; }
+.settings-theme-grid .theme-tile--evening .theme-tile__name { color: #F4C87A; }
+.settings-theme-grid .theme-tile--evening .theme-tile__time { color: #F4E8D0; }
+.settings-theme-grid .theme-tile--night .theme-tile__name   { color: #8BB3E8; }
+.settings-theme-grid .theme-tile--night .theme-tile__time   { color: #E2EAF4; }
+
+/* =============================================
    Section 17 — Error boundary
    ============================================= */
 .error-boundary-container {
