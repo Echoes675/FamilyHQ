@@ -344,3 +344,29 @@ URL waits are fine as a synchronisation mechanism before the DOM check, but they
 count as the assertion.
 
 ---
+
+## External Dependency Isolation
+
+E2E tests run against the simulator, not real external APIs. All external services (Google Calendar, weather, geocoding) are stubbed by the simulator via config-driven base URLs.
+
+### Test Data Setup Pattern
+
+1. **Seed data** via simulator backdoor endpoints before each scenario (in `Given` steps)
+2. **Trigger processing** via WebApi endpoints (e.g., `POST /api/weather/refresh`) to force data through the pipeline
+3. **Assert UI state** using Playwright page objects
+4. **Clean up** via `[AfterScenario]` hooks that clear seeded data from the simulator
+
+### Available Backdoor Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/simulator/backdoor/location` | Seed geocoding result for a place name |
+| `DELETE /api/simulator/backdoor/location?placeName=X` | Clear geocoding result |
+| `POST /api/simulator/backdoor/weather` | Seed weather data for a lat/lon |
+| `DELETE /api/simulator/backdoor/weather?latitude=X&longitude=Y` | Clear weather data |
+| `POST /api/simulator/configure` | Configure user template |
+| `POST /api/simulator/backdoor/events` | Seed calendar event |
+
+See `.agent/docs/simulator-external-dependencies.md` for the full pattern.
+
+---

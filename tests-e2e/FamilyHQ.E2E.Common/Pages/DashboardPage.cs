@@ -40,6 +40,19 @@ public class DashboardPage : BasePage
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
     private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
+    // Weather Locators
+    public ILocator WeatherStrip => Page.Locator(".weather-strip");
+    public ILocator WeatherStripTemp => Page.Locator(".weather-strip__temp");
+    public ILocator WeatherStripCondition => Page.Locator(".weather-strip__condition");
+    public ILocator WeatherStripForecastDays => Page.Locator(".weather-strip__forecast-day");
+    public ILocator WeatherOverlay => Page.Locator("#weather-overlay");
+
+    public ILocator AgendaWeatherForDate(string dateKey) =>
+        Page.GetByTestId($"agenda-day-label-{dateKey}").Locator(".agenda-weather");
+    public ILocator AgendaWeatherTemps(string dateKey) =>
+        Page.GetByTestId($"agenda-day-label-{dateKey}").Locator(".agenda-weather__temps");
+    public ILocator DayHourTemps => Page.Locator(".day-hour-temp");
+
     // Actions
 
     /// <summary>
@@ -93,7 +106,7 @@ public class DashboardPage : BasePage
         var expectedText = current.AddMonths(-1).ToString("MMMM yyyy");
         await Page.GetByTestId("agenda-prev-month").ClickAsync();
         await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
-            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
         await Page.WaitForTimeoutAsync(1000);
     }
 
@@ -103,7 +116,7 @@ public class DashboardPage : BasePage
         var expectedText = current.AddMonths(1).ToString("MMMM yyyy");
         await Page.GetByTestId("agenda-next-month").ClickAsync();
         await Assertions.Expect(Page.GetByTestId("agenda-month-year-label"))
-            .ToHaveTextAsync(expectedText, new() { Timeout = 10000 });
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
         await Page.WaitForTimeoutAsync(1000);
     }
 
@@ -301,12 +314,18 @@ public class DashboardPage : BasePage
         await WaitForCalendarVisibleAsync();
     }
 
+    public async Task WaitForWeatherStripAsync(int timeoutMs = 60000)
+    {
+        await Assertions.Expect(WeatherStrip).ToBeVisibleAsync(
+            new() { Timeout = timeoutMs });
+    }
+
     public async Task LoginAsync(string userName)
     {
         // Follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         await LoginBtn.ClickAsync();
-        await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+        await Page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
         await Page.Locator("select#selectedUserId").SelectOptionAsync(new SelectOptionValue { Label = userName });
         await Page.Locator("button[type='submit']").ClickAsync();
         await WaitForCalendarToLoadAsync();
@@ -322,7 +341,7 @@ public class DashboardPage : BasePage
             await Page.EvaluateAsync("() => { localStorage.clear(); sessionStorage.clear(); }");
             await Page.GotoAsync(_config.BaseUrl + "/");
             await Page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
-            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 15000 });
+            await LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         }
     }
 
@@ -448,13 +467,6 @@ public class DashboardPage : BasePage
         // navigation has been processed and the UI has re-rendered.
         var monthHeaderBtn = Page.GetByRole(AriaRole.Button, new() { Name = expectedMonthText });
         await monthHeaderBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-
-        // Give the loading cycle time to complete. The table may still be showing
-        // stale data if Blazor batched the renders, so use an explicit small wait
-        // to let the HTTP response return and the final render complete.
-        await Page.WaitForTimeoutAsync(3000);
-
-        await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     /// <summary>

@@ -164,5 +164,24 @@ public class UserSteps
 
         // Wait for navigation to complete back to dashboard
         await page.WaitForURLAsync(config.BaseUrl + "/");
+
+        // Verify authentication completed and the correct user is logged in:
+        // wait for the settings gear (only rendered when authenticated), then navigate to
+        // the settings page and confirm the account name matches the expected user.
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        await page.GotoAsync(config.BaseUrl + "/settings");
+        await page.Locator(".account-name").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        var displayedName = await page.Locator(".account-name").InnerTextAsync();
+        if (!displayedName.Contains(uniqueUsername))
+            throw new InvalidOperationException(
+                $"Login verification failed: expected username '{uniqueUsername}' but got '{displayedName}'");
+
+        // Return to the dashboard so subsequent steps start from a known state.
+        await page.GotoAsync(config.BaseUrl + "/");
+        await page.Locator(".dashboard-header__settings").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 }

@@ -23,6 +23,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDayThemeRepository, DayThemeRepository>();
         services.AddScoped<ILocationSettingRepository, LocationSettingRepository>();
         services.AddScoped<IDisplaySettingRepository, DisplaySettingRepository>();
+        services.AddScoped<IWeatherDataPointRepository, WeatherDataPointRepository>();
+        services.AddScoped<IWeatherSettingRepository, WeatherSettingRepository>();
 
         return services;
     }

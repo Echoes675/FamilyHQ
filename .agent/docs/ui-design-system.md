@@ -271,27 +271,45 @@ body {
 ```
 <body data-theme="...">
   <div id="theme-bg" />        z-index: 0  — full-bleed gradient (CSS only, pointer-events: none)
-  <div id="weather-overlay" /> z-index: 1  — reserved for future weather animations (empty now)
+  <div id="weather-overlay" /> z-index: 1  — CSS weather animations (managed by WeatherOverlay.razor via weather.js)
   <div id="app">               z-index: 2  — all Blazor content
 ```
 
 **Never place content inside `#theme-bg` or `#weather-overlay`.** These are pure visual layers.
 
-## Weather Overlay — Extension Point
+## Weather Overlay
 
-The `#weather-overlay` div is intentionally empty. Future weather integration will inject CSS animations or lightweight SVG animations into it. Design rules for that future work:
+The `#weather-overlay` div displays CSS-only weather animations driven by `WeatherOverlay.razor` via JS interop (`weather.js`). The overlay applies CSS classes to `#weather-overlay` based on the current weather condition:
 
-- Animations must be CSS-only or minimal JS (no canvas/WebGL).
+| CSS Class | Animation |
+|---|---|
+| `.weather-lightrain` | Moderate falling lines |
+| `.weather-heavyrain` | Dense fast falling lines |
+| `.weather-drizzle` | Sparse slow falling lines |
+| `.weather-thunder` | Heavy rain + periodic lightning flash |
+| `.weather-snow` | Falling dots with gentle drift |
+| `.weather-sleet` | Mixed rain lines and snow dots |
+| `.weather-partlycloudy` | Subtle drifting cloud gradient |
+| `.weather-cloudy` | Darker drifting cloud gradient |
+| `.weather-fog` | Semi-transparent gradient with opacity pulse |
+| `.weather-windy` | Modifier — tilts particle animations ~15° |
+
+Design rules:
+- All animations use CSS `@keyframes` on `transform` and `opacity` only (GPU-compositable).
+- `will-change` declarations promote animated pseudo-elements to compositor layers.
+- Max ~30 animated pseudo-elements.
 - Must be independent of the theme layer — weather overlays the gradient, does not replace it.
-- Must use `pointer-events: none` so touch passes through to the UI.
-- Must be removable (clear `#weather-overlay` innerHTML) without affecting the theme.
+- `pointer-events: none` always — touch passes through to the UI.
+- State transitions: overlay class is swapped; the `transition: opacity 1s ease` on `#weather-overlay` handles fade.
+- **Never place content inside `#weather-overlay`** — CSS pseudo-elements (`::before`, `::after`) handle all visuals.
 
 ## Settings Page Layout
 
 Sections in order (top to bottom):
 1. **Location** — current location pill (Auto / Saved badge), place name input, Save button
-2. **Display** — transparency slider (`--user-surface-multiplier`, 0–2), opaque toggle (forces multiplier to max), transition speed slider (`--theme-transition-duration`). Changes applied in real time via `DisplaySettingService`.
+2. **Weather** — link to `/settings/weather` sub-page (enable/disable, temperature unit, poll interval, wind threshold)
 3. **Today's Theme Schedule** — 4 period tiles showing boundary times
-4. **Account** — avatar initials, display name, email, Sign Out button *(at bottom — used infrequently)*
+4. **Display** — transparency slider (`--user-surface-multiplier`, 0–2), opaque toggle (forces multiplier to max), transition speed slider (`--theme-transition-duration`). Changes applied in real time via `DisplaySettingService`.
+5. **Account** — avatar initials, display name, email, Sign Out button *(at bottom — used infrequently)*
 
 Header contains only: brand name + back arrow. User name is **not** shown in the header.

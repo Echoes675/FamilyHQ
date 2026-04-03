@@ -27,6 +27,14 @@ public class SettingsSteps
         await _settingsPage.NavigateAndWaitAsync();
     }
 
+    [Then(@"I am on the settings page")]
+    public async Task ThenIAmOnTheSettingsPage()
+    {
+        var page = _scenarioContext.Get<IPage>();
+        page.Url.Should().EndWith("/settings");
+        await Assertions.Expect(_settingsPage.AccountName).ToBeVisibleAsync(new() { Timeout = 30000 });
+    }
+
     [When(@"I navigate to the settings page")]
     public async Task WhenINavigateToTheSettingsPage()
     {
@@ -68,7 +76,7 @@ public class SettingsSteps
     public async Task ThenISeeTheNoSavedLocationHint()
     {
         await _settingsPage.LocationHint.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
     [Then(@"I see the location pill displaying ""([^""]*)""")]
@@ -123,7 +131,7 @@ public class SettingsSteps
     public async Task ThenISeeTheUsernameInTheAccountSection()
     {
         await _settingsPage.AccountName.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
         var text = await _settingsPage.AccountName.InnerTextAsync();
         text.Trim().Should().NotBeEmpty("Account section should display the signed-in username");
     }

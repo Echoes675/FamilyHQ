@@ -1,7 +1,7 @@
+namespace FamilyHQ.E2E.Common.Helpers;
+
 using System.Globalization;
 using System.Text.RegularExpressions;
-
-namespace FamilyHQ.E2E.Steps;
 
 /// <summary>
 /// Resolves relative date expressions like "tomorrow", "today", "in N days"
@@ -19,6 +19,9 @@ public static partial class DateExpressionResolver
         if (trimmed.Equals("tomorrow", StringComparison.OrdinalIgnoreCase))
             return DateTime.Today.AddDays(1).ToString("yyyy-MM-dd");
 
+        if (trimmed.Equals("next month", StringComparison.OrdinalIgnoreCase))
+            return new DateTime(DateTime.Today.Year, DateTime.Today.Month, 15).AddMonths(1).ToString("yyyy-MM-dd");
+
         var match = InDaysPattern().Match(trimmed);
         if (match.Success && int.TryParse(match.Groups[1].Value, out var days))
             return DateTime.Today.AddDays(days).ToString("yyyy-MM-dd");
@@ -27,7 +30,7 @@ public static partial class DateExpressionResolver
         if (DateTime.TryParseExact(trimmed, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
             return trimmed;
 
-        throw new ArgumentException($"Unrecognised date expression: '{expression}'. Use 'today', 'tomorrow', 'in N days', or 'yyyy-MM-dd'.");
+        throw new ArgumentException($"Unrecognised date expression: '{expression}'. Use 'today', 'tomorrow', 'next month', 'in N days', or 'yyyy-MM-dd'.");
     }
 
     [GeneratedRegex(@"^in\s+(\d+)\s+days?$", RegexOptions.IgnoreCase)]

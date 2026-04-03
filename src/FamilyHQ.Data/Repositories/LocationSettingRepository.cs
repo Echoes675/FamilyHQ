@@ -16,11 +16,15 @@ public class LocationSettingRepository : ILocationSettingRepository
     public async Task<LocationSetting?> GetAsync(CancellationToken ct = default)
         => await _context.LocationSettings.FirstOrDefaultAsync(ct);
 
-    public async Task<LocationSetting> UpsertAsync(LocationSetting locationSetting, CancellationToken ct = default)
+    public async Task<LocationSetting?> GetAsync(string userId, CancellationToken ct = default)
+        => await _context.LocationSettings.FirstOrDefaultAsync(x => x.UserId == userId, ct);
+
+    public async Task<LocationSetting> UpsertAsync(string userId, LocationSetting locationSetting, CancellationToken ct = default)
     {
-        var existing = await GetAsync(ct);
+        var existing = await GetAsync(userId, ct);
         if (existing is null)
         {
+            locationSetting.UserId = userId;
             _context.LocationSettings.Add(locationSetting);
             await _context.SaveChangesAsync(ct);
             return locationSetting;
@@ -34,9 +38,9 @@ public class LocationSettingRepository : ILocationSettingRepository
         return existing;
     }
 
-    public async Task DeleteAsync(CancellationToken ct = default)
+    public async Task DeleteAsync(string userId, CancellationToken ct = default)
     {
-        var existing = await GetAsync(ct);
+        var existing = await GetAsync(userId, ct);
         if (existing is not null)
         {
             _context.LocationSettings.Remove(existing);
