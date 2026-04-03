@@ -24,6 +24,7 @@ public class SettingsController : ControllerBase
     private readonly IDisplaySettingRepository _displayRepo;
     private readonly IWeatherService _weatherService;
     private readonly IWeatherRefreshService _weatherRefreshService;
+    private readonly ICurrentUserService _currentUser;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -34,7 +35,8 @@ public class SettingsController : ControllerBase
         ILogger<SettingsController> logger,
         IDisplaySettingRepository displayRepo,
         IWeatherService weatherService,
-        IWeatherRefreshService weatherRefreshService)
+        IWeatherRefreshService weatherRefreshService,
+        ICurrentUserService currentUser)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -45,12 +47,14 @@ public class SettingsController : ControllerBase
         _displayRepo = displayRepo;
         _weatherService = weatherService;
         _weatherRefreshService = weatherRefreshService;
+        _currentUser = currentUser;
     }
 
     [HttpGet("location")]
     public async Task<IActionResult> GetLocation(CancellationToken ct)
     {
-        var setting = await _locationRepo.GetAsync(ct);
+        var userId = _currentUser.UserId!;
+        var setting = await _locationRepo.GetAsync(userId, ct);
         if (setting is null) return NotFound();
         return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
     }
@@ -71,7 +75,8 @@ public class SettingsController : ControllerBase
             return BadRequest("Location not found. Please check the spelling and try again.");
         }
 
-        await _locationRepo.UpsertAsync(new LocationSetting
+        var userId = _currentUser.UserId!;
+        await _locationRepo.UpsertAsync(userId, new LocationSetting
         {
             PlaceName = request.PlaceName,
             Latitude = lat,
@@ -94,7 +99,8 @@ public class SettingsController : ControllerBase
     [HttpDelete("location")]
     public async Task<IActionResult> DeleteLocation(CancellationToken ct)
     {
-        await _locationRepo.DeleteAsync(ct);
+        var userId = _currentUser.UserId!;
+        await _locationRepo.DeleteAsync(userId, ct);
 
         await _dayThemeService.RecalculateForTodayAsync(ct);
 

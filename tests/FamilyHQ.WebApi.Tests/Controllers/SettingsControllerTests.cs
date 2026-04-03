@@ -12,12 +12,14 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 
 public class SettingsControllerTests
 {
+    private const string TestUserId = "test-user-123";
+
     [Fact]
     public async Task GetLocation_Returns404_WhenNotSet()
     {
         // Arrange
         var (sut, locationRepoMock, _, _, _, _, _, _) = CreateSut();
-        locationRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
+        locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((LocationSetting?)null);
 
         // Act
@@ -32,7 +34,7 @@ public class SettingsControllerTests
     {
         // Arrange
         var (sut, locationRepoMock, _, _, _, _, _, _) = CreateSut();
-        locationRepoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>()))
+        locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LocationSetting { PlaceName = "Edinburgh, Scotland", Latitude = 55.9, Longitude = -3.2 });
 
         // Act
@@ -53,8 +55,8 @@ public class SettingsControllerTests
 
         geocodingMock.Setup(x => x.GeocodeAsync("Edinburgh, Scotland", It.IsAny<CancellationToken>()))
             .ReturnsAsync((55.9533, -3.1883));
-        locationRepoMock.Setup(x => x.UpsertAsync(It.IsAny<LocationSetting>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((LocationSetting ls, CancellationToken _) => ls);
+        locationRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<LocationSetting>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, LocationSetting ls, CancellationToken _) => ls);
         dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
@@ -95,6 +97,8 @@ public class SettingsControllerTests
         var displayRepoMock = new Mock<IDisplaySettingRepository>();
         var weatherServiceMock = new Mock<IWeatherService>();
         var weatherRefreshServiceMock = new Mock<IWeatherRefreshService>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(x => x.UserId).Returns(TestUserId);
 
         var sut = new SettingsController(
             locationRepoMock.Object,
@@ -105,7 +109,8 @@ public class SettingsControllerTests
             loggerMock.Object,
             displayRepoMock.Object,
             weatherServiceMock.Object,
-            weatherRefreshServiceMock.Object);
+            weatherRefreshServiceMock.Object,
+            currentUserMock.Object);
 
         return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock, weatherRefreshServiceMock);
     }
