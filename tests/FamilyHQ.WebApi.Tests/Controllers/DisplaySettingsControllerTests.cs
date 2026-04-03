@@ -63,7 +63,7 @@ public class DisplaySettingsControllerTests
         displayRepoMock.Setup(x => x.UpsertAsync(It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DisplaySetting ds, CancellationToken _) => ds);
 
-        var dto = new DisplaySettingDto(1.2, false, 20);
+        var dto = new DisplaySettingDto(0.8, false, 20, "auto");
 
         // Act
         var result = await sut.PutDisplay(dto, CancellationToken.None);
@@ -73,7 +73,7 @@ public class DisplaySettingsControllerTests
         ok.Value.Should().BeOfType<DisplaySettingDto>();
         displayRepoMock.Verify(x => x.UpsertAsync(
             It.Is<DisplaySetting>(ds =>
-                ds.SurfaceMultiplier == 1.2 &&
+                ds.SurfaceMultiplier == 0.8 &&
                 ds.TransitionDurationSecs == 20 &&
                 !ds.OpaqueSurfaces),
             It.IsAny<CancellationToken>()), Times.Once);
