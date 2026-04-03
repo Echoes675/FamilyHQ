@@ -92,45 +92,6 @@ public class SimulatorApiClient : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>
-    /// Seeds weather data for a specific location via the Simulator backdoor.
-    /// </summary>
-    public async Task SetWeatherAsync(object weatherRequest)
-    {
-        var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/weather", weatherRequest);
-        response.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>
-    /// Clears seeded weather data for a location via the Simulator backdoor.
-    /// </summary>
-    public async Task ClearWeatherAsync(double latitude, double longitude)
-    {
-        var response = await _httpClient.DeleteAsync(
-            $"api/simulator/backdoor/weather?latitude={latitude}&longitude={longitude}");
-        response.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>
-    /// Seeds a geocoding result for a place name via the Simulator backdoor.
-    /// </summary>
-    public async Task SetLocationAsync(string placeName, double latitude, double longitude)
-    {
-        var body = new { PlaceName = placeName, Latitude = latitude, Longitude = longitude };
-        var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/location", body);
-        response.EnsureSuccessStatusCode();
-    }
-
-    /// <summary>
-    /// Clears a seeded geocoding result via the Simulator backdoor.
-    /// </summary>
-    public async Task ClearLocationAsync(string placeName)
-    {
-        var response = await _httpClient.DeleteAsync(
-            $"api/simulator/backdoor/location?placeName={Uri.EscapeDataString(placeName)}");
-        response.EnsureSuccessStatusCode();
-    }
-
     public void Dispose()
     {
         _httpClient.Dispose();

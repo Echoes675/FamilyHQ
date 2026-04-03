@@ -1,8 +1,3 @@
-@using FamilyHQ.WebUi.Components.Weather
-@using FamilyHQ.WebUi.Services
-@inject IWeatherUiService WeatherService
-@implements IDisposable
-
 @* Agenda nav bar *@
 <div class="flex justify-between items-center mb-4">
     <div class="btn-group">
@@ -50,19 +45,6 @@
                     <td data-testid="@($"agenda-day-label-{dateKey}")" class="agenda-day-col"
                         style="cursor:pointer" @onclick="() => OnAddEvent.InvokeAsync(date)">
                         @date.ToString("dd ddd")
-                        @{
-                            var dayForecast = WeatherService.DailyForecast
-                                .FirstOrDefault(f => f.Date == DateOnly.FromDateTime(date));
-                        }
-                        @if (dayForecast is not null && WeatherService.IsEnabled)
-                        {
-                            <div class="agenda-weather">
-                                <WeatherIcon IconName="@dayForecast.IconName" IsWindy="@dayForecast.IsWindy" Size="14" />
-                                <span class="agenda-weather__temps">
-                                    <strong>@($"{dayForecast.High:F0}°")</strong>/@($"{dayForecast.Low:F0}°")
-                                </span>
-                            </div>
-                        }
                     </td>
                     @foreach (var cal in Calendars)
                     {
@@ -107,18 +89,6 @@
 </div>
 
 @code {
-    protected override void OnInitialized()
-    {
-        WeatherService.OnWeatherChanged += HandleWeatherChanged;
-    }
-
-    private void HandleWeatherChanged() => InvokeAsync(StateHasChanged);
-
-    public void Dispose()
-    {
-        WeatherService.OnWeatherChanged -= HandleWeatherChanged;
-    }
-
     [Parameter] public DateTime CurrentMonth { get; set; }
     [Parameter] public MonthViewModel? MonthView { get; set; }
     [Parameter] public IReadOnlyList<CalendarSummaryViewModel> Calendars { get; set; } = Array.Empty<CalendarSummaryViewModel>();

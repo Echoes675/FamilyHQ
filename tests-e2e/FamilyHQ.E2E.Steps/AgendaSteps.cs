@@ -7,8 +7,6 @@ using Reqnroll;
 
 namespace FamilyHQ.E2E.Steps;
 
-using FamilyHQ.E2E.Common.Helpers;
-
 [Binding]
 public class AgendaSteps
 {

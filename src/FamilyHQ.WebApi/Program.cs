@@ -42,11 +42,9 @@ builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
-var geocodingBaseUrl = builder.Configuration["Geocoding:BaseUrl"]
-    ?? "https://nominatim.openstreetmap.org";
 builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
 {
-    client.BaseAddress = new Uri(geocodingBaseUrl.TrimEnd('/') + "/");
+    client.BaseAddress = new Uri("https://nominatim.openstreetmap.org");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
@@ -76,7 +74,6 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 // Add SignalR Configuration
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IThemeBroadcaster, FamilyHQ.WebApi.Hubs.SignalRThemeBroadcaster>();
-builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IWeatherBroadcaster, FamilyHQ.WebApi.Hubs.SignalRWeatherBroadcaster>();
 
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
