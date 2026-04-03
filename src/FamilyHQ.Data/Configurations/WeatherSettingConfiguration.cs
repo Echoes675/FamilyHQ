@@ -1,9 +1,9 @@
-namespace FamilyHQ.Data.Configurations;
-
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+
+namespace FamilyHQ.Data.Configurations;
 
 public class WeatherSettingConfiguration : IEntityTypeConfiguration<WeatherSetting>
 {
