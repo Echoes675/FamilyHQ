@@ -1,0 +1,45 @@
+@using FamilyHQ.WebUi.Services.Auth
+@inject IAuthenticationService AuthService
+@inject NavigationManager Navigation
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">General</h2>
+
+    @if (_username is not null)
+    {
+        <div class="settings-account glass-surface">
+            <div class="account-avatar">@GetInitials(_username)</div>
+            <p class="account-name" data-testid="account-name">@_username</p>
+        </div>
+    }
+
+    <button class="settings-btn settings-btn--secondary"
+            data-testid="sign-out-btn"
+            @onclick="OnSignOutClicked">
+        Sign Out
+    </button>
+</div>
+
+@code {
+    private string? _username;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _username = await AuthService.GetUsernameAsync();
+    }
+
+    private async Task OnSignOutClicked()
+    {
+        await AuthService.SignOutAsync();
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private static string GetInitials(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant()
+            : name[..Math.Min(2, name.Length)].ToUpperInvariant();
+    }
+}

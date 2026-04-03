@@ -13,25 +13,66 @@ public class SettingsPage : BasePage
         _config = ConfigurationLoader.Load();
     }
 
+    // Header
     public ILocator BackBtn => Page.Locator(".dashboard-header__back");
-    public ILocator LocationHint => Page.Locator(".settings-hint").Filter(new() { HasText = "No location saved" });
-    public ILocator LocationPill => Page.Locator(".settings-location-pill");
+
+    // Tab navigation
+    public ILocator GeneralTab  => Page.GetByTestId("tab-general");
+    public ILocator LocationTab => Page.GetByTestId("tab-location");
+    public ILocator WeatherTab  => Page.GetByTestId("tab-weather");
+    public ILocator DisplayTab  => Page.GetByTestId("tab-display");
+
+    // General tab
+    public ILocator AccountName => Page.GetByTestId("account-name");
+    public ILocator SignOutBtn  => Page.GetByTestId("sign-out-btn");
+
+    // Location tab
+    public ILocator LocationHint     => Page.Locator(".settings-hint").Filter(new() { HasText = "No location saved" });
+    public ILocator LocationPill     => Page.Locator(".settings-location-pill");
     public ILocator LocationPillBadge => Page.Locator(".settings-location-pill__badge");
-    public ILocator PlaceNameInput => Page.Locator("#place-input");
-    public ILocator SaveLocationBtn => Page.GetByTestId("save-location-btn");
-    public ILocator MorningTile => Page.Locator(".theme-tile--morning");
-    public ILocator DaytimeTile => Page.Locator(".theme-tile--daytime");
-    public ILocator EveningTile => Page.Locator(".theme-tile--evening");
-    public ILocator NightTile => Page.Locator(".theme-tile--night");
-    public ILocator AccountName => Page.Locator(".account-name");
-    public ILocator SignOutBtn => Page.Locator(".settings-account")
-        .GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
-    public ILocator WeatherSettingsLink => Page.Locator(".settings-section").Filter(new() { HasText = "Weather settings" });
+    public ILocator PlaceNameInput   => Page.Locator("#place-input");
+    public ILocator SaveLocationBtn  => Page.GetByTestId("save-location-btn");
+
+    // Weather tab (for WeatherSteps access)
+    public ILocator WeatherEnabledToggle  => Page.Locator("#weather-enabled-toggle");
+    public ILocator TemperatureUnitSelect => Page.Locator("#temperature-unit");
+    public ILocator PollIntervalInput     => Page.Locator("#poll-interval");
+    public ILocator WindThresholdInput    => Page.Locator("#wind-threshold");
+    public ILocator WeatherSaveBtn        => Page.Locator(".settings-btn").First;
+    public ILocator WeatherCancelBtn      => Page.Locator(".settings-btn--ghost");
+    public ILocator WeatherSuccessMessage => Page.Locator(".settings-hint").Filter(new() { HasText = "Settings saved." });
+
+    // Display tab — auto-change toggle
+    public ILocator AutoThemeToggle => Page.Locator("#auto-theme-toggle");
+
+    // Display tab — theme tiles
+    public ILocator MorningTile => Page.GetByTestId("theme-tile-morning");
+    public ILocator DaytimeTile => Page.GetByTestId("theme-tile-daytime");
+    public ILocator EveningTile => Page.GetByTestId("theme-tile-evening");
+    public ILocator NightTile   => Page.GetByTestId("theme-tile-night");
+
+    public ILocator ThemeTile(string name) => Page.GetByTestId($"theme-tile-{name.ToLower()}");
 
     public async Task NavigateAndWaitAsync()
     {
         await NavigateAsync();
-        await Page.Locator(".settings-page").WaitForAsync(
+        await Page.Locator(".settings-page--tabbed").WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    public async Task NavigateToLocationTabAsync()
+    {
+        await NavigateAndWaitAsync();
+        await LocationTab.ClickAsync();
+        await PlaceNameInput.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    public async Task NavigateToWeatherTabAsync()
+    {
+        await NavigateAndWaitAsync();
+        await WeatherTab.ClickAsync();
+        await WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 }

@@ -4,6 +4,6 @@ namespace FamilyHQ.Core.Interfaces;
 
 public interface IDisplaySettingRepository
 {
-    Task<DisplaySetting?> GetAsync(CancellationToken ct = default);
-    Task<DisplaySetting> UpsertAsync(DisplaySetting setting, CancellationToken ct = default);
+    Task<DisplaySetting?> GetAsync(string userId, CancellationToken ct = default);
+    Task<DisplaySetting> UpsertAsync(string userId, DisplaySetting setting, CancellationToken ct = default);
 }

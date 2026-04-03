@@ -1,0 +1,114 @@
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Services
+@inject ISettingsApiService SettingsApiService
+@inject IJSRuntime JS
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">Location</h2>
+
+    <div class="settings-section">
+        <p class="settings-label">Current location</p>
+        @if (_locationSetting is not null)
+        {
+            <div class="settings-location-pill">
+                <span>@_locationSetting.PlaceName</span>
+                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")">
+                    @(_locationSetting.IsAutoDetected ? "Auto" : "Saved")
+                </span>
+            </div>
+        }
+        else
+        {
+            <p class="settings-hint">No location saved — using automatic detection.</p>
+        }
+
+        <div class="settings-input-container">
+            <label for="place-input" class="settings-label">Override location</label>
+            <input id="place-input"
+                   type="text"
+                   class="settings-input @(!string.IsNullOrWhiteSpace(_saveError) ? "settings-input--error" : "")"
+                   @bind="_placeNameInput"
+                   @bind:event="oninput"
+                   @onfocus="OnInputFocus"
+                   placeholder="e.g. Edinburgh, Scotland" />
+            @if (!string.IsNullOrWhiteSpace(_saveError))
+            {
+                <p class="settings-field-error">@_saveError</p>
+            }
+        </div>
+
+        <button class="settings-btn" data-testid="save-location-btn" @onclick="SaveLocationAsync" disabled="@_isSaving">
+            @(_isSaving ? "Saving…" : (_locationSetting is { IsAutoDetected: false } ? "Update Location" : "Save Location"))
+        </button>
+        @if (_locationSetting is { IsAutoDetected: false })
+        {
+            <button class="settings-btn settings-btn--ghost" @onclick="ResetToAutoLocationAsync" disabled="@_isSaving">
+                Reset to auto-detect
+            </button>
+        }
+        <p class="settings-hint">Takes effect immediately.</p>
+    </div>
+</div>
+
+@code {
+    private LocationSettingDto? _locationSetting;
+    private string _placeNameInput = string.Empty;
+    private bool _isSaving;
+    private string? _saveError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _locationSetting = await SettingsApiService.GetLocationAsync();
+    }
+
+    private async Task OnInputFocus()
+    {
+        await JS.InvokeVoidAsync("eval",
+            "document.getElementById('place-input')?.scrollIntoView({ behavior: 'smooth', block: 'center' })");
+    }
+
+    private async Task SaveLocationAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_placeNameInput)) return;
+
+        _isSaving = true;
+        _saveError = null;
+        try
+        {
+            _locationSetting = await SettingsApiService.SaveLocationAsync(_placeNameInput);
+            _placeNameInput = string.Empty;
+        }
+        catch (InvalidOperationException)
+        {
+            _saveError = "Location not found. Please check the spelling and try again.";
+        }
+        catch (Exception)
+        {
+            _saveError = "Could not save location. Please try again.";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task ResetToAutoLocationAsync()
+    {
+        _isSaving = true;
+        _saveError = null;
+        try
+        {
+            await SettingsApiService.DeleteLocationAsync();
+            _locationSetting = null;
+            _placeNameInput = string.Empty;
+        }
+        catch (Exception)
+        {
+            _saveError = "Could not reset location. Please try again.";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+}

@@ -112,18 +112,19 @@ public class SettingsController : ControllerBase
         return NoContent();
     }
 
-    [AllowAnonymous]
     [HttpGet("display")]
     public async Task<IActionResult> GetDisplay(CancellationToken ct)
     {
-        var setting = await _displayRepo.GetAsync(ct);
+        var userId = _currentUser.UserId!;
+        var setting = await _displayRepo.GetAsync(userId, ct);
         if (setting is null)
-            return Ok(new DisplaySettingDto(1.0, false, 15));
+            return Ok(new DisplaySettingDto(1.0, false, 15, "auto"));
 
         return Ok(new DisplaySettingDto(
             setting.SurfaceMultiplier,
             setting.OpaqueSurfaces,
-            setting.TransitionDurationSecs));
+            setting.TransitionDurationSecs,
+            setting.ThemeSelection));
     }
 
     [HttpPut("display")]
@@ -134,20 +135,21 @@ public class SettingsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
 
+        var userId = _currentUser.UserId!;
         var setting = new DisplaySetting
         {
             SurfaceMultiplier = dto.SurfaceMultiplier,
             OpaqueSurfaces = dto.OpaqueSurfaces,
             TransitionDurationSecs = dto.TransitionDurationSecs,
+            ThemeSelection = dto.ThemeSelection,
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        await _displayRepo.UpsertAsync(setting, ct);
+        await _displayRepo.UpsertAsync(userId, setting, ct);
 
         return Ok(dto);
     }
 
-    [AllowAnonymous]
     [HttpGet("weather")]
     public async Task<IActionResult> GetWeatherSettings(CancellationToken ct)
     {
@@ -155,7 +157,6 @@ public class SettingsController : ControllerBase
         return Ok(dto);
     }
 
-    [AllowAnonymous]
     [HttpPut("weather")]
     public async Task<IActionResult> UpdateWeatherSettings([FromBody] WeatherSettingDto dto, CancellationToken ct)
     {

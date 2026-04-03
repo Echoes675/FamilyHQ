@@ -14,29 +14,21 @@ public class WeatherRefreshService(
     IWeatherBroadcaster weatherBroadcaster,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
-    public Task RefreshAsync(CancellationToken ct = default)
-        => RefreshCoreAsync(null, ct);
-
-    public Task RefreshAsync(string userId, CancellationToken ct = default)
-        => RefreshCoreAsync(userId, ct);
-
-    private async Task RefreshCoreAsync(string? userId, CancellationToken ct)
+    public async Task RefreshAsync(string userId, CancellationToken ct = default)
     {
-        var weatherSetting = await weatherSettingRepo.GetOrCreateAsync(ct);
+        var weatherSetting = await weatherSettingRepo.GetOrCreateAsync(userId, ct);
 
         if (!weatherSetting.Enabled)
         {
-            logger.LogInformation("Weather is disabled. Skipping refresh.");
+            logger.LogInformation("Weather is disabled for user {UserId}. Skipping refresh.", userId);
             return;
         }
 
-        var location = userId is not null
-            ? await locationRepo.GetAsync(userId, ct)
-            : await locationRepo.GetAsync(ct);
+        var location = await locationRepo.GetAsync(userId, ct);
 
         if (location is null)
         {
-            logger.LogInformation("No location configured. Skipping weather refresh.");
+            logger.LogInformation("No location configured for user {UserId}. Skipping weather refresh.", userId);
             return;
         }
 
@@ -53,8 +45,8 @@ public class WeatherRefreshService(
         await weatherBroadcaster.BroadcastWeatherUpdatedAsync(ct);
 
         logger.LogInformation(
-            "Weather data updated for location {PlaceName} ({Lat}, {Lon})",
-            location.PlaceName, location.Latitude, location.Longitude);
+            "Weather data updated for user {UserId}, location {PlaceName} ({Lat}, {Lon})",
+            userId, location.PlaceName, location.Latitude, location.Longitude);
     }
 
     internal static List<WeatherDataPoint> BuildDataPoints(
@@ -65,7 +57,6 @@ public class WeatherRefreshService(
     {
         var dataPoints = new List<WeatherDataPoint>();
 
-        // Current
         dataPoints.Add(new WeatherDataPoint
         {
             LocationSettingId = locationSettingId,
@@ -78,7 +69,6 @@ public class WeatherRefreshService(
             RetrievedAt = retrievedAt
         });
 
-        // Hourly
         foreach (var hourly in response.HourlyForecasts)
         {
             dataPoints.Add(new WeatherDataPoint
@@ -94,7 +84,6 @@ public class WeatherRefreshService(
             });
         }
 
-        // Daily
         foreach (var daily in response.DailyForecasts)
         {
             dataPoints.Add(new WeatherDataPoint
