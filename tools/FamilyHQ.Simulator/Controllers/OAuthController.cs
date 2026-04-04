@@ -88,7 +88,18 @@ public class OAuthController(SimContext db, IConfiguration configuration) : Cont
             refresh_token = $"{refreshTokenPrefix}{userId}",
             expires_in = 3600,
             token_type = "Bearer",
-            user_id = userId
+            id_token = CreateIdToken(userId)
         });
     }
+
+    private static string CreateIdToken(string sub)
+    {
+        var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
+        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\"}}");
+        return $"{header}.{payload}.";
+    }
+
+    private static string Base64UrlEncode(string input)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }

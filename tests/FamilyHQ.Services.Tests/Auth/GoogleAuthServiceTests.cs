@@ -14,6 +14,39 @@ namespace FamilyHQ.Services.Tests.Auth;
 public class GoogleAuthServiceTests
 {
     [Fact]
+    public async Task ExchangeCodeForTokenAsync_WhenResponseContainsIdToken_ExtractsUserIdFromSub()
+    {
+        // Arrange
+        var (httpMock, systemUnderTest) = CreateSut();
+        var idToken = CreateTestIdToken("google-user-123");
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            access_token = "access-123",
+            refresh_token = "refresh-456",
+            expires_in = 3600,
+            token_type = "Bearer",
+            id_token = idToken
+        });
+
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(responseJson)
+            });
+
+        // Act
+        var result = await systemUnderTest.ExchangeCodeForTokenAsync("auth-code-789", "https://localhost/callback");
+
+        // Assert
+        result.UserId.Should().Be("google-user-123");
+    }
+
+    [Fact]
     public async Task ExchangeCodeForTokenAsync_WhenSuccessful_ReturnsTokens()
     {
         // Arrange
@@ -23,7 +56,8 @@ public class GoogleAuthServiceTests
             access_token = "access-123",
             refresh_token = "refresh-456",
             expires_in = 3600,
-            token_type = "Bearer"
+            token_type = "Bearer",
+            id_token = CreateTestIdToken("some-user")
         });
 
         httpMock.Protected()
@@ -129,6 +163,17 @@ public class GoogleAuthServiceTests
         // Assert
         result.Should().StartWith("https://accounts.test.com/o/oauth2/auth");
     }
+
+    private static string CreateTestIdToken(string sub)
+    {
+        var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
+        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\"}}");
+        return $"{header}.{payload}.";
+    }
+
+    private static string Base64UrlEncode(string input)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService SystemUnderTest) CreateSut()
     {

@@ -54,7 +54,20 @@ public class GoogleAuthService
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
-        return (result!.AccessToken, result.RefreshToken, result.UserId);
+        var userId = ExtractSubFromIdToken(result!.IdToken);
+        return (result.AccessToken, result.RefreshToken, userId);
+    }
+
+    private static string? ExtractSubFromIdToken(string? idToken)
+    {
+        if (string.IsNullOrEmpty(idToken)) return null;
+        var parts = idToken.Split('.');
+        if (parts.Length < 2) return null;
+        var payload = parts[1].Replace('-', '+').Replace('_', '/');
+        payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
     }
 
     public async Task<string> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)

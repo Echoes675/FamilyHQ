@@ -124,7 +124,9 @@ public class OAuthControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         json.Should().Contain("simulated_alice_");
-        json.Should().Contain("\"user_id\":\"alice\"");
+        json.Should().NotContain("user_id");
+        var idToken = ExtractIdTokenSub(json);
+        idToken.Should().Be("alice");
     }
 
     [Fact]
@@ -143,11 +145,27 @@ public class OAuthControllerTests
         // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
-        json.Should().Contain("\"user_id\":\"default_simulator_user\"");
         json.Should().Contain("simulated_default_simulator_user_");
+        json.Should().NotContain("user_id");
+        var idToken = ExtractIdTokenSub(json);
+        idToken.Should().Be("default_simulator_user");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>Decodes the id_token from a serialised token response and returns the sub claim.</summary>
+    private static string? ExtractIdTokenSub(string responseJson)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(responseJson);
+        if (!doc.RootElement.TryGetProperty("id_token", out var idTokenEl)) return null;
+        var parts = idTokenEl.GetString()?.Split('.');
+        if (parts == null || parts.Length < 2) return null;
+        var payload = parts[1].Replace('-', '+').Replace('_', '/');
+        payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+        using var payloadDoc = System.Text.Json.JsonDocument.Parse(json);
+        return payloadDoc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
+    }
 
     private static SimContext CreateDb()
     {

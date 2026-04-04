@@ -3,9 +3,9 @@ param(
 )
 
 $environments = @(
-    @{ Name = "Dev";     Password = "REPLACE-ME" }
-    @{ Name = "Staging"; Password = "REPLACE-ME" }
-    @{ Name = "Prod";    Password = "REPLACE-ME" }
+    #@{ Name = "Dev";     Password = "REPLACE-ME" }
+    #@{ Name = "Staging"; Password = "REPLACE-ME" }
+    @{ Name = "PreProd";    Password = "PreProdDpCert!2026" }
 )
 
 if (-not (Test-Path $OutputDir)) {
