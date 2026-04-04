@@ -147,7 +147,7 @@ public class GoogleAuthServiceTests
         query["client_id"].Should().Be("test-client-id");
         query["redirect_uri"].Should().Be(redirectUri);
         query["response_type"].Should().Be("code");
-        query["scope"].Should().Be("https://www.googleapis.com/auth/calendar");
+        query["scope"].Should().Be("openid https://www.googleapis.com/auth/calendar");
         query["access_type"].Should().Be("offline");
     }
 
