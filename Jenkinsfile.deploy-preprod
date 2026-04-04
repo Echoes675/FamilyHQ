@@ -1,0 +1,169 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+    }
+
+    triggers {
+        upstream(upstreamProjects: 'FamilyHQ/master', threshold: hudson.model.Result.SUCCESS)
+    }
+
+    tools {
+        dotnetsdk '.Net_10.0_SDK'
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: 'master', description: 'Branch name to deploy (default: master)')
+    }
+
+    environment {
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+        DEPLOY_HOST = 'jenkins_docker@192.168.86.23'
+        DEPLOY_PATH = '/Docker/deployed_apps/preprod/familyhq'
+        APP_BASE_URL = 'http://192.168.86.23:8400'
+        DB_NAME = 'FamilyHQ-PreProd'
+    }
+
+    stages {
+        stage('Resolve Image') {
+            steps {
+                echo '======= Resolve Image ======='
+                script {
+                    def branch = params.BRANCH?.trim() ?: 'master'
+                    def branchSanitized = branch.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
+                    echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
+
+                    def tagsJson = ''
+                    withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                        tagsJson = sh(
+                            script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                            returnStdout: true
+                        ).trim()
+                    }
+
+                    def rawTags = readJSON(text: tagsJson).tags
+                    def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
+                    def branchTags = []
+                    for (int i = 0; i < tags.size(); i++) {
+                        def t = tags[i]
+                        if (t != null && "${t}".startsWith("${branchSanitized}-")) {
+                            branchTags.add("${t}")
+                        }
+                    }
+                    branchTags.sort()
+
+                    if (branchTags.isEmpty()) {
+                        error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
+                    }
+
+                    env.RESOLVED_IMAGE_TAG = branchTags.last()
+                    echo "Resolved image tag: ${env.RESOLVED_IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Prepare') {
+            steps {
+                echo '======= Prepare ======='
+                checkout scm
+
+                withCredentials([
+                    file(credentialsId: 'familyhq-preprod-env', variable: 'ENV_FILE'),
+                    file(credentialsId: 'familyhq-preprod-dp-cert', variable: 'DP_CERT')
+                ]) {
+                    sshagent(credentials: ['jenkins_docker_dev']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                            scp docker-compose.yml docker-compose.preprod.yml ${DEPLOY_HOST}:${DEPLOY_PATH}/
+                            scp \$ENV_FILE ${DEPLOY_HOST}:${DEPLOY_PATH}/.env
+                            scp \$DP_CERT ${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                            ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} 'chmod 640 ${DEPLOY_PATH}/.env && chmod 640 ${DEPLOY_PATH}/dataprotection.pfx'
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Drop DB') {
+            steps {
+                echo '======= Drop DB ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            docker compose -p familyhq-preprod -f docker-compose.yml -f docker-compose.preprod.yml down --remove-orphans || true
+                            docker stop familyhq-webui-preprod familyhq-webapi-preprod familyhq-preprod-traefik 2>/dev/null || true
+                            docker rm familyhq-webui-preprod familyhq-webapi-preprod familyhq-preprod-traefik 2>/dev/null || true
+
+                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${DB_NAME}'"'"' AND pid <> pg_backend_pid();"
+                            docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
+                            docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${DB_NAME}\\";"
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo '======= Deploy ======='
+                sshagent(credentials: ['jenkins_docker_dev']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
+                            cd ${DEPLOY_PATH} &&
+                            export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
+                            docker compose -p familyhq-preprod -f docker-compose.yml -f docker-compose.preprod.yml pull &&
+                            docker compose -p familyhq-preprod -f docker-compose.yml -f docker-compose.preprod.yml up -d --remove-orphans
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Wait for Services') {
+            steps {
+                echo '======= Wait for Services ======='
+                script {
+                    def endpoints = [
+                        [name: 'WebUI',  url: "${APP_BASE_URL}/health",     isPost: false],
+                        [name: 'WebAPI', url: "${APP_BASE_URL}/api/health",  isPost: false]
+                    ]
+
+                    def branches = [:]
+                    for (ep in endpoints) {
+                        def name = ep.name
+                        def url = ep.url
+                        branches[name] = {
+                            def maxRetries = 18
+                            for (int i = 0; i < maxRetries; i++) {
+                                def body = sh(
+                                    script: "curl -s '${url}' || true",
+                                    returnStdout: true
+                                ).trim()
+                                if (body =~ /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/) {
+                                    echo "${name} ready"
+                                    return
+                                }
+                                echo "${name} not ready... attempt ${i + 1}/${maxRetries}"
+                                sleep(time: 10, unit: 'SECONDS')
+                            }
+                            error "${name} not ready after 3 minutes"
+                        }
+                    }
+                    parallel branches
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "PreProd deployment successful: ${env.RESOLVED_IMAGE_TAG}"
+        }
+        failure {
+            echo "PreProd deployment failed: ${env.RESOLVED_IMAGE_TAG}"
+        }
+    }
+}
