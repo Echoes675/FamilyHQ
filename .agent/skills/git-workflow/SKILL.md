@@ -21,3 +21,5 @@ description: Details processes of branching strategy, commit standards and Pull 
 - All E2E tests must pass on the `FamilyHQ-Deploy-Dev` pipeline. (make sure the build pipeline has been successful first)
 - No commented-out code or Console.WriteLine statements (use ILogger).
 - PR target is normally the `dev` branch unless told otherwise. **Never** target `master`
+
+> Use the `ci-gate` skill to satisfy the pipeline and E2E requirements above.
