@@ -38,6 +38,24 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public void Login_WhenBehindReverseProxy_UsesHttpsCallbackUrl()
+    {
+        // Arrange — simulate Traefik forwarding X-Forwarded-Proto: https
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Scheme = "https";
+        httpContext.Request.Host = new Microsoft.AspNetCore.Http.HostString("preprod.familyhq.alphaepsilon.co.uk:8400");
+
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.Login();
+
+        // Assert
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Contain("redirect_uri=https%3A%2F%2Fpreprod.familyhq.alphaepsilon.co.uk%3A8400%2Fapi%2Fauth%2Fcallback");
+    }
+
+    [Fact]
     public async Task Callback_WhenCodeExchangeSucceeds_SavesRefreshToken()
     {
         // Arrange
@@ -107,7 +125,8 @@ public class AuthControllerTests
     private static AuthController CreateSut(
         ITokenStore? tokenStore = null,
         string? frontendBaseUrl = "https://frontend.test",
-        bool includeRefreshToken = true)
+        bool includeRefreshToken = true,
+        DefaultHttpContext? httpContext = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -183,7 +202,7 @@ public class AuthControllerTests
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = httpContext ?? new DefaultHttpContext()
             }
         };
 
