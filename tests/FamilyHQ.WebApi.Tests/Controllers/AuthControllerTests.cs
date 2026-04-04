@@ -93,6 +93,17 @@ public class AuthControllerTests
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    private static string CreateTestIdToken(string sub)
+    {
+        var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
+        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\"}}");
+        return $"{header}.{payload}.";
+    }
+
+    private static string Base64UrlEncode(string input)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
     private static AuthController CreateSut(
         ITokenStore? tokenStore = null,
         string? frontendBaseUrl = "https://frontend.test",
@@ -105,7 +116,7 @@ public class AuthControllerTests
             ["refresh_token"] = includeRefreshToken ? (object?)"simulated_refresh_token" : null,
             ["expires_in"] = 3600,
             ["token_type"] = "Bearer",
-            ["user_id"] = "user1"
+            ["id_token"] = CreateTestIdToken("user1")
         };
         var responseJson = JsonSerializer.Serialize(responsePayload);
 
