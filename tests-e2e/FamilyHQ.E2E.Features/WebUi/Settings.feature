@@ -12,9 +12,10 @@ Feature: Settings Page
     When I click the back button
     Then I see the calendar displayed
 
-  Scenario: Location tab shows no saved location hint
+  Scenario: Location tab shows auto-detected location when none saved
     When I navigate to the location tab
-    Then I see the no saved location hint
+    Then I see the location pill displaying "Edinburgh, Scotland"
+    And I see the "Auto" badge on the location pill
 
   Scenario: User can save a location
     When I navigate to the location tab

@@ -1,0 +1,84 @@
+services:
+  webui:
+    container_name: familyhq-webui-preprod
+    env_file: .env
+    environment:
+      - BACKEND_URL=${BACKEND_URL}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-preprod"
+      - "traefik.http.routers.webui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.webui.priority=1"
+      - "traefik.http.routers.webui.entrypoints=websecure"
+      - "traefik.http.routers.webui.tls=true"
+      - "traefik.http.routers.webui.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.webui.tls.domains[0].main=preprod.familyhq.alphaepsilon.co.uk"
+      - "traefik.http.services.webui.loadbalancer.server.port=80"
+    networks:
+      - familyhq-preprod
+
+  webapi:
+    container_name: familyhq-webapi-preprod
+    env_file: .env
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=${ConnectionStrings__DefaultConnection}
+      - Jwt__SigningKey=${Jwt__SigningKey}
+      - GoogleCalendar__ClientId=${GoogleCalendar__ClientId}
+      - GoogleCalendar__ClientSecret=${GoogleCalendar__ClientSecret}
+      - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
+      - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
+      - FrontendBaseUrl=${FrontendBaseUrl}
+      - Weather__BaseUrl=${Weather__BaseUrl}
+      - Geocoding__BaseUrl=${Geocoding__BaseUrl}
+      - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
+      - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
+      - ReverseProxy__Enabled=true
+    volumes:
+      - ./dataprotection.pfx:/app/certs/dataprotection.pfx:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.constraint-label=familyhq-preprod"
+      - "traefik.http.routers.webapi.rule=PathPrefix(`/api`) || PathPrefix(`/hubs`) || PathPrefix(`/openapi`) || PathPrefix(`/scalar`)"
+      - "traefik.http.routers.webapi.priority=10"
+      - "traefik.http.routers.webapi.entrypoints=websecure"
+      - "traefik.http.routers.webapi.tls=true"
+      - "traefik.http.routers.webapi.tls.certresolver=letsencrypt"
+      - "traefik.http.services.webapi.loadbalancer.server.port=8080"
+    networks:
+      - familyhq-preprod
+      - postgres
+
+  traefik:
+    image: traefik:v2.11
+    container_name: familyhq-preprod-traefik
+    restart: unless-stopped
+    env_file: .env
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=familyhq-preprod"
+      - "--providers.docker.constraints=Label(`traefik.constraint-label`, `familyhq-preprod`)"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=godaddy"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@alphaepsilon.co.uk"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "8400:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-preprod-letsencrypt:/letsencrypt
+    networks:
+      - familyhq-preprod
+
+networks:
+  familyhq-preprod:
+    name: familyhq-preprod
+  postgres:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:-postgres_default}
+
+volumes:
+  traefik-preprod-letsencrypt:
+    name: traefik-preprod-letsencrypt

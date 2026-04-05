@@ -39,11 +39,15 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
         {
             for (var i = 0; i < apiResponse.Hourly.Time.Count; i++)
             {
+                var temp = apiResponse.Hourly.Temperature[i];
+                var code = apiResponse.Hourly.WeatherCode[i];
+                var wind = apiResponse.Hourly.WindSpeed[i];
+                if (temp is null || code is null || wind is null) continue;
                 hourly.Add(new WeatherHourlyItem(
                     DateTimeOffset.Parse(apiResponse.Hourly.Time[i], CultureInfo.InvariantCulture),
-                    WmoCodeMapper.ToCondition(apiResponse.Hourly.WeatherCode[i]),
-                    apiResponse.Hourly.Temperature[i],
-                    apiResponse.Hourly.WindSpeed[i]));
+                    WmoCodeMapper.ToCondition(code.Value),
+                    temp.Value,
+                    wind.Value));
             }
         }
 
@@ -52,12 +56,17 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
         {
             for (var i = 0; i < apiResponse.Daily.Time.Count; i++)
             {
+                var code = apiResponse.Daily.WeatherCode[i];
+                var max = apiResponse.Daily.TemperatureMax[i];
+                var min = apiResponse.Daily.TemperatureMin[i];
+                var wind = apiResponse.Daily.WindSpeedMax[i];
+                if (code is null || max is null || min is null || wind is null) continue;
                 daily.Add(new WeatherDailyItem(
                     DateOnly.Parse(apiResponse.Daily.Time[i], CultureInfo.InvariantCulture),
-                    WmoCodeMapper.ToCondition(apiResponse.Daily.WeatherCode[i]),
-                    apiResponse.Daily.TemperatureMax[i],
-                    apiResponse.Daily.TemperatureMin[i],
-                    apiResponse.Daily.WindSpeedMax[i]));
+                    WmoCodeMapper.ToCondition(code.Value),
+                    max.Value,
+                    min.Value,
+                    wind.Value));
             }
         }
 

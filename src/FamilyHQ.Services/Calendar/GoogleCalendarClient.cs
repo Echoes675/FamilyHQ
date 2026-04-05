@@ -103,8 +103,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
             else
             {
-                if (syncWindowStart.HasValue) query.Add($"timeMin={syncWindowStart.Value.ToString("O")}");
-                if (syncWindowEnd.HasValue) query.Add($"timeMax={syncWindowEnd.Value.ToString("O")}");
+                if (syncWindowStart.HasValue) query.Add($"timeMin={Uri.EscapeDataString(syncWindowStart.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
+                if (syncWindowEnd.HasValue) query.Add($"timeMax={Uri.EscapeDataString(syncWindowEnd.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
             }
 
             if (!string.IsNullOrEmpty(pageToken))

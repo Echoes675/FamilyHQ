@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.AspNetCore.HttpOverrides;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data;
 using FamilyHQ.Data.PostgreSQL;
@@ -11,7 +12,6 @@ using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
-using FamilyHQ.Core.Constants;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,8 +37,10 @@ builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.Current
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
 // Register typed HttpClients for services that require an injected HttpClient
+var ipApiBaseUrl = builder.Configuration["Location:IpApiBaseUrl"] ?? "http://ip-api.com";
 builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
 {
+    client.BaseAddress = new Uri(ipApiBaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
@@ -129,12 +131,27 @@ builder.Services.AddCors(options =>
     });
 });
 
+if (builder.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+}
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FamilyHQ.Data.FamilyHqDbContext>();
     db.Database.Migrate();
+}
+
+if (app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
+{
+    app.UseForwardedHeaders();
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();

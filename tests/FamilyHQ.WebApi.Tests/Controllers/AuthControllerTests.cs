@@ -38,6 +38,24 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public void Login_WhenBehindReverseProxy_UsesHttpsCallbackUrl()
+    {
+        // Arrange — simulate Traefik forwarding X-Forwarded-Proto: https
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Scheme = "https";
+        httpContext.Request.Host = new Microsoft.AspNetCore.Http.HostString("preprod.familyhq.alphaepsilon.co.uk:8400");
+
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.Login();
+
+        // Assert
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Contain("redirect_uri=https%3A%2F%2Fpreprod.familyhq.alphaepsilon.co.uk%3A8400%2Fapi%2Fauth%2Fcallback");
+    }
+
+    [Fact]
     public async Task Callback_WhenCodeExchangeSucceeds_SavesRefreshToken()
     {
         // Arrange
@@ -93,10 +111,24 @@ public class AuthControllerTests
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    private static string CreateTestIdToken(string sub, string? email = null)
+    {
+        var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
+        var payload = email is null
+            ? Base64UrlEncode($"{{\"sub\":\"{sub}\"}}")
+            : Base64UrlEncode($"{{\"sub\":\"{sub}\",\"email\":\"{email}\"}}");
+        return $"{header}.{payload}.";
+    }
+
+    private static string Base64UrlEncode(string input)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
     private static AuthController CreateSut(
         ITokenStore? tokenStore = null,
         string? frontendBaseUrl = "https://frontend.test",
-        bool includeRefreshToken = true)
+        bool includeRefreshToken = true,
+        DefaultHttpContext? httpContext = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -105,7 +137,7 @@ public class AuthControllerTests
             ["refresh_token"] = includeRefreshToken ? (object?)"simulated_refresh_token" : null,
             ["expires_in"] = 3600,
             ["token_type"] = "Bearer",
-            ["user_id"] = "user1"
+            ["id_token"] = CreateTestIdToken("user1", "user1@example.com")
         };
         var responseJson = JsonSerializer.Serialize(responsePayload);
 
@@ -172,7 +204,7 @@ public class AuthControllerTests
         {
             ControllerContext = new ControllerContext
             {
-                HttpContext = new DefaultHttpContext()
+                HttpContext = httpContext ?? new DefaultHttpContext()
             }
         };
 

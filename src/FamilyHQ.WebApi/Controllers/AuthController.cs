@@ -53,7 +53,7 @@ public class AuthController : ControllerBase
             ?? throw new InvalidOperationException("FrontendBaseUrl is not configured.");
 
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
-        var (accessToken, refreshToken, userId) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
+        var (accessToken, refreshToken, userId, email) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
 
         if (!string.IsNullOrEmpty(refreshToken) && !string.IsNullOrEmpty(userId))
             await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
@@ -61,7 +61,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(userId))
             return BadRequest("Authentication failed: user identity could not be determined.");
 
-        var apiToken = GenerateJwt(userId);
+        var apiToken = GenerateJwt(userId, email);
 
         // Propagate userId into the ExecutionContext so ICurrentUserService can
         // resolve it without an active HttpContext during the sync.
@@ -82,13 +82,15 @@ public class AuthController : ControllerBase
         return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
     }
 
-    private string GenerateJwt(string userId)
+    private string GenerateJwt(string userId, string? email)
     {
-        var claims = new[]
+        var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, userId),
             new Claim(JwtRegisteredClaimNames.UniqueName, userId)
         };
+        if (!string.IsNullOrEmpty(email))
+            claims.Add(new Claim(JwtRegisteredClaimNames.Name, email));
         
         var jwtKey = _configuration["Jwt:SigningKey"]
             ?? throw new InvalidOperationException("JWT signing key is not configured.");
@@ -98,7 +100,7 @@ public class AuthController : ControllerBase
         var token = new JwtSecurityToken(
             issuer: "FamilyHQ",
             audience: "FamilyHQ",
-            claims: claims,
+            claims: claims.ToArray(),
             expires: DateTime.Now.AddDays(1),
             signingCredentials: creds
         );
