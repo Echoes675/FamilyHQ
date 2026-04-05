@@ -13,13 +13,14 @@ public class LocationService(ILocationSettingRepository repo, HttpClient httpCli
             return new LocationResult(saved.PlaceName, saved.Latitude, saved.Longitude, IsAutoDetected: false);
 
         var response = await httpClient.GetFromJsonAsync<IpApiResponse>(
-            "http://ip-api.com/json/?fields=status,city,regionName,country,lat,lon", ct)
+            "json/?fields=status,city,regionName,country,lat,lon", ct)
             ?? throw new InvalidOperationException("IP geolocation returned null response.");
 
         if (response.Status != "success")
             throw new InvalidOperationException($"IP geolocation failed with status '{response.Status}'.");
 
-        var placeName = $"{response.City}, {response.RegionName}, {response.Country}";
+        var placeName = string.Join(", ", new[] { response.City, response.RegionName, response.Country }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
         return new LocationResult(placeName, response.Lat, response.Lon, IsAutoDetected: true);
     }
 

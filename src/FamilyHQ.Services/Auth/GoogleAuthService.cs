@@ -27,12 +27,13 @@ public class GoogleAuthService
         var query = "?client_id=" + Uri.EscapeDataString(_options.ClientId)
             + "&redirect_uri=" + Uri.EscapeDataString(redirectUri)
             + "&response_type=code"
-            + "&scope=" + Uri.EscapeDataString("https://www.googleapis.com/auth/calendar")
-            + "&access_type=offline";
+            + "&scope=" + Uri.EscapeDataString("openid email https://www.googleapis.com/auth/calendar")
+            + "&access_type=offline"
+            + "&prompt=consent";
         return _options.AuthPromptUrl + query;
     }
 
-    public async Task<(string AccessToken, string? RefreshToken, string? UserId)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
+    public async Task<(string AccessToken, string? RefreshToken, string? UserId, string? Email)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
     {
         var request = new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -54,7 +55,23 @@ public class GoogleAuthService
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
-        return (result!.AccessToken, result.RefreshToken, result.UserId);
+        var (userId, email) = ExtractClaimsFromIdToken(result!.IdToken);
+        return (result.AccessToken, result.RefreshToken, userId, email);
+    }
+
+    private static (string? sub, string? email) ExtractClaimsFromIdToken(string? idToken)
+    {
+        if (string.IsNullOrEmpty(idToken)) return (null, null);
+        var parts = idToken.Split('.');
+        if (parts.Length < 2) return (null, null);
+        var payload = parts[1].Replace('-', '+').Replace('_', '/');
+        payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var sub = root.TryGetProperty("sub", out var subEl) ? subEl.GetString() : null;
+        var email = root.TryGetProperty("email", out var emailEl) ? emailEl.GetString() : null;
+        return (sub, email);
     }
 
     public async Task<string> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)

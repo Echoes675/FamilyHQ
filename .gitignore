@@ -387,3 +387,5 @@ plans/*
 !.agent/rules/
 !.agent/skills/
 .superpowers/
+.playwright-mcp/
+.playwright/

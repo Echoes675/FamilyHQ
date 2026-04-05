@@ -40,7 +40,7 @@ public class LocationServiceTests
         var repoMock = new Mock<ILocationSettingRepository>();
         repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
 
-        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiHandler()));
+        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
 
         var result = await sut.GetEffectiveLocationAsync();
 
@@ -54,7 +54,7 @@ public class LocationServiceTests
         var repoMock = new Mock<ILocationSettingRepository>();
         repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
 
-        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiFailureHandler()));
+        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiFailureHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
 
         var act = () => sut.GetEffectiveLocationAsync();
 

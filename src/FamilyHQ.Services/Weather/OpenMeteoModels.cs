@@ -15,13 +15,13 @@ public record OpenMeteoCurrentData(
 
 public record OpenMeteoHourlyData(
     [property: JsonPropertyName("time")] List<string> Time,
-    [property: JsonPropertyName("temperature_2m")] List<double> Temperature,
-    [property: JsonPropertyName("weather_code")] List<int> WeatherCode,
-    [property: JsonPropertyName("wind_speed_10m")] List<double> WindSpeed);
+    [property: JsonPropertyName("temperature_2m")] List<double?> Temperature,
+    [property: JsonPropertyName("weather_code")] List<int?> WeatherCode,
+    [property: JsonPropertyName("wind_speed_10m")] List<double?> WindSpeed);
 
 public record OpenMeteoDailyData(
     [property: JsonPropertyName("time")] List<string> Time,
-    [property: JsonPropertyName("weather_code")] List<int> WeatherCode,
-    [property: JsonPropertyName("temperature_2m_max")] List<double> TemperatureMax,
-    [property: JsonPropertyName("temperature_2m_min")] List<double> TemperatureMin,
-    [property: JsonPropertyName("wind_speed_10m_max")] List<double> WindSpeedMax);
+    [property: JsonPropertyName("weather_code")] List<int?> WeatherCode,
+    [property: JsonPropertyName("temperature_2m_max")] List<double?> TemperatureMax,
+    [property: JsonPropertyName("temperature_2m_min")] List<double?> TemperatureMin,
+    [property: JsonPropertyName("wind_speed_10m_max")] List<double?> WindSpeedMax);

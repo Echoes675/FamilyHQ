@@ -110,6 +110,50 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetEventsAsync_WithSyncWindow_TimeParametersAreRfc3339WithZSuffix()
+    {
+        // Arrange
+        HttpRequestMessage? capturedRequest = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { nextSyncToken = "tok", items = Array.Empty<object>() }))
+            });
+
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var end = new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        await systemUnderTest.GetEventsAsync("cal1", start, end);
+
+        // Assert — timeMin and timeMax must not contain unencoded '+' and must use 'Z' suffix
+        var uri = capturedRequest!.RequestUri!.ToString();
+        uri.Should().Contain("timeMin=2026-01-01T00%3A00%3A00Z");
+        uri.Should().Contain("timeMax=2026-04-01T00%3A00%3A00Z");
+        uri.Should().NotContain("+"); // unencoded '+' would be misinterpreted as space
+    }
+
+    [Fact]
     public async Task GetEventsAsync_WhenAuthorized_ReturnsEventsAndNextSyncToken()
     {
         // Arrange
