@@ -18,7 +18,7 @@ public class GoogleAuthServiceTests
     {
         // Arrange
         var (httpMock, systemUnderTest) = CreateSut();
-        var idToken = CreateTestIdToken("google-user-123");
+        var idToken = CreateTestIdToken("google-user-123", "user@example.com");
         var responseJson = JsonSerializer.Serialize(new
         {
             access_token = "access-123",
@@ -44,6 +44,7 @@ public class GoogleAuthServiceTests
 
         // Assert
         result.UserId.Should().Be("google-user-123");
+        result.Email.Should().Be("user@example.com");
     }
 
     [Fact]
@@ -147,7 +148,7 @@ public class GoogleAuthServiceTests
         query["client_id"].Should().Be("test-client-id");
         query["redirect_uri"].Should().Be(redirectUri);
         query["response_type"].Should().Be("code");
-        query["scope"].Should().Be("openid https://www.googleapis.com/auth/calendar");
+        query["scope"].Should().Be("openid email https://www.googleapis.com/auth/calendar");
         query["access_type"].Should().Be("offline");
         query["prompt"].Should().Be("consent");
     }
@@ -165,10 +166,12 @@ public class GoogleAuthServiceTests
         result.Should().StartWith("https://accounts.test.com/o/oauth2/auth");
     }
 
-    private static string CreateTestIdToken(string sub)
+    private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
-        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\"}}");
+        var payload = email is null
+            ? Base64UrlEncode($"{{\"sub\":\"{sub}\"}}")
+            : Base64UrlEncode($"{{\"sub\":\"{sub}\",\"email\":\"{email}\"}}");
         return $"{header}.{payload}.";
     }
 

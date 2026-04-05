@@ -127,6 +127,7 @@ public class OAuthControllerTests
         json.Should().NotContain("user_id");
         var idToken = ExtractIdTokenSub(json);
         idToken.Should().Be("alice");
+        ExtractIdTokenEmail(json).Should().Be("alice");
     }
 
     [Fact]
@@ -149,12 +150,20 @@ public class OAuthControllerTests
         json.Should().NotContain("user_id");
         var idToken = ExtractIdTokenSub(json);
         idToken.Should().Be("default_simulator_user");
+        ExtractIdTokenEmail(json).Should().Be("default_simulator_user");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>Decodes the id_token from a serialised token response and returns the sub claim.</summary>
     private static string? ExtractIdTokenSub(string responseJson)
+        => ExtractIdTokenClaim(responseJson, "sub");
+
+    /// <summary>Decodes the id_token from a serialised token response and returns the email claim.</summary>
+    private static string? ExtractIdTokenEmail(string responseJson)
+        => ExtractIdTokenClaim(responseJson, "email");
+
+    private static string? ExtractIdTokenClaim(string responseJson, string claimName)
     {
         using var doc = System.Text.Json.JsonDocument.Parse(responseJson);
         if (!doc.RootElement.TryGetProperty("id_token", out var idTokenEl)) return null;
@@ -164,7 +173,7 @@ public class OAuthControllerTests
         payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
         var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
         using var payloadDoc = System.Text.Json.JsonDocument.Parse(json);
-        return payloadDoc.RootElement.TryGetProperty("sub", out var sub) ? sub.GetString() : null;
+        return payloadDoc.RootElement.TryGetProperty(claimName, out var claim) ? claim.GetString() : null;
     }
 
     private static SimContext CreateDb()

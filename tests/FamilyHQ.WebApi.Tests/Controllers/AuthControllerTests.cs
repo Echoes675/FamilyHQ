@@ -111,10 +111,12 @@ public class AuthControllerTests
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    private static string CreateTestIdToken(string sub)
+    private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
-        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\"}}");
+        var payload = email is null
+            ? Base64UrlEncode($"{{\"sub\":\"{sub}\"}}")
+            : Base64UrlEncode($"{{\"sub\":\"{sub}\",\"email\":\"{email}\"}}");
         return $"{header}.{payload}.";
     }
 
@@ -135,7 +137,7 @@ public class AuthControllerTests
             ["refresh_token"] = includeRefreshToken ? (object?)"simulated_refresh_token" : null,
             ["expires_in"] = 3600,
             ["token_type"] = "Bearer",
-            ["id_token"] = CreateTestIdToken("user1")
+            ["id_token"] = CreateTestIdToken("user1", "user1@example.com")
         };
         var responseJson = JsonSerializer.Serialize(responsePayload);
 
