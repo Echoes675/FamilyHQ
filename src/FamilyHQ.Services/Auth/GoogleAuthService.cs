@@ -28,7 +28,8 @@ public class GoogleAuthService
             + "&redirect_uri=" + Uri.EscapeDataString(redirectUri)
             + "&response_type=code"
             + "&scope=" + Uri.EscapeDataString("openid https://www.googleapis.com/auth/calendar")
-            + "&access_type=offline";
+            + "&access_type=offline"
+            + "&prompt=consent";
         return _options.AuthPromptUrl + query;
     }
 
