@@ -61,8 +61,16 @@ public class SettingsController : ControllerBase
         if (setting is not null)
             return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
 
-        var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
-        return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
+        try
+        {
+            var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
+            return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Auto-detection failed; no location available.");
+            return NotFound();
+        }
     }
 
     [HttpPost("location")]

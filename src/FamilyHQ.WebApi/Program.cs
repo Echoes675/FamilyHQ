@@ -37,8 +37,10 @@ builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.Current
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
 // Register typed HttpClients for services that require an injected HttpClient
+var ipApiBaseUrl = builder.Configuration["Location:IpApiBaseUrl"] ?? "http://ip-api.com";
 builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
 {
+    client.BaseAddress = new Uri(ipApiBaseUrl.TrimEnd('/') + "/");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 

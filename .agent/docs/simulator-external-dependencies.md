@@ -12,6 +12,7 @@ All external API dependencies are abstracted behind interfaces with config-drive
 | Google OAuth | `GoogleCalendar:AuthBaseUrl` | `https://accounts.google.com` | `https://localhost:7199` (simulator) |
 | Open-Meteo Weather API | `Weather:BaseUrl` | `https://api.open-meteo.com` | `https://localhost:7199` (simulator) |
 | Nominatim Geocoding | `Geocoding:BaseUrl` | `https://nominatim.openstreetmap.org` | `https://localhost:7199` (simulator) |
+| ip-api.com IP Geolocation | `Location:IpApiBaseUrl` | `http://ip-api.com` | `https://localhost:7199` (simulator) |
 
 ## Pattern
 
