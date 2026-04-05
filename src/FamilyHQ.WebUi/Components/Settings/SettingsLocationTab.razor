@@ -99,7 +99,7 @@
         try
         {
             await SettingsApiService.DeleteLocationAsync();
-            _locationSetting = null;
+            _locationSetting = await SettingsApiService.GetLocationAsync();
             _placeNameInput = string.Empty;
         }
         catch (Exception)

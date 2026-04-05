@@ -25,6 +25,7 @@ public class SettingsController : ControllerBase
     private readonly IWeatherService _weatherService;
     private readonly IWeatherRefreshService _weatherRefreshService;
     private readonly ICurrentUserService _currentUser;
+    private readonly ILocationService _locationService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -36,7 +37,8 @@ public class SettingsController : ControllerBase
         IDisplaySettingRepository displayRepo,
         IWeatherService weatherService,
         IWeatherRefreshService weatherRefreshService,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        ILocationService locationService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -48,6 +50,7 @@ public class SettingsController : ControllerBase
         _weatherService = weatherService;
         _weatherRefreshService = weatherRefreshService;
         _currentUser = currentUser;
+        _locationService = locationService;
     }
 
     [HttpGet("location")]
@@ -55,8 +58,11 @@ public class SettingsController : ControllerBase
     {
         var userId = _currentUser.UserId!;
         var setting = await _locationRepo.GetAsync(userId, ct);
-        if (setting is null) return NotFound();
-        return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
+        if (setting is not null)
+            return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
+
+        var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
+        return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
     }
 
     [HttpPost("location")]
@@ -108,6 +114,8 @@ public class SettingsController : ControllerBase
         await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
 
         await _scheduler.TriggerRecalculationAsync();
+
+        await _weatherRefreshService.RefreshAsync(userId, ct);
 
         return NoContent();
     }
