@@ -16,7 +16,7 @@ namespace FamilyHQ.Services.Tests.Calendar;
 public class GoogleCalendarClientMappingTests
 {
     [Fact]
-    public async Task GetEventAsync_MapsOrganizerAndAttendeesToGoogleEventDetail()
+    public async Task GetEventAsync_MapsOrganizerToGoogleEventDetail()
     {
         // Arrange
         var (http, tokenStore, sut) = CreateSut();
@@ -56,7 +56,6 @@ public class GoogleCalendarClientMappingTests
         result.Should().NotBeNull();
         result!.Id.Should().Be("evt-123");
         result.OrganizerEmail.Should().Be("org@calendar.google.com");
-        result.AttendeeEmails.Should().BeEquivalentTo(new[] { "att1@calendar.google.com", "att2@calendar.google.com" });
     }
 
     [Fact]
@@ -82,10 +81,10 @@ public class GoogleCalendarClientMappingTests
         result.Should().BeNull();
     }
 
-    // ── GetEventsAsync organizer mapping ──────────────────────────────────────
+    // ── GetEventsAsync mapping ────────────────────────────────────────────────
 
     [Fact]
-    public async Task GetEventsAsync_WhenOrganizerSelfFalse_SetsIsExternallyOwned()
+    public async Task GetEventsAsync_ReturnsEventWithCorrectTitle()
     {
         // Arrange
         var (http, tokenStore, sut) = CreateSut();
@@ -113,11 +112,11 @@ public class GoogleCalendarClientMappingTests
             ct: CancellationToken.None);
 
         // Assert
-        events.Should().ContainSingle(e => e.IsExternallyOwned);
+        events.Should().ContainSingle(e => e.Title == "External Meeting");
     }
 
     [Fact]
-    public async Task GetEventsAsync_WhenOrganizerSelfTrue_IsExternallyOwnedIsFalse()
+    public async Task GetEventsAsync_WhenOrganizerSelfTrue_ReturnsSingleEvent()
     {
         // Arrange
         var (http, tokenStore, sut) = CreateSut();
@@ -145,11 +144,11 @@ public class GoogleCalendarClientMappingTests
             ct: CancellationToken.None);
 
         // Assert
-        events.Should().ContainSingle(e => !e.IsExternallyOwned);
+        events.Should().ContainSingle(e => e.Title == "My Meeting");
     }
 
     [Fact]
-    public async Task GetEventsAsync_WhenOrganizerAbsent_IsExternallyOwnedIsFalse()
+    public async Task GetEventsAsync_WhenOrganizerAbsent_ReturnsSingleEvent()
     {
         // Arrange
         var (http, tokenStore, sut) = CreateSut();
@@ -177,7 +176,7 @@ public class GoogleCalendarClientMappingTests
             ct: CancellationToken.None);
 
         // Assert
-        events.Should().ContainSingle(e => !e.IsExternallyOwned);
+        events.Should().ContainSingle(e => e.Title == "Simple Meeting");
     }
 
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
