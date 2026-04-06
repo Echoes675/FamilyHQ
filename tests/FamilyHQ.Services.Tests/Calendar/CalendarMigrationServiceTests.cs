@@ -98,6 +98,7 @@ public class CalendarMigrationServiceTests
         migrated.Should().BeTrue();
         google.Verify(g => g.CreateEventAsync("eoin@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), default), Times.Once);
         google.Verify(g => g.DeleteEventAsync("shared@", "gid1", default), Times.Once);
+        evt.GoogleEventId.Should().Be("gid3");
         evt.OwnerCalendarInfoId.Should().Be(IndividualCalId);
     }
 
