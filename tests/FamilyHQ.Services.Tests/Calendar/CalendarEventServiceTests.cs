@@ -79,7 +79,7 @@ public class CalendarEventServiceTests
             [CalBId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
 
         await sut.Invoking(s => s.CreateAsync(request))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     // ── UpdateAsync ───────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ public class CalendarEventServiceTests
         var (google, repo, migration, tagParser, sut) = CreateSut();
 
         await sut.Invoking(s => s.SetMembersAsync(EventId, Array.Empty<Guid>()))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<ArgumentException>();
     }
 
     [Fact]

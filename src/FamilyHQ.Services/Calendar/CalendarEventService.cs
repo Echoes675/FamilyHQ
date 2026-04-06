@@ -98,7 +98,7 @@ public class CalendarEventService(
         CancellationToken ct = default)
     {
         if (memberCalendarInfoIds.Count == 0)
-            throw new InvalidOperationException("At least one member is required.");
+            throw new ArgumentException("At least one member is required.", nameof(memberCalendarInfoIds));
 
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
