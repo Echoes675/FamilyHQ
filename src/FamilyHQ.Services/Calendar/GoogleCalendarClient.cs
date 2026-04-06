@@ -21,7 +21,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly IAccessTokenProvider _accessTokenProvider;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
-    private static readonly JsonSerializerOptions _jsonSerializerOptions = new JsonSerializerOptions
+    private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
@@ -44,19 +44,16 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
     private async Task SetAuthorizationHeaderAsync(CancellationToken ct)
     {
-        // Use pre-obtained access token if available (e.g., during initial login sync)
         if (!string.IsNullOrEmpty(_accessTokenProvider.AccessToken))
         {
-            _logger.LogDebug("Using pre-obtained access token from provider");
-            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessTokenProvider.AccessToken);
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", _accessTokenProvider.AccessToken);
             return;
         }
 
         var refreshToken = await _tokenStore.GetRefreshTokenAsync(ct);
         if (string.IsNullOrEmpty(refreshToken))
-        {
             throw new InvalidOperationException("No refresh token available. User must authenticate first.");
-        }
 
         var accessToken = await _authService.RefreshAccessTokenAsync(refreshToken, ct);
         _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -65,13 +62,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     public async Task<IEnumerable<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
-
         var endpoint = $"{_options.CalendarApiBaseUrl}/users/me/calendarList";
         var response = await _httpClient.GetAsync(endpoint, ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiCalendarList>(cancellationToken: ct);
-
         return result?.Items.Select(item => new CalendarInfo
         {
             GoogleCalendarId = item.Id,
@@ -103,23 +98,21 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
             else
             {
-                if (syncWindowStart.HasValue) query.Add($"timeMin={Uri.EscapeDataString(syncWindowStart.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
-                if (syncWindowEnd.HasValue) query.Add($"timeMax={Uri.EscapeDataString(syncWindowEnd.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
+                if (syncWindowStart.HasValue)
+                    query.Add($"timeMin={Uri.EscapeDataString(syncWindowStart.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
+                if (syncWindowEnd.HasValue)
+                    query.Add($"timeMax={Uri.EscapeDataString(syncWindowEnd.Value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"))}");
             }
 
             if (!string.IsNullOrEmpty(pageToken))
-            {
                 query.Add($"pageToken={Uri.EscapeDataString(pageToken)}");
-            }
 
             var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events?{string.Join("&", query)}";
-
             var response = await _httpClient.GetAsync(endpoint, ct);
+
             if (response.StatusCode == System.Net.HttpStatusCode.Gone)
-            {
-                // Sync token expired. We must clear it and do a full sync.
                 throw new InvalidOperationException("Sync token is no longer valid. Full sync required.");
-            }
+
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<GoogleApiEventList>(cancellationToken: ct);
@@ -127,15 +120,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             {
                 foreach (var item in result.Items)
                 {
-                    // If the event was deleted, item.Status == "cancelled"
                     if (item.Status == "cancelled")
                     {
-                        // We will return a tombstone event so the caller can delete it from the DB
-                        events.Add(new CalendarEvent
-                        {
-                            GoogleEventId = item.Id,
-                            Title = "CANCELLED_TOMBSTONE"
-                        });
+                        events.Add(new CalendarEvent { GoogleEventId = item.Id, Title = "CANCELLED_TOMBSTONE" });
                         continue;
                     }
 
@@ -144,9 +131,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                     var endParam = item.End?.DateTime
                         ?? (item.End?.Date != null ? DateTimeOffset.Parse(item.End.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
 
-                    if (startParam == null || endParam == null) continue; // Skip malformed events
-
-                    var isAllDay = item.Start?.Date != null;
+                    if (startParam == null || endParam == null) continue;
 
                     events.Add(new CalendarEvent
                     {
@@ -154,10 +139,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         Title = item.Summary ?? "Untitled Event",
                         Start = startParam.Value,
                         End = endParam.Value,
-                        IsAllDay = isAllDay,
+                        IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
-                        Description = item.Description,
-                        // IsExternallyOwned removed — replaced by OwnerCalendarInfoId in Task 1 refactor
+                        Description = item.Description
+                        // ContentHash is NOT stored on CalendarEvent; retrieved on-demand from Google via GetEventAsync
                     });
                 }
 
@@ -169,80 +154,65 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return (events, nextSyncToken);
     }
 
-    public async Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, CancellationToken ct = default)
+    public async Task<CalendarEvent> CreateEventAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
-
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-
-        var requestBody = MapToGoogleEvent(calendarEvent);
-        var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash);
+        var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
-
         return calendarEvent;
     }
 
-    public async Task<CalendarEvent> UpdateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, CancellationToken ct = default)
+    public async Task<CalendarEvent> UpdateEventAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
-
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-
-        var requestBody = MapToGoogleEvent(calendarEvent);
-        var response = await _httpClient.PutAsJsonAsync(endpoint, requestBody, _jsonSerializerOptions, ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash);
+        var response = await _httpClient.PutAsJsonAsync(endpoint, body, _jsonOptions, ct);
         response.EnsureSuccessStatusCode();
-
         return calendarEvent;
     }
 
     public async Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
-
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.DeleteAsync(endpoint, ct);
 
-        // 404 means the event is already gone — treat as success (idempotent delete)
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            _logger.LogWarning(
-                "Delete event {GoogleEventId} from calendar {GoogleCalendarId} returned 404 — event already absent, treating as success.",
-                googleEventId, googleCalendarId);
+            _logger.LogWarning("Delete event {GoogleEventId} returned 404 — treating as success.", googleEventId);
             return;
         }
 
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default)
+    public async Task<string> MoveEventAsync(
+        string sourceCalendarId,
+        string googleEventId,
+        string destinationCalendarId,
+        CancellationToken ct = default)
     {
         await SetAuthorizationHeaderAsync(ct);
-
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(sourceCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}/move?destination={Uri.EscapeDataString(destinationCalendarId)}";
         var response = await _httpClient.PostAsync(endpoint, null, ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         return result!.Id;
-    }
-
-    public async Task PatchEventAttendeesAsync(
-        string organizerCalendarId,
-        string googleEventId,
-        IEnumerable<string> attendeeGoogleCalendarIds,
-        CancellationToken ct = default)
-    {
-        await SetAuthorizationHeaderAsync(ct);
-        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(organizerCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
-        var body = new
-        {
-            attendees = attendeeGoogleCalendarIds.Select(id => new { email = id }).ToArray()
-        };
-        var response = await _httpClient.PatchAsJsonAsync(endpoint, body, _jsonSerializerOptions, ct);
-        response.EnsureSuccessStatusCode();
     }
 
     public async Task<GoogleEventDetail?> GetEventAsync(
@@ -253,39 +223,45 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await SetAuthorizationHeaderAsync(ct);
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.GetAsync(endpoint, ct);
+
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
+
         var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         if (apiEvent is null) return null;
-        return new GoogleEventDetail(
-            Id: apiEvent.Id,
-            OrganizerEmail: apiEvent.Organizer?.Email,
-            AttendeeEmails: apiEvent.Attendees?.Select(a => a.Email).ToList() ?? []);
+
+        var contentHash = apiEvent.ExtendedProperties?.Private?.ContentHash;
+        return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
     }
 
-    private static object MapToGoogleEvent(CalendarEvent calendarEvent)
+    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash)
     {
-        if (calendarEvent.IsAllDay)
+        var extendedProperties = new
+        {
+            @private = new Dictionary<string, string> { ["content-hash"] = contentHash }
+        };
+
+        if (evt.IsAllDay)
         {
             return new
             {
-                summary = calendarEvent.Title,
-                description = calendarEvent.Description,
-                location = calendarEvent.Location,
-                start = new { date = calendarEvent.Start.ToString("yyyy-MM-dd") },
-                end = new { date = calendarEvent.End.ToString("yyyy-MM-dd") }
+                summary = evt.Title,
+                description = evt.Description,
+                location = evt.Location,
+                start = new { date = evt.Start.ToString("yyyy-MM-dd") },
+                end = new { date = evt.End.ToString("yyyy-MM-dd") },
+                extendedProperties
             };
         }
-        else
+
+        return new
         {
-            return new
-            {
-                summary = calendarEvent.Title,
-                description = calendarEvent.Description,
-                location = calendarEvent.Location,
-                start = new { dateTime = calendarEvent.Start.ToString("yyyy-MM-ddTHH:mm:ssK") },
-                end = new { dateTime = calendarEvent.End.ToString("yyyy-MM-ddTHH:mm:ssK") }
-            };
-        }
+            summary = evt.Title,
+            description = evt.Description,
+            location = evt.Location,
+            start = new { dateTime = evt.Start.ToString("yyyy-MM-ddTHH:mm:ssK") },
+            end = new { dateTime = evt.End.ToString("yyyy-MM-ddTHH:mm:ssK") },
+            extendedProperties
+        };
     }
 }
