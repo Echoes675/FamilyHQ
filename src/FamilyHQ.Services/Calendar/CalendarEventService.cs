@@ -20,7 +20,7 @@ public class CalendarEventService(
         var assignedMembers = request.MemberCalendarInfoIds
             .Select(id => calendarLookup.TryGetValue(id, out var cal)
                 ? cal
-                : throw new InvalidOperationException($"CalendarInfoId {id} is not known to the user."))
+                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(request)))
             .ToList();
 
         // Determine target calendar
@@ -67,7 +67,8 @@ public class CalendarEventService(
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
-        var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
+        var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
+            ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
 
         // Preserve existing member tag; only update user-visible description
         var memberNames = calendarEvent.Members.Select(m => m.DisplayName).ToList();
@@ -109,7 +110,7 @@ public class CalendarEventService(
         var newMembers = memberCalendarInfoIds
             .Select(id => calendarLookup.TryGetValue(id, out var cal)
                 ? cal
-                : throw new InvalidOperationException($"CalendarInfoId {id} is not known to the user."))
+                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(memberCalendarInfoIds)))
             .ToList();
 
         // Update description with new member tag
@@ -125,7 +126,8 @@ public class CalendarEventService(
         if (!migrated)
         {
             // No migration: write updated description/members to Google and DB.
-            var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
+            var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
+                ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
             var hash = EventContentHash.Compute(
                 calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
                 calendarEvent.IsAllDay, calendarEvent.Description);
@@ -145,7 +147,8 @@ public class CalendarEventService(
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
-        var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
+        var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
+            ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
 
         await googleCalendarClient.DeleteEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent.GoogleEventId, ct);
         await calendarRepository.DeleteEventAsync(eventId, ct);

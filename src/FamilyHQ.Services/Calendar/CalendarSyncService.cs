@@ -47,7 +47,10 @@ public class CalendarSyncService(
         logger.LogInformation("Finished syncing all calendars.");
     }
 
-    public async Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
+    public Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
+        => SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: false, ct);
+
+    private async Task SyncCoreAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, bool isRetry, CancellationToken ct)
     {
         var calendar = await calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
@@ -148,14 +151,14 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("no longer valid"))
+        catch (InvalidOperationException ex) when (!isRetry && ex.Message.Contains("no longer valid"))
         {
             logger.LogWarning("Sync token expired for {CalendarName}. Restarting full sync.", calendar.DisplayName);
             syncState.SyncToken = null;
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
             await calendarRepository.SaveChangesAsync(ct);
-            await SyncAsync(calendarInfoId, startDate, endDate, ct);
+            await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
     }
 }
