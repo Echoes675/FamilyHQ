@@ -21,7 +21,10 @@ public static class EventContentHash
         string? description)
     {
         var desc = string.IsNullOrEmpty(description) ? "" : description;
-        var input = $"{title}|{start.ToUniversalTime():O}|{end.ToUniversalTime():O}|{isAllDay}|{desc}";
+        // Use ASCII unit separator (\u001F) as delimiter — cannot appear in user-entered calendar text,
+        // preventing hash collisions from pipe characters in titles or descriptions.
+        const char Sep = '\u001F';
+        var input = $"{title}{Sep}{start.ToUniversalTime():O}{Sep}{end.ToUniversalTime():O}{Sep}{isAllDay}{Sep}{desc}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
