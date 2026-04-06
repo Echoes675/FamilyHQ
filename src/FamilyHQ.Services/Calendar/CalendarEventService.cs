@@ -32,7 +32,7 @@ public class CalendarEventService(
             Location = request.Location,
             Description = request.Description,
             OwnerCalendarInfoId = ownerCalendar.Id,
-            Calendars = request.CalendarInfoIds.Select(id => calendarLookup[id]).ToList()
+            Members = request.CalendarInfoIds.Select(id => calendarLookup[id]).ToList()
         };
 
         calendarEvent = await googleCalendarClient.CreateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, ct);
@@ -104,7 +104,7 @@ public class CalendarEventService(
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
-        if (calendarEvent.Calendars.Any(c => c.Id == targetCalendarInfoId))
+        if (calendarEvent.Members.Any(c => c.Id == targetCalendarInfoId))
         {
             logger.LogInformation(
                 "Event {EventId} is already linked to calendar {CalendarInfoId}. No action taken.",
@@ -118,9 +118,9 @@ public class CalendarEventService(
 
         var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
 
-        calendarEvent.Calendars.Add(targetCalendar);
+        calendarEvent.Members.Add(targetCalendar);
 
-        var attendeeIds = calendarEvent.Calendars
+        var attendeeIds = calendarEvent.Members
             .Where(c => c.Id != calendarEvent.OwnerCalendarInfoId)
             .Select(c => c.GoogleCalendarId);
 
@@ -144,23 +144,23 @@ public class CalendarEventService(
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
-        if (calendarEvent.Calendars.Count == 1)
+        if (calendarEvent.Members.Count == 1)
         {
             await DeleteAsync(eventId, ct);
             return;
         }
 
-        var calendarToRemove = calendarEvent.Calendars.FirstOrDefault(c => c.Id == calendarInfoId)
+        var calendarToRemove = calendarEvent.Members.FirstOrDefault(c => c.Id == calendarInfoId)
             ?? throw new InvalidOperationException($"CalendarInfoId {calendarInfoId} is not linked to event {eventId}.");
 
-        calendarEvent.Calendars.Remove(calendarToRemove);
+        calendarEvent.Members.Remove(calendarToRemove);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var calendarDict = allCalendars.ToDictionary(c => c.Id);
 
         if (calendarInfoId == calendarEvent.OwnerCalendarInfoId)
         {
-            var newOwnerInfo = calendarEvent.Calendars.First();
+            var newOwnerInfo = calendarEvent.Members.First();
             var newOwnerCalendar = calendarDict[newOwnerInfo.Id];
             var removedOwnerGoogleId = calendarDict[calendarInfoId].GoogleCalendarId;
 
@@ -172,7 +172,7 @@ public class CalendarEventService(
 
             calendarEvent.OwnerCalendarInfoId = newOwnerInfo.Id;
 
-            var attendeeIds = calendarEvent.Calendars
+            var attendeeIds = calendarEvent.Members
                 .Where(c => c.Id != newOwnerInfo.Id)
                 .Select(c => calendarDict[c.Id].GoogleCalendarId);
 
@@ -186,7 +186,7 @@ public class CalendarEventService(
         {
             var ownerCalendar = calendarDict[calendarEvent.OwnerCalendarInfoId];
 
-            var attendeeIds = calendarEvent.Calendars
+            var attendeeIds = calendarEvent.Members
                 .Where(c => c.Id != calendarEvent.OwnerCalendarInfoId)
                 .Select(c => calendarDict[c.Id].GoogleCalendarId);
 

@@ -157,7 +157,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         IsAllDay = isAllDay,
                         Location = item.Location,
                         Description = item.Description,
-                        IsExternallyOwned = item.Organizer?.Self == false
+                        // IsExternallyOwned removed — replaced by OwnerCalendarInfoId in Task 1 refactor
                     });
                 }
 

@@ -99,10 +99,10 @@ public class CalendarSyncService : ICalendarSyncService
                     var tracked = await _calendarRepository.GetEventByGoogleEventIdAsync(obsolete.GoogleEventId, ct);
                     if (tracked == null) continue;
 
-                    var calToRemove = tracked.Calendars.FirstOrDefault(c => c.Id == calendarInfoId);
-                    if (calToRemove != null) tracked.Calendars.Remove(calToRemove);
+                    var calToRemove = tracked.Members.FirstOrDefault(c => c.Id == calendarInfoId);
+                    if (calToRemove != null) tracked.Members.Remove(calToRemove);
 
-                    if (!tracked.Calendars.Any())
+                    if (!tracked.Members.Any())
                         await _calendarRepository.DeleteEventAsync(tracked.Id, ct);
                     else
                         await _calendarRepository.UpdateEventAsync(tracked, ct);
@@ -116,10 +116,10 @@ public class CalendarSyncService : ICalendarSyncService
                     var tracked = await _calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
                     if (tracked != null)
                     {
-                        var calToRemove = tracked.Calendars.FirstOrDefault(c => c.Id == calendarInfoId);
-                        if (calToRemove != null) tracked.Calendars.Remove(calToRemove);
+                        var calToRemove = tracked.Members.FirstOrDefault(c => c.Id == calendarInfoId);
+                        if (calToRemove != null) tracked.Members.Remove(calToRemove);
 
-                        if (!tracked.Calendars.Any())
+                        if (!tracked.Members.Any())
                             await _calendarRepository.DeleteEventAsync(tracked.Id, ct);
                         else
                             await _calendarRepository.UpdateEventAsync(tracked, ct);
@@ -159,7 +159,7 @@ public class CalendarSyncService : ICalendarSyncService
                             tracked.IsAllDay = evt.IsAllDay;
                             tracked.Location = evt.Location;
                             tracked.Description = evt.Description;
-                            tracked.Calendars.Add(calendar);
+                            tracked.Members.Add(calendar);
                             await _calendarRepository.UpdateEventAsync(tracked, ct);
                         }
                     }
@@ -167,7 +167,7 @@ public class CalendarSyncService : ICalendarSyncService
                     {
                         // Brand new event
                         evt.OwnerCalendarInfoId = calendar.Id;
-                        evt.Calendars.Add(calendar);
+                        evt.Members.Add(calendar);
                         await _calendarRepository.AddEventAsync(evt, ct);
                     }
                 }

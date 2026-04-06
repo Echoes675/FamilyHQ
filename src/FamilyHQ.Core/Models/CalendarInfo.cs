@@ -9,7 +9,12 @@ public class CalendarInfo
     public string? Color { get; set; }
     public bool IsVisible { get; set; } = true;
 
+    // Marks this calendar as the shared calendar used for multi-member events.
+    public bool IsShared { get; set; } = false;
+
+    // Order of this calendar's column in the Agenda view (0 = leftmost).
+    public int DisplayOrder { get; set; } = 0;
+
     // Navigation properties
-    public ICollection<CalendarEvent> Events { get; set; } = new List<CalendarEvent>();
     public SyncState? SyncState { get; set; }
 }

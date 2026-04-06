@@ -75,7 +75,7 @@ public class EventsController : ControllerBase
         e.IsAllDay,
         e.Location,
         e.Description,
-        e.Calendars
+        e.Members
             .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color))
             .ToList());
 }

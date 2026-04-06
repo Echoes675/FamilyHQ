@@ -66,7 +66,7 @@ public class CalendarsController : ControllerBase
                 evt.IsAllDay,
                 evt.Location,
                 evt.Description,
-                evt.Calendars.Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color)).ToList());
+                evt.Members.Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color)).ToList());
 
             // Index once for each day the event spans within the viewable range.
             // AddTicks(-1) handles midnight-ending events (e.g. all-day ending at 00:00 next day).
