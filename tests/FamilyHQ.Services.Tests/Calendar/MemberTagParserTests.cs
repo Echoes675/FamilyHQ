@@ -28,8 +28,9 @@ public class MemberTagParserTests
     [Fact]
     public void ParseMembers_NoTag_FallsBackToNameMatching()
     {
+        // "kids" case-insensitively matches the known member name "Kids" — accepted as low-risk false positive.
         var result = _sut.ParseMembers("Eoin and Sarah collecting the kids from football", KnownNames);
-        result.Should().Contain("Eoin").And.Contain("Sarah");
+        result.Should().Contain("Eoin").And.Contain("Sarah").And.Contain("Kids");
     }
 
     [Fact]

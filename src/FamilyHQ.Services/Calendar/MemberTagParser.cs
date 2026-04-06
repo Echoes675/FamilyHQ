@@ -36,7 +36,7 @@ public class MemberTagParser : IMemberTagParser
 
     public string StripMemberTag(string? description)
     {
-        if (string.IsNullOrEmpty(description))
+        if (string.IsNullOrWhiteSpace(description))
             return string.Empty;
 
         var stripped = TagRegex.Replace(description, string.Empty);
