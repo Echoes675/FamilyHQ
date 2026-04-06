@@ -15,19 +15,17 @@ public class CalendarRepository : ICalendarRepository
         _currentUserService = currentUserService;
     }
 
+    private string CurrentUserId => _currentUserService.UserId ?? string.Empty;
+
     public async Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
     {
-        var currentUserId = _currentUserService.UserId;
-        
-        // Return empty list if no user is authenticated (safer than using fallback)
-        if (string.IsNullOrEmpty(currentUserId))
-        {
+        if (string.IsNullOrEmpty(CurrentUserId))
             return Array.Empty<CalendarInfo>();
-        }
 
         return await _context.Calendars
             .AsNoTracking()
-            .Where(c => c.UserId == currentUserId)
+            .Where(c => c.UserId == CurrentUserId)
+            .OrderBy(c => c.DisplayOrder)
             .ToListAsync(ct);
     }
 
@@ -38,38 +36,41 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(c => c.Id == id, ct);
     }
 
-    public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
+    public async Task<CalendarInfo?> GetSharedCalendarAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(CurrentUserId))
+            return null;
+
+        return await _context.Calendars
+            .FirstOrDefaultAsync(c => c.UserId == CurrentUserId && c.IsShared, ct);
+    }
+
+    public async Task<IReadOnlyList<CalendarEvent>> GetEventsByOwnerCalendarAsync(
+        Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
         return await _context.Events
             .Include(e => e.Members)
-            .Where(e => e.Members.Any(c => c.Id == calendarInfoId) && e.Start < end && e.End > start)
+            .Where(e => e.OwnerCalendarInfoId == calendarInfoId && e.Start < end && e.End > start)
             .OrderBy(e => e.Start)
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(
+        DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
-        var currentUserId = _currentUserService.UserId;
-        if (string.IsNullOrEmpty(currentUserId))
+        if (string.IsNullOrEmpty(CurrentUserId))
             return Array.Empty<CalendarEvent>();
 
         return await _context.Events
             .AsNoTracking()
             .Include(e => e.Members)
             .Where(e => e.Start < end && e.End > start
-                        && e.Members.Any(c => c.UserId == currentUserId))
+                     && _context.Calendars.Any(c => c.Id == e.OwnerCalendarInfoId && c.UserId == CurrentUserId))
             .OrderBy(e => e.Start)
             .ToListAsync(ct);
     }
 
     public async Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default)
-    {
-        return await _context.Events
-            .Include(e => e.Members)
-            .FirstOrDefaultAsync(e => e.Id == id, ct);
-    }
-
-    public async Task<CalendarEvent?> GetEventByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Events
             .Include(e => e.Members)
@@ -97,19 +98,12 @@ public class CalendarRepository : ICalendarRepository
 
         if (calendar == null) return;
 
-        // Unlink this calendar from all events; delete events that have no remaining links
-        var linkedEvents = await _context.Events
-            .Include(e => e.Members)
-            .Where(e => e.Members.Any(c => c.Id == calendarInfoId))
+        // Delete all events owned by this calendar (members junction rows cascade via EF)
+        var ownedEvents = await _context.Events
+            .Where(e => e.OwnerCalendarInfoId == calendarInfoId)
             .ToListAsync(ct);
 
-        foreach (var evt in linkedEvents)
-        {
-            var link = evt.Members.FirstOrDefault(c => c.Id == calendarInfoId);
-            if (link != null) evt.Members.Remove(link);
-            if (!evt.Members.Any())
-                _context.Events.Remove(evt);
-        }
+        _context.Events.RemoveRange(ownedEvents);
 
         if (calendar.SyncState != null)
             _context.SyncStates.Remove(calendar.SyncState);
@@ -125,21 +119,23 @@ public class CalendarRepository : ICalendarRepository
         return Task.CompletedTask;
     }
 
+    public Task UpdateCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default)
+    {
+        _context.Calendars.Update(calendarInfo);
+        return Task.CompletedTask;
+    }
+
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Attach all linked calendars to the context BEFORE calling Events.Add() so that
-        // EF Core's graph traversal during Add() sees the full skip-navigation collection
-        // and registers every join row in one pass. Attaching after Add() risks the join
-        // rows being missed because the snapshot was already taken with an empty collection.
-        var trackedCalendars = calendarEvent.Members
-            .Select(cal => _context.Entry(cal).State == EntityState.Detached
-                ? _context.Calendars.Attach(cal).Entity
-                : cal)
+        // Attach member CalendarInfos so EF registers EventMembers join rows correctly.
+        var trackedMembers = calendarEvent.Members
+            .Select(m => _context.Entry(m).State == EntityState.Detached
+                ? _context.Calendars.Attach(m).Entity
+                : m)
             .ToList();
 
-        calendarEvent.Members = trackedCalendars;
+        calendarEvent.Members = trackedMembers;
         _context.Events.Add(calendarEvent);
-
         return Task.CompletedTask;
     }
 
@@ -151,20 +147,16 @@ public class CalendarRepository : ICalendarRepository
 
     public async Task DeleteEventAsync(Guid id, CancellationToken ct = default)
     {
-        var calendarEvent = await _context.Events.FindAsync([id], ct);
-        if (calendarEvent != null)
-        {
-            _context.Events.Remove(calendarEvent);
-        }
+        var evt = await _context.Events.FindAsync([id], ct);
+        if (evt != null)
+            _context.Events.Remove(evt);
     }
 
     public Task SaveSyncStateAsync(SyncState syncState, CancellationToken ct = default)
     {
         var entry = _context.Entry(syncState);
         if (entry.State == EntityState.Detached)
-        {
             _context.SyncStates.Update(syncState);
-        }
         return Task.CompletedTask;
     }
 
@@ -175,7 +167,5 @@ public class CalendarRepository : ICalendarRepository
     }
 
     public async Task<int> SaveChangesAsync(CancellationToken ct = default)
-    {
-        return await _context.SaveChangesAsync(ct);
-    }
+        => await _context.SaveChangesAsync(ct);
 }
