@@ -32,6 +32,7 @@ public class CalendarRepository : ICalendarRepository
     public async Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Calendars
+            .AsNoTracking()
             .Include(c => c.SyncState)
             .FirstOrDefaultAsync(c => c.Id == id, ct);
     }
@@ -42,6 +43,7 @@ public class CalendarRepository : ICalendarRepository
             return null;
 
         return await _context.Calendars
+            .AsNoTracking()
             .FirstOrDefaultAsync(c => c.UserId == CurrentUserId && c.IsShared, ct);
     }
 
@@ -49,6 +51,7 @@ public class CalendarRepository : ICalendarRepository
         Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default)
     {
         return await _context.Events
+            .AsNoTracking()
             .Include(e => e.Members)
             .Where(e => e.OwnerCalendarInfoId == calendarInfoId && e.Start < end && e.End > start)
             .OrderBy(e => e.Start)
@@ -100,6 +103,7 @@ public class CalendarRepository : ICalendarRepository
 
         // Delete all events owned by this calendar (members junction rows cascade via EF)
         var ownedEvents = await _context.Events
+            .Include(e => e.Members)
             .Where(e => e.OwnerCalendarInfoId == calendarInfoId)
             .ToListAsync(ct);
 
@@ -128,10 +132,20 @@ public class CalendarRepository : ICalendarRepository
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
         // Attach member CalendarInfos so EF registers EventMembers join rows correctly.
+        // If a CalendarInfo with the same Id is already tracked by this context, use that
+        // instance instead of attaching — calling Attach on a second instance with the
+        // same key throws InvalidOperationException.
         var trackedMembers = calendarEvent.Members
-            .Select(m => _context.Entry(m).State == EntityState.Detached
-                ? _context.Calendars.Attach(m).Entity
-                : m)
+            .Select(m =>
+            {
+                var entry = _context.Entry(m);
+                if (entry.State != EntityState.Detached)
+                    return m;
+
+                var existing = _context.ChangeTracker.Entries<CalendarInfo>()
+                    .FirstOrDefault(e => e.Entity.Id == m.Id);
+                return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
+            })
             .ToList();
 
         calendarEvent.Members = trackedMembers;
