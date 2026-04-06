@@ -8,10 +8,10 @@ public interface ICalendarRepository
     Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default);
     Task<CalendarInfo?> GetSharedCalendarAsync(CancellationToken ct = default);
 
-    // Returns events owned by calendarInfoId (used by sync service per-calendar).
+    /// <summary>Returns events owned by calendarInfoId (used by sync service per-calendar).</summary>
     Task<IReadOnlyList<CalendarEvent>> GetEventsByOwnerCalendarAsync(Guid calendarInfoId, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
 
-    // Returns all events for the current user (by owner calendar), including Members nav.
+    /// <summary>Returns all events for the current user (by owner calendar), including the Members navigation property.</summary>
     Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
 
     Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default);

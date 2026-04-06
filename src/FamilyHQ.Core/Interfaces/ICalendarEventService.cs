@@ -19,6 +19,7 @@ public interface ICalendarEventService
     /// <summary>
     /// Replaces the full member list for an event. Rewrites the [members:...] tag, updates EventMembers,
     /// and migrates the event to the correct calendar if membership count crosses the 1/shared threshold.
+    /// Throws <see cref="ArgumentException"/> if memberCalendarInfoIds is empty.
     /// </summary>
     Task<CalendarEvent> SetMembersAsync(Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default);
 
