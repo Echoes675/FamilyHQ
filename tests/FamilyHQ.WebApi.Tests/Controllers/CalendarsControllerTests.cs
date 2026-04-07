@@ -23,8 +23,8 @@ public class CalendarsControllerTests
         // Arrange
         var (calendarRepository, systemUnderTest) = CreateSut();
 
-        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000" };
-        var calB = new CalendarInfo { Id = CalBId, DisplayName = "Cal B", Color = "#0000ff" };
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var calB = new CalendarInfo { Id = CalBId, DisplayName = "Cal B", Color = "#0000ff", IsVisible = true };
 
         var evt = new CalendarEvent
         {
@@ -34,7 +34,7 @@ public class CalendarsControllerTests
             Start = new DateTimeOffset(2026, 6, 15, 9, 0, 0, TimeSpan.Zero),
             End = new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.Zero),
             IsAllDay = false,
-            Calendars = new List<CalendarInfo> { calA, calB }
+            Members = new List<CalendarInfo> { calA, calB }
         };
 
         calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
@@ -49,11 +49,12 @@ public class CalendarsControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var monthView = ok.Value.Should().BeOfType<MonthViewDto>().Subject;
         var dayEvents = monthView.Days["2026-06-15"];
-        dayEvents.Should().ContainSingle();
+        // One DTO per visible member lane — 2 members → 2 DTOs, each carrying the full member list
+        dayEvents.Should().HaveCount(2);
         var dto = dayEvents[0].Should().BeOfType<CalendarEventDto>().Subject;
-        dto.Calendars.Should().HaveCount(2);
-        dto.Calendars.Should().Contain(c => c.Id == CalAId);
-        dto.Calendars.Should().Contain(c => c.Id == CalBId);
+        dto.Members.Should().HaveCount(2);
+        dto.Members.Should().Contain(c => c.Id == CalAId);
+        dto.Members.Should().Contain(c => c.Id == CalBId);
     }
 
     [Fact]

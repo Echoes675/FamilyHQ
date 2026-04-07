@@ -34,7 +34,7 @@ public class EventsControllerTests
         var dto = created.Value.Should().BeOfType<CalendarEventDto>().Subject;
         dto.Id.Should().Be(EventId);
         dto.GoogleEventId.Should().Be("gid-1");
-        dto.Calendars.Should().ContainSingle(c => c.Id == CalAId);
+        dto.Members.Should().ContainSingle(c => c.Id == CalAId);
         // No ViewModel fields in response
         dto.Should().BeOfType<CalendarEventDto>();
     }
@@ -67,7 +67,7 @@ public class EventsControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var dto = ok.Value.Should().BeOfType<CalendarEventDto>().Subject;
         dto.Id.Should().Be(EventId);
-        dto.Calendars.Should().ContainSingle(c => c.Id == CalAId);
+        dto.Members.Should().ContainSingle(c => c.Id == CalAId);
     }
 
     [Fact]
@@ -94,36 +94,32 @@ public class EventsControllerTests
         result.Should().BeOfType<NoContentResult>();
     }
 
-    // ── POST /api/events/{eventId}/calendars/{calendarId} ────────────────────
+    // ── PUT /api/events/{eventId}/members ─────────────────────────────────────
 
     [Fact]
-    public async Task AddCalendar_Returns200WithCalendarEventDto()
+    public async Task SetMembers_Returns200WithCalendarEventDto()
     {
         var (service, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com");
         var updatedEvent = Event(EventId, "gid-1", CalAId, calA);
 
-        service.Setup(s => s.AddCalendarAsync(EventId, CalAId, It.IsAny<CancellationToken>()))
+        service.Setup(s => s.SetMembersAsync(EventId, It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(updatedEvent);
 
-        var result = await sut.AddCalendar(EventId, CalAId, CancellationToken.None);
+        var request = new SetEventMembersRequest([CalAId]);
+        var result = await sut.SetMembers(EventId, request, CancellationToken.None);
 
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         ok.Value.Should().BeOfType<CalendarEventDto>();
     }
 
-    // ── DELETE /api/events/{eventId}/calendars/{calendarId} ──────────────────
-
     [Fact]
-    public async Task RemoveCalendar_Returns204()
+    public async Task SetMembers_EmptyList_Returns400()
     {
-        var (service, sut) = CreateSut();
-        service.Setup(s => s.RemoveCalendarAsync(EventId, CalAId, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var result = await sut.RemoveCalendar(EventId, CalAId, CancellationToken.None);
-
-        result.Should().BeOfType<NoContentResult>();
+        var (_, sut) = CreateSut();
+        var request = new SetEventMembersRequest([]);
+        var result = await sut.SetMembers(EventId, request, CancellationToken.None);
+        result.Should().BeOfType<BadRequestObjectResult>();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -137,7 +133,7 @@ public class EventsControllerTests
     private static CalendarEvent Event(Guid id, string googleId, Guid ownerCalId, params CalendarInfo[] cals) =>
         new() { Id = id, GoogleEventId = googleId, Title = "Test",
                 Start = FixedStart, End = FixedEnd,
-                OwnerCalendarInfoId = ownerCalId, Calendars = cals.ToList() };
+                OwnerCalendarInfoId = ownerCalId, Members = cals.ToList() };
 
     private static (Mock<ICalendarEventService>, EventsController) CreateSut()
     {

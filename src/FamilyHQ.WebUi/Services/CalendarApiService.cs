@@ -106,23 +106,6 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<CalendarEventViewModel> AddCalendarToEventAsync(Guid eventId, Guid calendarId, CancellationToken ct = default)
-    {
-        var response = await httpClient.PostAsync($"api/events/{eventId}/calendars/{calendarId}", null, ct);
-        response.EnsureSuccessStatusCode();
-
-        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
-                  ?? throw new InvalidOperationException("API returned empty response for AddCalendarToEventAsync.");
-
-        return MapToViewModel(dto);
-    }
-
-    public async Task RemoveCalendarFromEventAsync(Guid eventId, Guid calendarId, CancellationToken ct = default)
-    {
-        var response = await httpClient.DeleteAsync($"api/events/{eventId}/calendars/{calendarId}", ct);
-        response.EnsureSuccessStatusCode();
-    }
-
     public async Task<CalendarEventViewModel> SetEventMembersAsync(
         Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default)
     {
