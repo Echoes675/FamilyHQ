@@ -244,8 +244,6 @@
                     _eventModel.Location,
                     _eventModel.Description);
                 await CalendarApi.UpdateEventAsync(_eventModel.Id, updateReq);
-                if (_selectedCalendarIds.Count > 0)
-                    await CalendarApi.SetEventMembersAsync(_eventModel.Id, _selectedCalendarIds.ToList());
             }
             else
             {
