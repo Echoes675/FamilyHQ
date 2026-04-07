@@ -60,6 +60,11 @@
                         <label class="form-label">Location (Optional)</label>
                         <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (Optional)</label>
+                        <textarea class="form-input" rows="3" @bind="_eventModel.Description"
+                                  placeholder="Notes, details…"></textarea>
+                    </div>
                     @if (!string.IsNullOrEmpty(_modalError))
                     {
                         <div class="alert alert-danger">@_modalError</div>
@@ -190,6 +195,7 @@
             End = evt.End,
             IsAllDay = evt.IsAllDay,
             Location = evt.Location,
+            Description = evt.Description,
             AllCalendars = evt.AllCalendars.ToList()
         };
         _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
@@ -231,7 +237,7 @@
                     _eventModel.End,
                     _eventModel.IsAllDay,
                     _eventModel.Location,
-                    null);
+                    _eventModel.Description);
                 await CalendarApi.UpdateEventAsync(_eventModel.Id, updateReq);
             }
             else
@@ -243,7 +249,7 @@
                     _eventModel.End,
                     _eventModel.IsAllDay,
                     _eventModel.Location,
-                    null);
+                    _eventModel.Description);
                 await CalendarApi.CreateEventAsync(createReq);
             }
             Close();
@@ -289,6 +295,7 @@
         public DateTimeOffset End { get; set; }
         public bool IsAllDay { get; set; }
         public string? Location { get; set; }
+        public string? Description { get; set; }
         public List<CalendarSummaryViewModel> AllCalendars { get; set; } = new();
     }
 }

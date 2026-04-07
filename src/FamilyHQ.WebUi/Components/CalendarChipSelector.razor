@@ -74,40 +74,30 @@
             return;
         }
 
-        // Edit mode — issue API calls
-        if (CalendarApi is null)
-            return;
+        // Edit mode — replace full member list via SetMembers
+        if (CalendarApi is null) return;
+
+        var newIds = new HashSet<Guid>(SelectedCalendarIds);
 
         if (isActive)
         {
-            if (SelectedCalendarIds.Count <= 1)
-                return; // protected — last chip
-
-            try
-            {
-                await CalendarApi.RemoveCalendarFromEventAsync(EventId.Value, cal.Id);
-                SelectedCalendarIds.Remove(cal.Id);
-                await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
-            {
-                _chipError = $"Could not remove '{cal.DisplayName}'. Please try again.";
-            }
+            if (newIds.Count <= 1) return; // last chip protected
+            newIds.Remove(cal.Id);
         }
         else
         {
-            try
-            {
-                // Return value (refreshed CalendarEventViewModel) not needed here;
-                // SelectedCalendarIds is updated locally to keep the chip list in sync.
-                await CalendarApi.AddCalendarToEventAsync(EventId.Value, cal.Id);
-                SelectedCalendarIds.Add(cal.Id);
-                await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
-            {
-                _chipError = $"Could not add '{cal.DisplayName}'. Please try again.";
-            }
+            newIds.Add(cal.Id);
+        }
+
+        try
+        {
+            await CalendarApi.SetEventMembersAsync(EventId!.Value, newIds.ToList());
+            SelectedCalendarIds = newIds;
+            await SelectedCalendarIdsChanged.InvokeAsync(SelectedCalendarIds);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
+        {
+            _chipError = $"Could not update members. Please try again.";
         }
     }
 }
