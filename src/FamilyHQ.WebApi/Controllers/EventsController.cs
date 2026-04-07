@@ -29,8 +29,12 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
-        var created = await _service.CreateAsync(request, ct);
-        return Created($"/api/events/{created.Id}", MapToDto(created));
+        try
+        {
+            var created = await _service.CreateAsync(request, ct);
+            return Created($"/api/events/{created.Id}", MapToDto(created));
+        }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
     [HttpPut("{eventId:guid}")]
@@ -41,15 +45,23 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
-        var updated = await _service.UpdateAsync(eventId, request, ct);
-        return Ok(MapToDto(updated));
+        try
+        {
+            var updated = await _service.UpdateAsync(eventId, request, ct);
+            return Ok(MapToDto(updated));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
     }
 
     [HttpDelete("{eventId:guid}")]
     public async Task<IActionResult> DeleteEvent(Guid eventId, CancellationToken ct)
     {
-        await _service.DeleteAsync(eventId, ct);
-        return NoContent();
+        try
+        {
+            await _service.DeleteAsync(eventId, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
     }
 
     /// <summary>Replaces the full member list for an event.</summary>
@@ -59,8 +71,13 @@ public class EventsController : ControllerBase
         if (request.MemberCalendarInfoIds == null || request.MemberCalendarInfoIds.Count == 0)
             return BadRequest("At least one member is required.");
 
-        var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
-        return Ok(MapToDto(updated));
+        try
+        {
+            var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
+            return Ok(MapToDto(updated));
+        }
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
     }
 
     private static CalendarEventDto MapToDto(CalendarEvent e) => new(

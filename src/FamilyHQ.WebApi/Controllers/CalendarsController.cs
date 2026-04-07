@@ -42,17 +42,21 @@ public class CalendarsController : ControllerBase
         var nextMonth = firstDay.AddMonths(1);
         var endDay = nextMonth.AddDays(7 - (int)Math.Max(1, (int)nextMonth.DayOfWeek));
 
+        // +14 days: pre-fetches the first two weeks of the next month for scroll-ahead display.
         var events = await _calendarRepository.GetEventsAsync(start: startDay, end: endDay.AddDays(14), ct: ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);
-        // Expose only non-shared (visible) calendars in the month view response
-        var visibleCalendars = allCalendars.Where(c => !c.IsShared && c.IsVisible).ToHashSet();
+        // Compare by Id — Members are AsNoTracking instances, not the same object references.
+        var visibleCalendarIds = allCalendars
+            .Where(c => !c.IsShared && c.IsVisible)
+            .Select(c => c.Id)
+            .ToHashSet();
 
         var monthView = new MonthViewDto { Year = year, Month = month };
 
         foreach (var evt in events)
         {
             // Project event into each assigned visible member's lane
-            var visibleMembers = evt.Members.Where(m => visibleCalendars.Contains(m)).ToList();
+            var visibleMembers = evt.Members.Where(m => visibleCalendarIds.Contains(m.Id)).ToList();
             if (visibleMembers.Count == 0) continue;
 
             foreach (var member in visibleMembers)
