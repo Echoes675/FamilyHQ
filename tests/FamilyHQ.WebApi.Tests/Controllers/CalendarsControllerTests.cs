@@ -49,8 +49,8 @@ public class CalendarsControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var monthView = ok.Value.Should().BeOfType<MonthViewDto>().Subject;
         var dayEvents = monthView.Days["2026-06-15"];
-        // One DTO per visible member lane — 2 members → 2 DTOs, each carrying the full member list
-        dayEvents.Should().HaveCount(2);
+        // One DTO per event (not per member) — client expands into one lane per member
+        dayEvents.Should().HaveCount(1);
         var dto = dayEvents[0].Should().BeOfType<CalendarEventDto>().Subject;
         dto.Members.Should().HaveCount(2);
         dto.Members.Should().Contain(c => c.Id == CalAId);

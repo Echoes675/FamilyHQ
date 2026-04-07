@@ -55,35 +55,48 @@ public class CalendarsController : ControllerBase
 
         foreach (var evt in events)
         {
-            // Project event into each assigned visible member's lane
+            // Determine which members to include in the DTO.
+            // Multi-member events: use the full member list (client expands into one lane per member).
+            // Simple events with no member tags: fall back to the owner calendar as the sole lane.
             var visibleMembers = evt.Members.Where(m => visibleCalendarIds.Contains(m.Id)).ToList();
-            if (visibleMembers.Count == 0) continue;
 
-            foreach (var member in visibleMembers)
+            IReadOnlyList<EventCalendarDto> memberDtos;
+            if (visibleMembers.Count > 0)
             {
-                var dto = new CalendarEventDto(
-                    evt.Id,
-                    evt.GoogleEventId,
-                    evt.Title,
-                    evt.Start,
-                    evt.End,
-                    evt.IsAllDay,
-                    evt.Location,
-                    StripMemberTag(evt.Description),
-                    evt.Members.Select(m => new EventCalendarDto(m.Id, m.DisplayName, m.Color, m.IsShared)).ToList());
+                memberDtos = evt.Members
+                    .Select(m => new EventCalendarDto(m.Id, m.DisplayName, m.Color, m.IsShared))
+                    .ToList();
+            }
+            else
+            {
+                // No member tags — show the event in its owner calendar if visible
+                var owner = allCalendars.FirstOrDefault(c => c.Id == evt.OwnerCalendarInfoId);
+                if (owner == null || !visibleCalendarIds.Contains(owner.Id)) continue;
+                memberDtos = [new EventCalendarDto(owner.Id, owner.DisplayName, owner.Color, owner.IsShared)];
+            }
 
-                var current = evt.Start.Date;
-                var last    = evt.End.AddTicks(-1).Date;
-                int daysProcessed = 0;
-                while (current <= last && daysProcessed < 366)
-                {
-                    var dateKey = current.ToString("yyyy-MM-dd");
-                    if (!monthView.Days.ContainsKey(dateKey))
-                        monthView.Days[dateKey] = [];
-                    monthView.Days[dateKey].Add(dto);
-                    current = current.AddDays(1);
-                    daysProcessed++;
-                }
+            var dto = new CalendarEventDto(
+                evt.Id,
+                evt.GoogleEventId,
+                evt.Title,
+                evt.Start,
+                evt.End,
+                evt.IsAllDay,
+                evt.Location,
+                StripMemberTag(evt.Description),
+                memberDtos);
+
+            var current = evt.Start.Date;
+            var last    = evt.End.AddTicks(-1).Date;
+            int daysProcessed = 0;
+            while (current <= last && daysProcessed < 366)
+            {
+                var dateKey = current.ToString("yyyy-MM-dd");
+                if (!monthView.Days.ContainsKey(dateKey))
+                    monthView.Days[dateKey] = [];
+                monthView.Days[dateKey].Add(dto);
+                current = current.AddDays(1);
+                daysProcessed++;
             }
         }
 
