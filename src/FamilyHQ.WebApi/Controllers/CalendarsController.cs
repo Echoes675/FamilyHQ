@@ -27,7 +27,7 @@ public class CalendarsController : ControllerBase
         var calendars = await _calendarRepository.GetCalendarsAsync(ct);
         var dtos = calendars
             .OrderBy(c => c.DisplayOrder)
-            .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color, c.IsShared));
+            .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible));
         return Ok(dtos);
     }
 
@@ -124,7 +124,7 @@ public class CalendarsController : ControllerBase
         await _calendarRepository.UpdateCalendarAsync(calendar, ct);
         await _calendarRepository.SaveChangesAsync(ct);
 
-        return Ok(new EventCalendarDto(calendar.Id, calendar.DisplayName, calendar.Color, calendar.IsShared));
+        return Ok(new EventCalendarDto(calendar.Id, calendar.DisplayName, calendar.Color, calendar.IsShared, calendar.IsVisible));
     }
 
     /// <summary>Saves the display order for all calendars (agenda column order).</summary>

@@ -17,7 +17,7 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var dtos = await response.Content.ReadFromJsonAsync<List<EventCalendarDto>>(cancellationToken: ct)
                    ?? new List<EventCalendarDto>();
 
-        return dtos.Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared)).ToList();
+        return dtos.Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible)).ToList();
     }
 
     public async Task UpdateCalendarSettingsAsync(Guid calendarId, bool isVisible, bool isShared, CancellationToken ct = default)
