@@ -42,6 +42,10 @@ public class SettingsPage : BasePage
     public ILocator WeatherCancelBtn      => Page.Locator(".settings-btn--ghost");
     public ILocator WeatherSuccessMessage => Page.Locator(".settings-hint").Filter(new() { HasText = "Settings saved." });
 
+    // Calendars tab
+    public ILocator CalendarsTab           => Page.GetByTestId("tab-calendars");
+    public ILocator CalendarSettingsList   => Page.Locator(".calendar-settings-item");
+
     // Display tab — auto-change toggle
     public ILocator AutoThemeToggle => Page.Locator("#auto-theme-toggle");
 
@@ -74,5 +78,35 @@ public class SettingsPage : BasePage
         await WeatherTab.ClickAsync();
         await WeatherEnabledToggle.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    public async Task NavigateToCalendarsTabAsync()
+    {
+        await NavigateAndWaitAsync();
+        await CalendarsTab.ClickAsync();
+        await CalendarSettingsList.First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    public ILocator GetCalendarSettingsItem(string calendarName)
+        => CalendarSettingsList.Filter(new() { HasText = calendarName });
+
+    public async Task HideCalendarAsync(string calendarName)
+    {
+        var checkbox = GetCalendarSettingsItem(calendarName).Locator("input[type='checkbox']");
+        if (await checkbox.IsCheckedAsync())
+            await checkbox.ClickAsync();
+    }
+
+    public async Task<bool> IsCalendarDesignatedSharedAsync(string calendarName)
+    {
+        var radio = GetCalendarSettingsItem(calendarName).Locator("input[type='radio']");
+        return await radio.IsCheckedAsync();
+    }
+
+    public async Task DesignateSharedCalendarAsync(string calendarName)
+    {
+        var radio = GetCalendarSettingsItem(calendarName).Locator("input[type='radio']");
+        await radio.ClickAsync();
     }
 }

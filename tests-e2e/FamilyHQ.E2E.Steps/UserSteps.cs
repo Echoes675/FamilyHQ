@@ -39,7 +39,8 @@ public class UserSteps
             {
                 Id = newId,
                 Summary = c.Summary,
-                BackgroundColor = c.BackgroundColor
+                BackgroundColor = c.BackgroundColor,
+                IsShared = c.IsShared
             });
         }
 
@@ -52,7 +53,8 @@ public class UserSteps
                 Summary = e.Summary,
                 StartTime = e.StartTime,
                 EndTime = e.EndTime,
-                IsAllDay = e.IsAllDay
+                IsAllDay = e.IsAllDay,
+                Description = e.Description
             });
         }
 

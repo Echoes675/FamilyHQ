@@ -60,6 +60,12 @@
                 "Id": "template_multical_personal",
                 "Summary": "Personal Calendar",
                 "BackgroundColor": "#34a853"
+            },
+            {
+                "Id": "template_multical_shared",
+                "Summary": "Family Calendar",
+                "BackgroundColor": "#4285f4",
+                "IsShared": true
             }
         ],
         "Events": []

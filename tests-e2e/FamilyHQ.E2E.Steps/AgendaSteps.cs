@@ -152,6 +152,13 @@ public class AgendaSteps
         visible.Should().BeTrue($"A column header for '{calendarName}' should be visible.");
     }
 
+    [Then(@"I do not see a column header for ""([^""]*)""")]
+    public async Task ThenIDoNotSeeAColumnHeaderFor(string calendarName)
+    {
+        var visible = await _dashboardPage.IsAgendaCalendarHeaderVisibleAsync(calendarName);
+        visible.Should().BeFalse($"A column header for '{calendarName}' should not be visible.");
+    }
+
     [Then(@"I see the event ""([^""]*)"" in the ""([^""]*)"" column for ""([^""]*)""")]
     public async Task ThenISeeTheEventInTheColumnFor(string expectedText, string calendarName, string dateExpr)
     {
