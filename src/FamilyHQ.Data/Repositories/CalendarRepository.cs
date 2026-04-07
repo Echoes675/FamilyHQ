@@ -131,48 +131,66 @@ public class CalendarRepository : ICalendarRepository
 
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Attach member CalendarInfos so EF registers EventMembers join rows correctly.
-        // If a CalendarInfo with the same Id is already tracked by this context, use that
-        // instance instead of attaching — calling Attach on a second instance with the
-        // same key throws InvalidOperationException.
-        var trackedMembers = calendarEvent.Members
-            .Select(m =>
-            {
-                var entry = _context.Entry(m);
-                if (entry.State != EntityState.Detached)
-                    return m;
+        // Add to the context first so EF tracks the entity (State = Added).
+        // Then add resolved member instances to the EF-managed collection so that
+        // EF's skip-navigation change tracker correctly generates the EventMembers
+        // junction rows on SaveChanges.
+        var membersToLink = calendarEvent.Members.ToList();
+        calendarEvent.Members = [];
+        _context.Events.Add(calendarEvent);
 
+        foreach (var m in membersToLink)
+        {
+            var mEntry = _context.Entry(m);
+            CalendarInfo tracked;
+            if (mEntry.State != EntityState.Detached)
+            {
+                tracked = m;
+            }
+            else
+            {
                 var existing = _context.ChangeTracker.Entries<CalendarInfo>()
                     .FirstOrDefault(e => e.Entity.Id == m.Id);
-                return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
-            })
-            .ToList();
+                tracked = existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
+            }
 
-        calendarEvent.Members = trackedMembers;
-        _context.Events.Add(calendarEvent);
+            calendarEvent.Members.Add(tracked);
+        }
+
         return Task.CompletedTask;
     }
 
     public Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Attach member CalendarInfos so EF registers EventMembers join rows correctly.
-        // Members loaded via GetCalendarsAsync are AsNoTracking — attaching them here
-        // prevents EF from treating them as new entities and dropping the junction rows.
-        var trackedMembers = calendarEvent.Members
+        // Resolve member instances: use already-tracked instances where available,
+        // otherwise attach the AsNoTracking instances from the caller.
+        var resolvedMembers = calendarEvent.Members
             .Select(m =>
             {
-                var entry = _context.Entry(m);
-                if (entry.State != EntityState.Detached)
-                    return m;
-
+                var mEntry = _context.Entry(m);
+                if (mEntry.State != EntityState.Detached) return m;
                 var existing = _context.ChangeTracker.Entries<CalendarInfo>()
                     .FirstOrDefault(e => e.Entity.Id == m.Id);
                 return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
             })
             .ToList();
 
-        calendarEvent.Members = trackedMembers;
-        _context.Events.Update(calendarEvent);
+        var entry = _context.Entry(calendarEvent);
+        if (entry.State != EntityState.Detached)
+        {
+            // Entity is already tracked (loaded via GetEventAsync / GetEventByGoogleEventIdAsync).
+            // Use the NavigationEntry API to update the collection so EF's skip-navigation
+            // change detection correctly computes which junction rows to add/remove.
+            // Direct assignment (entity.Members = list) replaces the EF proxy collection with
+            // a plain List, which breaks change detection for many-to-many skip navigations.
+            entry.Collection(e => e.Members).CurrentValue = resolvedMembers;
+        }
+        else
+        {
+            calendarEvent.Members = resolvedMembers;
+            _context.Events.Update(calendarEvent);
+        }
+
         return Task.CompletedTask;
     }
 
