@@ -32,6 +32,7 @@ public class EventsController : ControllerBase
             .Select(e => e.Id)
             .ToListAsync();
 
+        // TODO(Task 16): EventAttendees kept for E2E backward-compat; remove when E2E tests are updated.
         var attendeeEventIds = await _db.EventAttendees
             .Where(a => a.AttendeeCalendarId == calendarId && userEventIds.Contains(a.EventId))
             .Select(a => a.EventId)
@@ -215,10 +216,10 @@ public class EventsController : ControllerBase
     }
 
     [HttpPatch("{eventId}")]
-    public IActionResult PatchEvent(string calendarId, string eventId, [FromBody] SimulatorPatchAttendeesRequest body)
+    public IActionResult PatchEvent(string calendarId, string eventId)
     {
         // No-op: attendee patching is not used in the member-tag model.
-        // Kept to avoid 404s from any E2E tests not yet updated.
+        // Kept to avoid 404s from any E2E tests not yet updated (removed in Task 16).
         _logger.LogInformation("[SIM] PATCH attendees (no-op) for event: {EventId}", eventId);
         return Ok();
     }
