@@ -215,46 +215,12 @@ public class EventsController : ControllerBase
     }
 
     [HttpPatch("{eventId}")]
-    public async Task<IActionResult> PatchEvent(string calendarId, string eventId, [FromBody] SimulatorPatchAttendeesRequest body)
+    public IActionResult PatchEvent(string calendarId, string eventId, [FromBody] SimulatorPatchAttendeesRequest body)
     {
-        _logger.LogInformation("[SIM] PATCH attendees for event: {EventId} on calendar: {CalendarId}", eventId, calendarId);
-        var userId = ExtractUserId(Request);
-
-        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
-
-        if (existing == null)
-        {
-            _logger.LogWarning("[SIM] Event {EventId} not found for patch.", eventId);
-            return NotFound(new
-            {
-                error = new
-                {
-                    code = 404,
-                    message = "Not Found",
-                    errors = new[]
-                    {
-                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
-                    }
-                }
-            });
-        }
-
-        var currentAttendees = await _db.EventAttendees
-            .Where(a => a.EventId == eventId)
-            .ToListAsync();
-        _db.EventAttendees.RemoveRange(currentAttendees);
-
-        var newAttendees = body.Attendees
-            .Where(a => a.Email != existing.CalendarId)
-            .Select(a => new SimulatedEventAttendee { EventId = eventId, AttendeeCalendarId = a.Email })
-            .ToList();
-        _db.EventAttendees.AddRange(newAttendees);
-
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("[SIM] Patched attendees for event: {EventId}", eventId);
-
-        var attendeeCalendarIds = newAttendees.Select(a => a.AttendeeCalendarId).ToList();
-        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+        // No-op: attendee patching is not used in the member-tag model.
+        // Kept to avoid 404s from any E2E tests not yet updated.
+        _logger.LogInformation("[SIM] PATCH attendees (no-op) for event: {EventId}", eventId);
+        return Ok();
     }
 
     [HttpDelete("{eventId}")]
