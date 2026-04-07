@@ -1,4 +1,5 @@
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
 using FamilyHQ.E2E.Data.Models;
 using FamilyHQ.E2E.Steps.Hooks;
@@ -180,6 +181,20 @@ public class UserSteps
         if (!displayedName.Contains(uniqueUsername))
             throw new InvalidOperationException(
                 $"Login verification failed: expected username '{uniqueUsername}' but got '{displayedName}'");
+
+        // If the template designates a shared calendar, configure it in the app while we are
+        // already on the settings page.  This must happen after login/sync so the app has the
+        // user's calendars in its DB; it is transparent to scenarios — no extra Given step needed.
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var sharedCalendar = isolatedTemplate.Calendars.FirstOrDefault(c => c.IsShared);
+        if (sharedCalendar != null)
+        {
+            var settingsPage = new SettingsPage(page);
+            await settingsPage.NavigateToCalendarsTabAsync();
+            await settingsPage.DesignateSharedCalendarAsync(sharedCalendar.Summary);
+            await page.Locator(".alert-success").WaitForAsync(
+                new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        }
 
         // Return to the dashboard so subsequent steps start from a known state.
         await page.GotoAsync(config.BaseUrl + "/");
