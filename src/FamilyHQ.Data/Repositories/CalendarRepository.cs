@@ -131,30 +131,35 @@ public class CalendarRepository : ICalendarRepository
 
     public Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Add to the context first so EF tracks the entity (State = Added).
-        // Then add resolved member instances to the EF-managed collection so that
-        // EF's skip-navigation change tracker correctly generates the EventMembers
-        // junction rows on SaveChanges.
-        var membersToLink = calendarEvent.Members.ToList();
-        calendarEvent.Members = [];
-        _context.Events.Add(calendarEvent);
-
-        foreach (var m in membersToLink)
+        // Resolve members to tracked instances BEFORE calling Events.Add, with
+        // AutoDetectChangesEnabled disabled so that EF does not run DetectChanges
+        // mid-resolution (which would process a partially-filled Members collection
+        // and potentially create incomplete relationship snapshots).
+        //
+        // With auto-detect off, _context.Entry() and ChangeTracker.Entries<>() are
+        // safe to call inside the loop without triggering partial DetectChanges runs.
+        // SaveChanges will call DetectChanges once with the fully-populated collection.
+        var wasAutoDetect = _context.ChangeTracker.AutoDetectChangesEnabled;
+        _context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
         {
-            var mEntry = _context.Entry(m);
-            CalendarInfo tracked;
-            if (mEntry.State != EntityState.Detached)
-            {
-                tracked = m;
-            }
-            else
-            {
-                var existing = _context.ChangeTracker.Entries<CalendarInfo>()
-                    .FirstOrDefault(e => e.Entity.Id == m.Id);
-                tracked = existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
-            }
+            var resolvedMembers = calendarEvent.Members
+                .Select(m =>
+                {
+                    var mEntry = _context.Entry(m);
+                    if (mEntry.State != EntityState.Detached) return m;
+                    var existing = _context.ChangeTracker.Entries<CalendarInfo>()
+                        .FirstOrDefault(e => e.Entity.Id == m.Id);
+                    return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
+                })
+                .ToList();
 
-            calendarEvent.Members.Add(tracked);
+            calendarEvent.Members = resolvedMembers;
+            _context.Events.Add(calendarEvent);
+        }
+        finally
+        {
+            _context.ChangeTracker.AutoDetectChangesEnabled = wasAutoDetect;
         }
 
         return Task.CompletedTask;
@@ -162,33 +167,46 @@ public class CalendarRepository : ICalendarRepository
 
     public Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
-        // Resolve member instances: use already-tracked instances where available,
-        // otherwise attach the AsNoTracking instances from the caller.
-        var resolvedMembers = calendarEvent.Members
-            .Select(m =>
-            {
-                var mEntry = _context.Entry(m);
-                if (mEntry.State != EntityState.Detached) return m;
-                var existing = _context.ChangeTracker.Entries<CalendarInfo>()
-                    .FirstOrDefault(e => e.Entity.Id == m.Id);
-                return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
-            })
-            .ToList();
+        // Resolve member instances with AutoDetectChangesEnabled temporarily disabled.
+        // The caller may have assigned a plain List of AsNoTracking instances to
+        // calendarEvent.Members. Calling _context.Entry() or ChangeTracker.Entries<>()
+        // with auto-detect enabled would trigger DetectChanges while Members still holds
+        // those untracked instances, causing EF to compute an incorrect relationship
+        // diff before we have a chance to set the correctly-tracked collection.
+        var wasAutoDetect = _context.ChangeTracker.AutoDetectChangesEnabled;
+        _context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            var resolvedMembers = calendarEvent.Members
+                .Select(m =>
+                {
+                    var mEntry = _context.Entry(m);
+                    if (mEntry.State != EntityState.Detached) return m;
+                    var existing = _context.ChangeTracker.Entries<CalendarInfo>()
+                        .FirstOrDefault(e => e.Entity.Id == m.Id);
+                    return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
+                })
+                .ToList();
 
-        var entry = _context.Entry(calendarEvent);
-        if (entry.State != EntityState.Detached)
-        {
-            // Entity is already tracked (loaded via GetEventAsync / GetEventByGoogleEventIdAsync).
-            // Use the NavigationEntry API to update the collection so EF's skip-navigation
-            // change detection correctly computes which junction rows to add/remove.
-            // Direct assignment (entity.Members = list) replaces the EF proxy collection with
-            // a plain List, which breaks change detection for many-to-many skip navigations.
-            entry.Collection(e => e.Members).CurrentValue = resolvedMembers;
+            var entry = _context.Entry(calendarEvent);
+            if (entry.State != EntityState.Detached)
+            {
+                // Entity is already tracked (loaded via GetEventAsync / GetEventByGoogleEventIdAsync).
+                // Set the collection via NavigationEntry.CurrentValue so EF's skip-navigation
+                // change detection computes the correct junction-row diff at SaveChanges time.
+                // Direct assignment (entity.Members = list) bypasses EF's tracking and causes
+                // the relationship snapshot to fall out of sync with the actual collection.
+                entry.Collection(e => e.Members).CurrentValue = resolvedMembers;
+            }
+            else
+            {
+                calendarEvent.Members = resolvedMembers;
+                _context.Events.Update(calendarEvent);
+            }
         }
-        else
+        finally
         {
-            calendarEvent.Members = resolvedMembers;
-            _context.Events.Update(calendarEvent);
+            _context.ChangeTracker.AutoDetectChangesEnabled = wasAutoDetect;
         }
 
         return Task.CompletedTask;
