@@ -165,6 +165,7 @@
     private void CancelReorderMode()
     {
         _reorderMode = false;
+        _reorderList.Clear();
     }
 
     private void MoveLeft(int index)
@@ -184,7 +185,11 @@
         var order = _reorderList
             .Select((cal, i) => (cal.Id, DisplayOrder: i))
             .ToDictionary(x => x.Id, x => x.DisplayOrder);
+
+        // Parent is responsible for error handling.
+        // Only exit reorder mode on success — do not move this before the await.
         await OnSaveOrder.InvokeAsync(order);
         _reorderMode = false;
+        _reorderList.Clear();
     }
 }

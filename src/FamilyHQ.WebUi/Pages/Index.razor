@@ -84,6 +84,10 @@
                     OnAddEventForCalendar="OnAgendaAddEventForCalendar"
                     OnDayDrillDown="OnAgendaDrillDown"
                     OnSaveOrder="HandleSaveOrder" />
+        @if (_saveOrderError is not null)
+        {
+            <div class="alert alert-warning">@_saveOrderError</div>
+        }
     }
     }
     }
@@ -252,10 +256,20 @@
 
     private Task OnAgendaDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
+    private string? _saveOrderError;
+
     private async Task HandleSaveOrder(Dictionary<Guid, int> order)
     {
-        await CalendarApi.SaveCalendarOrderAsync(order);
-        _calendars = await CalendarApi.GetCalendarsAsync();
+        _saveOrderError = null;
+        try
+        {
+            await CalendarApi.SaveCalendarOrderAsync(order);
+            _calendars = await CalendarApi.GetCalendarsAsync();
+        }
+        catch
+        {
+            _saveOrderError = "Failed to save column order. Please try again.";
+        }
         StateHasChanged();
     }
 
