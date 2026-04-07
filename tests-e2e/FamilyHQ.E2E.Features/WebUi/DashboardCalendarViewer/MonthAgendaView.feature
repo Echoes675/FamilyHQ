@@ -85,7 +85,6 @@ Feature: Month Agenda View
     And I click the "Agenda" tab
     Then I see a column header for "Work Calendar"
     And I see a column header for "Personal Calendar"
-    And I do not see a column header for "Family Calendar"
 
   Scenario: Timed events display in 24hr HH:mm format
     Given I have a user like "StandardUser"

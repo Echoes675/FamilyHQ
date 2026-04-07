@@ -95,7 +95,12 @@ public class SettingsPage : BasePage
     {
         var checkbox = GetCalendarSettingsItem(calendarName).Locator("input[type='checkbox']");
         if (await checkbox.IsCheckedAsync())
+        {
             await checkbox.ClickAsync();
+            // Wait for the async Blazor save to complete before returning
+            await Page.Locator(".alert-success").WaitForAsync(
+                new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        }
     }
 
     public async Task<bool> IsCalendarDesignatedSharedAsync(string calendarName)

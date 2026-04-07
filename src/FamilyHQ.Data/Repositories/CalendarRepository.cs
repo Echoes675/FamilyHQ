@@ -155,6 +155,23 @@ public class CalendarRepository : ICalendarRepository
 
     public Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
+        // Attach member CalendarInfos so EF registers EventMembers join rows correctly.
+        // Members loaded via GetCalendarsAsync are AsNoTracking — attaching them here
+        // prevents EF from treating them as new entities and dropping the junction rows.
+        var trackedMembers = calendarEvent.Members
+            .Select(m =>
+            {
+                var entry = _context.Entry(m);
+                if (entry.State != EntityState.Detached)
+                    return m;
+
+                var existing = _context.ChangeTracker.Entries<CalendarInfo>()
+                    .FirstOrDefault(e => e.Entity.Id == m.Id);
+                return existing != null ? existing.Entity : _context.Calendars.Attach(m).Entity;
+            })
+            .ToList();
+
+        calendarEvent.Members = trackedMembers;
         _context.Events.Update(calendarEvent);
         return Task.CompletedTask;
     }
