@@ -204,7 +204,12 @@
         StateHasChanged();
     }
 
-    private void Close() => _showEventModal = false;
+    private void Close()
+    {
+        _showEventModal = false;
+        _eventModel = new();
+        _modalError = null;
+    }
 
     private async Task SaveEvent()
     {
