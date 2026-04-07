@@ -117,7 +117,8 @@ public class EventsController : ControllerBase
             StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow),
             EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
-            UserId = userId
+            UserId = userId,
+            ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash")
         };
 
         _db.Events.Add(newEvent);
@@ -162,6 +163,8 @@ public class EventsController : ControllerBase
         existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : existing.StartTime);
         existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
+        if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
+            existing.ContentHash = hash;
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
@@ -298,16 +301,19 @@ public class EventsController : ControllerBase
 
     private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
     {
-        id = e.Id,
-        status = e.IsDeleted ? "cancelled" : "confirmed",
-        summary = e.Summary,
-        location = e.Location,
+        id          = e.Id,
+        status      = e.IsDeleted ? "cancelled" : "confirmed",
+        summary     = e.Summary,
+        location    = e.Location,
         description = e.Description,
         start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
-        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd")   } : new { dateTime = e.EndTime.ToString("O")   },
-        organizer = new { email = e.CalendarId, self = true },
+        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }   : new { dateTime = e.EndTime.ToString("O") },
+        organizer   = new { email = e.CalendarId, self = true },
         attendees = attendeeCalendarIds.Count > 0
             ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+            : null,
+        extendedProperties = e.ContentHash != null
+            ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = e.ContentHash } }
             : null
     };
 
