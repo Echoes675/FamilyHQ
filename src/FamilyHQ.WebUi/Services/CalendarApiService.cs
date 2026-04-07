@@ -17,7 +17,21 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var dtos = await response.Content.ReadFromJsonAsync<List<EventCalendarDto>>(cancellationToken: ct)
                    ?? new List<EventCalendarDto>();
 
-        return dtos.Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color)).ToList();
+        return dtos.Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared)).ToList();
+    }
+
+    public async Task UpdateCalendarSettingsAsync(Guid calendarId, bool isVisible, bool isShared, CancellationToken ct = default)
+    {
+        var response = await httpClient.PutAsJsonAsync(
+            $"api/calendars/{calendarId}/settings",
+            new { isVisible, isShared }, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task SaveCalendarOrderAsync(Dictionary<Guid, int> order, CancellationToken ct = default)
+    {
+        var response = await httpClient.PutAsJsonAsync("api/calendars/order", new { order }, ct);
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<MonthViewModel> GetEventsForMonthAsync(int year, int month, CancellationToken ct = default)
@@ -36,12 +50,12 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
 
             foreach (var evtDto in eventDtos)
             {
-                var allCalendars = evtDto.Calendars
-                    .Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color))
+                var allCalendars = evtDto.Members
+                    .Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared))
                     .ToList();
 
-                // One ViewModel per calendar — grid expansion happens here
-                foreach (var cal in evtDto.Calendars)
+                // One ViewModel per member calendar — grid expansion happens here
+                foreach (var cal in evtDto.Members)
                 {
                     vms.Add(new CalendarEventViewModel(
                         evtDto.Id,
@@ -109,13 +123,26 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<CalendarEventViewModel> SetEventMembersAsync(
+        Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default)
+    {
+        var response = await httpClient.PutAsJsonAsync(
+            $"api/events/{eventId}/members",
+            new { memberCalendarInfoIds }, ct);
+        response.EnsureSuccessStatusCode();
+
+        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("Empty response from SetEventMembersAsync.");
+        return MapToViewModel(dto);
+    }
+
     private static CalendarEventViewModel MapToViewModel(CalendarEventDto dto)
     {
-        var allCalendars = dto.Calendars
-            .Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color))
+        var allCalendars = dto.Members
+            .Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared))
             .ToList();
 
-        var primary = dto.Calendars.FirstOrDefault();
+        var primary = dto.Members.FirstOrDefault();
 
         return new CalendarEventViewModel(
             dto.Id,

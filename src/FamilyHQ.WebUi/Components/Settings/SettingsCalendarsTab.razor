@@ -1,0 +1,106 @@
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.ViewModels
+@inject ICalendarApiService CalendarApi
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">Calendars</h2>
+    <p class="settings-section__description">
+        Control which calendars are shown on the kiosk and designate the shared calendar used for multi-member events.
+    </p>
+
+    @if (_calendars == null)
+    {
+        <div class="spinner" role="status"></div>
+    }
+    else if (_calendars.Count == 0)
+    {
+        <p>No calendars found. Sign in and sync to populate calendars.</p>
+    }
+    else
+    {
+        <ul class="calendar-settings-list">
+            @foreach (var cal in _calendars)
+            {
+                <li class="calendar-settings-item glass-surface">
+                    <span class="cal-color-dot" style="background-color: @(cal.Color ?? "var(--theme-text-muted)");"></span>
+                    <span class="calendar-settings-item__name">@cal.DisplayName</span>
+
+                    <label class="toggle-label" title="Show/hide this calendar">
+                        <input type="checkbox"
+                               checked="@_visibility[cal.Id]"
+                               @onchange="e => OnVisibilityChanged(cal.Id, (bool)e.Value!)" />
+                        Visible
+                    </label>
+
+                    <label class="toggle-label" title="Designate as shared calendar for multi-member events">
+                        <input type="radio"
+                               name="sharedCalendar"
+                               checked="@_shared[cal.Id]"
+                               @onchange="() => OnSharedChanged(cal.Id)" />
+                        Shared
+                    </label>
+                </li>
+            }
+        </ul>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert-error mt-2">@_error</div>
+        }
+        @if (_saved)
+        {
+            <div class="alert-success mt-2">Saved.</div>
+        }
+    }
+</div>
+
+@code {
+    private List<CalendarSummaryViewModel>? _calendars;
+    private Dictionary<Guid, bool> _visibility = new();
+    private Dictionary<Guid, bool> _shared = new();
+    private string? _error;
+    private bool _saved;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _calendars = (await CalendarApi.GetCalendarsAsync()).ToList();
+        foreach (var cal in _calendars)
+        {
+            _visibility[cal.Id] = true;
+            _shared[cal.Id]     = cal.IsShared;
+        }
+    }
+
+    private async Task OnVisibilityChanged(Guid calId, bool isVisible)
+    {
+        _visibility[calId] = isVisible;
+        _saved = false;
+        _error = null;
+        try
+        {
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, isVisible, _shared[calId]);
+            _saved = true;
+        }
+        catch
+        {
+            _error = "Failed to save. Please try again.";
+        }
+    }
+
+    private async Task OnSharedChanged(Guid calId)
+    {
+        foreach (var key in _shared.Keys.ToList()) _shared[key] = false;
+        _shared[calId] = true;
+        _saved = false;
+        _error = null;
+        try
+        {
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, _visibility[calId], true);
+            _saved = true;
+        }
+        catch
+        {
+            _error = "Failed to save. Please try again.";
+        }
+    }
+}

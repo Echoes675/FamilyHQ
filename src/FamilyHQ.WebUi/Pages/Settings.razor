@@ -32,6 +32,12 @@
             <span class="settings-tab__icon" aria-hidden="true">🖥</span>
             <span class="settings-tab__label">Display</span>
         </button>
+        <button class="settings-tab @(_activeTab == "calendars" ? "settings-tab--active" : "")"
+                data-testid="tab-calendars"
+                @onclick='() => SetTab("calendars")'>
+            <span class="settings-tab__icon" aria-hidden="true">📅</span>
+            <span class="settings-tab__label">Calendars</span>
+        </button>
     </nav>
 
     <div class="settings-tab-content">
@@ -48,6 +54,9 @@
                 break;
             case "display":
                 <SettingsDisplayTab />
+                break;
+            case "calendars":
+                <SettingsCalendarsTab />
                 break;
         }
     </div>
