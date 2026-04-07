@@ -12,9 +12,18 @@
         </button>
         <button class="btn btn-ghost" data-testid="agenda-next-month" @onclick="OnNextMonth">Next &#8250;</button>
     </div>
-    <button class="btn btn-primary" style="margin-left: 16px;" data-testid="agenda-create-button" @onclick="() => OnAddEvent.InvokeAsync(DateTime.Today)">
-        + Add Event
-    </button>
+    <div class="flex gap-2" style="margin-left: 16px;">
+        @if (!_reorderMode)
+        {
+            <button class="btn btn-secondary" data-testid="agenda-reorder-btn" @onclick="EnterReorderMode">Reorder</button>
+            <button class="btn btn-primary" data-testid="agenda-create-button" @onclick="() => OnAddEvent.InvokeAsync(DateTime.Today)">+ Add Event</button>
+        }
+        else
+        {
+            <button class="btn btn-secondary" data-testid="agenda-reorder-cancel" @onclick="CancelReorderMode">Cancel</button>
+            <button class="btn btn-primary" data-testid="agenda-reorder-save" @onclick="SaveOrder">Save Order</button>
+        }
+    </div>
 </div>
 
 @* Agenda table *@
@@ -23,11 +32,25 @@
         <thead>
             <tr class="agenda-header-row">
                 <th class="agenda-day-col">Day</th>
-                @foreach (var cal in Calendars)
+                @foreach (var cal in (_reorderMode ? _reorderList : Calendars))
                 {
                     <th data-testid="@($"agenda-calendar-header-{cal.Id}")" class="agenda-cal-col">
+                        @if (_reorderMode)
+                        {
+                            var idx = _reorderList.IndexOf(cal);
+                            <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-left-{cal.Id}")"
+                                    disabled="@(idx == 0)"
+                                    @onclick="() => MoveLeft(idx)">&#8592;</button>
+                        }
                         <span class="cal-color-dot" style="background-color: @(cal.Color ?? "#9e9e9e");"></span>
                         @cal.DisplayName
+                        @if (_reorderMode)
+                        {
+                            var idx = _reorderList.IndexOf(cal);
+                            <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-right-{cal.Id}")"
+                                    disabled="@(idx == _reorderList.Count - 1)"
+                                    @onclick="() => MoveRight(idx)">&#8594;</button>
+                        }
                     </th>
                 }
             </tr>
@@ -64,7 +87,7 @@
                             </div>
                         }
                     </td>
-                    @foreach (var cal in Calendars)
+                    @foreach (var cal in (_reorderMode ? _reorderList : Calendars))
                     {
                         var calDayEvents = (MonthView!.Days.TryGetValue(dateKey, out var dayList)
                                 ? dayList
@@ -128,4 +151,40 @@
     [Parameter] public EventCallback<DateTime> OnAddEvent { get; set; }
     [Parameter] public EventCallback<(DateTime Date, Guid CalendarId)> OnAddEventForCalendar { get; set; }
     [Parameter] public EventCallback<DateTime> OnDayDrillDown { get; set; }
+    [Parameter] public EventCallback<Dictionary<Guid, int>> OnSaveOrder { get; set; }
+
+    private bool _reorderMode;
+    private List<CalendarSummaryViewModel> _reorderList = new();
+
+    private void EnterReorderMode()
+    {
+        _reorderList = Calendars.ToList();
+        _reorderMode = true;
+    }
+
+    private void CancelReorderMode()
+    {
+        _reorderMode = false;
+    }
+
+    private void MoveLeft(int index)
+    {
+        if (index <= 0) return;
+        (_reorderList[index - 1], _reorderList[index]) = (_reorderList[index], _reorderList[index - 1]);
+    }
+
+    private void MoveRight(int index)
+    {
+        if (index >= _reorderList.Count - 1) return;
+        (_reorderList[index], _reorderList[index + 1]) = (_reorderList[index + 1], _reorderList[index]);
+    }
+
+    private async Task SaveOrder()
+    {
+        var order = _reorderList
+            .Select((cal, i) => (cal.Id, DisplayOrder: i))
+            .ToDictionary(x => x.Id, x => x.DisplayOrder);
+        await OnSaveOrder.InvokeAsync(order);
+        _reorderMode = false;
+    }
 }

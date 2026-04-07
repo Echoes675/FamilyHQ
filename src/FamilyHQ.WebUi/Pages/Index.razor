@@ -82,7 +82,8 @@
                     OnOpenQuickJump="OpenQuickJumpModal"
                     OnAddEvent="OnAgendaAddEvent"
                     OnAddEventForCalendar="OnAgendaAddEventForCalendar"
-                    OnDayDrillDown="OnAgendaDrillDown" />
+                    OnDayDrillDown="OnAgendaDrillDown"
+                    OnSaveOrder="HandleSaveOrder" />
     }
     }
     }
@@ -250,6 +251,13 @@
         OpenAddEventModal(args.Date, args.CalendarId);
 
     private Task OnAgendaDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
+
+    private async Task HandleSaveOrder(Dictionary<Guid, int> order)
+    {
+        await CalendarApi.SaveCalendarOrderAsync(order);
+        _calendars = await CalendarApi.GetCalendarsAsync();
+        StateHasChanged();
+    }
 
     private Task OnDayNavigate(DateTime date) => SwitchToView(DashboardView.Day, date);
 
