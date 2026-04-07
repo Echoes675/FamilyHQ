@@ -18,12 +18,14 @@ Feature: Calendar Settings
     And I switch to the Agenda View tab
     Then I do not see a column header for "Work Calendar"
 
-  Scenario: The shared calendar is pre-designated in settings
+  Scenario: Designating a shared calendar marks it as shared
     When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
     Then "Family Calendar" is designated as the shared calendar
 
   Scenario: Only one calendar can be the shared calendar at a time
     When I navigate to the calendar settings tab
     And I designate "Work Calendar" as the shared calendar
-    Then "Work Calendar" is designated as the shared calendar
-    And "Family Calendar" is no longer designated as the shared calendar
+    And I designate "Personal Calendar" as the shared calendar
+    Then "Personal Calendar" is designated as the shared calendar
+    And "Work Calendar" is no longer designated as the shared calendar

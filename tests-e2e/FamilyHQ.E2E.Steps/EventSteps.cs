@@ -206,6 +206,11 @@ public class EventSteps
             ?? throw new InvalidOperationException(
                 $"Original calendar for event '{eventName}' not found in template.");
 
+        if (originalCalendar.IsShared)
+            throw new InvalidOperationException(
+                $"Event '{eventName}' is already on the shared calendar. " +
+                "Ensure it is seeded on an individual member calendar before calling this step.");
+
         // Move the event to the shared calendar and encode both members in the description tag
         existingEvent.CalendarId = sharedCalendar.Id;
         existingEvent.Description = $"[members: {originalCalendar.Summary}, {additionalCalendar.Summary}]";
