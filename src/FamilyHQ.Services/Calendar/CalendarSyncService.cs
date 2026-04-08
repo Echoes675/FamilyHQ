@@ -37,12 +37,19 @@ public class CalendarSyncService(
         // when the shared calendar is synced first, member-tag parsing inside
         // SyncCoreAsync returns an empty member list and the event is persisted with
         // no junction rows.
+        //
+        // New calendars are assigned a sequential DisplayOrder starting from the
+        // current maximum so Day/Agenda column order is deterministic (matches the
+        // order Google returns them) and the user-facing reorder feature still has
+        // unique sort keys to work with.
+        var nextOrder = localCalendars.Count == 0 ? 0 : localCalendars.Max(c => c.DisplayOrder) + 1;
         var calendarIdsToSync = new List<Guid>(googleCalendars.Count);
         foreach (var googleCal in googleCalendars)
         {
             var localCal = localCalendars.FirstOrDefault(c => c.GoogleCalendarId == googleCal.GoogleCalendarId);
             if (localCal == null)
             {
+                googleCal.DisplayOrder = nextOrder++;
                 await calendarRepository.AddCalendarAsync(googleCal, ct);
                 await calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
@@ -55,12 +62,16 @@ public class CalendarSyncService(
         // covers the initial sync after sign-up where the user has not yet picked
         // a shared calendar via settings.  Single-calendar accounts are left alone
         // — there is no "shared" concept for a user with only one calendar.
+        //
+        // GetCalendarsAsync returns no-tracking entities, so we must route the
+        // change through UpdateCalendarAsync/SaveChangesAsync so EF persists it.
         var calendarsAfterAdd = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
         if (calendarsAfterAdd.Count > 1 && !calendarsAfterAdd.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
             var firstCalendar   = calendarsAfterAdd.First(c => c.Id == firstCalendarId);
             firstCalendar.IsShared = true;
+            await calendarRepository.UpdateCalendarAsync(firstCalendar, ct);
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation(
                 "Auto-designated {CalendarName} as the shared calendar (no prior designation).",

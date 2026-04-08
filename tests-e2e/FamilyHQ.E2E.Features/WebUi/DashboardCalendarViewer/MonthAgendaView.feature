@@ -131,8 +131,8 @@ Feature: Month Agenda View
     And the "Work Calendar" calendar is the active calendar
     And I login as the user "MultiCalUser"
     When I view the dashboard
-    And I click the "Agenda" tab
     And I create an event "Planning Session" in calendar "Work Calendar" with description "Sync with Personal Calendar on priorities"
+    And I click the "Agenda" tab
     Then I see the event "Planning Session" in the "Work Calendar" column for "today"
     And I see the event "Planning Session" in the "Personal Calendar" column for "today"
 

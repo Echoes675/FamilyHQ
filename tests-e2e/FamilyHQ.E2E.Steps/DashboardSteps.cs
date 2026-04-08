@@ -260,8 +260,12 @@ public class DashboardSteps
     [Then(@"the day picker shows today's date")]
     public async Task ThenTheDayPickerShowsTodaysDate()
     {
-        var expected = DateTime.Today.ToString("D");
-        var actual = await _dashboardPage.GetDayPickerButtonTextAsync();
+        // The Blazor WASM runtime formats via CultureInfo.CurrentCulture which in the
+        // dev environment is en-GB ("8 April 2026").  Use en-GB explicitly here so the
+        // test's expected value matches regardless of the host machine's culture.
+        var culture  = new System.Globalization.CultureInfo("en-GB");
+        var expected = DateTime.Today.ToString("D", culture);
+        var actual   = await _dashboardPage.GetDayPickerButtonTextAsync();
         actual.Trim().Should().Be(expected,
             "the Day View tab should always default to today when clicked directly.");
     }

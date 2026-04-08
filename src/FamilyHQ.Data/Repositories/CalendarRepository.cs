@@ -22,10 +22,15 @@ public class CalendarRepository : ICalendarRepository
         if (string.IsNullOrEmpty(CurrentUserId))
             return Array.Empty<CalendarInfo>();
 
+        // Secondary sort on Id ensures a deterministic order when multiple
+        // calendars share the same DisplayOrder (e.g. freshly synced accounts
+        // where every calendar defaults to 0).  Without it, Postgres can return
+        // tied rows in heap order, which changes whenever a row is UPDATEd.
         return await _context.Calendars
             .AsNoTracking()
             .Where(c => c.UserId == CurrentUserId)
             .OrderBy(c => c.DisplayOrder)
+            .ThenBy(c => c.Id)
             .ToListAsync(ct);
     }
 
