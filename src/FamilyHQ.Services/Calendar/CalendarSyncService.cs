@@ -31,6 +31,13 @@ public class CalendarSyncService(
         if (obsolete.Count > 0)
             await calendarRepository.SaveChangesAsync(ct);
 
+        // Pass 1: ensure every Google calendar exists in the local DB before syncing
+        // any events.  Multi-member events on the shared calendar reference member
+        // calendars by display name; if those member calendars are not yet present
+        // when the shared calendar is synced first, member-tag parsing inside
+        // SyncCoreAsync returns an empty member list and the event is persisted with
+        // no junction rows.
+        var calendarIdsToSync = new List<Guid>(googleCalendars.Count);
         foreach (var googleCal in googleCalendars)
         {
             var localCal = localCalendars.FirstOrDefault(c => c.GoogleCalendarId == googleCal.GoogleCalendarId);
@@ -40,8 +47,15 @@ public class CalendarSyncService(
                 await calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
             }
+            calendarIdsToSync.Add(localCal.Id);
+        }
 
-            await SyncAsync(localCal.Id, startDate, endDate, ct);
+        // Pass 2: sync events for every calendar.  By the time SyncCoreAsync calls
+        // GetCalendarsAsync (line ~83) the local DB contains all calendars, so
+        // member-tag parsing resolves correctly regardless of iteration order.
+        foreach (var calendarId in calendarIdsToSync)
+        {
+            await SyncAsync(calendarId, startDate, endDate, ct);
         }
 
         logger.LogInformation("Finished syncing all calendars.");
