@@ -297,8 +297,10 @@
                 await LoadMonthDataAsync();
             }
         }
-        else if (view == DashboardView.Day && _selectedDate == default)
+        else if (view == DashboardView.Day)
         {
+            // Clicking the Day View tab without a specific date (i.e. not via a drill-down)
+            // always returns to today — don't preserve a previously drilled-into date.
             _selectedDate = DateTime.Today;
             if (_selectedDate.Month != CurrentMonth.Month || _selectedDate.Year != CurrentMonth.Year)
             {

@@ -250,4 +250,13 @@ public class DashboardSteps
         var visible = await _dashboardPage.IsCurrentTimeLineVisibleAsync();
         visible.Should().BeTrue();
     }
+
+    [Then(@"the day picker shows today's date")]
+    public async Task ThenTheDayPickerShowsTodaysDate()
+    {
+        var expected = DateTime.Today.ToString("D");
+        var actual = await _dashboardPage.GetDayPickerButtonTextAsync();
+        actual.Trim().Should().Be(expected,
+            "the Day View tab should always default to today when clicked directly.");
+    }
 }

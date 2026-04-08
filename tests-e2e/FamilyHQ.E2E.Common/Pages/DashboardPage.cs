@@ -249,13 +249,19 @@ public class DashboardPage : BasePage
         // Click the center date header button on Day view
         await DayPickerBtn.ClickAsync();
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        
+
         await DayPickerInput.FillAsync(dateYyyyMmDd);
         await DayPickerGoBtn.ClickAsync();
-        
+
         // Ensure modal is gone before proceeding
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await WaitForCalendarVisibleAsync();
+    }
+
+    public async Task<string> GetDayPickerButtonTextAsync()
+    {
+        await DayPickerBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        return await DayPickerBtn.InnerTextAsync();
     }
 
     public async Task ClickMoreEventsLinkAsync(string dayDateString)

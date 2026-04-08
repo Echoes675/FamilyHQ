@@ -17,6 +17,14 @@ Feature: Day Calendar View
     When I switch to the Month View tab
     Then I see the Month View Table
 
+  Scenario: Day View tab defaults to today after switching away from a drilled-in date
+    When I view the dashboard
+    And I switch to the Day View tab
+    And I select the date "in 10 days" using the day picker
+    And I switch to the Month View tab
+    And I switch to the Day View tab
+    Then the day picker shows today's date
+
   Scenario: Navigate via "+n more" link
     Given I have a user like "NMoreUser"
     And the "Family Events" calendar is the active calendar
