@@ -85,6 +85,16 @@ Feature: Day Calendar View
     And I switch to the Day View tab
     Then there are 6 calendar columns in the day view
 
+  Scenario: Day view supports reorder mode with edge-hidden arrows
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I switch to the Day View tab
+    And I enter day view reorder mode
+    Then the "Work Calendar" column has no left arrow in day view reorder mode
+    And the "Personal Calendar" column has no right arrow in day view reorder mode
+
   Scenario: Day View displays multi-day events
     Given I have a user like "MultiDayUser"
     And the "Family Events" calendar is the active calendar
