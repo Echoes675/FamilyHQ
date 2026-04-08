@@ -44,7 +44,9 @@ public class SettingsPage : BasePage
 
     // Calendars tab
     public ILocator CalendarsTab           => Page.GetByTestId("tab-calendars");
-    public ILocator CalendarSettingsList   => Page.Locator(".calendar-settings-item");
+    public ILocator CalendarSettingsList   => Page.Locator(".calendar-settings-row");
+    public ILocator SharedChangeConfirmBtn => Page.GetByTestId("shared-change-confirm");
+    public ILocator SharedChangeCancelBtn  => Page.GetByTestId("shared-change-cancel");
 
     // Display tab — auto-change toggle
     public ILocator AutoThemeToggle => Page.Locator("#auto-theme-toggle");
@@ -89,14 +91,21 @@ public class SettingsPage : BasePage
     }
 
     public ILocator GetCalendarSettingsItem(string calendarName)
-        => CalendarSettingsList.Filter(new() { HasText = calendarName });
+        => Page.GetByTestId($"calendar-row-{calendarName}");
+
+    public ILocator GetVisibilityToggle(string calendarName)
+        => Page.GetByTestId($"visibility-toggle-{calendarName}");
+
+    public ILocator GetSharedToggle(string calendarName)
+        => Page.GetByTestId($"shared-toggle-{calendarName}");
 
     public async Task HideCalendarAsync(string calendarName)
     {
-        var checkbox = GetCalendarSettingsItem(calendarName).Locator("input[type='checkbox']");
-        if (await checkbox.IsCheckedAsync())
+        var toggle = GetVisibilityToggle(calendarName);
+        var classes = await toggle.GetAttributeAsync("class") ?? string.Empty;
+        if (classes.Contains("pill-toggle--on"))
         {
-            await checkbox.ClickAsync();
+            await toggle.ClickAsync();
             // Wait for the async Blazor save to complete before returning
             await Page.Locator(".alert-success").WaitForAsync(
                 new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
@@ -105,14 +114,25 @@ public class SettingsPage : BasePage
 
     public async Task<bool> IsCalendarDesignatedSharedAsync(string calendarName)
     {
-        var radio = GetCalendarSettingsItem(calendarName).Locator("input[type='radio']");
-        return await radio.IsCheckedAsync();
+        var toggle = GetSharedToggle(calendarName);
+        var classes = await toggle.GetAttributeAsync("class") ?? string.Empty;
+        return classes.Contains("pill-toggle--on");
     }
 
     public async Task DesignateSharedCalendarAsync(string calendarName)
     {
-        var radio = GetCalendarSettingsItem(calendarName).Locator("input[type='radio']");
-        await radio.ClickAsync();
+        // Already shared? Button is a no-op.
+        if (await IsCalendarDesignatedSharedAsync(calendarName))
+            return;
+
+        await GetSharedToggle(calendarName).ClickAsync();
+        // Confirmation modal appears — confirm the change.
+        await SharedChangeConfirmBtn.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        await SharedChangeConfirmBtn.ClickAsync();
+        // Wait for the save to complete before returning.
+        await Page.Locator(".alert-success").WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
     public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");

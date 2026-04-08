@@ -47,24 +47,29 @@
         <ul class="calendar-settings-list">
             @foreach (var cal in _calendars)
             {
-                <li class="calendar-settings-item glass-surface">
-                    <span class="cal-color-dot" style="background-color: @(cal.Color ?? "var(--theme-text-muted)");"></span>
-                    <span class="calendar-settings-item__name">@cal.DisplayName</span>
+                var isShared = _shared[cal.Id];
+                var isVisible = _visibility[cal.Id];
+                <li class="calendar-settings-row glass-surface" data-testid="@($"calendar-row-{cal.DisplayName}")">
+                    <span class="calendar-settings-row__color" style="background-color: @(cal.Color ?? "var(--theme-text-muted)");"></span>
+                    <span class="calendar-settings-row__name">@cal.DisplayName</span>
 
-                    <label class="toggle-label" title="Show/hide this calendar">
-                        <input type="checkbox"
-                               checked="@_visibility[cal.Id]"
-                               @onchange="e => OnVisibilityChanged(cal.Id, (bool)e.Value!)" />
-                        Visible
-                    </label>
+                    <div class="calendar-settings-row__controls">
+                        <button type="button"
+                                class="@($"pill-toggle {(isVisible ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                data-testid="@($"visibility-toggle-{cal.DisplayName}")"
+                                disabled="@isShared"
+                                title="@(isShared ? "Shared calendars are always hidden" : "Tap to show or hide")"
+                                @onclick="() => OnVisibilityToggleClicked(cal.Id)">
+                            @(isVisible ? "Visible" : "Hidden")
+                        </button>
 
-                    <label class="toggle-label" title="Designate as shared calendar for multi-member events">
-                        <input type="radio"
-                               name="sharedCalendar"
-                               checked="@_shared[cal.Id]"
-                               @onchange="() => OnSharedChanged(cal.Id)" />
-                        Shared
-                    </label>
+                        <button type="button"
+                                class="@($"pill-toggle pill-toggle--shared {(isShared ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                data-testid="@($"shared-toggle-{cal.DisplayName}")"
+                                @onclick="() => RequestSharedChange(cal.Id)">
+                            @(isShared ? "Shared" : "Make Shared")
+                        </button>
+                    </div>
                 </li>
             }
         </ul>
@@ -80,6 +85,34 @@
     }
 </div>
 
+@if (_pendingSharedId.HasValue)
+{
+    <div class="modal-backdrop" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Change Shared Calendar</h5>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        Designate <strong>@_pendingSharedName</strong> as the shared calendar? The current shared calendar will become a regular member calendar.
+                    </p>
+                </div>
+                <div class="modal-footer flex justify-between">
+                    <button type="button"
+                            class="btn btn-secondary"
+                            data-testid="shared-change-cancel"
+                            @onclick="CancelSharedChange">Cancel</button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-testid="shared-change-confirm"
+                            @onclick="ConfirmSharedChange">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private List<CalendarSummaryViewModel>? _calendars;
     private Dictionary<Guid, bool> _visibility = new();
@@ -89,6 +122,8 @@
     private bool _isSyncing;
     private string? _syncMessage;
     private string? _syncError;
+    private Guid? _pendingSharedId;
+    private string? _pendingSharedName;
 
     private async Task TriggerSyncAsync()
     {
@@ -99,12 +134,7 @@
         {
             await CalendarApi.TriggerSyncAsync();
             // Refresh the calendar list so any newly synced calendars appear immediately.
-            _calendars = (await CalendarApi.GetCalendarsAsync()).ToList();
-            foreach (var cal in _calendars)
-            {
-                _visibility[cal.Id] = cal.IsVisible;
-                _shared[cal.Id]     = cal.IsShared;
-            }
+            await LoadCalendarsAsync();
             _syncMessage = "Sync completed.";
         }
         catch
@@ -117,9 +147,13 @@
         }
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync() => LoadCalendarsAsync();
+
+    private async Task LoadCalendarsAsync()
     {
         _calendars = (await CalendarApi.GetCalendarsAsync()).ToList();
+        _visibility.Clear();
+        _shared.Clear();
         foreach (var cal in _calendars)
         {
             _visibility[cal.Id] = cal.IsVisible;
@@ -127,36 +161,90 @@
         }
     }
 
-    private async Task OnVisibilityChanged(Guid calId, bool isVisible)
+    private async Task OnVisibilityToggleClicked(Guid calId)
     {
-        _visibility[calId] = isVisible;
+        // Shared calendars are always hidden; the button is disabled, but
+        // guard here too so a stray programmatic call can't bypass the rule.
+        if (_shared[calId]) return;
+
+        _visibility[calId] = !_visibility[calId];
         _saved = false;
         _error = null;
         try
         {
-            await CalendarApi.UpdateCalendarSettingsAsync(calId, isVisible, _shared[calId]);
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, _visibility[calId], _shared[calId]);
             _saved = true;
         }
         catch
         {
             _error = "Failed to save. Please try again.";
+            // Revert on failure so the UI reflects the real state.
+            _visibility[calId] = !_visibility[calId];
         }
     }
 
-    private async Task OnSharedChanged(Guid calId)
+    private void RequestSharedChange(Guid calId)
     {
-        foreach (var key in _shared.Keys.ToList()) _shared[key] = false;
+        if (_shared[calId]) return; // already shared
+        _pendingSharedId = calId;
+        _pendingSharedName = _calendars?.FirstOrDefault(c => c.Id == calId)?.DisplayName;
+    }
+
+    private void CancelSharedChange()
+    {
+        _pendingSharedId = null;
+        _pendingSharedName = null;
+    }
+
+    private async Task ConfirmSharedChange()
+    {
+        if (!_pendingSharedId.HasValue)
+            return;
+
+        var calId = _pendingSharedId.Value;
+        _pendingSharedId = null;
+        _pendingSharedName = null;
+
+        // Local optimistic state: unset any previously shared calendar and set
+        // the new one. The previously shared calendar becomes a normal member
+        // whose visibility we restore to true.
+        Guid? previousSharedId = null;
+        foreach (var key in _shared.Keys.ToList())
+        {
+            if (_shared[key] && key != calId)
+                previousSharedId = key;
+            _shared[key] = false;
+        }
         _shared[calId] = true;
+
+        // Shared calendar auto-hides.
+        _visibility[calId] = false;
+
+        // Restore visibility on the calendar that was previously shared so it
+        // reappears in the kiosk as a regular member.
+        if (previousSharedId.HasValue)
+            _visibility[previousSharedId.Value] = true;
+
         _saved = false;
         _error = null;
         try
         {
-            await CalendarApi.UpdateCalendarSettingsAsync(calId, _visibility[calId], true);
+            if (previousSharedId.HasValue)
+            {
+                await CalendarApi.UpdateCalendarSettingsAsync(
+                    previousSharedId.Value,
+                    isVisible: true,
+                    isShared: false);
+            }
+
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, isVisible: false, isShared: true);
             _saved = true;
         }
         catch
         {
             _error = "Failed to save. Please try again.";
+            // Reload to resync UI with server state on failure.
+            await LoadCalendarsAsync();
         }
     }
 }

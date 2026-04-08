@@ -91,4 +91,40 @@ public class CalendarSettingsSteps
         await Assertions.Expect(_settingsPage.SyncNowBtn)
             .ToBeVisibleAsync(new() { Timeout = 5000 });
     }
+
+    [When(@"I tap the shared toggle for ""([^""]*)""")]
+    public async Task WhenITapTheSharedToggleFor(string calendarName)
+    {
+        await _settingsPage.GetSharedToggle(calendarName).ClickAsync();
+    }
+
+    [Then(@"I see the shared calendar confirmation prompt")]
+    public async Task ThenISeeTheSharedCalendarConfirmationPrompt()
+    {
+        await Assertions.Expect(_settingsPage.SharedChangeConfirmBtn)
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    [When(@"I cancel the shared calendar confirmation")]
+    public async Task WhenICancelTheSharedCalendarConfirmation()
+    {
+        await _settingsPage.SharedChangeCancelBtn.ClickAsync();
+    }
+
+    [Then(@"the visibility toggle for ""([^""]*)"" is disabled")]
+    public async Task ThenTheVisibilityToggleIsDisabled(string calendarName)
+    {
+        var toggle = _settingsPage.GetVisibilityToggle(calendarName);
+        (await toggle.IsDisabledAsync()).Should().BeTrue(
+            $"The visibility toggle for '{calendarName}' should be disabled because it is the shared calendar.");
+    }
+
+    [Then(@"the visibility toggle for ""([^""]*)"" reads ""([^""]*)""")]
+    public async Task ThenTheVisibilityToggleReads(string calendarName, string expectedText)
+    {
+        var toggle = _settingsPage.GetVisibilityToggle(calendarName);
+        var actualText = (await toggle.InnerTextAsync()).Trim();
+        actualText.Should().Be(expectedText,
+            $"The visibility toggle for '{calendarName}' should read '{expectedText}'.");
+    }
 }

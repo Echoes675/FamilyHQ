@@ -65,3 +65,16 @@ Feature: Calendar Settings
     Then the Sync Now button is visible
     When I click the Sync Now button
     Then I see "Work Calendar" in the calendar settings list
+
+  Scenario: Cancelling the shared calendar confirmation keeps the current shared calendar
+    When I navigate to the calendar settings tab
+    And I tap the shared toggle for "Work Calendar"
+    Then I see the shared calendar confirmation prompt
+    When I cancel the shared calendar confirmation
+    Then "Family Calendar" is designated as the shared calendar
+    And "Work Calendar" is no longer designated as the shared calendar
+
+  Scenario: Shared calendar is automatically hidden and its visibility toggle is disabled
+    When I navigate to the calendar settings tab
+    Then the visibility toggle for "Family Calendar" is disabled
+    And the visibility toggle for "Family Calendar" reads "Hidden"
