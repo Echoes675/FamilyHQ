@@ -203,6 +203,18 @@ Feature: Month Agenda View
     And I fill in and save the event "New Meeting"
     Then I see the event "New Meeting" in the "Work Calendar" column for "in 3 days"
 
+  # Reorder Scenarios
+
+  Scenario: Reorder mode hides the left arrow on the leftmost calendar and the right arrow on the rightmost calendar
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I click the "Agenda" tab
+    And I enter agenda reorder mode
+    Then the "Work Calendar" column has no left arrow in agenda reorder mode
+    And the "Personal Calendar" column has no right arrow in agenda reorder mode
+
   # Sync Scenarios
 
   Scenario: A newly synced event appears in the correct calendar column

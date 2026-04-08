@@ -282,4 +282,33 @@ public class AgendaSteps
         var active = await _dashboardPage.IsCalendarChipActiveAsync(calendarName);
         active.Should().BeTrue($"The '{calendarName}' chip should be pre-selected in the modal.");
     }
+
+    // ─── Reorder ────────────────────────────────────────────────────────────────
+
+    [When(@"I enter agenda reorder mode")]
+    public async Task WhenIEnterAgendaReorderMode()
+    {
+        await _page.GetByTestId("agenda-reorder-btn").ClickAsync();
+        // Wait for at least one reorder button to be present so we know we're in reorder mode.
+        await _page.Locator("[data-testid^='agenda-reorder-right-']").First
+            .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [Then(@"the ""([^""]*)"" column has no left arrow in agenda reorder mode")]
+    public async Task ThenTheColumnHasNoLeftArrowInAgendaReorderMode(string calendarName)
+    {
+        var calId = await ResolveCalendarIdFromPageAsync(calendarName);
+        var leftArrow = _page.GetByTestId($"agenda-reorder-left-{calId}");
+        (await leftArrow.CountAsync()).Should().Be(0,
+            $"'{calendarName}' is the leftmost column and should not render a left reorder arrow.");
+    }
+
+    [Then(@"the ""([^""]*)"" column has no right arrow in agenda reorder mode")]
+    public async Task ThenTheColumnHasNoRightArrowInAgendaReorderMode(string calendarName)
+    {
+        var calId = await ResolveCalendarIdFromPageAsync(calendarName);
+        var rightArrow = _page.GetByTestId($"agenda-reorder-right-{calId}");
+        (await rightArrow.CountAsync()).Should().Be(0,
+            $"'{calendarName}' is the rightmost column and should not render a right reorder arrow.");
+    }
 }

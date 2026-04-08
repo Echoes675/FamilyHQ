@@ -38,18 +38,22 @@
                         @if (_reorderMode)
                         {
                             var idx = _reorderList.IndexOf(cal);
-                            <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-left-{cal.Id}")"
-                                    disabled="@(idx == 0)"
-                                    @onclick="() => MoveLeft(idx)">&#8592;</button>
+                            @if (idx > 0)
+                            {
+                                <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-left-{cal.Id}")"
+                                        @onclick="() => MoveLeft(idx)">&#8592;</button>
+                            }
                         }
                         <span class="cal-color-dot" style="background-color: @(cal.Color ?? "#9e9e9e");"></span>
                         @cal.DisplayName
                         @if (_reorderMode)
                         {
                             var idx = _reorderList.IndexOf(cal);
-                            <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-right-{cal.Id}")"
-                                    disabled="@(idx == _reorderList.Count - 1)"
-                                    @onclick="() => MoveRight(idx)">&#8594;</button>
+                            @if (idx < _reorderList.Count - 1)
+                            {
+                                <button class="btn btn-ghost btn-sm" data-testid="@($"agenda-reorder-right-{cal.Id}")"
+                                        @onclick="() => MoveRight(idx)">&#8594;</button>
+                            }
                         }
                     </th>
                 }
