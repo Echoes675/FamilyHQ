@@ -166,19 +166,36 @@ public class CalendarRepository : ICalendarRepository
                 resolvedMembers.Add(tracked);
         }
 
-        var entry = _context.Entry(calendarEvent);
-        if (entry.State != EntityState.Detached)
+        // Disable AutoDetectChanges while we resolve the entry and set CurrentValue.
+        // At this point calendarEvent.Members may still hold the AsNoTracking instances
+        // assigned by the caller (e.g. CalendarEventService.SetMembersAsync).  If
+        // _context.Entry(calendarEvent) is called with AutoDetectChanges enabled, EF
+        // runs DetectChanges immediately and processes the stale AsNoTracking collection
+        // against the relationship snapshot.  Setting CurrentValue afterwards does not
+        // reliably override the pending junction-row operations that DetectChanges has
+        // already scheduled, which can silently drop newly-added member relationships.
+        var wasAutoDetect = _context.ChangeTracker.AutoDetectChangesEnabled;
+        _context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
         {
-            // Entity is already tracked (loaded via GetEventAsync / GetEventByGoogleEventIdAsync).
-            // Use NavigationEntry.CurrentValue to update the skip navigation so EF can
-            // correctly diff the relationship snapshot against the new collection at
-            // SaveChanges time and generate the right INSERT/DELETE on EventMembers.
-            entry.Collection(e => e.Members).CurrentValue = resolvedMembers;
+            var entry = _context.Entry(calendarEvent);
+            if (entry.State != EntityState.Detached)
+            {
+                // Entity is already tracked (loaded via GetEventAsync / GetEventByGoogleEventIdAsync).
+                // Use NavigationEntry.CurrentValue to update the skip navigation so EF can
+                // correctly diff the relationship snapshot against the new collection at
+                // SaveChanges time and generate the right INSERT/DELETE on EventMembers.
+                entry.Collection(e => e.Members).CurrentValue = resolvedMembers;
+            }
+            else
+            {
+                calendarEvent.Members = resolvedMembers;
+                _context.Events.Update(calendarEvent);
+            }
         }
-        else
+        finally
         {
-            calendarEvent.Members = resolvedMembers;
-            _context.Events.Update(calendarEvent);
+            _context.ChangeTracker.AutoDetectChangesEnabled = wasAutoDetect;
         }
     }
 
