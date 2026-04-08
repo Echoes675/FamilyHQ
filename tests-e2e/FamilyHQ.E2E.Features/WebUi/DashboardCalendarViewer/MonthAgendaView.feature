@@ -216,14 +216,17 @@ Feature: Month Agenda View
   # Reorder Scenarios
 
   Scenario: Reorder mode hides the left arrow on the leftmost calendar and the right arrow on the rightmost calendar
+    # The simulator orders calendars by Id, so the visible Agenda columns for
+    # MultiCalUser (after filtering out the shared Family Calendar) are Personal,
+    # Work.  The names below reflect that deterministic column order.
     Given I have a user like "MultiCalUser"
     And the "Work Calendar" calendar is the active calendar
     And I login as the user "MultiCalUser"
     When I view the dashboard
     And I click the "Agenda" tab
     And I enter agenda reorder mode
-    Then the "Work Calendar" column has no left arrow in agenda reorder mode
-    And the "Personal Calendar" column has no right arrow in agenda reorder mode
+    Then the "Personal Calendar" column has no left arrow in agenda reorder mode
+    And the "Work Calendar" column has no right arrow in agenda reorder mode
 
   # Sync Scenarios
 

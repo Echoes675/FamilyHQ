@@ -86,14 +86,19 @@ Feature: Day Calendar View
     Then there are 6 calendar columns in the day view
 
   Scenario: Day view supports reorder mode with edge-hidden arrows
+    # The simulator returns calendars ordered by Id, so for MultiCalUser the visible
+    # Day View columns (after the shared Family Calendar is filtered out) are
+    # Personal, Work.  The test asserts that the leftmost column has no left arrow
+    # and the rightmost has no right arrow — specific calendar names are chosen to
+    # match that deterministic order, not the template declaration order.
     Given I have a user like "MultiCalUser"
     And the "Work Calendar" calendar is the active calendar
     And I login as the user "MultiCalUser"
     When I view the dashboard
     And I switch to the Day View tab
     And I enter day view reorder mode
-    Then the "Work Calendar" column has no left arrow in day view reorder mode
-    And the "Personal Calendar" column has no right arrow in day view reorder mode
+    Then the "Personal Calendar" column has no left arrow in day view reorder mode
+    And the "Work Calendar" column has no right arrow in day view reorder mode
 
   Scenario: Day View displays multi-day events
     Given I have a user like "MultiDayUser"
