@@ -1,71 +1,33 @@
-using FamilyHQ.Core.DTOs;
-using FamilyHQ.Core.Interfaces;
-using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Theme;
 using FluentAssertions;
-using Moq;
 
 namespace FamilyHQ.Services.Tests.Theme;
 
 public class LocationServiceTests
 {
-    private static LocationService CreateSut(ILocationSettingRepository repo, HttpClient httpClient)
-        => new(repo, httpClient);
+    private static LocationService CreateSut(HttpClient httpClient) => new(httpClient);
 
     [Fact]
-    public async Task GetEffectiveLocationAsync_ReturnsSavedSetting_WhenPresent()
+    public async Task GetEffectiveLocationAsync_ReturnsAutoDetected_FromIpApi()
     {
-        var saved = new LocationSetting
-        {
-            PlaceName = "Edinburgh, Scotland",
-            Latitude = 55.9533,
-            Longitude = -3.1883,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-        var repoMock = new Mock<ILocationSettingRepository>();
-        repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(saved);
-
-        var sut = CreateSut(repoMock.Object, new HttpClient(new NoOpHandler()));
-
-        var result = await sut.GetEffectiveLocationAsync();
-
-        result.PlaceName.Should().Be("Edinburgh, Scotland");
-        result.Latitude.Should().Be(55.9533);
-        result.IsAutoDetected.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task GetEffectiveLocationAsync_ReturnsAutoDetected_WhenNoSetting()
-    {
-        var repoMock = new Mock<ILocationSettingRepository>();
-        repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
-
-        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
+        var sut = CreateSut(new HttpClient(new FakeIpApiHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
 
         var result = await sut.GetEffectiveLocationAsync();
 
         result.IsAutoDetected.Should().BeTrue();
+        result.PlaceName.Should().Contain("London");
         result.Latitude.Should().NotBe(0);
     }
 
     [Fact]
     public async Task GetEffectiveLocationAsync_ThrowsInvalidOperationException_WhenIpApiStatusFails()
     {
-        var repoMock = new Mock<ILocationSettingRepository>();
-        repoMock.Setup(x => x.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
-
-        var sut = CreateSut(repoMock.Object, new HttpClient(new FakeIpApiFailureHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
+        var sut = CreateSut(new HttpClient(new FakeIpApiFailureHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
 
         var act = () => sut.GetEffectiveLocationAsync();
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*fail*");
-    }
-
-    private class NoOpHandler : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
     }
 
     private class FakeIpApiHandler : HttpMessageHandler

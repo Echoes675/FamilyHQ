@@ -4,14 +4,14 @@ using FamilyHQ.Core.Interfaces;
 
 namespace FamilyHQ.Services.Theme;
 
-public class LocationService(ILocationSettingRepository repo, HttpClient httpClient) : ILocationService
+public class LocationService(HttpClient httpClient) : ILocationService
 {
+    // Resolves a location via IP auto-detection only.  Per-user saved locations
+    // must be looked up via ILocationSettingRepository.GetAsync(userId, ct) by
+    // the caller — including any saved-location behaviour here would require an
+    // unfiltered repo call that leaks across users in parallel-test scenarios.
     public async Task<LocationResult> GetEffectiveLocationAsync(CancellationToken ct = default)
     {
-        var saved = await repo.GetAsync(ct);
-        if (saved is not null)
-            return new LocationResult(saved.PlaceName, saved.Latitude, saved.Longitude, IsAutoDetected: false);
-
         var response = await httpClient.GetFromJsonAsync<IpApiResponse>(
             "json/?fields=status,city,regionName,country,lat,lon", ct)
             ?? throw new InvalidOperationException("IP geolocation returned null response.");
