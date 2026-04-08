@@ -194,6 +194,18 @@ public class SettingsSteps
             "tiles should be read-only when auto-change is enabled");
     }
 
+    [Then(@"the settings tab in position (\d+) is ""([^""]*)""")]
+    public async Task ThenTheSettingsTabInPositionIs(int position, string expectedLabel)
+    {
+        var page = _scenarioContext.Get<IPage>();
+        // 1-based position over the settings tab strip
+        var tab = page.Locator($".settings-tab-strip .settings-tab:nth-child({position})");
+        await Assertions.Expect(tab).ToBeVisibleAsync(new() { Timeout = 10000 });
+        var label = await tab.Locator(".settings-tab__label").InnerTextAsync();
+        label.Trim().Should().Be(expectedLabel,
+            $"settings tab in position {position} should be '{expectedLabel}'");
+    }
+
     [Then(@"the ""([^""]*)"" theme tile is selected")]
     public async Task ThenTheThemeTileIsSelected(string themeName)
     {
