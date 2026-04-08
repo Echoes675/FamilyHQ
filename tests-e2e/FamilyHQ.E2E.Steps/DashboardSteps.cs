@@ -124,6 +124,12 @@ public class DashboardSteps
         await _dashboardPage.CreateEventInCalendarsAsync(eventName, calendarName1, calendarName2);
     }
 
+    [When(@"I create an event ""([^""]*)"" in calendar ""([^""]*)"" with description ""([^""]*)""")]
+    public async Task WhenICreateAnEventInCalendarWithDescription(string eventName, string calendarName, string description)
+    {
+        await _dashboardPage.CreateEventWithDescriptionInCalendarAsync(eventName, description, calendarName);
+    }
+
     [When(@"I open the event ""([^""]*)"" for editing")]
     public async Task WhenIOpenTheEventForEditing(string eventName)
     {

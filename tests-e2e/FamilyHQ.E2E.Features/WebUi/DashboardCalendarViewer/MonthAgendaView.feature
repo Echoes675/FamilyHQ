@@ -126,6 +126,16 @@ Feature: Month Agenda View
     Then I see the event "Team Meeting" in the "Work Calendar" column for "tomorrow"
     And I see the event "Team Meeting" in the "Personal Calendar" column for "tomorrow"
 
+  Scenario: Member names in the description add additional calendars automatically
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I click the "Agenda" tab
+    And I create an event "Planning Session" in calendar "Work Calendar" with description "Sync with Personal Calendar on priorities"
+    Then I see the event "Planning Session" in the "Work Calendar" column for "today"
+    And I see the event "Planning Session" in the "Personal Calendar" column for "today"
+
   Scenario: All six calendar column headers are visible in the agenda view
     Given I have a user like "SixCalUser"
     And the "Work Calendar" calendar is the active calendar

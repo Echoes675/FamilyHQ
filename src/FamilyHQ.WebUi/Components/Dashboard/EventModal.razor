@@ -1,3 +1,4 @@
+@using System.Text.RegularExpressions
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Services
 @inject ICalendarApiService CalendarApi
@@ -164,6 +165,24 @@
         }
     }
 
+    private IEnumerable<Guid> DetectMemberIdsInDescription(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return Array.Empty<Guid>();
+
+        // Match whole-word, case-insensitive. Unknown names are skipped.
+        // Only selectable calendars (non-shared, non-hidden) are candidates — mentioning the
+        // shared calendar name in the description should not tag the event with the shared
+        // calendar as a member, since shared is the routing target, not a member.
+        var matched = new List<Guid>();
+        foreach (var cal in SelectableCalendars)
+        {
+            if (Regex.IsMatch(description, $@"\b{Regex.Escape(cal.DisplayName)}\b", RegexOptions.IgnoreCase))
+                matched.Add(cal.Id);
+        }
+        return matched;
+    }
+
     private void SyncEndDateIfNeeded()
     {
         if (_eventModel.End < _eventModel.Start)
@@ -228,7 +247,17 @@
             _modalError = "Title is required.";
             return;
         }
-        if (_selectedCalendarIds.Count == 0)
+
+        // Merge pill selection with any member names detected in the description.
+        // The description is the source of truth for extra members — pills are additive.
+        // Unknown names in the description are ignored.
+        var effectiveMemberIds = new HashSet<Guid>(_selectedCalendarIds);
+        foreach (var id in DetectMemberIdsInDescription(_eventModel.Description))
+        {
+            effectiveMemberIds.Add(id);
+        }
+
+        if (effectiveMemberIds.Count == 0)
         {
             _modalError = "Please select at least one calendar.";
             return;
@@ -256,7 +285,7 @@
             else
             {
                 var createReq = new CreateEventRequest(
-                    _selectedCalendarIds.ToList(),
+                    effectiveMemberIds.ToList(),
                     _eventModel.Title,
                     _eventModel.Start,
                     _eventModel.End,
