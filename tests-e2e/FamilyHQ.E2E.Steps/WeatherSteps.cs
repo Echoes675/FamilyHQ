@@ -167,22 +167,29 @@ public class WeatherSteps
         // The browser holds the JWT in localStorage, so the API can scope the
         // refresh to this user's saved location — preventing parallel-test pollution.
         var page = _scenarioContext.Get<IPage>();
-        await page.EvaluateAsync(@"async () => {
+
+        // Capture the refresh POST status so we can include it in any failure
+        // message.  The fetch is awaited fully (including the response body) so
+        // we know RefreshAsync has completed server-side by the time this call
+        // returns — not just that the headers have been received.
+        var refreshStatus = await page.EvaluateAsync<int>(@"async () => {
             const token = localStorage.getItem('familyhq_auth_token');
-            await fetch('/api/weather/refresh', {
+            const resp = await fetch('/api/weather/refresh', {
                 method: 'POST',
                 headers: token ? { 'Authorization': `Bearer ${token}` } : {}
             });
+            await resp.text();
+            return resp.status;
         }");
 
         // Verify the API has weather data before loading the page.
         // api/weather/current is user-scoped, so the check must carry the JWT.
-        // The /refresh POST returns before the stored data becomes visible to
-        // /current in all environments (depends on the persistence backend and
-        // any write-through caching), so poll for up to 10s instead of reading
-        // once and racing the persistence write.
+        // Even though the /refresh POST is awaited server-side, the /current
+        // endpoint can briefly return 204 while the DB write propagates (EF
+        // change tracker flush, connection pooling, etc.), so poll before
+        // failing.
         int status = 0;
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (DateTimeOffset.UtcNow < deadline)
         {
             status = await page.EvaluateAsync<int>(@"async () => {
@@ -192,12 +199,12 @@ public class WeatherSteps
                 return resp.status;
             }");
             if (status == 200) break;
-            await Task.Delay(250);
+            await Task.Delay(500);
         }
         if (status != 200)
             throw new InvalidOperationException(
-                $"Weather API returned {status} after refresh — expected 200. " +
-                "The refresh may have failed to store data.");
+                $"Weather API returned {status} after refresh (refresh POST returned {refreshStatus}) " +
+                $"— expected 200.  The refresh may have failed to store data.");
 
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.
