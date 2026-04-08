@@ -206,9 +206,13 @@ public class CalendarSyncServiceTests
         // Act
         await systemUnderTest.SyncAllAsync(startDate, endDate);
 
-        // Assert — the first calendar in the Google list is designated shared
-        workCal.IsShared.Should().BeTrue("the first calendar should become shared when no prior designation exists");
-        personalCal.IsShared.Should().BeFalse();
+        // Assert — MarkCalendarAsSharedAsync is invoked for the first calendar and
+        // not for the second.  We can't assert on the entity itself because the real
+        // repository mutates the tracked entity via FindAsync; the mock doesn't have
+        // a DbContext, so wiring a callback to mutate workCal would just re-test our
+        // own test setup.  Verifying the interaction is the cleaner contract.
+        calendarRepository.Verify(r => r.MarkCalendarAsSharedAsync(workCal.Id, It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepository.Verify(r => r.MarkCalendarAsSharedAsync(personalCal.Id, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

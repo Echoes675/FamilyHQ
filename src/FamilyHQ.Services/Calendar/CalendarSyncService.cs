@@ -79,19 +79,21 @@ public class CalendarSyncService(
         // a shared calendar via settings.  Single-calendar accounts are left alone
         // — there is no "shared" concept for a user with only one calendar.
         //
-        // GetCalendarsAsync returns no-tracking entities, so we must route the
-        // change through UpdateCalendarAsync/SaveChangesAsync so EF persists it.
+        // Pass 2 above FindAsync-ed tracked CalendarInfo instances for every
+        // calendar that had events synced.  Re-querying via GetCalendarsAsync here
+        // would return AsNoTracking duplicates and `_context.Calendars.Update(...)`
+        // would collide with the already-tracked instance.  MarkCalendarAsSharedAsync
+        // mutates the tracked entity in place to avoid that conflict.
         var calendarsAfterSync = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
         if (calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
-            var firstCalendar   = calendarsAfterSync.First(c => c.Id == firstCalendarId);
-            firstCalendar.IsShared = true;
-            await calendarRepository.UpdateCalendarAsync(firstCalendar, ct);
+            var firstCalendarName = calendarsAfterSync.First(c => c.Id == firstCalendarId).DisplayName;
+            await calendarRepository.MarkCalendarAsSharedAsync(firstCalendarId, ct);
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation(
                 "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
-                firstCalendar.DisplayName);
+                firstCalendarName);
         }
 
         logger.LogInformation("Finished syncing all calendars.");

@@ -22,6 +22,16 @@ public interface ICalendarRepository
     Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default);
     Task UpdateCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
 
+    /// <summary>
+    /// Marks the calendar with the given id as shared in-place on the tracked entity.
+    /// Intended for callers that may have other CalendarInfo instances already tracked
+    /// in the same DbContext (e.g. sync loops that FindAsync tracked members during
+    /// event persistence).  Avoids the tracking conflict that <c>UpdateCalendarAsync</c>
+    /// triggers when called with an AsNoTracking instance whose primary key is already
+    /// represented in the change tracker.
+    /// </summary>
+    Task MarkCalendarAsSharedAsync(Guid calendarInfoId, CancellationToken ct = default);
+
     Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
     Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
     Task DeleteEventAsync(Guid id, CancellationToken ct = default);

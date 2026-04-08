@@ -134,6 +134,19 @@ public class CalendarRepository : ICalendarRepository
         return Task.CompletedTask;
     }
 
+    public async Task MarkCalendarAsSharedAsync(Guid calendarInfoId, CancellationToken ct = default)
+    {
+        // FindAsync hits the identity map first — if the calendar is already tracked
+        // from an earlier Add/FindAsync in this scope (sync service Pass 1 attaches
+        // every calendar; AddEventAsync/UpdateEventAsync re-FindAsync tracked members)
+        // we reuse that tracked instance.  Mutating it in-place lets EF's DetectChanges
+        // schedule a simple IsShared update without colliding with an AsNoTracking
+        // duplicate already in the tracker.
+        var tracked = await _context.Calendars.FindAsync([calendarInfoId], ct);
+        if (tracked != null)
+            tracked.IsShared = true;
+    }
+
     public async Task AddEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
     {
         // Resolve member CalendarInfos to properly-tracked instances via FindAsync.
