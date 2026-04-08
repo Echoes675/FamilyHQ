@@ -164,6 +164,134 @@ public class CalendarSyncServiceTests
         client.Verify(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task SyncAllAsync_WhenMultipleCalendarsAndNoShared_AutoDesignatesFirstAsShared()
+    {
+        // Arrange
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
+
+        var workCal = new CalendarInfo
+        {
+            Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            GoogleCalendarId = "work@group.calendar.google.com",
+            DisplayName = "Work",
+            IsShared = false
+        };
+        var personalCal = new CalendarInfo
+        {
+            Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            GoogleCalendarId = "personal@group.calendar.google.com",
+            DisplayName = "Personal",
+            IsShared = false
+        };
+
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, personalCal });
+
+        // Simulate repository state: both calendars already persisted (returned both passes)
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, personalCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                id == workCal.Id ? workCal : personalCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        // Act
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
+
+        // Assert — the first calendar in the Google list is designated shared
+        workCal.IsShared.Should().BeTrue("the first calendar should become shared when no prior designation exists");
+        personalCal.IsShared.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SyncAllAsync_WhenSingleCalendarAndNoShared_DoesNotDesignateShared()
+    {
+        // Arrange
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
+
+        var soloCal = new CalendarInfo
+        {
+            Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            GoogleCalendarId = "solo@group.calendar.google.com",
+            DisplayName = "Solo",
+            IsShared = false
+        };
+
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { soloCal });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { soloCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(soloCal.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(soloCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(soloCal.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        client.Setup(c => c.GetEventsAsync(soloCal.GoogleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(soloCal.Id, startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        // Act
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
+
+        // Assert — single-calendar account has no shared concept
+        soloCal.IsShared.Should().BeFalse("a user with only one calendar should not have a shared calendar designation");
+    }
+
+    [Fact]
+    public async Task SyncAllAsync_WhenSharedAlreadyDesignated_DoesNotOverwrite()
+    {
+        // Arrange
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
+
+        var workCal = new CalendarInfo
+        {
+            Id = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            GoogleCalendarId = "work@group.calendar.google.com",
+            DisplayName = "Work",
+            IsShared = false
+        };
+        var familyCal = new CalendarInfo
+        {
+            Id = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            GoogleCalendarId = "family@group.calendar.google.com",
+            DisplayName = "Family",
+            IsShared = true // already designated
+        };
+
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                id == workCal.Id ? workCal : familyCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        // Act
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
+
+        // Assert — existing shared designation is preserved
+        workCal.IsShared.Should().BeFalse("the non-shared calendar should remain non-shared");
+        familyCal.IsShared.Should().BeTrue("the already-designated shared calendar should be preserved");
+    }
+
     // ── Member-tag sync tests ─────────────────────────────────────────────────
 
     [Fact]

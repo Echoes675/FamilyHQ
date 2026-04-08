@@ -50,6 +50,23 @@ public class CalendarSyncService(
             calendarIdsToSync.Add(localCal.Id);
         }
 
+        // First-login default: if the user has more than one calendar but none is
+        // designated as shared, auto-designate the first calendar as shared.  This
+        // covers the initial sync after sign-up where the user has not yet picked
+        // a shared calendar via settings.  Single-calendar accounts are left alone
+        // — there is no "shared" concept for a user with only one calendar.
+        var calendarsAfterAdd = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
+        if (calendarsAfterAdd.Count > 1 && !calendarsAfterAdd.Any(c => c.IsShared))
+        {
+            var firstCalendarId = calendarIdsToSync.First();
+            var firstCalendar   = calendarsAfterAdd.First(c => c.Id == firstCalendarId);
+            firstCalendar.IsShared = true;
+            await calendarRepository.SaveChangesAsync(ct);
+            logger.LogInformation(
+                "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
+                firstCalendar.DisplayName);
+        }
+
         // Pass 2: sync events for every calendar.  By the time SyncCoreAsync calls
         // GetCalendarsAsync (line ~83) the local DB contains all calendars, so
         // member-tag parsing resolves correctly regardless of iteration order.

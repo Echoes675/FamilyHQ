@@ -47,3 +47,15 @@ Feature: Calendar Settings
     Then I see the event modal
     And the "Work Calendar" chip is available in the modal
     And the "Personal Calendar" chip is not available in the modal
+
+  Scenario: On first login a multi-calendar user automatically has the first calendar designated as shared
+    Given I have a user like "AutoDesignateUser"
+    And I login as the user "AutoDesignateUser"
+    When I navigate to the calendar settings tab
+    Then "Primary Calendar" is designated as the shared calendar
+
+  Scenario: Single-calendar accounts have no shared calendar designated
+    Given I have a user like "SoloUser"
+    And I login as the user "SoloUser"
+    When I navigate to the calendar settings tab
+    Then "Only Calendar" is no longer designated as the shared calendar
