@@ -260,14 +260,23 @@ public class DashboardSteps
     [Then(@"the day picker shows today's date")]
     public async Task ThenTheDayPickerShowsTodaysDate()
     {
-        // The Blazor WASM runtime formats via CultureInfo.CurrentCulture which in the
-        // dev environment is en-GB ("8 April 2026").  Use en-GB explicitly here so the
-        // test's expected value matches regardless of the host machine's culture.
-        var culture  = new System.Globalization.CultureInfo("en-GB");
-        var expected = DateTime.Today.ToString("D", culture);
-        var actual   = await _dashboardPage.GetDayPickerButtonTextAsync();
-        actual.Trim().Should().Be(expected,
-            "the Day View tab should always default to today when clicked directly.");
+        // Blazor WASM formats via CurrentCulture backed by the browser's ICU data, which
+        // for en-GB produces "Wednesday, 8 April 2026".  Server-side .NET on Linux (the CI
+        // runner) uses a different ICU build whose en-GB LongDatePattern omits the comma
+        // ("Wednesday 8 April 2026").  Rather than reproduce the browser's exact format,
+        // assert on the semantic content: weekday name, day number, month name and year.
+        var today   = DateTime.Today;
+        var actual  = (await _dashboardPage.GetDayPickerButtonTextAsync()).Trim();
+        var culture = new System.Globalization.CultureInfo("en-GB");
+
+        actual.Should().Contain(today.ToString("dddd", culture),
+            "the day picker should include today's weekday name.");
+        actual.Should().Contain(today.Day.ToString(),
+            "the day picker should include today's day-of-month.");
+        actual.Should().Contain(today.ToString("MMMM", culture),
+            "the day picker should include the current month name.");
+        actual.Should().Contain(today.Year.ToString(),
+            "the day picker should include the current year.");
     }
 
     [When(@"I enter day view reorder mode")]
