@@ -147,8 +147,23 @@ public class CalendarRepository : ICalendarRepository
                 resolvedMembers.Add(tracked);
         }
 
-        calendarEvent.Members = resolvedMembers;
-        _context.Events.Add(calendarEvent);
+        // Disable AutoDetectChanges around the Add call.  In the sync loop multiple
+        // events are added before SaveChanges; with AutoDetect on, _context.Events.Add
+        // triggers DetectChanges across the whole tracker for each event, which can
+        // process AsNoTracking instances still referenced by other events' Members
+        // navigations and produce incomplete junction-row state.  A single DetectChanges
+        // at SaveChanges time, with all events fully resolved, is the safe path.
+        var wasAutoDetect = _context.ChangeTracker.AutoDetectChangesEnabled;
+        _context.ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            calendarEvent.Members = resolvedMembers;
+            _context.Events.Add(calendarEvent);
+        }
+        finally
+        {
+            _context.ChangeTracker.AutoDetectChangesEnabled = wasAutoDetect;
+        }
     }
 
     public async Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
