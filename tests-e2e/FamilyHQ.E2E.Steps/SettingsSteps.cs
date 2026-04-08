@@ -106,10 +106,12 @@ public class SettingsSteps
     [Then(@"I see the location pill displaying ""([^""]*)""")]
     public async Task ThenISeeTheLocationPillDisplaying(string placeName)
     {
-        await _settingsPage.LocationPill.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        var text = await _settingsPage.LocationPill.InnerTextAsync();
-        text.Should().Contain(placeName);
+        // The pill is visible both before and after the save (pre-save it shows the
+        // auto-detected city).  A one-shot InnerTextAsync() read races the post-save
+        // re-render, so use Playwright's auto-retrying assertion to poll for the new
+        // text.
+        await Assertions.Expect(_settingsPage.LocationPill)
+            .ToContainTextAsync(placeName, new() { Timeout = 30000 });
     }
 
     [Then(@"I see the ""([^""]*)"" badge on the location pill")]

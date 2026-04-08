@@ -177,13 +177,23 @@ public class WeatherSteps
 
         // Verify the API has weather data before loading the page.
         // api/weather/current is user-scoped, so the check must carry the JWT.
-        // If this returns 204 NoContent, the refresh didn't store data.
-        var status = await page.EvaluateAsync<int>(@"async () => {
-            const token = localStorage.getItem('familyhq_auth_token');
-            const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-            const resp = await fetch('/api/weather/current', { headers });
-            return resp.status;
-        }");
+        // The /refresh POST returns before the stored data becomes visible to
+        // /current in all environments (depends on the persistence backend and
+        // any write-through caching), so poll for up to 10s instead of reading
+        // once and racing the persistence write.
+        int status = 0;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            status = await page.EvaluateAsync<int>(@"async () => {
+                const token = localStorage.getItem('familyhq_auth_token');
+                const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+                const resp = await fetch('/api/weather/current', { headers });
+                return resp.status;
+            }");
+            if (status == 200) break;
+            await Task.Delay(250);
+        }
         if (status != 200)
             throw new InvalidOperationException(
                 $"Weather API returned {status} after refresh — expected 200. " +
