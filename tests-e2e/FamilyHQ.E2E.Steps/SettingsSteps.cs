@@ -115,8 +115,12 @@ public class SettingsSteps
     [Then(@"I see the ""([^""]*)"" badge on the location pill")]
     public async Task ThenISeeTheBadgeOnTheLocationPill(string badgeText)
     {
-        var text = await _settingsPage.LocationPillBadge.InnerTextAsync();
-        text.Trim().Should().Be(badgeText);
+        // The badge text transitions from "Auto" to "Saved" after the save request
+        // completes and Blazor re-renders.  Use Playwright's auto-retrying assertion so
+        // we poll for the expected text instead of reading InnerTextAsync once and
+        // racing the re-render.
+        await Assertions.Expect(_settingsPage.LocationPillBadge)
+            .ToHaveTextAsync(badgeText, new() { Timeout = 10000 });
     }
 
     [Then(@"I see the Morning theme tile with a time")]
