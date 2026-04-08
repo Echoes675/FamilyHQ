@@ -57,6 +57,22 @@ public class CalendarSyncService(
             calendarIdsToSync.Add(localCal.Id);
         }
 
+        // Pass 2: sync events for every calendar.  By the time SyncCoreAsync calls
+        // GetCalendarsAsync (line ~83) the local DB contains all calendars, so
+        // member-tag parsing resolves correctly regardless of iteration order.
+        //
+        // Auto-designation of the shared calendar is deliberately deferred until
+        // AFTER this loop.  SyncCoreAsync's memberless-event fallback adds the
+        // owning calendar to the Members list only when `!calendar.IsShared`.  If
+        // we designated the first calendar as shared before syncing its events,
+        // every event with no member tags would be persisted with Members=[] and
+        // then get stranded off the dashboard once the user picks a different
+        // shared calendar in settings.
+        foreach (var calendarId in calendarIdsToSync)
+        {
+            await SyncAsync(calendarId, startDate, endDate, ct);
+        }
+
         // First-login default: if the user has more than one calendar but none is
         // designated as shared, auto-designate the first calendar as shared.  This
         // covers the initial sync after sign-up where the user has not yet picked
@@ -65,25 +81,17 @@ public class CalendarSyncService(
         //
         // GetCalendarsAsync returns no-tracking entities, so we must route the
         // change through UpdateCalendarAsync/SaveChangesAsync so EF persists it.
-        var calendarsAfterAdd = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
-        if (calendarsAfterAdd.Count > 1 && !calendarsAfterAdd.Any(c => c.IsShared))
+        var calendarsAfterSync = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
+        if (calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
-            var firstCalendar   = calendarsAfterAdd.First(c => c.Id == firstCalendarId);
+            var firstCalendar   = calendarsAfterSync.First(c => c.Id == firstCalendarId);
             firstCalendar.IsShared = true;
             await calendarRepository.UpdateCalendarAsync(firstCalendar, ct);
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation(
                 "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
                 firstCalendar.DisplayName);
-        }
-
-        // Pass 2: sync events for every calendar.  By the time SyncCoreAsync calls
-        // GetCalendarsAsync (line ~83) the local DB contains all calendars, so
-        // member-tag parsing resolves correctly regardless of iteration order.
-        foreach (var calendarId in calendarIdsToSync)
-        {
-            await SyncAsync(calendarId, startDate, endDate, ct);
         }
 
         logger.LogInformation("Finished syncing all calendars.");
