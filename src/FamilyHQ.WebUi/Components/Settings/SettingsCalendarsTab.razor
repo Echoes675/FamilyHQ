@@ -8,6 +8,32 @@
         Control which calendars are shown on the kiosk and designate the shared calendar used for multi-member events.
     </p>
 
+    <div class="settings-section__actions mb-3">
+        <button type="button"
+                class="btn btn-secondary"
+                data-testid="sync-now-btn"
+                @onclick="TriggerSyncAsync"
+                disabled="@_isSyncing">
+            @if (_isSyncing)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Syncing…</span>
+            }
+            else
+            {
+                <span>Sync Now</span>
+            }
+        </button>
+        @if (!string.IsNullOrEmpty(_syncMessage))
+        {
+            <span class="alert-success ml-2">@_syncMessage</span>
+        }
+        @if (!string.IsNullOrEmpty(_syncError))
+        {
+            <span class="alert-error ml-2">@_syncError</span>
+        }
+    </div>
+
     @if (_calendars == null)
     {
         <div class="spinner" role="status"></div>
@@ -60,6 +86,36 @@
     private Dictionary<Guid, bool> _shared = new();
     private string? _error;
     private bool _saved;
+    private bool _isSyncing;
+    private string? _syncMessage;
+    private string? _syncError;
+
+    private async Task TriggerSyncAsync()
+    {
+        _isSyncing = true;
+        _syncMessage = null;
+        _syncError = null;
+        try
+        {
+            await CalendarApi.TriggerSyncAsync();
+            // Refresh the calendar list so any newly synced calendars appear immediately.
+            _calendars = (await CalendarApi.GetCalendarsAsync()).ToList();
+            foreach (var cal in _calendars)
+            {
+                _visibility[cal.Id] = cal.IsVisible;
+                _shared[cal.Id]     = cal.IsShared;
+            }
+            _syncMessage = "Sync completed.";
+        }
+        catch
+        {
+            _syncError = "Sync failed. Please try again.";
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

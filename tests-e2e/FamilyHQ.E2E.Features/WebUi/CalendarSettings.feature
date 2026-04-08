@@ -59,3 +59,9 @@ Feature: Calendar Settings
     And I login as the user "SoloUser"
     When I navigate to the calendar settings tab
     Then "Only Calendar" is no longer designated as the shared calendar
+
+  Scenario: Sync Now button triggers a full calendar sync
+    When I navigate to the calendar settings tab
+    Then the Sync Now button is visible
+    When I click the Sync Now button
+    Then I see "Work Calendar" in the calendar settings list

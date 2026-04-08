@@ -140,4 +140,10 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             primary?.Color,
             allCalendars);
     }
+
+    public async Task TriggerSyncAsync(CancellationToken ct = default)
+    {
+        var response = await httpClient.PostAsync("api/sync/trigger", content: null, ct);
+        response.EnsureSuccessStatusCode();
+    }
 }

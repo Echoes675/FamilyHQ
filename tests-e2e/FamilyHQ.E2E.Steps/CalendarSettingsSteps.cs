@@ -78,4 +78,17 @@ public class CalendarSettingsSteps
         (await chip.CountAsync()).Should().Be(0,
             $"The '{calendarName}' chip should not be selectable in the event modal.");
     }
+
+    [When(@"I click the Sync Now button")]
+    public async Task WhenIClickTheSyncNowButton()
+    {
+        await _settingsPage.ClickSyncNowAsync();
+    }
+
+    [Then(@"the Sync Now button is visible")]
+    public async Task ThenTheSyncNowButtonIsVisible()
+    {
+        await Assertions.Expect(_settingsPage.SyncNowBtn)
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
 }

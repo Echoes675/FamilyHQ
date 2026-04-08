@@ -114,4 +114,19 @@ public class SettingsPage : BasePage
         var radio = GetCalendarSettingsItem(calendarName).Locator("input[type='radio']");
         await radio.ClickAsync();
     }
+
+    public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");
+
+    public async Task ClickSyncNowAsync()
+    {
+        // The sync call hits POST /api/sync/trigger.  We wait for the response
+        // before checking the success banner so the test doesn't race against
+        // Blazor's state update.
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/sync/trigger") && r.Status == 200,
+            new() { Timeout = 30000 });
+
+        await SyncNowBtn.ClickAsync();
+        await responseTask;
+    }
 }
