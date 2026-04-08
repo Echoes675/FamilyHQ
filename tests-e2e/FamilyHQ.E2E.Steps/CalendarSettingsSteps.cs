@@ -9,10 +9,12 @@ namespace FamilyHQ.E2E.Steps;
 public class CalendarSettingsSteps
 {
     private readonly SettingsPage _settingsPage;
+    private readonly IPage _page;
 
     public CalendarSettingsSteps(ScenarioContext scenarioContext)
     {
-        _settingsPage = new SettingsPage(scenarioContext.Get<IPage>());
+        _page = scenarioContext.Get<IPage>();
+        _settingsPage = new SettingsPage(_page);
     }
 
     [When(@"I navigate to the calendar settings tab")]
@@ -60,5 +62,20 @@ public class CalendarSettingsSteps
     {
         var isShared = await _settingsPage.IsCalendarDesignatedSharedAsync(calendarName);
         isShared.Should().BeFalse($"'{calendarName}' should not be designated as the shared calendar.");
+    }
+
+    [Then(@"the ""([^""]*)"" chip is available in the modal")]
+    public async Task ThenTheChipIsAvailableInTheModal(string calendarName)
+    {
+        var chip = _page.Locator(".modal-content .chip").Filter(new() { HasText = calendarName });
+        await Assertions.Expect(chip).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    [Then(@"the ""([^""]*)"" chip is not available in the modal")]
+    public async Task ThenTheChipIsNotAvailableInTheModal(string calendarName)
+    {
+        var chip = _page.Locator(".modal-content .chip").Filter(new() { HasText = calendarName });
+        (await chip.CountAsync()).Should().Be(0,
+            $"The '{calendarName}' chip should not be selectable in the event modal.");
     }
 }

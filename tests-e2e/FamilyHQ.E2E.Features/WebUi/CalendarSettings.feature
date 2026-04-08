@@ -29,3 +29,21 @@ Feature: Calendar Settings
     And I designate "Personal Calendar" as the shared calendar
     Then "Personal Calendar" is designated as the shared calendar
     And "Work Calendar" is no longer designated as the shared calendar
+
+  Scenario: Shared calendar is not selectable as a pill in the event modal
+    When I view the dashboard
+    And I click the "Agenda" tab
+    And I tap the agenda create button
+    Then I see the event modal
+    And the "Work Calendar" chip is available in the modal
+    And the "Personal Calendar" chip is available in the modal
+    And the "Family Calendar" chip is not available in the modal
+
+  Scenario: Hidden calendar is not selectable as a pill in the event modal
+    When I hide the "Personal Calendar" in calendar settings
+    And I view the dashboard
+    And I click the "Agenda" tab
+    And I tap the agenda create button
+    Then I see the event modal
+    And the "Work Calendar" chip is available in the modal
+    And the "Personal Calendar" chip is not available in the modal
