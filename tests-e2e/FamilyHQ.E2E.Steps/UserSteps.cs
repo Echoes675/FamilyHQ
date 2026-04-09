@@ -31,9 +31,16 @@ public class UserSteps
         var isolatedTemplate = new SimulatorConfigurationModel { UserName = uniqueUsername };
         var newCalendarIds = new Dictionary<string, string>();
 
-        foreach (var c in template.Calendars)
+        // Sequential index prefix keeps the alphabetical Id sort aligned with the
+        // template declaration order.  The simulator's /users/me/calendarList
+        // endpoint orders by Id, and the sync service assigns DisplayOrder in the
+        // order calendars are returned, so this chain makes column order, sync
+        // order, and auto-shared-designation all deterministic and matching the
+        // order the test author declared in user_templates.json.
+        for (int i = 0; i < template.Calendars.Count; i++)
         {
-            var newId = "cal_" + Guid.NewGuid().ToString("N");
+            var c = template.Calendars[i];
+            var newId = $"cal_{i:D3}_" + Guid.NewGuid().ToString("N");
             newCalendarIds[c.Id] = newId;
 
             isolatedTemplate.Calendars.Add(new SimulatorCalendarModel
@@ -192,6 +199,12 @@ public class UserSteps
         // If the template designates a shared calendar, configure it in the app while we are
         // already on the settings page.  This must happen after login/sync so the app has the
         // user's calendars in its DB; it is transparent to scenarios — no extra Given step needed.
+        //
+        // DesignateSharedCalendarAsync already waits for the .alert-success banner internally
+        // when it performs a save, and short-circuits without clicking anything when the target
+        // calendar is already shared (e.g. because auto-designation on first sync already picked
+        // it).  A second .alert-success wait here would hang for 10s in that short-circuit path,
+        // so we rely on the method's internal wait instead.
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var sharedCalendar = isolatedTemplate.Calendars.FirstOrDefault(c => c.IsShared);
         if (sharedCalendar != null)
@@ -199,8 +212,6 @@ public class UserSteps
             var settingsPage = new SettingsPage(page);
             await settingsPage.NavigateToCalendarsTabAsync();
             await settingsPage.DesignateSharedCalendarAsync(sharedCalendar.Summary);
-            await page.Locator(".alert-success").WaitForAsync(
-                new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
         }
 
         // Return to the dashboard so subsequent steps start from a known state.
