@@ -27,11 +27,16 @@ public class WeatherController(
         // A silent skip previously returned 200 with no data written, which
         // caused intermittent E2E flakes where /api/weather/current then
         // returned 204.  Surface skips explicitly so clients fail fast.
+        // The userId is included in the 409 body so that a failing E2E run can
+        // compare the server-observed user against the JWT sub in localStorage
+        // and diagnose whether the refresh call resolved the same identity as
+        // the preceding save-location call.  See the diagnostic plan in
+        // fix/weather-refresh-race for the three-row decision matrix.
         if (result.Outcome == WeatherRefreshOutcome.SkippedWeatherDisabled)
-            return Conflict(new { message = "Weather refresh skipped: weather is disabled for this user." });
+            return Conflict(new { message = "Weather refresh skipped: weather is disabled for this user.", userId });
 
         if (result.Outcome == WeatherRefreshOutcome.SkippedNoLocation)
-            return Conflict(new { message = "Weather refresh skipped: no saved location for this user." });
+            return Conflict(new { message = "Weather refresh skipped: no saved location for this user.", userId });
 
         // Verify the refresh actually produced data that is visible to a
         // subsequent read.  The intermittent failure we are guarding against

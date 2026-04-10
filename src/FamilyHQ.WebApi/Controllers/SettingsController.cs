@@ -90,6 +90,12 @@ public class SettingsController : ControllerBase
         }
 
         var userId = _currentUser.UserId!;
+        // Diagnostic log for fix/weather-refresh-race: pair this with the
+        // userId emitted in WeatherController's 409 body to confirm the save
+        // and the refresh resolved the same identity from the JWT.
+        _logger.LogInformation(
+            "SaveLocation entry: userId={UserId}, placeName={PlaceName}",
+            userId, request.PlaceName);
         await _locationRepo.UpsertAsync(userId, new LocationSetting
         {
             PlaceName = request.PlaceName,

@@ -176,6 +176,52 @@ public class WeatherSteps
         // Re-triggering the refresh from a fresh request reliably resolves it.
         var page = _scenarioContext.Get<IPage>();
 
+        // Diagnostic pre-check for fix/weather-refresh-race: before we hit
+        // /api/weather/refresh, hit /api/settings/location through the same
+        // browser-context fetch path with the same JWT.  If the server's
+        // SettingsController (which shares ICurrentUserService with
+        // WeatherController) can see the saved row under this JWT's sub, it
+        // returns isAutoDetected=false.  If not, it returns isAutoDetected=true
+        // (auto-detect fallback) or 404.  The answer tells us, on a failing
+        // run, whether the refresh skip is caused by:
+        //   - auth drift (different sub resolved on save vs refresh), or
+        //   - a save that never persisted for this JWT's sub, or
+        //   - a server-side bug inside WeatherController/WeatherRefreshService
+        //     that can't find a row SettingsController CAN find.
+        // The pre-check is silent on the happy path — it is only appended to
+        // the failure message below.
+        var preCheck = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const resp = await fetch('/api/settings/location', {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            const body = await resp.text();
+            return {
+                status: resp.status,
+                body,
+                tokenPrefix: token ? token.substring(0, 16) : ''
+            };
+        }");
+        var preCheckStatus = preCheck.GetProperty("status").GetInt32();
+        var preCheckBody = preCheck.GetProperty("body").GetString() ?? string.Empty;
+        var tokenPrefix = preCheck.GetProperty("tokenPrefix").GetString() ?? string.Empty;
+        // Parse isAutoDetected without throwing on malformed bodies — this is
+        // diagnostic-only and must never break the happy path.
+        string preCheckIsAutoDetected = "n/a";
+        if (preCheckStatus == 200 && !string.IsNullOrEmpty(preCheckBody))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(preCheckBody);
+                if (doc.RootElement.TryGetProperty("isAutoDetected", out var el))
+                    preCheckIsAutoDetected = el.GetBoolean().ToString();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                preCheckIsAutoDetected = "parse-error";
+            }
+        }
+
         int status = 0;
         int refreshStatus = 0;
         string refreshBody = string.Empty;
@@ -231,7 +277,10 @@ public class WeatherSteps
             throw new InvalidOperationException(
                 $"Weather API returned {status} after {maxAttempts} refresh attempts " +
                 $"(last refresh POST returned {refreshStatus}) — expected 200.  " +
-                $"Last refresh response body: {refreshBody}");
+                $"Last refresh response body: {refreshBody}  " +
+                $"Pre-refresh GET /api/settings/location: status={preCheckStatus}, " +
+                $"isAutoDetected={preCheckIsAutoDetected}  " +
+                $"Token prefix (first 16 chars): {tokenPrefix}");
 
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.

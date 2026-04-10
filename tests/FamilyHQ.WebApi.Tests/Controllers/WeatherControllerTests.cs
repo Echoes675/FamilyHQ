@@ -48,7 +48,7 @@ public class WeatherControllerTests
     }
 
     [Fact]
-    public async Task Refresh_WhenServiceReportsNoLocation_ReturnsConflict()
+    public async Task Refresh_WhenServiceReportsNoLocation_ReturnsConflictWithUserId()
     {
         // Arrange — an explicit client-initiated refresh with no saved location
         // used to silently return 200.  That masked an intermittent race where
@@ -56,6 +56,10 @@ public class WeatherControllerTests
         // a subsequent refresh call, causing /api/weather/current to return 204
         // for up to 30s and flaking the E2E weather scenarios.  We now surface
         // the skip as 409 Conflict so the client fails fast with a clear reason.
+        //
+        // The 409 body also includes the server-observed userId so a failing
+        // E2E run can compare it against the JWT sub in localStorage and tell
+        // us whether the two requests even resolved the same identity.
         var (sut, _, weatherRefreshServiceMock) = CreateSut(TestUserId);
         weatherRefreshServiceMock
             .Setup(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()))
@@ -65,13 +69,16 @@ public class WeatherControllerTests
         var result = await sut.Refresh(CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<ConflictObjectResult>();
+        var conflict = result.Should().BeOfType<ConflictObjectResult>().Subject;
+        AssertHasUserIdProperty(conflict.Value, TestUserId);
     }
 
     [Fact]
-    public async Task Refresh_WhenServiceReportsWeatherDisabled_ReturnsConflict()
+    public async Task Refresh_WhenServiceReportsWeatherDisabled_ReturnsConflictWithUserId()
     {
-        // Arrange
+        // Arrange — same diagnostic requirement as the no-location case:
+        // surface the server-observed userId in the 409 body so an E2E
+        // failure can identify which user the server saw.
         var (sut, _, weatherRefreshServiceMock) = CreateSut(TestUserId);
         weatherRefreshServiceMock
             .Setup(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()))
@@ -81,7 +88,17 @@ public class WeatherControllerTests
         var result = await sut.Refresh(CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<ConflictObjectResult>();
+        var conflict = result.Should().BeOfType<ConflictObjectResult>().Subject;
+        AssertHasUserIdProperty(conflict.Value, TestUserId);
+    }
+
+    private static void AssertHasUserIdProperty(object? body, string expectedUserId)
+    {
+        body.Should().NotBeNull();
+        var userIdProperty = body!.GetType().GetProperty("userId");
+        userIdProperty.Should().NotBeNull("the 409 body must expose a userId field for E2E diagnostics");
+        var value = userIdProperty!.GetValue(body);
+        value.Should().Be(expectedUserId);
     }
 
     [Fact]
