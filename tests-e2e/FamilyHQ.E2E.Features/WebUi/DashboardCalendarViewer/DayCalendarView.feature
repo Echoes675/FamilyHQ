@@ -17,6 +17,14 @@ Feature: Day Calendar View
     When I switch to the Month View tab
     Then I see the Month View Table
 
+  Scenario: Day View tab defaults to today after switching away from a drilled-in date
+    When I view the dashboard
+    And I switch to the Day View tab
+    And I select the date "in 10 days" using the day picker
+    And I switch to the Month View tab
+    And I switch to the Day View tab
+    Then the day picker shows today's date
+
   Scenario: Navigate via "+n more" link
     Given I have a user like "NMoreUser"
     And the "Family Events" calendar is the active calendar
@@ -76,6 +84,20 @@ Feature: Day Calendar View
     When I view the dashboard
     And I switch to the Day View tab
     Then there are 6 calendar columns in the day view
+
+  Scenario: Day view supports reorder mode with edge-hidden arrows
+    # UserSteps.GivenIHaveAUserLike assigns sequential cal_NNN_ prefixes to calendar
+    # Ids so the simulator's OrderBy(Id) returns them in template-declaration order.
+    # MultiCalUser declares Work, Personal, Family (shared), so after filtering out
+    # the shared Family Calendar the visible Day View columns are [Work, Personal].
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I switch to the Day View tab
+    And I enter day view reorder mode
+    Then the "Work Calendar" column has no left arrow in day view reorder mode
+    And the "Personal Calendar" column has no right arrow in day view reorder mode
 
   Scenario: Day View displays multi-day events
     Given I have a user like "MultiDayUser"

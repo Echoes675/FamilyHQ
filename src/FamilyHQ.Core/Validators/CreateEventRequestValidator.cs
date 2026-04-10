@@ -7,7 +7,7 @@ public class CreateEventRequestValidator : AbstractValidator<CreateEventRequest>
 {
     public CreateEventRequestValidator()
     {
-        RuleFor(x => x.CalendarInfoIds)
+        RuleFor(x => x.MemberCalendarInfoIds)
             .NotNull().WithMessage("At least one calendar is required.")
             .Must(ids => ids != null && ids.Count > 0).WithMessage("At least one calendar is required.")
             .Must(ids => ids == null || ids.All(id => id != Guid.Empty)).WithMessage("Calendar ID must not be empty.")

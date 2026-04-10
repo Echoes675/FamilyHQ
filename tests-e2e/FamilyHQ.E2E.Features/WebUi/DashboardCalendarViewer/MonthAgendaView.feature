@@ -126,6 +126,16 @@ Feature: Month Agenda View
     Then I see the event "Team Meeting" in the "Work Calendar" column for "tomorrow"
     And I see the event "Team Meeting" in the "Personal Calendar" column for "tomorrow"
 
+  Scenario: Member names in the description add additional calendars automatically
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I create an event "Planning Session" in calendar "Work Calendar" with description "Sync with Personal Calendar on priorities"
+    And I click the "Agenda" tab
+    Then I see the event "Planning Session" in the "Work Calendar" column for "today"
+    And I see the event "Planning Session" in the "Personal Calendar" column for "today"
+
   Scenario: All six calendar column headers are visible in the agenda view
     Given I have a user like "SixCalUser"
     And the "Work Calendar" calendar is the active calendar
@@ -202,6 +212,22 @@ Feature: Month Agenda View
     And I tap the empty cell in the "Work Calendar" column for "in 3 days"
     And I fill in and save the event "New Meeting"
     Then I see the event "New Meeting" in the "Work Calendar" column for "in 3 days"
+
+  # Reorder Scenarios
+
+  Scenario: Reorder mode hides the left arrow on the leftmost calendar and the right arrow on the rightmost calendar
+    # UserSteps.GivenIHaveAUserLike assigns sequential cal_NNN_ prefixes to calendar
+    # Ids so the simulator's OrderBy(Id) returns them in template-declaration order.
+    # MultiCalUser declares Work, Personal, Family (shared), so after filtering out
+    # the shared Family Calendar the visible Agenda columns are [Work, Personal].
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I view the dashboard
+    And I click the "Agenda" tab
+    And I enter agenda reorder mode
+    Then the "Work Calendar" column has no left arrow in agenda reorder mode
+    And the "Personal Calendar" column has no right arrow in agenda reorder mode
 
   # Sync Scenarios
 

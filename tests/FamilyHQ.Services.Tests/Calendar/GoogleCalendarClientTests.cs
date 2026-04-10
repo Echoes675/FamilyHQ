@@ -244,7 +244,7 @@ public class GoogleCalendarClientTests
         };
 
         // Act
-        var result = await systemUnderTest.CreateEventAsync("cal1", newEvent);
+        var result = await systemUnderTest.CreateEventAsync("cal1", newEvent, "testhash");
 
         // Assert
         result.GoogleEventId.Should().Be("new-google-event-id");
@@ -289,7 +289,7 @@ public class GoogleCalendarClientTests
         };
 
         // Act
-        var result = await systemUnderTest.UpdateEventAsync("cal1", updatedEvent);
+        var result = await systemUnderTest.UpdateEventAsync("cal1", updatedEvent, "testhash");
 
         // Assert
         result.GoogleEventId.Should().Be("existing-id");

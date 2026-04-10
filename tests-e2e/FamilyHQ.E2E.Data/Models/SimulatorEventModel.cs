@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 namespace FamilyHQ.E2E.Data.Models;
 
@@ -12,9 +11,9 @@ public class SimulatorEventModel
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }
     /// <summary>
-    /// Additional calendar IDs that this event appears in (attendee calendars).
-    /// When non-empty, the Simulator seeds these as EventAttendee rows so that
-    /// the event shows up on each attendee calendar's feed.
+    /// Optional event description. May contain a [members: Name1, Name2] tag
+    /// to designate which member calendars this event appears in when it lives
+    /// on the shared calendar.
     /// </summary>
-    public List<string> AttendeeCalendarIds { get; set; } = new();
+    public string? Description { get; set; }
 }

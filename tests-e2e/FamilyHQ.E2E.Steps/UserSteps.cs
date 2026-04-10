@@ -1,4 +1,5 @@
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
 using FamilyHQ.E2E.Data.Models;
 using FamilyHQ.E2E.Steps.Hooks;
@@ -30,16 +31,24 @@ public class UserSteps
         var isolatedTemplate = new SimulatorConfigurationModel { UserName = uniqueUsername };
         var newCalendarIds = new Dictionary<string, string>();
 
-        foreach (var c in template.Calendars)
+        // Sequential index prefix keeps the alphabetical Id sort aligned with the
+        // template declaration order.  The simulator's /users/me/calendarList
+        // endpoint orders by Id, and the sync service assigns DisplayOrder in the
+        // order calendars are returned, so this chain makes column order, sync
+        // order, and auto-shared-designation all deterministic and matching the
+        // order the test author declared in user_templates.json.
+        for (int i = 0; i < template.Calendars.Count; i++)
         {
-            var newId = "cal_" + Guid.NewGuid().ToString("N");
+            var c = template.Calendars[i];
+            var newId = $"cal_{i:D3}_" + Guid.NewGuid().ToString("N");
             newCalendarIds[c.Id] = newId;
 
             isolatedTemplate.Calendars.Add(new SimulatorCalendarModel
             {
                 Id = newId,
                 Summary = c.Summary,
-                BackgroundColor = c.BackgroundColor
+                BackgroundColor = c.BackgroundColor,
+                IsShared = c.IsShared
             });
         }
 
@@ -52,7 +61,8 @@ public class UserSteps
                 Summary = e.Summary,
                 StartTime = e.StartTime,
                 EndTime = e.EndTime,
-                IsAllDay = e.IsAllDay
+                IsAllDay = e.IsAllDay,
+                Description = e.Description
             });
         }
 
@@ -93,17 +103,21 @@ public class UserSteps
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
         //
-        // Clicking via page.Mouse.ClickAsync(x, y) dispatches events at screen coordinates
-        // rather than tracking a specific element handle. Even if the button is briefly
-        // recreated by a Blazor render, the new element sits at the same screen position and
-        // receives the click — avoiding the element-tracking race entirely.
+        // The click and the OAuth navigation must be retried as a unit.  Blazor can
+        // re-render the login page between the click and the redirect (e.g. when the
+        // dashboard is still transitioning out of a prior user's authenticated state),
+        // causing the click event to be dispatched to a stale element and silently
+        // dropped.  We use a short (15s) navigation timeout so a dropped click surfaces
+        // quickly and the whole click + nav sequence can be retried — rather than
+        // hanging on a single 120s wait.
         //
-        // If Blazor re-authenticates from a stale localStorage token that survives across the
-        // sign-out cycle, the Login button appears briefly (first render) then disappears when
-        // OnInitializedAsync completes with _isAuthenticated=true. We detect this case by
-        // checking whether the Sign Out button appeared, then sign out and retry.
-        float? clickX = null, clickY = null;
-        for (var attempt = 0; attempt < 3 && clickX == null; attempt++)
+        // If Blazor re-authenticates from a stale localStorage token that survives across
+        // the sign-out cycle, the Login button appears briefly (first render) then
+        // disappears when OnInitializedAsync completes with _isAuthenticated=true. We
+        // detect this case by checking whether the Sign Out button appeared, then sign
+        // out and retry.
+        var navigationOk = false;
+        for (var attempt = 0; attempt < 3 && !navigationOk; attempt++)
         {
             // If signed in (from Background login or stale re-auth), sign out first
             if (await dashboardPage.IsSignedInAsync())
@@ -130,32 +144,35 @@ public class UserSteps
                 continue; // sign-out check at top of loop will handle Sign Out state
             }
 
-            // Obtain the button's screen position.
-            // BoundingBoxAsync on a Locator internally waits for the element to be present.
-            // Catch Exception (not PlaywrightException) because the Playwright timeout maps to
-            // System.TimeoutException which does not derive from PlaywrightException.
-            // Use var to avoid naming the BoundingBox type (referenced only transitively here).
+            // Click via the locator so Playwright auto-waits for actionability and
+            // handles brief Blazor re-renders of the button itself.  Catch failures so
+            // the loop can retry rather than throwing out of the method.
             try
             {
-                var box = await loginBtn.BoundingBoxAsync(new() { Timeout = 3000 });
-                if (box != null)
-                {
-                    clickX = box.X + box.Width / 2;
-                    clickY = box.Y + box.Height / 2;
-                }
+                await loginBtn.ClickAsync(new() { Timeout = 5000 });
             }
             catch (Exception)
             {
-                // Button disappeared before we could measure it (Blazor re-auth race).
-                // Loop back; the IsSignedInAsync check will detect Sign Out state.
+                continue;
+            }
+
+            // The click should trigger navigation to the simulator OAuth consent page.
+            // Short timeout: if nav hasn't started within 15s the click was dropped
+            // (Blazor re-rendered mid-dispatch), so reset to / and retry the cycle.
+            try
+            {
+                await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+                navigationOk = true;
+            }
+            catch (TimeoutException)
+            {
+                await page.GotoAsync(config.BaseUrl + "/");
+                await page.WaitForLoadStateAsync(Microsoft.Playwright.LoadState.NetworkIdle);
             }
         }
 
-        if (clickX == null || clickY == null)
-            throw new InvalidOperationException("Login button unavailable after 3 sign-in attempts");
-
-        await page.Mouse.ClickAsync(clickX.Value, clickY.Value);
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 120000 });
+        if (!navigationOk)
+            throw new InvalidOperationException("Login click failed to initiate OAuth navigation after 3 attempts");
 
         // Select the user on the simulator consent screen
         var userSelect = page.Locator("select#selectedUserId");
@@ -178,6 +195,24 @@ public class UserSteps
         if (!displayedName.Contains(uniqueUsername))
             throw new InvalidOperationException(
                 $"Login verification failed: expected username '{uniqueUsername}' but got '{displayedName}'");
+
+        // If the template designates a shared calendar, configure it in the app while we are
+        // already on the settings page.  This must happen after login/sync so the app has the
+        // user's calendars in its DB; it is transparent to scenarios — no extra Given step needed.
+        //
+        // DesignateSharedCalendarAsync already waits for the .alert-success banner internally
+        // when it performs a save, and short-circuits without clicking anything when the target
+        // calendar is already shared (e.g. because auto-designation on first sync already picked
+        // it).  A second .alert-success wait here would hang for 10s in that short-circuit path,
+        // so we rely on the method's internal wait instead.
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var sharedCalendar = isolatedTemplate.Calendars.FirstOrDefault(c => c.IsShared);
+        if (sharedCalendar != null)
+        {
+            var settingsPage = new SettingsPage(page);
+            await settingsPage.NavigateToCalendarsTabAsync();
+            await settingsPage.DesignateSharedCalendarAsync(sharedCalendar.Summary);
+        }
 
         // Return to the dashboard so subsequent steps start from a known state.
         await page.GotoAsync(config.BaseUrl + "/");

@@ -14,4 +14,13 @@ public class GoogleEventRequest
     public GoogleDateTime Start { get; set; } = new();
     [JsonPropertyName("end")]
     public GoogleDateTime End { get; set; } = new();
+
+    [JsonPropertyName("extendedProperties")]
+    public GoogleEventExtendedPropertiesRequest? ExtendedProperties { get; set; }
+
+    public class GoogleEventExtendedPropertiesRequest
+    {
+        [JsonPropertyName("private")]
+        public Dictionary<string, string>? Private { get; set; }
+    }
 }

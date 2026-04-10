@@ -13,13 +13,11 @@ public class CalendarEvent
     public string? Location { get; set; }
     public string? Description { get; set; }
 
-    // FK to the CalendarInfo that is the Google organiser for this event.
-    // Used to select the correct calendarId for events.update, events.move, events.delete.
+    // FK to the CalendarInfo that owns this event in Google (individual or shared calendar).
     public Guid OwnerCalendarInfoId { get; set; }
 
-    // True when Google's organizer.Self = false at sync time. Informational only.
-    public bool IsExternallyOwned { get; set; }
-
-    // Navigation properties
-    public ICollection<CalendarInfo> Calendars { get; set; } = new List<CalendarInfo>();
+    // Family members assigned to this event (for display projection).
+    // For a 1-member event: contains that member's CalendarInfo.
+    // For a shared event: contains all assigned members' CalendarInfo rows.
+    public ICollection<CalendarInfo> Members { get; set; } = new List<CalendarInfo>();
 }

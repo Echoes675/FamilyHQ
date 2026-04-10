@@ -42,12 +42,13 @@ public class AuthenticationSteps
         // This step requires the user to be set up first
         // Use the existing UserSteps to handle this
         var uniqueUsername = _scenarioContext.Get<string>($"UniqueUsername:{userKey}");
-        
+
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
 
         // Navigate to the dashboard
         await page.GotoAsync(config.BaseUrl + "/");
+        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
         // Check if already signed in with the correct user
         if (await _dashboardPage.IsSignedInAsync())
@@ -56,10 +57,51 @@ public class AuthenticationSteps
             return;
         }
 
-        // Need to sign in - click Login to Google and follow the full OAuth redirect chain:
+        // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
-        await page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" }).ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
+        //
+        // The click and OAuth navigation must be retried as a unit. Blazor can re-render
+        // the login page between the click and the redirect, causing the click to be
+        // dispatched to a stale element and silently dropped. A short (15s) per-attempt
+        // navigation timeout surfaces a dropped click quickly so the cycle can retry,
+        // rather than hanging on a single 30s wait that fails the whole scenario.
+        var navigationOk = false;
+        for (var attempt = 0; attempt < 3 && !navigationOk; attempt++)
+        {
+            var loginBtn = page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
+            try
+            {
+                await loginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            try
+            {
+                await loginBtn.ClickAsync(new() { Timeout = 5000 });
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            try
+            {
+                await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+                navigationOk = true;
+            }
+            catch (TimeoutException)
+            {
+                await page.GotoAsync(config.BaseUrl + "/");
+                await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+            }
+        }
+
+        if (!navigationOk)
+            throw new InvalidOperationException("Login click failed to initiate OAuth navigation after 3 attempts");
+
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();
@@ -97,14 +139,43 @@ public class AuthenticationSteps
     public async Task WhenISignInAsTheUser(string userKey)
     {
         var uniqueUsername = _scenarioContext.Get<string>($"UniqueUsername:{userKey}");
-        
+
         var page = _scenarioContext.Get<IPage>();
         var config = ConfigurationLoader.Load();
 
         // Click Login to Google and follow the full OAuth redirect chain:
         // /api/auth/login → simulator consent page → /api/auth/callback → /login-success → /
-        await _dashboardPage.LoginBtn.ClickAsync();
-        await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 30000 });
+        // Retry click + nav as a unit — Blazor can re-render the page between the click
+        // and the redirect, causing the click to be dropped. See GivenIAmSignedInAsTheUser
+        // for the full rationale.
+        var navigationOk = false;
+        for (var attempt = 0; attempt < 3 && !navigationOk; attempt++)
+        {
+            try
+            {
+                await _dashboardPage.LoginBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+                await _dashboardPage.LoginBtn.ClickAsync(new() { Timeout = 5000 });
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            try
+            {
+                await page.WaitForURLAsync(url => url.Contains("/oauth2/auth"), new() { Timeout = 15000 });
+                navigationOk = true;
+            }
+            catch (TimeoutException)
+            {
+                await page.GotoAsync(config.BaseUrl + "/");
+                await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+            }
+        }
+
+        if (!navigationOk)
+            throw new InvalidOperationException("Login click failed to initiate OAuth navigation after 3 attempts");
+
         var userSelect = page.Locator("select#selectedUserId");
         await userSelect.SelectOptionAsync(new SelectOptionValue { Label = uniqueUsername });
         await page.Locator("button[type='submit']").ClickAsync();

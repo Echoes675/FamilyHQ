@@ -32,6 +32,7 @@ public class EventsController : ControllerBase
             .Select(e => e.Id)
             .ToListAsync();
 
+        // TODO(Task 16): EventAttendees kept for E2E backward-compat; remove when E2E tests are updated.
         var attendeeEventIds = await _db.EventAttendees
             .Where(a => a.AttendeeCalendarId == calendarId && userEventIds.Contains(a.EventId))
             .Select(a => a.EventId)
@@ -117,7 +118,8 @@ public class EventsController : ControllerBase
             StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow),
             EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
-            UserId = userId
+            UserId = userId,
+            ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash")
         };
 
         _db.Events.Add(newEvent);
@@ -162,6 +164,8 @@ public class EventsController : ControllerBase
         existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : existing.StartTime);
         existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
+        if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
+            existing.ContentHash = hash;
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
@@ -212,46 +216,12 @@ public class EventsController : ControllerBase
     }
 
     [HttpPatch("{eventId}")]
-    public async Task<IActionResult> PatchEvent(string calendarId, string eventId, [FromBody] SimulatorPatchAttendeesRequest body)
+    public IActionResult PatchEvent(string calendarId, string eventId)
     {
-        _logger.LogInformation("[SIM] PATCH attendees for event: {EventId} on calendar: {CalendarId}", eventId, calendarId);
-        var userId = ExtractUserId(Request);
-
-        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
-
-        if (existing == null)
-        {
-            _logger.LogWarning("[SIM] Event {EventId} not found for patch.", eventId);
-            return NotFound(new
-            {
-                error = new
-                {
-                    code = 404,
-                    message = "Not Found",
-                    errors = new[]
-                    {
-                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
-                    }
-                }
-            });
-        }
-
-        var currentAttendees = await _db.EventAttendees
-            .Where(a => a.EventId == eventId)
-            .ToListAsync();
-        _db.EventAttendees.RemoveRange(currentAttendees);
-
-        var newAttendees = body.Attendees
-            .Where(a => a.Email != existing.CalendarId)
-            .Select(a => new SimulatedEventAttendee { EventId = eventId, AttendeeCalendarId = a.Email })
-            .ToList();
-        _db.EventAttendees.AddRange(newAttendees);
-
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("[SIM] Patched attendees for event: {EventId}", eventId);
-
-        var attendeeCalendarIds = newAttendees.Select(a => a.AttendeeCalendarId).ToList();
-        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+        // No-op: attendee patching is not used in the member-tag model.
+        // Kept to avoid 404s from any E2E tests not yet updated (removed in Task 16).
+        _logger.LogInformation("[SIM] PATCH attendees (no-op) for event: {EventId}", eventId);
+        return Ok();
     }
 
     [HttpDelete("{eventId}")]
@@ -298,16 +268,19 @@ public class EventsController : ControllerBase
 
     private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
     {
-        id = e.Id,
-        status = e.IsDeleted ? "cancelled" : "confirmed",
-        summary = e.Summary,
-        location = e.Location,
+        id          = e.Id,
+        status      = e.IsDeleted ? "cancelled" : "confirmed",
+        summary     = e.Summary,
+        location    = e.Location,
         description = e.Description,
         start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
-        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd")   } : new { dateTime = e.EndTime.ToString("O")   },
-        organizer = new { email = e.CalendarId, self = true },
+        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }   : new { dateTime = e.EndTime.ToString("O") },
+        organizer   = new { email = e.CalendarId, self = true },
         attendees = attendeeCalendarIds.Count > 0
             ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+            : null,
+        extendedProperties = e.ContentHash != null
+            ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = e.ContentHash } }
             : null
     };
 

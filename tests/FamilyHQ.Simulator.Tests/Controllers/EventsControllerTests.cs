@@ -316,53 +316,28 @@ public class EventsControllerTests
         result.Should().BeOfType<NotFoundObjectResult>();
     }
 
-    // ── PatchEvent (new) ──────────────────────────────────────────────────────
+    // ── PatchEvent (no-op) ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task PatchEvent_ReplacesAttendees()
+    public async Task PatchEvent_IsNoOp_Returns200()
     {
-        // Arrange
-        using var db = CreateDb();
-        db.Events.Add(new SimulatedEvent
-            { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
-        db.EventAttendees.Add(new SimulatedEventAttendee
-            { EventId = "evt-1", AttendeeCalendarId = "cal-old" });
-        await db.SaveChangesAsync();
-
-        var sut = CreateSut(db, userId: "alice");
-        var body = new SimulatorPatchAttendeesRequest(
-            new[] { new SimulatorAttendee("cal-new") });
-
-        // Act
-        var result = await sut.PatchEvent("cal-org", "evt-1", body);
-
-        // Assert
-        result.Should().BeOfType<OkObjectResult>();
-        var attendees = await db.EventAttendees.Where(a => a.EventId == "evt-1").ToListAsync();
-        attendees.Should().ContainSingle(a => a.AttendeeCalendarId == "cal-new");
-        attendees.Should().NotContain(a => a.AttendeeCalendarId == "cal-old");
-    }
-
-    [Fact]
-    public async Task PatchEvent_DoesNotAddOrganizerToAttendeesTable()
-    {
-        // Arrange
+        // PatchEvent was made a no-op in the member-tag refactor — the API receives
+        // attendee patches from Google but the new model derives members from the
+        // description tag, so patching attendees has no effect.
         using var db = CreateDb();
         db.Events.Add(new SimulatedEvent
             { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
         await db.SaveChangesAsync();
 
         var sut = CreateSut(db, userId: "alice");
-        var body = new SimulatorPatchAttendeesRequest(
-            new[] { new SimulatorAttendee("cal-org"), new SimulatorAttendee("cal-att") });
 
-        // Act
-        await sut.PatchEvent("cal-org", "evt-1", body);
+        // Act — PatchEvent is synchronous (no-op)
+        var result = sut.PatchEvent("cal-org", "evt-1");
 
-        // Assert
+        // Assert — no-op returns 200 without modifying attendees
+        result.Should().BeOfType<OkResult>();
         var attendees = await db.EventAttendees.Where(a => a.EventId == "evt-1").ToListAsync();
-        attendees.Should().NotContain(a => a.AttendeeCalendarId == "cal-org");
-        attendees.Should().ContainSingle(a => a.AttendeeCalendarId == "cal-att");
+        attendees.Should().BeEmpty();
     }
 
     // ── MoveEvent ─────────────────────────────────────────────────────────────

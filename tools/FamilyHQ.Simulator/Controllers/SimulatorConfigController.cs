@@ -55,6 +55,7 @@ public class SimulatorConfigController : ControllerBase
                 Id = e.Id,
                 CalendarId = e.CalendarId,
                 Summary = e.Summary,
+                Description = e.Description,
                 StartTime = e.StartTime,
                 EndTime = e.EndTime,
                 IsAllDay = e.IsAllDay,

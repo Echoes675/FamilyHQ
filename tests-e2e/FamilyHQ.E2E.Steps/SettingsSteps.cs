@@ -106,17 +106,23 @@ public class SettingsSteps
     [Then(@"I see the location pill displaying ""([^""]*)""")]
     public async Task ThenISeeTheLocationPillDisplaying(string placeName)
     {
-        await _settingsPage.LocationPill.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        var text = await _settingsPage.LocationPill.InnerTextAsync();
-        text.Should().Contain(placeName);
+        // The pill is visible both before and after the save (pre-save it shows the
+        // auto-detected city).  A one-shot InnerTextAsync() read races the post-save
+        // re-render, so use Playwright's auto-retrying assertion to poll for the new
+        // text.
+        await Assertions.Expect(_settingsPage.LocationPill)
+            .ToContainTextAsync(placeName, new() { Timeout = 30000 });
     }
 
     [Then(@"I see the ""([^""]*)"" badge on the location pill")]
     public async Task ThenISeeTheBadgeOnTheLocationPill(string badgeText)
     {
-        var text = await _settingsPage.LocationPillBadge.InnerTextAsync();
-        text.Trim().Should().Be(badgeText);
+        // The badge text transitions from "Auto" to "Saved" after the save request
+        // completes and Blazor re-renders.  Use Playwright's auto-retrying assertion so
+        // we poll for the expected text instead of reading InnerTextAsync once and
+        // racing the re-render.
+        await Assertions.Expect(_settingsPage.LocationPillBadge)
+            .ToHaveTextAsync(badgeText, new() { Timeout = 10000 });
     }
 
     [Then(@"I see the Morning theme tile with a time")]
@@ -186,6 +192,18 @@ public class SettingsSteps
         var classes = await _settingsPage.MorningTile.GetAttributeAsync("class") ?? "";
         classes.Should().Contain("theme-tile--readonly",
             "tiles should be read-only when auto-change is enabled");
+    }
+
+    [Then(@"the settings tab in position (\d+) is ""([^""]*)""")]
+    public async Task ThenTheSettingsTabInPositionIs(int position, string expectedLabel)
+    {
+        var page = _scenarioContext.Get<IPage>();
+        // 1-based position over the settings tab strip
+        var tab = page.Locator($".settings-tab-strip .settings-tab:nth-child({position})");
+        await Assertions.Expect(tab).ToBeVisibleAsync(new() { Timeout = 10000 });
+        var label = await tab.Locator(".settings-tab__label").InnerTextAsync();
+        label.Trim().Should().Be(expectedLabel,
+            $"settings tab in position {position} should be '{expectedLabel}'");
     }
 
     [Then(@"the ""([^""]*)"" theme tile is selected")]

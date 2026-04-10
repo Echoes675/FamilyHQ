@@ -249,13 +249,19 @@ public class DashboardPage : BasePage
         // Click the center date header button on Day view
         await DayPickerBtn.ClickAsync();
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        
+
         await DayPickerInput.FillAsync(dateYyyyMmDd);
         await DayPickerGoBtn.ClickAsync();
-        
+
         // Ensure modal is gone before proceeding
         await DayPickerModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await WaitForCalendarVisibleAsync();
+    }
+
+    public async Task<string> GetDayPickerButtonTextAsync()
+    {
+        await DayPickerBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        return await DayPickerBtn.InnerTextAsync();
     }
 
     public async Task ClickMoreEventsLinkAsync(string dayDateString)
@@ -563,6 +569,40 @@ public class DashboardPage : BasePage
             await chip2.ClickAsync();
             await Assertions.Expect(chip2).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
         }
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Creates an event from the agenda create button with the given title, description,
+    /// and primary calendar pill. Used to exercise description-name parsing behaviour
+    /// where additional member names in the description are auto-detected.
+    /// </summary>
+    public async Task CreateEventWithDescriptionInCalendarAsync(string title, string description, string primaryCalendarName)
+    {
+        await AddEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EventTitleInput.FillAsync(title);
+
+        // Ensure only the primary calendar chip is active.
+        var primaryChip = EventModal.Locator(".chip").Filter(new() { HasText = primaryCalendarName });
+        var primaryClasses = await primaryChip.GetAttributeAsync("class") ?? "";
+        if (!primaryClasses.Contains("chip-active"))
+        {
+            await primaryChip.ClickAsync();
+            await Assertions.Expect(primaryChip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
+
+        var descriptionInput = EventModal.Locator("textarea");
+        await descriptionInput.FillAsync(description);
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),

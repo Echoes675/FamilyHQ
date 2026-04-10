@@ -14,6 +14,12 @@
             <span class="settings-tab__icon" aria-hidden="true">⚙</span>
             <span class="settings-tab__label">General</span>
         </button>
+        <button class="settings-tab @(_activeTab == "calendars" ? "settings-tab--active" : "")"
+                data-testid="tab-calendars"
+                @onclick='() => SetTab("calendars")'>
+            <span class="settings-tab__icon" aria-hidden="true">📅</span>
+            <span class="settings-tab__label">Calendars</span>
+        </button>
         <button class="settings-tab @(_activeTab == "location" ? "settings-tab--active" : "")"
                 data-testid="tab-location"
                 @onclick='() => SetTab("location")'>
@@ -48,6 +54,9 @@
                 break;
             case "display":
                 <SettingsDisplayTab />
+                break;
+            case "calendars":
+                <SettingsCalendarsTab />
                 break;
         }
     </div>

@@ -34,7 +34,7 @@ public class DtoAndViewModelTests
         dto.IsAllDay.Should().Be(isAllDay);
         dto.Location.Should().Be(location);
         dto.Description.Should().Be(description);
-        dto.Calendars.Should().BeEquivalentTo(calendars);
+        dto.Members.Should().BeEquivalentTo(calendars);
     }
 
     [Fact]
