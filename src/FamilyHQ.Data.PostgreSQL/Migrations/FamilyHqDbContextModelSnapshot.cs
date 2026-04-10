@@ -24,17 +24,17 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
             modelBuilder.Entity("CalendarEventCalendarInfo", b =>
                 {
-                    b.Property<Guid>("CalendarsId")
+                    b.Property<Guid>("CalendarEventId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("EventsId")
+                    b.Property<Guid>("MembersId")
                         .HasColumnType("uuid");
 
-                    b.HasKey("CalendarsId", "EventsId");
+                    b.HasKey("CalendarEventId", "MembersId");
 
-                    b.HasIndex("EventsId");
+                    b.HasIndex("MembersId");
 
-                    b.ToTable("CalendarEventCalendar", (string)null);
+                    b.ToTable("EventMembers", (string)null);
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.CalendarEvent", b =>
@@ -56,11 +56,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
-
-                    b.Property<bool>("IsExternallyOwned")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
 
                     b.Property<string>("Location")
                         .HasMaxLength(1000)
@@ -106,10 +101,20 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<int>("DisplayOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("GoogleCalendarId")
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<bool>("IsShared")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<bool>("IsVisible")
                         .HasColumnType("boolean");
@@ -415,15 +420,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
             modelBuilder.Entity("CalendarEventCalendarInfo", b =>
                 {
-                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", null)
+                    b.HasOne("FamilyHQ.Core.Models.CalendarEvent", null)
                         .WithMany()
-                        .HasForeignKey("CalendarsId")
+                        .HasForeignKey("CalendarEventId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("FamilyHQ.Core.Models.CalendarEvent", null)
+                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", null)
                         .WithMany()
-                        .HasForeignKey("EventsId")
+                        .HasForeignKey("MembersId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

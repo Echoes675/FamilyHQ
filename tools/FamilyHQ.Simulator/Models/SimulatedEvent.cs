@@ -7,6 +7,7 @@ public class SimulatedEvent
     public string Summary { get; set; } = string.Empty;
     public string? Location { get; set; }
     public string? Description { get; set; }
+    public string? ContentHash { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }

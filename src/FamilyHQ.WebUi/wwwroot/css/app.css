@@ -1210,6 +1210,88 @@ html, body {
 .settings-theme-grid .theme-tile--night .theme-tile__name   { color: #8BB3E8; }
 .settings-theme-grid .theme-tile--night .theme-tile__time   { color: #E2EAF4; }
 
+/* ── Calendar settings list ─────────────────────────────────────────── */
+.calendar-settings-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.calendar-settings-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+}
+
+.calendar-settings-row__color {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 1px solid var(--theme-glass-border);
+}
+
+.calendar-settings-row__name {
+    flex: 1;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--theme-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.calendar-settings-row__controls {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.pill-toggle {
+    min-width: 96px;
+    min-height: 48px;
+    padding: 10px 16px;
+    border-radius: 9999px;
+    border: 2px solid var(--theme-glass-border);
+    background: transparent;
+    color: var(--theme-text);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    user-select: none;
+}
+
+.pill-toggle:hover:not(:disabled) {
+    border-color: var(--theme-accent);
+}
+
+.pill-toggle--on {
+    background-color: var(--theme-accent);
+    border-color: var(--theme-accent);
+    color: #fff;
+}
+
+.pill-toggle--off {
+    background-color: transparent;
+    color: var(--theme-text-muted);
+}
+
+.pill-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pill-toggle--shared.pill-toggle--on {
+    background-color: var(--theme-accent-hover, var(--theme-accent));
+    border-color: var(--theme-accent-hover, var(--theme-accent));
+}
+
 /* =============================================
    Section 17 — Error boundary
    ============================================= */

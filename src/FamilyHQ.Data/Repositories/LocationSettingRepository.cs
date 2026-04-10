@@ -13,9 +13,6 @@ public class LocationSettingRepository : ILocationSettingRepository
         _context = context;
     }
 
-    public async Task<LocationSetting?> GetAsync(CancellationToken ct = default)
-        => await _context.LocationSettings.FirstOrDefaultAsync(ct);
-
     public async Task<LocationSetting?> GetAsync(string userId, CancellationToken ct = default)
         => await _context.LocationSettings.FirstOrDefaultAsync(x => x.UserId == userId, ct);
 

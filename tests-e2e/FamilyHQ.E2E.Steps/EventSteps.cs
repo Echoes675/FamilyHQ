@@ -189,16 +189,31 @@ public class EventSteps
     {
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
 
-        var attendeeCalendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName);
-        if (attendeeCalendar == null)
-            throw new InvalidOperationException($"Calendar '{calendarName}' not found in template.");
+        var additionalCalendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+            ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found in template.");
 
-        // Find the existing event by name and append the attendee calendar ID.
-        var existingEvent = isolatedTemplate.Events.Find(e => e.Summary == eventName);
-        if (existingEvent == null)
-            throw new InvalidOperationException($"Event '{eventName}' not found in template — add it before calling this step.");
+        var existingEvent = isolatedTemplate.Events.Find(e => e.Summary == eventName)
+            ?? throw new InvalidOperationException(
+                $"Event '{eventName}' not found in template — add it before calling this step.");
 
-        existingEvent.AttendeeCalendarIds.Add(attendeeCalendar.Id);
+        // Locate the shared calendar — multi-member events live on the shared calendar
+        var sharedCalendar = isolatedTemplate.Calendars.Find(c => c.IsShared)
+            ?? throw new InvalidOperationException(
+                "No shared calendar in the user template. Add a calendar with IsShared: true.");
+
+        // Find the original member calendar by the event's current CalendarId
+        var originalCalendar = isolatedTemplate.Calendars.Find(c => c.Id == existingEvent.CalendarId)
+            ?? throw new InvalidOperationException(
+                $"Original calendar for event '{eventName}' not found in template.");
+
+        if (originalCalendar.IsShared)
+            throw new InvalidOperationException(
+                $"Event '{eventName}' is already on the shared calendar. " +
+                "Ensure it is seeded on an individual member calendar before calling this step.");
+
+        // Move the event to the shared calendar and encode both members in the description tag
+        existingEvent.CalendarId = sharedCalendar.Id;
+        existingEvent.Description = $"[members: {originalCalendar.Summary}, {additionalCalendar.Summary}]";
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }

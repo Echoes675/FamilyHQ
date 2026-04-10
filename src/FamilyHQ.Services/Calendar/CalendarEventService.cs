@@ -8,6 +8,8 @@ namespace FamilyHQ.Services.Calendar;
 public class CalendarEventService(
     IGoogleCalendarClient googleCalendarClient,
     ICalendarRepository calendarRepository,
+    ICalendarMigrationService migrationService,
+    IMemberTagParser memberTagParser,
     ILogger<CalendarEventService> logger) : ICalendarEventService
 {
     public async Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct = default)
@@ -15,13 +17,21 @@ public class CalendarEventService(
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var calendarLookup = allCalendars.ToDictionary(c => c.Id);
 
-        foreach (var calendarInfoId in request.CalendarInfoIds)
-        {
-            if (!calendarLookup.ContainsKey(calendarInfoId))
-                throw new InvalidOperationException($"CalendarInfoId {calendarInfoId} is not known to the user.");
-        }
+        var assignedMembers = request.MemberCalendarInfoIds
+            .Select(id => calendarLookup.TryGetValue(id, out var cal)
+                ? cal
+                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(request)))
+            .ToList();
 
-        var ownerCalendar = calendarLookup[request.CalendarInfoIds[0]];
+        // Determine target calendar
+        var targetCalendar = assignedMembers.Count == 1
+            ? assignedMembers[0]
+            : await calendarRepository.GetSharedCalendarAsync(ct)
+              ?? throw new InvalidOperationException("No shared calendar configured for multi-member events.");
+
+        // Build description with member tag
+        var memberNames = assignedMembers.Select(m => m.DisplayName).ToList();
+        var fullDescription = memberTagParser.NormaliseDescription(request.Description, memberNames);
 
         var calendarEvent = new CalendarEvent
         {
@@ -30,43 +40,23 @@ public class CalendarEventService(
             End = request.End,
             IsAllDay = request.IsAllDay,
             Location = request.Location,
-            Description = request.Description,
-            OwnerCalendarInfoId = ownerCalendar.Id,
-            Calendars = request.CalendarInfoIds.Select(id => calendarLookup[id]).ToList()
+            Description = fullDescription,
+            OwnerCalendarInfoId = targetCalendar.Id,
+            Members = assignedMembers
         };
 
-        calendarEvent = await googleCalendarClient.CreateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, ct);
+        var hash = EventContentHash.Compute(
+            calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
+            calendarEvent.IsAllDay, calendarEvent.Description);
 
-        if (request.CalendarInfoIds.Count > 1)
-        {
-            var attendeeIds = request.CalendarInfoIds
-                .Skip(1)
-                .Select(id => calendarLookup[id].GoogleCalendarId);
+        calendarEvent = await googleCalendarClient.CreateEventAsync(
+            targetCalendar.GoogleCalendarId, calendarEvent, hash, ct);
 
-            await googleCalendarClient.PatchEventAttendeesAsync(
-                ownerCalendar.GoogleCalendarId,
-                calendarEvent.GoogleEventId,
-                attendeeIds,
-                ct);
-        }
+        await calendarRepository.AddEventAsync(calendarEvent, ct);
+        await calendarRepository.SaveChangesAsync(ct);
 
-        try
-        {
-            await calendarRepository.AddEventAsync(calendarEvent, ct);
-            await calendarRepository.SaveChangesAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex,
-                "CreateAsync failed: local DB save failed for event with GoogleEventId {GoogleEventId}. " +
-                "Manual reconciliation may be required. Event exists on Google calendar {OwnerCalendarId}.",
-                calendarEvent.GoogleEventId, ownerCalendar.GoogleCalendarId);
-            throw;
-        }
-
-        logger.LogInformation(
-            "Event {GoogleEventId} created on calendar {OwnerCalendarId}.",
-            calendarEvent.GoogleEventId, ownerCalendar.GoogleCalendarId);
+        logger.LogInformation("Event {GoogleEventId} created on calendar {CalendarId}.",
+            calendarEvent.GoogleEventId, targetCalendar.GoogleCalendarId);
 
         return calendarEvent;
     }
@@ -78,130 +68,77 @@ public class CalendarEventService(
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
-            ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} for event {eventId} is not in the user's calendar set.");
+            ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
+
+        // Preserve existing member tag; only update user-visible description
+        var memberNames = calendarEvent.Members.Select(m => m.DisplayName).ToList();
+        var fullDescription = memberTagParser.NormaliseDescription(request.Description, memberNames);
 
         calendarEvent.Title = request.Title;
         calendarEvent.Start = request.Start;
         calendarEvent.End = request.End;
         calendarEvent.IsAllDay = request.IsAllDay;
         calendarEvent.Location = request.Location;
-        calendarEvent.Description = request.Description;
+        calendarEvent.Description = fullDescription;
 
-        await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, ct);
+        var hash = EventContentHash.Compute(
+            calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
+            calendarEvent.IsAllDay, calendarEvent.Description);
 
+        await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
         await calendarRepository.UpdateEventAsync(calendarEvent, ct);
         await calendarRepository.SaveChangesAsync(ct);
 
-        logger.LogInformation(
-            "Event {EventId} updated via calendar {OwnerCalendarId}.",
-            eventId, ownerCalendar.GoogleCalendarId);
-
+        logger.LogInformation("Event {EventId} updated.", eventId);
         return calendarEvent;
     }
 
-    public async Task<CalendarEvent> AddCalendarAsync(Guid eventId, Guid targetCalendarInfoId, CancellationToken ct = default)
+    public async Task<CalendarEvent> SetMembersAsync(
+        Guid eventId,
+        IReadOnlyList<Guid> memberCalendarInfoIds,
+        CancellationToken ct = default)
     {
+        if (memberCalendarInfoIds.Count == 0)
+            throw new ArgumentException("At least one member is required.", nameof(memberCalendarInfoIds));
+
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
-        if (calendarEvent.Calendars.Any(c => c.Id == targetCalendarInfoId))
+        var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
+        var calendarLookup = allCalendars.ToDictionary(c => c.Id);
+
+        var newMembers = memberCalendarInfoIds
+            .Select(id => calendarLookup.TryGetValue(id, out var cal)
+                ? cal
+                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(memberCalendarInfoIds)))
+            .ToList();
+
+        // Update description with new member tag
+        var strippedDescription = memberTagParser.StripMemberTag(calendarEvent.Description);
+        var memberNames = newMembers.Select(m => m.DisplayName).ToList();
+        calendarEvent.Description = memberTagParser.NormaliseDescription(strippedDescription, memberNames);
+        calendarEvent.Members = newMembers;
+
+        // Migrate if the individual/shared invariant is violated.
+        // EnsureCorrectCalendarAsync already writes to Google and saves the DB if it migrates.
+        var migrated = await migrationService.EnsureCorrectCalendarAsync(calendarEvent, newMembers, ct);
+
+        if (!migrated)
         {
-            logger.LogInformation(
-                "Event {EventId} is already linked to calendar {CalendarInfoId}. No action taken.",
-                eventId, targetCalendarInfoId);
-            return calendarEvent;
+            // No migration: write updated description/members to Google and DB.
+            var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
+                ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
+            var hash = EventContentHash.Compute(
+                calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
+                calendarEvent.IsAllDay, calendarEvent.Description);
+
+            await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+            await calendarRepository.UpdateEventAsync(calendarEvent, ct);
+            await calendarRepository.SaveChangesAsync(ct);
         }
 
-        var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
-        var targetCalendar = allCalendars.FirstOrDefault(c => c.Id == targetCalendarInfoId)
-            ?? throw new InvalidOperationException($"CalendarInfoId {targetCalendarInfoId} is not in the user's calendar set.");
-
-        var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
-
-        calendarEvent.Calendars.Add(targetCalendar);
-
-        var attendeeIds = calendarEvent.Calendars
-            .Where(c => c.Id != calendarEvent.OwnerCalendarInfoId)
-            .Select(c => c.GoogleCalendarId);
-
-        await googleCalendarClient.PatchEventAttendeesAsync(
-            ownerCalendar.GoogleCalendarId,
-            calendarEvent.GoogleEventId,
-            attendeeIds,
-            ct);
-
-        await calendarRepository.SaveChangesAsync(ct);
-
-        logger.LogInformation(
-            "Calendar {CalendarInfoId} added to event {EventId}.",
-            targetCalendarInfoId, eventId);
-
+        logger.LogInformation("Members updated for event {EventId}.", eventId);
         return calendarEvent;
-    }
-
-    public async Task RemoveCalendarAsync(Guid eventId, Guid calendarInfoId, CancellationToken ct = default)
-    {
-        var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
-            ?? throw new InvalidOperationException($"Event {eventId} not found.");
-
-        if (calendarEvent.Calendars.Count == 1)
-        {
-            await DeleteAsync(eventId, ct);
-            return;
-        }
-
-        var calendarToRemove = calendarEvent.Calendars.FirstOrDefault(c => c.Id == calendarInfoId)
-            ?? throw new InvalidOperationException($"CalendarInfoId {calendarInfoId} is not linked to event {eventId}.");
-
-        calendarEvent.Calendars.Remove(calendarToRemove);
-
-        var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
-        var calendarDict = allCalendars.ToDictionary(c => c.Id);
-
-        if (calendarInfoId == calendarEvent.OwnerCalendarInfoId)
-        {
-            var newOwnerInfo = calendarEvent.Calendars.First();
-            var newOwnerCalendar = calendarDict[newOwnerInfo.Id];
-            var removedOwnerGoogleId = calendarDict[calendarInfoId].GoogleCalendarId;
-
-            await googleCalendarClient.MoveEventAsync(
-                removedOwnerGoogleId,
-                calendarEvent.GoogleEventId,
-                newOwnerCalendar.GoogleCalendarId,
-                ct);
-
-            calendarEvent.OwnerCalendarInfoId = newOwnerInfo.Id;
-
-            var attendeeIds = calendarEvent.Calendars
-                .Where(c => c.Id != newOwnerInfo.Id)
-                .Select(c => calendarDict[c.Id].GoogleCalendarId);
-
-            await googleCalendarClient.PatchEventAttendeesAsync(
-                newOwnerCalendar.GoogleCalendarId,
-                calendarEvent.GoogleEventId,
-                attendeeIds,
-                ct);
-        }
-        else
-        {
-            var ownerCalendar = calendarDict[calendarEvent.OwnerCalendarInfoId];
-
-            var attendeeIds = calendarEvent.Calendars
-                .Where(c => c.Id != calendarEvent.OwnerCalendarInfoId)
-                .Select(c => calendarDict[c.Id].GoogleCalendarId);
-
-            await googleCalendarClient.PatchEventAttendeesAsync(
-                ownerCalendar.GoogleCalendarId,
-                calendarEvent.GoogleEventId,
-                attendeeIds,
-                ct);
-        }
-
-        await calendarRepository.SaveChangesAsync(ct);
-
-        logger.LogInformation(
-            "Calendar {CalendarInfoId} removed from event {EventId}.",
-            calendarInfoId, eventId);
     }
 
     public async Task DeleteAsync(Guid eventId, CancellationToken ct = default)
@@ -210,45 +147,13 @@ public class CalendarEventService(
             ?? throw new InvalidOperationException($"Event {eventId} not found.");
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
-        var ownerCalendar = allCalendars.First(c => c.Id == calendarEvent.OwnerCalendarInfoId);
+        var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
+            ?? throw new InvalidOperationException($"Owner calendar {calendarEvent.OwnerCalendarInfoId} not found for event {eventId}.");
 
-        var googleEvent = await googleCalendarClient.GetEventAsync(
-            ownerCalendar.GoogleCalendarId,
-            calendarEvent.GoogleEventId,
-            ct);
-
-        if (googleEvent is not null)
-        {
-            var userCalendarIds = allCalendars.Select(c => c.GoogleCalendarId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var hasExternalAttendees = googleEvent.AttendeeEmails.Any(email =>
-                !userCalendarIds.Contains(email) &&
-                !string.Equals(email, googleEvent.OrganizerEmail, StringComparison.OrdinalIgnoreCase));
-
-            if (!hasExternalAttendees)
-            {
-                await googleCalendarClient.DeleteEventAsync(
-                    ownerCalendar.GoogleCalendarId,
-                    calendarEvent.GoogleEventId,
-                    ct);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "Event {EventId} has external attendees; skipping Google delete.",
-                    eventId);
-            }
-        }
-        else
-        {
-            logger.LogWarning(
-                "Event {EventId} with GoogleEventId {GoogleEventId} not found on Google; skipping Google delete.",
-                eventId, calendarEvent.GoogleEventId);
-        }
-
+        await googleCalendarClient.DeleteEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent.GoogleEventId, ct);
         await calendarRepository.DeleteEventAsync(eventId, ct);
         await calendarRepository.SaveChangesAsync(ct);
 
-        logger.LogInformation("Event {EventId} deleted locally.", eventId);
+        logger.LogInformation("Event {EventId} deleted.", eventId);
     }
 }

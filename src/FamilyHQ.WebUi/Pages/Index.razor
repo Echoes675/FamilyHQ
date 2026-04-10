@@ -66,23 +66,29 @@
     {
         <DayView SelectedDate="_selectedDate"
                  MonthView="_monthView"
-                 Calendars="_calendars"
+                 Calendars="_displayCalendars"
                  OnNavigate="OnDayNavigate"
                  OnOpenDayPicker="OpenDayPickerModal"
                  OnEditEvent="OpenEditEventModal"
-                 OnAddEvent="OnDayAddEvent" />
+                 OnAddEvent="OnDayAddEvent"
+                 OnSaveOrder="HandleSaveOrder" />
     }
     else if (_currentView == DashboardView.MonthAgenda)
     {
         <AgendaView CurrentMonth="CurrentMonth"
                     MonthView="_monthView"
-                    Calendars="_calendars"
+                    Calendars="_displayCalendars"
                     OnPreviousMonth="GoToPreviousMonth"
                     OnNextMonth="GoToNextMonth"
                     OnOpenQuickJump="OpenQuickJumpModal"
                     OnAddEvent="OnAgendaAddEvent"
                     OnAddEventForCalendar="OnAgendaAddEventForCalendar"
-                    OnDayDrillDown="OnAgendaDrillDown" />
+                    OnDayDrillDown="OnAgendaDrillDown"
+                    OnSaveOrder="HandleSaveOrder" />
+        @if (_saveOrderError is not null)
+        {
+            <div class="alert alert-warning">@_saveOrderError</div>
+        }
     }
     }
     }
@@ -128,6 +134,7 @@
     // Event Modal
     private EventModal _eventModal = default!;
     private IReadOnlyList<CalendarSummaryViewModel> _calendars = Array.Empty<CalendarSummaryViewModel>();
+    private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
 
     protected override async Task OnInitializedAsync()
     {
@@ -144,6 +151,7 @@
 
         // Authenticated - load calendar data
         _calendars = await CalendarApi.GetCalendarsAsync();
+        _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
         
         SignalR.OnEventsUpdated += RefreshDataFromSignalR;
         await SignalR.StartAsync();
@@ -169,6 +177,7 @@
         InvokeAsync(async () =>
         {
             _calendars = await CalendarApi.GetCalendarsAsync();
+            _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
             await LoadMonthDataAsync();
             StateHasChanged();
         });
@@ -251,6 +260,24 @@
 
     private Task OnAgendaDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
+    private string? _saveOrderError;
+
+    private async Task HandleSaveOrder(Dictionary<Guid, int> order)
+    {
+        _saveOrderError = null;
+        try
+        {
+            await CalendarApi.SaveCalendarOrderAsync(order);
+            _calendars = await CalendarApi.GetCalendarsAsync();
+            _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
+        }
+        catch
+        {
+            _saveOrderError = "Failed to save column order. Please try again.";
+        }
+        StateHasChanged();
+    }
+
     private Task OnDayNavigate(DateTime date) => SwitchToView(DashboardView.Day, date);
 
     private void OnDayAddEvent((DateTime Date, Guid CalendarId) args) =>
@@ -271,8 +298,10 @@
                 await LoadMonthDataAsync();
             }
         }
-        else if (view == DashboardView.Day && _selectedDate == default)
+        else if (view == DashboardView.Day)
         {
+            // Clicking the Day View tab without a specific date (i.e. not via a drill-down)
+            // always returns to today — don't preserve a previously drilled-into date.
             _selectedDate = DateTime.Today;
             if (_selectedDate.Month != CurrentMonth.Month || _selectedDate.Year != CurrentMonth.Year)
             {

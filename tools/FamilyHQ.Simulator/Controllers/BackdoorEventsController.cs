@@ -32,6 +32,7 @@ public class BackdoorEventsController : ControllerBase
             Id = "simulated_evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = body.CalendarId,
             Summary = body.Summary,
+            Description = body.Description,
             StartTime = body.Start,
             EndTime = body.End,
             IsAllDay = body.IsAllDay,

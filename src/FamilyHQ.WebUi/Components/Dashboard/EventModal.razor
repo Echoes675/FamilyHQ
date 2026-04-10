@@ -1,3 +1,4 @@
+@using System.Text.RegularExpressions
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Services
 @inject ICalendarApiService CalendarApi
@@ -15,7 +16,7 @@
                     <div class="mb-3">
                         <label class="form-label">Calendars</label>
                         <CalendarChipSelector
-                            AllCalendars="Calendars"
+                            AllCalendars="SelectableCalendars"
                             SelectedCalendarIds="_selectedCalendarIds"
                             SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
                             EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
@@ -60,6 +61,11 @@
                         <label class="form-label">Location (Optional)</label>
                         <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (Optional)</label>
+                        <textarea class="form-input" rows="3" @bind="_eventModel.Description"
+                                  placeholder="Notes, details…"></textarea>
+                    </div>
                     @if (!string.IsNullOrEmpty(_modalError))
                     {
                         <div class="alert alert-danger">@_modalError</div>
@@ -96,6 +102,14 @@
     [Parameter] public IReadOnlyList<CalendarSummaryViewModel> Calendars { get; set; } = Array.Empty<CalendarSummaryViewModel>();
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback OnDeleted { get; set; }
+
+    // Pills in the event modal should only expose calendars that represent a real family
+    // member — the shared calendar and any hidden calendars are not selectable here.
+    // Shared calendar membership is implicit (multi-member events route there automatically)
+    // and hidden calendars are intentionally excluded from the kiosk display, so selecting
+    // them would be misleading.
+    private IReadOnlyList<CalendarSummaryViewModel> SelectableCalendars =>
+        Calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
 
     private bool _showEventModal;
     private bool _isEditingEvent;
@@ -151,6 +165,24 @@
         }
     }
 
+    private IEnumerable<Guid> DetectMemberIdsInDescription(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return Array.Empty<Guid>();
+
+        // Match whole-word, case-insensitive. Unknown names are skipped.
+        // Only selectable calendars (non-shared, non-hidden) are candidates — mentioning the
+        // shared calendar name in the description should not tag the event with the shared
+        // calendar as a member, since shared is the routing target, not a member.
+        var matched = new List<Guid>();
+        foreach (var cal in SelectableCalendars)
+        {
+            if (Regex.IsMatch(description, $@"\b{Regex.Escape(cal.DisplayName)}\b", RegexOptions.IgnoreCase))
+                matched.Add(cal.Id);
+        }
+        return matched;
+    }
+
     private void SyncEndDateIfNeeded()
     {
         if (_eventModel.End < _eventModel.Start)
@@ -190,6 +222,7 @@
             End = evt.End,
             IsAllDay = evt.IsAllDay,
             Location = evt.Location,
+            Description = evt.Description,
             AllCalendars = evt.AllCalendars.ToList()
         };
         _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
@@ -198,7 +231,12 @@
         StateHasChanged();
     }
 
-    private void Close() => _showEventModal = false;
+    private void Close()
+    {
+        _showEventModal = false;
+        _eventModel = new();
+        _modalError = null;
+    }
 
     private async Task SaveEvent()
     {
@@ -209,7 +247,17 @@
             _modalError = "Title is required.";
             return;
         }
-        if (_selectedCalendarIds.Count == 0)
+
+        // Merge pill selection with any member names detected in the description.
+        // The description is the source of truth for extra members — pills are additive.
+        // Unknown names in the description are ignored.
+        var effectiveMemberIds = new HashSet<Guid>(_selectedCalendarIds);
+        foreach (var id in DetectMemberIdsInDescription(_eventModel.Description))
+        {
+            effectiveMemberIds.Add(id);
+        }
+
+        if (effectiveMemberIds.Count == 0)
         {
             _modalError = "Please select at least one calendar.";
             return;
@@ -231,19 +279,19 @@
                     _eventModel.End,
                     _eventModel.IsAllDay,
                     _eventModel.Location,
-                    null);
+                    _eventModel.Description);
                 await CalendarApi.UpdateEventAsync(_eventModel.Id, updateReq);
             }
             else
             {
                 var createReq = new CreateEventRequest(
-                    _selectedCalendarIds.ToList(),
+                    effectiveMemberIds.ToList(),
                     _eventModel.Title,
                     _eventModel.Start,
                     _eventModel.End,
                     _eventModel.IsAllDay,
                     _eventModel.Location,
-                    null);
+                    _eventModel.Description);
                 await CalendarApi.CreateEventAsync(createReq);
             }
             Close();
@@ -289,6 +337,7 @@
         public DateTimeOffset End { get; set; }
         public bool IsAllDay { get; set; }
         public string? Location { get; set; }
+        public string? Description { get; set; }
         public List<CalendarSummaryViewModel> AllCalendars { get; set; } = new();
     }
 }

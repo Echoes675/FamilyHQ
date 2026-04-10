@@ -9,4 +9,4 @@ public record CalendarEventDto(
     bool IsAllDay,
     string? Location,
     string? Description,
-    IReadOnlyList<EventCalendarDto> Calendars);
+    IReadOnlyList<EventCalendarDto> Members);

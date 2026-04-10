@@ -30,7 +30,7 @@ public class CreateEventRequestValidatorTests
     [Fact]
     public async Task Null_CalendarInfoIds_Fails()
     {
-        var request = Valid() with { CalendarInfoIds = null! };
+        var request = Valid() with { MemberCalendarInfoIds = null! };
         var result = await new CreateEventRequestValidator().ValidateAsync(request);
         result.IsValid.Should().BeFalse();
     }

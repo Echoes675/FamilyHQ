@@ -14,18 +14,19 @@ public class CalendarSyncServiceTests
     public async Task SyncAsync_WhenNoExistingToken_PerformsFullSyncWithWindows()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calendarId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId      = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var googleCalendarId = "test@group.calendar.google.com";
-        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
-        var endDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+        var startDate       = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var endDate         = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
 
         var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendarInfo);
-
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SyncState?)null); // No token exists!
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendarInfo });
 
         var mockEvents = new List<CalendarEvent>
         {
@@ -33,16 +34,13 @@ public class CalendarSyncServiceTests
             new CalendarEvent { GoogleEventId = "evt-2", Title = "Event 2" }
         };
 
-        client.Setup(c => c.GetEventsAsync(
-                googleCalendarId, 
-                startDate, 
-                endDate, 
-                null, 
-                It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync((mockEvents, "new_sync_token"));
 
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
 
         // Act
         await systemUnderTest.SyncAsync(calendarId, startDate, endDate);
@@ -50,9 +48,9 @@ public class CalendarSyncServiceTests
         // Assert
         client.Verify(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()), Times.Once);
         calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
-        calendarRepository.Verify(r => r.AddSyncStateAsync(It.Is<SyncState>(s => 
-            s.SyncToken == "new_sync_token" && 
-            s.SyncWindowStart == startDate && 
+        calendarRepository.Verify(r => r.AddSyncStateAsync(It.Is<SyncState>(s =>
+            s.SyncToken == "new_sync_token" &&
+            s.SyncWindowStart == startDate &&
             s.SyncWindowEnd == endDate), It.IsAny<CancellationToken>()), Times.Once);
         calendarRepository.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -61,34 +59,29 @@ public class CalendarSyncServiceTests
     public async Task SyncAsync_WhenTokenExists_PerformsIncrementalSync()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calendarId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var googleCalendarId = "test@group.calendar.google.com";
 
-        var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
+        var calendarInfo      = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
         var existingSyncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
-        
+
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendarInfo);
-
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(existingSyncState);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendarInfo });
 
         var mockEvents = new List<CalendarEvent>
         {
             new CalendarEvent { GoogleEventId = "evt-inc", Title = "Incremental Event" }
         };
 
-        client.Setup(c => c.GetEventsAsync(
-                googleCalendarId, 
-                null, 
-                null, 
-                "old_token", 
-                It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
             .ReturnsAsync((mockEvents, "next_token"));
-
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
 
         // Act
         var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
@@ -96,7 +89,7 @@ public class CalendarSyncServiceTests
 
         // Assert
         client.Verify(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()), Times.Once);
-        calendarRepository.Verify(r => r.SaveSyncStateAsync(It.Is<SyncState>(s => 
+        calendarRepository.Verify(r => r.SaveSyncStateAsync(It.Is<SyncState>(s =>
             s.SyncToken == "next_token"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -104,30 +97,26 @@ public class CalendarSyncServiceTests
     public async Task SyncAllAsync_WithNewCalendar_AddsCalendarAndSyncsEvents()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
-        var endDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
-        var calendarId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var startDate        = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var endDate          = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+        var calendarId       = Guid.Parse("33333333-3333-3333-3333-333333333333");
         var googleCalendarId = "test@group.calendar.google.com";
 
         var googleCalendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        
+
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
-
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo>()); // No local calendars
-
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(googleCalendar);
-
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
-
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
         // Act
@@ -143,31 +132,27 @@ public class CalendarSyncServiceTests
     public async Task SyncAllAsync_WithExistingCalendar_SyncsEvents()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
-        var endDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
-        var calendarId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var startDate        = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var endDate          = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+        var calendarId       = Guid.Parse("44444444-4444-4444-4444-444444444444");
         var googleCalendarId = "test@group.calendar.google.com";
 
         var googleCalendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var localCalendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests Local" };
-        
+        var localCalendar  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests Local" };
+
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
-
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { localCalendar });
-
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(localCalendar);
-
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
-
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
         // Act
@@ -179,180 +164,149 @@ public class CalendarSyncServiceTests
         client.Verify(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    // ── Many-to-Many relationship tests ───────────────────────────────────────
-
     [Fact]
-    public async Task SyncAsync_WhenEventExistsOnDifferentCalendar_LinksToSecondCalendar()
+    public async Task SyncAllAsync_WhenMultipleCalendarsAndNoShared_AutoDesignatesFirstAsShared()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calAId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        var calBId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
-        var calA = new CalendarInfo { Id = calAId, GoogleCalendarId = "cal-a@google.com", DisplayName = "Cal A" };
-        var calB = new CalendarInfo { Id = calBId, GoogleCalendarId = "cal-b@google.com", DisplayName = "Cal B" };
-        var start = DateTimeOffset.UtcNow.AddDays(-1);
-        var end = DateTimeOffset.UtcNow.AddDays(1);
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
 
-        var existingEvent = new CalendarEvent
+        var workCal = new CalendarInfo
         {
-            Id = Guid.NewGuid(),
-            GoogleEventId = "evt-shared",
-            Title = "Shared Event",
-            Calendars = new List<CalendarInfo> { calA }
+            Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            GoogleCalendarId = "work@group.calendar.google.com",
+            DisplayName = "Work",
+            IsShared = false
+        };
+        var personalCal = new CalendarInfo
+        {
+            Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            GoogleCalendarId = "personal@group.calendar.google.com",
+            DisplayName = "Personal",
+            IsShared = false
         };
 
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calBId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calB);
-        calendarRepository.Setup(r => r.GetSyncStateAsync(calBId, It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, personalCal });
+
+        // Simulate repository state: both calendars already persisted (returned both passes)
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, personalCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                id == workCal.Id ? workCal : personalCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
-        client.Setup(c => c.GetEventsAsync(calB.GoogleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-shared", Title = "Shared Event" } }, "token-b"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calBId, start, end, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent>()); // Not yet linked to calB
-        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-shared", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent); // Exists on calA
-        // Mock GetEventByIdAsync to return a tracked instance with the updated calendars
-        calendarRepository.Setup(r => r.GetEventByIdAsync(existingEvent.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
+        client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
 
         // Act
-        await systemUnderTest.SyncAsync(calBId, start, end);
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
 
-        // Assert — event updated with calB added; not inserted again
-        calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
-        calendarRepository.Verify(r => r.UpdateEventAsync(
-            It.Is<CalendarEvent>(e => e.Calendars.Any(c => c.Id == calBId)),
-            It.IsAny<CancellationToken>()), Times.Once);
+        // Assert — MarkCalendarAsSharedAsync is invoked for the first calendar and
+        // not for the second.  We can't assert on the entity itself because the real
+        // repository mutates the tracked entity via FindAsync; the mock doesn't have
+        // a DbContext, so wiring a callback to mutate workCal would just re-test our
+        // own test setup.  Verifying the interaction is the cleaner contract.
+        calendarRepository.Verify(r => r.MarkCalendarAsSharedAsync(workCal.Id, It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepository.Verify(r => r.MarkCalendarAsSharedAsync(personalCal.Id, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task SyncAsync_WhenEventAlreadyLinkedToThisCalendar_UpdatesPropertiesOnly()
+    public async Task SyncAllAsync_WhenSingleCalendarAndNoShared_DoesNotDesignateShared()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calAId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        var calA = new CalendarInfo { Id = calAId, GoogleCalendarId = "cal-a@google.com", DisplayName = "Cal A" };
-        var start = DateTimeOffset.UtcNow.AddDays(-1);
-        var end = DateTimeOffset.UtcNow.AddDays(1);
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
 
-        var linkedEvent = new CalendarEvent
+        var soloCal = new CalendarInfo
         {
-            Id = Guid.NewGuid(),
-            GoogleEventId = "evt-existing",
-            Title = "Old Title",
-            Calendars = new List<CalendarInfo> { calA }
+            Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            GoogleCalendarId = "solo@group.calendar.google.com",
+            DisplayName = "Solo",
+            IsShared = false
         };
 
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
-        calendarRepository.Setup(r => r.GetSyncStateAsync(calAId, It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { soloCal });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { soloCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(soloCal.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(soloCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(soloCal.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
-        client.Setup(c => c.GetEventsAsync(calA.GoogleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-existing", Title = "New Title" } }, "token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calAId, start, end, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { linkedEvent }); // Already linked
+        client.Setup(c => c.GetEventsAsync(soloCal.GoogleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(soloCal.Id, startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
 
         // Act
-        await systemUnderTest.SyncAsync(calAId, start, end);
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
 
-        // Assert — properties updated; cross-calendar lookup never needed
-        calendarRepository.Verify(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        calendarRepository.Verify(r => r.UpdateEventAsync(
-            It.Is<CalendarEvent>(e => e.Title == "New Title"),
-            It.IsAny<CancellationToken>()), Times.Once);
-        calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Assert — single-calendar account has no shared concept
+        soloCal.IsShared.Should().BeFalse("a user with only one calendar should not have a shared calendar designation");
     }
 
     [Fact]
-    public async Task SyncAsync_WhenTombstoneAndEventHasOtherCalendars_UnlinksButDoesNotDelete()
+    public async Task SyncAllAsync_WhenSharedAlreadyDesignated_DoesNotOverwrite()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calAId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        var calBId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
-        var calA = new CalendarInfo { Id = calAId, GoogleCalendarId = "cal-a@google.com", DisplayName = "Cal A" };
-        var calB = new CalendarInfo { Id = calBId, GoogleCalendarId = "cal-b@google.com", DisplayName = "Cal B" };
-        var start = DateTimeOffset.UtcNow.AddDays(-1);
-        var end = DateTimeOffset.UtcNow.AddDays(1);
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
 
-        var eventLinkedToBoth = new CalendarEvent
+        var workCal = new CalendarInfo
         {
-            Id = Guid.NewGuid(),
-            GoogleEventId = "evt-tombstone",
-            Title = "Event on Two Calendars",
-            Calendars = new List<CalendarInfo> { calA, calB }
+            Id = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            GoogleCalendarId = "work@group.calendar.google.com",
+            DisplayName = "Work",
+            IsShared = false
+        };
+        var familyCal = new CalendarInfo
+        {
+            Id = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            GoogleCalendarId = "family@group.calendar.google.com",
+            DisplayName = "Family",
+            IsShared = true // already designated
         };
 
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
-        calendarRepository.Setup(r => r.GetSyncStateAsync(calAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = calAId, SyncToken = "incremental-token" });
-        client.Setup(c => c.GetEventsAsync(calA.GoogleCalendarId, null, null, "incremental-token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-tombstone", Title = "CANCELLED_TOMBSTONE" } }, "new-token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calAId, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                id == workCal.Id ? workCal : familyCal);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
-        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-tombstone", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(eventLinkedToBoth);
 
         // Act
-        await systemUnderTest.SyncAsync(calAId, start, end);
+        await systemUnderTest.SyncAllAsync(startDate, endDate);
 
-        // Assert — calA removed from Calendars but event not deleted (still linked to calB)
-        calendarRepository.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
-        calendarRepository.Verify(r => r.UpdateEventAsync(
-            It.Is<CalendarEvent>(e => !e.Calendars.Any(c => c.Id == calAId) && e.Calendars.Any(c => c.Id == calBId)),
-            It.IsAny<CancellationToken>()), Times.Once);
+        // Assert — existing shared designation is preserved
+        workCal.IsShared.Should().BeFalse("the non-shared calendar should remain non-shared");
+        familyCal.IsShared.Should().BeTrue("the already-designated shared calendar should be preserved");
     }
 
-    [Fact]
-    public async Task SyncAsync_WhenTombstoneAndEventHasNoOtherCalendars_DeletesEvent()
-    {
-        // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calAId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
-        var calA = new CalendarInfo { Id = calAId, GoogleCalendarId = "cal-a@google.com", DisplayName = "Cal A" };
-        var start = DateTimeOffset.UtcNow.AddDays(-1);
-        var end = DateTimeOffset.UtcNow.AddDays(1);
-        var eventId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
-
-        var eventOnlyOnCalA = new CalendarEvent
-        {
-            Id = eventId,
-            GoogleEventId = "evt-orphan",
-            Title = "Only On Cal A",
-            Calendars = new List<CalendarInfo> { calA }
-        };
-
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
-        calendarRepository.Setup(r => r.GetSyncStateAsync(calAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = calAId, SyncToken = "incremental-token" });
-        client.Setup(c => c.GetEventsAsync(calA.GoogleCalendarId, null, null, "incremental-token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-orphan", Title = "CANCELLED_TOMBSTONE" } }, "new-token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calAId, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent>());
-        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-orphan", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(eventOnlyOnCalA);
-
-        // Act
-        await systemUnderTest.SyncAsync(calAId, start, end);
-
-        // Assert — event deleted entirely as it has no remaining calendar links
-        calendarRepository.Verify(r => r.DeleteEventAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
-        calendarRepository.Verify(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    // ── OwnerCalendarInfoId + IsExternallyOwned tests ────────────────────────
+    // ── Member-tag sync tests ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task SyncAsync_FirstSync_SetsOwnerCalendarInfoId()
+    public async Task SyncAsync_NewEvent_SetsOwnerCalendarInfoIdAndMembers()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calendarId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("55555555-5555-5555-5555-555555555555");
         var googleCalendarId = "owner@group.calendar.google.com";
-        var start = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-1);
-        var end = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(1);
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-1);
+        var end              = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(1);
 
         var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Owner Cal" };
 
@@ -360,11 +314,13 @@ public class CalendarSyncServiceTests
             .ReturnsAsync(calendar);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
 
         var newEvent = new CalendarEvent { GoogleEventId = "evt-1", Title = "New Event" };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync((new List<CalendarEvent> { newEvent }, "sync-token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync((CalendarEvent?)null);
@@ -379,95 +335,141 @@ public class CalendarSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAsync_OrganizerSelfFalse_SetsIsExternallyOwned()
+    public async Task SyncAsync_ExistingEvent_UpdatesProperties()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var calendarId = Guid.Parse("66666666-6666-6666-6666-666666666666");
-        var googleCalendarId = "attendee@group.calendar.google.com";
-        var start = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-1);
-        var end = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(1);
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        var googleCalendarId = "cal@google.com";
+        var start            = DateTimeOffset.UtcNow.AddDays(-1);
+        var end              = DateTimeOffset.UtcNow.AddDays(1);
 
-        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Attendee Cal" };
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Cal" };
+        var existing = new CalendarEvent
+        {
+            Id            = Guid.NewGuid(),
+            GoogleEventId = "evt-existing",
+            Title         = "Old Title",
+            Members       = new List<CalendarInfo> { calendar }
+        };
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendar);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
 
-        // IsExternallyOwned = true simulates organizer.Self == false
-        var externalEvent = new CalendarEvent { GoogleEventId = "evt-external", Title = "External Event", IsExternallyOwned = true };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { externalEvent }, "sync-token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-existing", Title = "New Title" } }, "token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
-        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-external", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((CalendarEvent?)null);
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-existing", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
 
         // Act
         await systemUnderTest.SyncAsync(calendarId, start, end);
 
         // Assert
-        calendarRepository.Verify(r => r.AddEventAsync(
-            It.Is<CalendarEvent>(e => e.IsExternallyOwned == true),
+        calendarRepository.Verify(r => r.UpdateEventAsync(
+            It.Is<CalendarEvent>(e => e.Title == "New Title"),
             It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task SyncAsync_SecondCalendarAttach_DoesNotOverwriteOwnerCalendarInfoId()
+    public async Task SyncAsync_TombstoneEvent_DeletesFromDb()
     {
         // Arrange
-        var (client, calendarRepository, systemUnderTest) = CreateSut();
-        var secondCalendarId = Guid.Parse("77777777-7777-7777-7777-777777777777");
-        var existingOwnerCalendarId = Guid.Parse("88888888-8888-8888-8888-888888888888");
-        var googleCalendarId = "second@group.calendar.google.com";
-        var start = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-1);
-        var end = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(1);
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        var googleCalendarId = "cal-a@google.com";
+        var start            = DateTimeOffset.UtcNow.AddDays(-1);
+        var end              = DateTimeOffset.UtcNow.AddDays(1);
+        var eventId          = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
-        var secondCalendar = new CalendarInfo { Id = secondCalendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Second Cal" };
-        var existingEvent = new CalendarEvent
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Cal A" };
+        var trackedEvent = new CalendarEvent
         {
-            Id = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
-            GoogleEventId = "evt-1",
-            Title = "Shared Event",
-            OwnerCalendarInfoId = existingOwnerCalendarId,
-            Calendars = new List<CalendarInfo>()
+            Id            = eventId,
+            GoogleEventId = "evt-orphan",
+            Title         = "Only On Cal A",
+            Members       = new List<CalendarInfo> { calendar }
         };
 
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(secondCalendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(secondCalendar);
-        calendarRepository.Setup(r => r.GetSyncStateAsync(secondCalendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SyncState?)null);
-
-        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-1", Title = "Shared Event" } }, "sync-token"));
-        calendarRepository.Setup(r => r.GetEventsAsync(secondCalendarId, start, end, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent>()); // Not yet linked to secondCalendar
-        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent); // Exists already (owned by existingOwnerCalendarId)
-        calendarRepository.Setup(r => r.GetEventByIdAsync(existingEvent.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existingEvent);
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "incremental-token" });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental-token", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-orphan", Title = "CANCELLED_TOMBSTONE" } }, "new-token"));
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-orphan", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(trackedEvent);
 
         // Act
-        await systemUnderTest.SyncAsync(secondCalendarId, start, end);
+        await systemUnderTest.SyncAsync(calendarId, start, end);
 
-        // Assert — second-calendar attach: no new insert, SaveChanges IS called, OwnerCalendarInfoId not overwritten
-        calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
-        calendarRepository.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-        existingEvent.OwnerCalendarInfoId.Should().Be(existingOwnerCalendarId);
+        // Assert
+        calendarRepository.Verify(r => r.DeleteEventAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private static (Mock<IGoogleCalendarClient> Client, Mock<ICalendarRepository> calendarRepository, CalendarSyncService systemUnderTest) CreateSut()
+    [Fact]
+    public async Task SyncAsync_FullSync_RemovesObsoleteEvents()
     {
-        var clientMock = new Mock<IGoogleCalendarClient>();
-        var calendarRepositoryMock = new Mock<ICalendarRepository>();
-        var loggerMock = new Mock<ILogger<CalendarSyncService>>();
+        // Arrange
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("88888888-8888-8888-8888-888888888888");
+        var googleCalendarId = "cal@google.com";
+        var start            = DateTimeOffset.UtcNow.AddDays(-1);
+        var end              = DateTimeOffset.UtcNow.AddDays(1);
+        var obsoleteEventId  = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
-        var systemUnderTest = new CalendarSyncService(
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Cal" };
+        var obsoleteEvent = new CalendarEvent
+        {
+            Id            = obsoleteEventId,
+            GoogleEventId = "evt-gone",
+            Title         = "Gone Event"
+        };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null); // Full sync
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token")); // Empty result from Google
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { obsoleteEvent }); // Local has a stale event
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert — obsolete event removed
+        calendarRepository.Verify(r => r.DeleteEventAsync(obsoleteEventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
+        Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
+    {
+        var clientMock     = new Mock<IGoogleCalendarClient>();
+        var repoMock       = new Mock<ICalendarRepository>();
+        var tagParserMock  = new Mock<IMemberTagParser>();
+        var loggerMock     = new Mock<ILogger<CalendarSyncService>>();
+
+        // Default tag parser returns empty list
+        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns(new List<string>());
+
+        var sut = new CalendarSyncService(
             clientMock.Object,
-            calendarRepositoryMock.Object,
+            repoMock.Object,
+            tagParserMock.Object,
             loggerMock.Object);
 
-        return (clientMock, calendarRepositoryMock, systemUnderTest);
+        return (clientMock, repoMock, tagParserMock, sut);
     }
 }

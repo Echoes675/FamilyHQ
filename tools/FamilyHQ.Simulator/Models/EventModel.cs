@@ -9,6 +9,11 @@ public class EventModel
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }
     /// <summary>
+    /// Optional event description. May contain a [members: ...] tag to designate
+    /// which member calendars this event appears in when stored on the shared calendar.
+    /// </summary>
+    public string? Description { get; set; }
+    /// <summary>
     /// Additional calendar IDs that this event appears in.
     /// Seeds EventAttendee rows so the event surfaces on each attendee calendar's feed.
     /// </summary>

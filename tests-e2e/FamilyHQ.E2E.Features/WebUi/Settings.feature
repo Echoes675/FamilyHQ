@@ -12,6 +12,9 @@ Feature: Settings Page
     When I click the back button
     Then I see the calendar displayed
 
+  Scenario: Calendars tab is the second tab on the settings page
+    Then the settings tab in position 2 is "Calendars"
+
   Scenario: Location tab shows auto-detected location when none saved
     When I navigate to the location tab
     Then I see the location pill displaying "Edinburgh, Scotland"

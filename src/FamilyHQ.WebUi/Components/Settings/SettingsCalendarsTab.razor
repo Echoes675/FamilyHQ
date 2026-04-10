@@ -1,0 +1,250 @@
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.ViewModels
+@inject ICalendarApiService CalendarApi
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">Calendars</h2>
+    <p class="settings-section__description">
+        Control which calendars are shown on the kiosk and designate the shared calendar used for multi-member events.
+    </p>
+
+    <div class="settings-section__actions mb-3">
+        <button type="button"
+                class="btn btn-secondary"
+                data-testid="sync-now-btn"
+                @onclick="TriggerSyncAsync"
+                disabled="@_isSyncing">
+            @if (_isSyncing)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Syncing…</span>
+            }
+            else
+            {
+                <span>Sync Now</span>
+            }
+        </button>
+        @if (!string.IsNullOrEmpty(_syncMessage))
+        {
+            <span class="alert-success ml-2">@_syncMessage</span>
+        }
+        @if (!string.IsNullOrEmpty(_syncError))
+        {
+            <span class="alert-error ml-2">@_syncError</span>
+        }
+    </div>
+
+    @if (_calendars == null)
+    {
+        <div class="spinner" role="status"></div>
+    }
+    else if (_calendars.Count == 0)
+    {
+        <p>No calendars found. Sign in and sync to populate calendars.</p>
+    }
+    else
+    {
+        <ul class="calendar-settings-list">
+            @foreach (var cal in _calendars)
+            {
+                var isShared = _shared[cal.Id];
+                var isVisible = _visibility[cal.Id];
+                <li class="calendar-settings-row glass-surface" data-testid="@($"calendar-row-{cal.DisplayName}")">
+                    <span class="calendar-settings-row__color" style="background-color: @(cal.Color ?? "var(--theme-text-muted)");"></span>
+                    <span class="calendar-settings-row__name">@cal.DisplayName</span>
+
+                    <div class="calendar-settings-row__controls">
+                        <button type="button"
+                                class="@($"pill-toggle {(isVisible ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                data-testid="@($"visibility-toggle-{cal.DisplayName}")"
+                                disabled="@isShared"
+                                title="@(isShared ? "Shared calendars are always hidden" : "Tap to show or hide")"
+                                @onclick="() => OnVisibilityToggleClicked(cal.Id)">
+                            @(isVisible ? "Visible" : "Hidden")
+                        </button>
+
+                        <button type="button"
+                                class="@($"pill-toggle pill-toggle--shared {(isShared ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                data-testid="@($"shared-toggle-{cal.DisplayName}")"
+                                @onclick="() => RequestSharedChange(cal.Id)">
+                            @(isShared ? "Shared" : "Make Shared")
+                        </button>
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <div class="alert-error mt-2">@_error</div>
+        }
+        @if (_saved)
+        {
+            <div class="alert-success mt-2">Saved.</div>
+        }
+    }
+</div>
+
+@if (_pendingSharedId.HasValue)
+{
+    <div class="modal-backdrop" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Change Shared Calendar</h5>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        Designate <strong>@_pendingSharedName</strong> as the shared calendar? The current shared calendar will become a regular member calendar.
+                    </p>
+                </div>
+                <div class="modal-footer flex justify-between">
+                    <button type="button"
+                            class="btn btn-secondary"
+                            data-testid="shared-change-cancel"
+                            @onclick="CancelSharedChange">Cancel</button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-testid="shared-change-confirm"
+                            @onclick="ConfirmSharedChange">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<CalendarSummaryViewModel>? _calendars;
+    private Dictionary<Guid, bool> _visibility = new();
+    private Dictionary<Guid, bool> _shared = new();
+    private string? _error;
+    private bool _saved;
+    private bool _isSyncing;
+    private string? _syncMessage;
+    private string? _syncError;
+    private Guid? _pendingSharedId;
+    private string? _pendingSharedName;
+
+    private async Task TriggerSyncAsync()
+    {
+        _isSyncing = true;
+        _syncMessage = null;
+        _syncError = null;
+        try
+        {
+            await CalendarApi.TriggerSyncAsync();
+            // Refresh the calendar list so any newly synced calendars appear immediately.
+            await LoadCalendarsAsync();
+            _syncMessage = "Sync completed.";
+        }
+        catch
+        {
+            _syncError = "Sync failed. Please try again.";
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+    }
+
+    protected override Task OnInitializedAsync() => LoadCalendarsAsync();
+
+    private async Task LoadCalendarsAsync()
+    {
+        _calendars = (await CalendarApi.GetCalendarsAsync()).ToList();
+        _visibility.Clear();
+        _shared.Clear();
+        foreach (var cal in _calendars)
+        {
+            _visibility[cal.Id] = cal.IsVisible;
+            _shared[cal.Id]     = cal.IsShared;
+        }
+    }
+
+    private async Task OnVisibilityToggleClicked(Guid calId)
+    {
+        // Shared calendars are always hidden; the button is disabled, but
+        // guard here too so a stray programmatic call can't bypass the rule.
+        if (_shared[calId]) return;
+
+        _visibility[calId] = !_visibility[calId];
+        _saved = false;
+        _error = null;
+        try
+        {
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, _visibility[calId], _shared[calId]);
+            _saved = true;
+        }
+        catch
+        {
+            _error = "Failed to save. Please try again.";
+            // Revert on failure so the UI reflects the real state.
+            _visibility[calId] = !_visibility[calId];
+        }
+    }
+
+    private void RequestSharedChange(Guid calId)
+    {
+        if (_shared[calId]) return; // already shared
+        _pendingSharedId = calId;
+        _pendingSharedName = _calendars?.FirstOrDefault(c => c.Id == calId)?.DisplayName;
+    }
+
+    private void CancelSharedChange()
+    {
+        _pendingSharedId = null;
+        _pendingSharedName = null;
+    }
+
+    private async Task ConfirmSharedChange()
+    {
+        if (!_pendingSharedId.HasValue)
+            return;
+
+        var calId = _pendingSharedId.Value;
+        _pendingSharedId = null;
+        _pendingSharedName = null;
+
+        // Local optimistic state: unset any previously shared calendar and set
+        // the new one. The previously shared calendar becomes a normal member
+        // whose visibility we restore to true.
+        Guid? previousSharedId = null;
+        foreach (var key in _shared.Keys.ToList())
+        {
+            if (_shared[key] && key != calId)
+                previousSharedId = key;
+            _shared[key] = false;
+        }
+        _shared[calId] = true;
+
+        // Shared calendar auto-hides.
+        _visibility[calId] = false;
+
+        // Restore visibility on the calendar that was previously shared so it
+        // reappears in the kiosk as a regular member.
+        if (previousSharedId.HasValue)
+            _visibility[previousSharedId.Value] = true;
+
+        _saved = false;
+        _error = null;
+        try
+        {
+            if (previousSharedId.HasValue)
+            {
+                await CalendarApi.UpdateCalendarSettingsAsync(
+                    previousSharedId.Value,
+                    isVisible: true,
+                    isShared: false);
+            }
+
+            await CalendarApi.UpdateCalendarSettingsAsync(calId, isVisible: false, isShared: true);
+            _saved = true;
+        }
+        catch
+        {
+            _error = "Failed to save. Please try again.";
+            // Reload to resync UI with server state on failure.
+            await LoadCalendarsAsync();
+        }
+    }
+}

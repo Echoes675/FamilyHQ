@@ -25,6 +25,12 @@
                 "Id": "template_school",
                 "Summary": "School Calendar",
                 "BackgroundColor": "#fbbc04"
+            },
+            {
+                "Id": "template_multical_shared",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4",
+                "IsShared": true
             }
         ],
         "Events": []
@@ -49,6 +55,31 @@
         ],
         "Events": []
     },
+    "AutoDesignateUser": {
+        "Calendars": [
+            {
+                "Id": "template_autodesignate_first",
+                "Summary": "Primary Calendar",
+                "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_autodesignate_second",
+                "Summary": "Secondary Calendar",
+                "BackgroundColor": "#34a853"
+            }
+        ],
+        "Events": []
+    },
+    "SoloUser": {
+        "Calendars": [
+            {
+                "Id": "template_solo",
+                "Summary": "Only Calendar",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    },
     "MultiCalUser": {
         "Calendars": [
             {
@@ -60,6 +91,12 @@
                 "Id": "template_multical_personal",
                 "Summary": "Personal Calendar",
                 "BackgroundColor": "#34a853"
+            },
+            {
+                "Id": "template_multical_shared",
+                "Summary": "Family Calendar",
+                "BackgroundColor": "#4285f4",
+                "IsShared": true
             }
         ],
         "Events": []
@@ -155,6 +192,12 @@
                 "Id": "template_sixcal_hobbies",
                 "Summary": "Hobbies Calendar",
                 "BackgroundColor": "#00acc1"
+            },
+            {
+                "Id": "template_sixcal_shared",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4",
+                "IsShared": true
             }
         ],
         "Events": []

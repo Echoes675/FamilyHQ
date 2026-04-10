@@ -20,6 +20,8 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IGoogleCalendarClient, GoogleCalendarClient>();
 
         services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
+        services.AddScoped<IMemberTagParser, MemberTagParser>();
+        services.AddScoped<ICalendarMigrationService, CalendarMigrationService>();
         services.AddScoped<ICalendarSyncService, CalendarSyncService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddHostedService<SyncOrchestrator>();

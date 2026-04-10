@@ -18,8 +18,15 @@ public class CalendarsController : ControllerBase
     public async Task<IActionResult> GetCalendarList()
     {
         var userId = ExtractUserId(Request);
+        // Order by Id for a stable response.  Without an explicit OrderBy, Postgres
+        // returns rows in heap order, which varies across test runs once rows are
+        // deleted and reinserted in the same database (very common when many E2E
+        // scenarios share one simulator container).  The downstream sync service
+        // assigns sequential DisplayOrder values in the order we return calendars,
+        // so a non-deterministic response here makes column-order assertions flaky.
         var calendars = await _db.Calendars
             .Where(c => c.UserId == userId)
+            .OrderBy(c => c.Id)
             .ToListAsync();
 
         var response = new

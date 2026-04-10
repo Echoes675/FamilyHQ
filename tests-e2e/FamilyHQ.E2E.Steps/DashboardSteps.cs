@@ -124,6 +124,12 @@ public class DashboardSteps
         await _dashboardPage.CreateEventInCalendarsAsync(eventName, calendarName1, calendarName2);
     }
 
+    [When(@"I create an event ""([^""]*)"" in calendar ""([^""]*)"" with description ""([^""]*)""")]
+    public async Task WhenICreateAnEventInCalendarWithDescription(string eventName, string calendarName, string description)
+    {
+        await _dashboardPage.CreateEventWithDescriptionInCalendarAsync(eventName, description, calendarName);
+    }
+
     [When(@"I open the event ""([^""]*)"" for editing")]
     public async Task WhenIOpenTheEventForEditing(string eventName)
     {
@@ -249,5 +255,64 @@ public class DashboardSteps
     {
         var visible = await _dashboardPage.IsCurrentTimeLineVisibleAsync();
         visible.Should().BeTrue();
+    }
+
+    [Then(@"the day picker shows today's date")]
+    public async Task ThenTheDayPickerShowsTodaysDate()
+    {
+        // Blazor WASM formats via CurrentCulture backed by the browser's ICU data, which
+        // for en-GB produces "Wednesday, 8 April 2026".  Server-side .NET on Linux (the CI
+        // runner) uses a different ICU build whose en-GB LongDatePattern omits the comma
+        // ("Wednesday 8 April 2026").  Rather than reproduce the browser's exact format,
+        // assert on the semantic content: weekday name, day number, month name and year.
+        var today   = DateTime.Today;
+        var actual  = (await _dashboardPage.GetDayPickerButtonTextAsync()).Trim();
+        var culture = new System.Globalization.CultureInfo("en-GB");
+
+        actual.Should().Contain(today.ToString("dddd", culture),
+            "the day picker should include today's weekday name.");
+        actual.Should().Contain(today.Day.ToString(),
+            "the day picker should include today's day-of-month.");
+        actual.Should().Contain(today.ToString("MMMM", culture),
+            "the day picker should include the current month name.");
+        actual.Should().Contain(today.Year.ToString(),
+            "the day picker should include the current year.");
+    }
+
+    [When(@"I enter day view reorder mode")]
+    public async Task WhenIEnterDayViewReorderMode()
+    {
+        var page = _scenarioContext.Get<IPage>();
+        await page.GetByTestId("day-reorder-btn").ClickAsync();
+        await page.Locator("[data-testid^='day-reorder-right-']").First
+            .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [Then(@"the ""([^""]*)"" column has no left arrow in day view reorder mode")]
+    public async Task ThenTheColumnHasNoLeftArrowInDayViewReorderMode(string calendarName)
+    {
+        var page = _scenarioContext.Get<IPage>();
+        var header = page.Locator("[data-testid^='day-calendar-header-']")
+                         .Filter(new() { HasText = calendarName });
+        var testId = await header.First.GetAttributeAsync("data-testid")
+                     ?? throw new InvalidOperationException($"No day header found for '{calendarName}'.");
+        var guid = testId.Replace("day-calendar-header-", "");
+        var leftArrow = page.GetByTestId($"day-reorder-left-{guid}");
+        (await leftArrow.CountAsync()).Should().Be(0,
+            $"'{calendarName}' is the leftmost column and should not render a left reorder arrow in day view.");
+    }
+
+    [Then(@"the ""([^""]*)"" column has no right arrow in day view reorder mode")]
+    public async Task ThenTheColumnHasNoRightArrowInDayViewReorderMode(string calendarName)
+    {
+        var page = _scenarioContext.Get<IPage>();
+        var header = page.Locator("[data-testid^='day-calendar-header-']")
+                         .Filter(new() { HasText = calendarName });
+        var testId = await header.First.GetAttributeAsync("data-testid")
+                     ?? throw new InvalidOperationException($"No day header found for '{calendarName}'.");
+        var guid = testId.Replace("day-calendar-header-", "");
+        var rightArrow = page.GetByTestId($"day-reorder-right-{guid}");
+        (await rightArrow.CountAsync()).Should().Be(0,
+            $"'{calendarName}' is the rightmost column and should not render a right reorder arrow in day view.");
     }
 }
