@@ -77,12 +77,37 @@ public class WeatherSteps
         // Navigate to settings location tab, enter place name, save, wait for pill
         await _settingsPage.NavigateToLocationTabAsync();
         await _settingsPage.PlaceNameInput.FillAsync(uniqueName);
+        // Blur the input to force Blazor's `@bind:event="oninput"` to flush
+        // the value into `_placeNameInput` via the `change` event that fires
+        // on blur.  Without this, a subsequent click handler can race the
+        // bind flush and see an empty field, silently returning without
+        // performing the save.  Belt-and-braces: this is the *fix*; the
+        // Saved-badge assertion below is the diagnostic safety net that
+        // catches the race if it ever slips through.
+        await _settingsPage.PlaceNameInput.BlurAsync();
 
         var page = _scenarioContext.Get<IPage>();
         await _settingsPage.SaveLocationBtn.ClickAsync();
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 30000 });
-        await _settingsPage.LocationPill.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // Previously this step waited for the generic `.settings-location-pill`
+        // selector to be visible.  That was a silent source of flakes: the pill
+        // is already rendered by `OnInitializedAsync` before any save happens,
+        // showing an "Auto" badge from the auto-detect fallback.  If Blazor's
+        // `@bind:event="oninput"` had not flushed `_placeNameInput` before the
+        // click handler ran, `SaveLocationAsync` returned early with no POST
+        // and no error — but the generic pill wait resolved immediately
+        // against the pre-existing auto-detect pill, so the test proceeded as
+        // if the save had worked.  The scenario then failed much later when
+        // `/api/weather/refresh` returned a 409 because no saved row existed.
+        //
+        // We now assert the "Saved" badge specifically.  Playwright's
+        // auto-retrying assertion polls the text for up to 15s, so a silently
+        // dropped save surfaces here as a clear failure in the GIVEN step
+        // rather than as an obscure refresh error downstream.
+        await Assertions.Expect(_settingsPage.LocationPillBadge)
+            .ToHaveTextAsync("Saved", new() { Timeout = 15000 });
+        await Assertions.Expect(_settingsPage.LocationPill)
+            .ToContainTextAsync(uniqueName, new() { Timeout = 15000 });
 
         // Navigate back to dashboard
         await _dashboardPage.NavigateAndWaitAsync();
