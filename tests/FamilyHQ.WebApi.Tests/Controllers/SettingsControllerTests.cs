@@ -1,4 +1,5 @@
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Controllers;
@@ -56,7 +57,9 @@ public class SettingsControllerTests
     {
         // Arrange
         var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, _) = CreateSut();
-        weatherRefreshServiceMock.Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        weatherRefreshServiceMock
+            .Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 1, DataPointsWritten: 5));
 
         geocodingMock.Setup(x => x.GeocodeAsync("Edinburgh, Scotland", It.IsAny<CancellationToken>()))
             .ReturnsAsync((55.9533, -3.1883));
@@ -94,7 +97,9 @@ public class SettingsControllerTests
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30), "Daytime"));
         schedulerMock.Setup(x => x.TriggerRecalculationAsync()).Returns(Task.CompletedTask);
-        weatherRefreshServiceMock.Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        weatherRefreshServiceMock
+            .Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 1, DataPointsWritten: 5));
 
         var clientsMock = new Mock<IHubClients>();
         var clientMock = new Mock<IClientProxy>();

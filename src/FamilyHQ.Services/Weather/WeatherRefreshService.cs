@@ -14,22 +14,24 @@ public class WeatherRefreshService(
     IWeatherBroadcaster weatherBroadcaster,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
-    public async Task RefreshAsync(string userId, CancellationToken ct = default)
+    public async Task<WeatherRefreshResult> RefreshAsync(string userId, CancellationToken ct = default)
     {
+        logger.LogInformation("Weather refresh requested for user {UserId}.", userId);
+
         var weatherSetting = await weatherSettingRepo.GetOrCreateAsync(userId, ct);
 
         if (!weatherSetting.Enabled)
         {
             logger.LogInformation("Weather is disabled for user {UserId}. Skipping refresh.", userId);
-            return;
+            return new WeatherRefreshResult(WeatherRefreshOutcome.SkippedWeatherDisabled, LocationSettingId: null, DataPointsWritten: 0);
         }
 
         var location = await locationRepo.GetAsync(userId, ct);
 
         if (location is null)
         {
-            logger.LogInformation("No location configured for user {UserId}. Skipping weather refresh.", userId);
-            return;
+            logger.LogWarning("No location configured for user {UserId}. Skipping weather refresh.", userId);
+            return new WeatherRefreshResult(WeatherRefreshOutcome.SkippedNoLocation, LocationSettingId: null, DataPointsWritten: 0);
         }
 
         var weatherResponse = await weatherProvider.GetWeatherAsync(
@@ -45,8 +47,10 @@ public class WeatherRefreshService(
         await weatherBroadcaster.BroadcastWeatherUpdatedAsync(ct);
 
         logger.LogInformation(
-            "Weather data updated for user {UserId}, location {PlaceName} ({Lat}, {Lon})",
-            userId, location.PlaceName, location.Latitude, location.Longitude);
+            "Weather data updated for user {UserId}, location {LocationId} ({PlaceName} @ {Lat}, {Lon}). Wrote {DataPointsWritten} data points.",
+            userId, location.Id, location.PlaceName, location.Latitude, location.Longitude, dataPoints.Count);
+
+        return new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, location.Id, dataPoints.Count);
     }
 
     internal static List<WeatherDataPoint> BuildDataPoints(

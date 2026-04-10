@@ -77,12 +77,37 @@ public class WeatherSteps
         // Navigate to settings location tab, enter place name, save, wait for pill
         await _settingsPage.NavigateToLocationTabAsync();
         await _settingsPage.PlaceNameInput.FillAsync(uniqueName);
+        // Blur the input to force Blazor's `@bind:event="oninput"` to flush
+        // the value into `_placeNameInput` via the `change` event that fires
+        // on blur.  Without this, a subsequent click handler can race the
+        // bind flush and see an empty field, silently returning without
+        // performing the save.  Belt-and-braces: this is the *fix*; the
+        // Saved-badge assertion below is the diagnostic safety net that
+        // catches the race if it ever slips through.
+        await _settingsPage.PlaceNameInput.BlurAsync();
 
         var page = _scenarioContext.Get<IPage>();
         await _settingsPage.SaveLocationBtn.ClickAsync();
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 30000 });
-        await _settingsPage.LocationPill.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // Previously this step waited for the generic `.settings-location-pill`
+        // selector to be visible.  That was a silent source of flakes: the pill
+        // is already rendered by `OnInitializedAsync` before any save happens,
+        // showing an "Auto" badge from the auto-detect fallback.  If Blazor's
+        // `@bind:event="oninput"` had not flushed `_placeNameInput` before the
+        // click handler ran, `SaveLocationAsync` returned early with no POST
+        // and no error — but the generic pill wait resolved immediately
+        // against the pre-existing auto-detect pill, so the test proceeded as
+        // if the save had worked.  The scenario then failed much later when
+        // `/api/weather/refresh` returned a 409 because no saved row existed.
+        //
+        // We now assert the "Saved" badge specifically.  Playwright's
+        // auto-retrying assertion polls the text for up to 15s, so a silently
+        // dropped save surfaces here as a clear failure in the GIVEN step
+        // rather than as an obscure refresh error downstream.
+        await Assertions.Expect(_settingsPage.LocationPillBadge)
+            .ToHaveTextAsync("Saved", new() { Timeout = 15000 });
+        await Assertions.Expect(_settingsPage.LocationPill)
+            .ToContainTextAsync(uniqueName, new() { Timeout = 15000 });
 
         // Navigate back to dashboard
         await _dashboardPage.NavigateAndWaitAsync();
@@ -176,24 +201,82 @@ public class WeatherSteps
         // Re-triggering the refresh from a fresh request reliably resolves it.
         var page = _scenarioContext.Get<IPage>();
 
+        // Diagnostic pre-check for fix/weather-refresh-race: before we hit
+        // /api/weather/refresh, hit /api/settings/location through the same
+        // browser-context fetch path with the same JWT.  If the server's
+        // SettingsController (which shares ICurrentUserService with
+        // WeatherController) can see the saved row under this JWT's sub, it
+        // returns isAutoDetected=false.  If not, it returns isAutoDetected=true
+        // (auto-detect fallback) or 404.  The answer tells us, on a failing
+        // run, whether the refresh skip is caused by:
+        //   - auth drift (different sub resolved on save vs refresh), or
+        //   - a save that never persisted for this JWT's sub, or
+        //   - a server-side bug inside WeatherController/WeatherRefreshService
+        //     that can't find a row SettingsController CAN find.
+        // The pre-check is silent on the happy path — it is only appended to
+        // the failure message below.
+        var preCheck = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
+            const token = localStorage.getItem('familyhq_auth_token');
+            const resp = await fetch('/api/settings/location', {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            });
+            const body = await resp.text();
+            return {
+                status: resp.status,
+                body,
+                tokenPrefix: token ? token.substring(0, 16) : ''
+            };
+        }");
+        var preCheckStatus = preCheck.GetProperty("status").GetInt32();
+        var preCheckBody = preCheck.GetProperty("body").GetString() ?? string.Empty;
+        var tokenPrefix = preCheck.GetProperty("tokenPrefix").GetString() ?? string.Empty;
+        // Parse isAutoDetected without throwing on malformed bodies — this is
+        // diagnostic-only and must never break the happy path.
+        string preCheckIsAutoDetected = "n/a";
+        if (preCheckStatus == 200 && !string.IsNullOrEmpty(preCheckBody))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(preCheckBody);
+                if (doc.RootElement.TryGetProperty("isAutoDetected", out var el))
+                    preCheckIsAutoDetected = el.GetBoolean().ToString();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                preCheckIsAutoDetected = "parse-error";
+            }
+        }
+
         int status = 0;
         int refreshStatus = 0;
+        string refreshBody = string.Empty;
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            // Capture the refresh POST status so we can include it in any failure
-            // message.  The fetch is awaited fully (including the response body) so
-            // we know RefreshAsync has completed server-side by the time this call
-            // returns — not just that the headers have been received.
-            refreshStatus = await page.EvaluateAsync<int>(@"async () => {
+            // Capture the refresh POST status and body so failures surface the
+            // exact reason the server gave.  /api/weather/refresh now returns
+            // structured 409/503 bodies describing why it skipped or why the
+            // data isn't visible, and echoing those into the test error lets us
+            // root-cause a failing run from the test report alone.
+            var refreshResult = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
                 const token = localStorage.getItem('familyhq_auth_token');
                 const resp = await fetch('/api/weather/refresh', {
                     method: 'POST',
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}
                 });
-                await resp.text();
-                return resp.status;
+                const body = await resp.text();
+                return { status: resp.status, body };
             }");
+
+            refreshStatus = refreshResult.GetProperty("status").GetInt32();
+            refreshBody = refreshResult.GetProperty("body").GetString() ?? string.Empty;
+
+            // 409 (conflict) means the server deterministically skipped the
+            // refresh — weather is disabled for this user or no location is
+            // visible.  Retrying would not change that, so bail out of the loop
+            // immediately with the diagnostic body already captured.
+            if (refreshStatus == 409)
+                break;
 
             // Verify the API has weather data before loading the page.  /current is
             // user-scoped, so the check must carry the JWT.  Poll for up to 10s per
@@ -219,7 +302,10 @@ public class WeatherSteps
             throw new InvalidOperationException(
                 $"Weather API returned {status} after {maxAttempts} refresh attempts " +
                 $"(last refresh POST returned {refreshStatus}) — expected 200.  " +
-                $"The refresh may have failed to store data.");
+                $"Last refresh response body: {refreshBody}  " +
+                $"Pre-refresh GET /api/settings/location: status={preCheckStatus}, " +
+                $"isAutoDetected={preCheckIsAutoDetected}  " +
+                $"Token prefix (first 16 chars): {tokenPrefix}");
 
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.
