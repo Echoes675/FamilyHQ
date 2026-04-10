@@ -178,22 +178,34 @@ public class WeatherSteps
 
         int status = 0;
         int refreshStatus = 0;
+        string refreshBody = string.Empty;
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            // Capture the refresh POST status so we can include it in any failure
-            // message.  The fetch is awaited fully (including the response body) so
-            // we know RefreshAsync has completed server-side by the time this call
-            // returns — not just that the headers have been received.
-            refreshStatus = await page.EvaluateAsync<int>(@"async () => {
+            // Capture the refresh POST status and body so failures surface the
+            // exact reason the server gave.  /api/weather/refresh now returns
+            // structured 409/503 bodies describing why it skipped or why the
+            // data isn't visible, and echoing those into the test error lets us
+            // root-cause a failing run from the test report alone.
+            var refreshResult = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
                 const token = localStorage.getItem('familyhq_auth_token');
                 const resp = await fetch('/api/weather/refresh', {
                     method: 'POST',
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}
                 });
-                await resp.text();
-                return resp.status;
+                const body = await resp.text();
+                return { status: resp.status, body };
             }");
+
+            refreshStatus = refreshResult.GetProperty("status").GetInt32();
+            refreshBody = refreshResult.GetProperty("body").GetString() ?? string.Empty;
+
+            // 409 (conflict) means the server deterministically skipped the
+            // refresh — weather is disabled for this user or no location is
+            // visible.  Retrying would not change that, so bail out of the loop
+            // immediately with the diagnostic body already captured.
+            if (refreshStatus == 409)
+                break;
 
             // Verify the API has weather data before loading the page.  /current is
             // user-scoped, so the check must carry the JWT.  Poll for up to 10s per
@@ -219,7 +231,7 @@ public class WeatherSteps
             throw new InvalidOperationException(
                 $"Weather API returned {status} after {maxAttempts} refresh attempts " +
                 $"(last refresh POST returned {refreshStatus}) — expected 200.  " +
-                $"The refresh may have failed to store data.");
+                $"Last refresh response body: {refreshBody}");
 
         // Reload the dashboard so WeatherUiService.InitialiseAsync() picks up
         // the freshly-stored data instead of relying on SignalR timing.
