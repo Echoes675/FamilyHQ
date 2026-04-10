@@ -1,7 +1,9 @@
 namespace FamilyHQ.WebApi.Controllers;
 
+using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 [Authorize]
@@ -19,8 +21,35 @@ public class WeatherController(
         var userId = currentUser.UserId;
         if (userId is null)
             return Unauthorized();
-        await weatherRefreshService.RefreshAsync(userId, ct);
-        return Ok(new { message = "Weather refreshed" });
+
+        var result = await weatherRefreshService.RefreshAsync(userId, ct);
+
+        // A silent skip previously returned 200 with no data written, which
+        // caused intermittent E2E flakes where /api/weather/current then
+        // returned 204.  Surface skips explicitly so clients fail fast.
+        if (result.Outcome == WeatherRefreshOutcome.SkippedWeatherDisabled)
+            return Conflict(new { message = "Weather refresh skipped: weather is disabled for this user." });
+
+        if (result.Outcome == WeatherRefreshOutcome.SkippedNoLocation)
+            return Conflict(new { message = "Weather refresh skipped: no saved location for this user." });
+
+        // Verify the refresh actually produced data that is visible to a
+        // subsequent read.  The intermittent failure we are guarding against
+        // is RefreshAsync reporting success while /current sees no current
+        // data point.  By checking visibility here we turn an obscure
+        // downstream 204 into a single clear 503 on the refresh call itself.
+        var current = await weatherService.GetCurrentAsync(ct);
+        if (current is null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                message = "Weather refresh reported success but no current data is visible.",
+                locationSettingId = result.LocationSettingId,
+                dataPointsWritten = result.DataPointsWritten
+            });
+        }
+
+        return Ok(new { message = "Weather refreshed", dataPointsWritten = result.DataPointsWritten });
     }
 
     [AllowAnonymous]

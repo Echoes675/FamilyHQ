@@ -14,8 +14,15 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+*(none currently — see Resolved issues below.)*
+
+---
+
+## Resolved issues
+
 ### 1. Weather refresh returns 200 but `/current` returns 204
 
+**Resolved:** branch `fix/weather-refresh-race` (2026-04-10)
 **Component:** `tests-e2e/FamilyHQ.E2E.Steps/WeatherSteps.cs` → `WhenIWaitForWeatherDataToLoad`
 **First seen:** Deploy-Dev #237 (2026-04-08)
 **Occurrences:** Deploy-Dev #237, #240 — both on the `Disabling weather hides the weather strip` scenario in `Weather.feature`. Other weather scenarios in the same runs (e.g. `Weather strip shows current temperature and condition`) used the identical `Background` and `WhenIWaitForWeatherDataToLoad` step and passed.
@@ -26,38 +33,27 @@ System.InvalidOperationException : Weather API returned 204 after refresh
 (refresh POST returned 200) — expected 200. The refresh may have failed
 to store data.
 ```
-The poll runs `/api/weather/current` every 500ms for 30s and never sees a 200 — i.e. it is not a timing race within the poll window, the data is genuinely never written.
+The E2E poll ran `/api/weather/current` every 500ms for 30s and never saw a 200 — i.e. it was not a timing race within the poll window, the data was genuinely never visible.
 
-**What we know:**
-- `POST /api/weather/refresh` returns **200** — the request reached the server and `WeatherRefreshService.RefreshAsync` did not throw.
-- `GET /api/weather/current` returns **204** for the entire 30s window — `WeatherService.GetCurrentAsync` returns null. This happens if either:
-  1. `locationSettingRepository.GetAsync(userId)` returns null (no location for that user), **or**
-  2. `weatherDataPointRepository.GetCurrentAsync(locationId)` returns null (location exists but no current data point stored).
-- `WeatherRefreshService.RefreshAsync` (`src/FamilyHQ.Services/Weather/WeatherRefreshService.cs:27-33`) silently returns with status 200 if `locationRepo.GetAsync(userId)` returns null. This is the most likely path to "refresh succeeded but stored nothing".
+**What we knew:**
+- `POST /api/weather/refresh` returned **200** — the request reached the server and `WeatherRefreshService.RefreshAsync` did not throw.
+- `GET /api/weather/current` returned **204** for the entire 30s window — `WeatherService.GetCurrentAsync` returned null. This can only happen if either `locationSettingRepository.GetAsync(userId)` returns null (no location for that user) or `weatherDataPointRepository.GetCurrentAsync(locationId)` returns null (location exists but no current data point stored).
+- `WeatherRefreshService.RefreshAsync` previously silently returned with status 200 if `locationRepo.GetAsync(userId)` returned null. This was the most likely path to "refresh succeeded but stored nothing".
 - The location IS saved before the refresh runs — `GivenTheUserHasASavedLocation` waits for `.settings-location-pill` to appear, which the Razor component only renders after `SaveLocationAsync` returns successfully.
-- `POST /api/settings/location` (`src/FamilyHQ.WebApi/Controllers/SettingsController.cs:108`) internally calls `_weatherRefreshService.RefreshAsync(userId, ct)` immediately after `_locationRepo.UpsertAsync`, so the refresh happens *inside* the same request as the location save. The DbContext is request-scoped and shared between repos, so this should not race — but PostgreSQL read-committed semantics combined with EF's change tracker behaviour leave us unable to fully rule out a same-context visibility quirk.
-- Per-scenario browser context isolation is verified (`MasterHooks.SetupBrowserAsync`/`TeardownBrowserAsync`), so cross-test JWT/user leakage is not in play.
+- `POST /api/settings/location` internally called `_weatherRefreshService.RefreshAsync(userId, ct)` immediately after `_locationRepo.UpsertAsync`, so the refresh happened *inside* the same request as the location save. The DbContext is request-scoped and shared between repos, so this should not have raced — but PostgreSQL read-committed semantics combined with EF's change tracker behaviour left us unable to fully rule out a same-context visibility quirk.
+- Per-scenario browser context isolation was verified (`MasterHooks.SetupBrowserAsync`/`TeardownBrowserAsync`), so cross-test JWT/user leakage was not in play.
 
-**Suspected root causes (unverified, in rough order of likelihood):**
-1. **DbContext / save-vs-refresh race inside `POST /api/settings/location`** — the post-upsert refresh sometimes sees no location for the user and silently no-ops, leaving zero data points. The next test refresh then ALSO sees nothing because the *real* failure was the absence of seeded weather data on the first refresh, and replacing nothing with nothing is a no-op.
-2. **`WeatherRefreshService.RefreshAsync` silent no-op when location is null** is by itself a foot-gun: any call that runs before a location is committed will return 200 and store nothing.
-3. **Lat/lon precision drift** between the seeded simulator location and the simulator's `/v1/forecast` lookup — possible but unlikely; the simulator uses 0.001 tolerance and the test offsets are in the 0.01–0.099 range.
+**Previous mitigation** (commit `abaffae`, 2026-04-08):
+- `WhenIWaitForWeatherDataToLoad` retried the refresh+poll cycle up to 3 times. This masked but did not fix the problem: #240 still failed through the retries because the same request path was exercised each time.
 
-**Mitigation in place** (commit `abaffae`, 2026-04-08):
-- `WhenIWaitForWeatherDataToLoad` retries the refresh+poll cycle up to 3 times. Each iteration POSTs `/api/weather/refresh` then polls `/current` for up to 10s. Re-triggering the refresh from a fresh request is expected to resolve the race in practice.
+**Root-cause fix:**
+- `WeatherRefreshService.RefreshAsync` now returns a structured `WeatherRefreshResult` (`Succeeded` / `SkippedWeatherDisabled` / `SkippedNoLocation`) instead of silently returning with status 200 on a no-op. An entry log line records `UserId`, and the success log records `LocationId`, resolved place name, lat/lon and the number of data points written — exactly the forensic trail that would have made root-causing this immediate.
+- `WeatherController.Refresh` translates skipped outcomes into **409 Conflict** with a structured `message`, so a client call that runs before a location is committed fails loudly instead of reporting success.
+- `WeatherController.Refresh` now also verifies that `WeatherService.GetCurrentAsync` returns non-null data *before* returning 200. If the refresh reported success but no current data point is visible to a subsequent read, the endpoint returns **503 Service Unavailable** with `locationSettingId` and `dataPointsWritten` diagnostics. This turns the intermittent downstream 204 into a single clear server-side failure on the refresh call itself.
+- `SettingsController` still calls `RefreshAsync` after a location save, but the new structured result means any same-request visibility quirk is surfaced in logs rather than silently swallowed.
+- Unit test coverage in `WeatherControllerTests` pins all four new outcome paths (success, 409 no-location, 409 disabled, 503 not-visible).
 
-**What a real fix looks like:**
-- Replace the silent no-op in `WeatherRefreshService.cs:29-33` with either a fail-fast (throw) or a synchronous re-fetch of the location after a short delay. Failing loudly here would surface the real bug instead of letting it appear as a downstream test flake.
-- Alternatively, decouple the post-save refresh from `POST /api/settings/location` entirely — schedule it as a fire-and-forget background job or remove it and let the next user-initiated refresh fetch the data.
-- Add a server-side log line on `RefreshAsync` entry that includes the userId and resolved location ID — would have made root-causing this immediate.
-
-**If this recurs:**
-1. Pull the WebApi container logs for the failing run window — look for the `"No location configured for user {UserId}. Skipping weather refresh."` message. If present → root cause confirmed as path 1/2 above.
-2. Check whether the failing scenario logs the same `userId` for both the location save and the refresh.
-3. Don't dismiss as flake even if it's just one occurrence — two occurrences in this case were enough to confirm reproducibility.
-
----
-
-## Resolved issues
-
-*(none yet — when an issue is fixed, move it here with the resolving commit hash and date.)*
+**If the symptom returns:**
+1. A 503 on `POST /api/weather/refresh` with `dataPointsWritten > 0` confirms the same-request visibility quirk — check the `weatherdataPoint` INSERTs were committed before the `WeatherService.GetCurrentAsync` SELECT ran. Likely next step is to push the post-save refresh out of the same request (fire-and-forget or a follow-up client call).
+2. A 409 with `SkippedNoLocation` confirms the caller's location was not visible at refresh time — check whether `POST /api/settings/location` returned before the E2E moved on, and confirm the same userId is used for both calls.
+3. The E2E retry loop in `WhenIWaitForWeatherDataToLoad` is now backed by a fail-fast server, so a test failure here carries real diagnostic context in the WebApi logs.
