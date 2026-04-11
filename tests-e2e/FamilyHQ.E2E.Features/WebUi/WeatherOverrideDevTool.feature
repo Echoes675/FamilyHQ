@@ -9,14 +9,14 @@ Feature: Weather override dev tool
 
   Scenario: Activating override and selecting a condition engages the matching animation
     When I navigate to the settings page
-    And I open the "Weather Override" tab
+    And I navigate to the Weather Override tab
     And I toggle override on
     And I select the "HeavyRain" condition
     Then the weather overlay element has the class "weather-heavyrain"
 
   Scenario: Toggling Windy adds the windy class
     When I navigate to the settings page
-    And I open the "Weather Override" tab
+    And I navigate to the Weather Override tab
     And I toggle override on
     And I select the "Snow" condition
     And I toggle Windy on
@@ -31,7 +31,7 @@ Feature: Weather override dev tool
       | 12           | 0            | 5          |
     When I wait for weather data to load
     And I navigate to the settings page
-    And I open the "Weather Override" tab
+    And I navigate to the Weather Override tab
     And I toggle override on
     And I select the "HeavyRain" condition
     Then the weather overlay element has the class "weather-heavyrain"

@@ -20,13 +20,10 @@ public class WeatherOverrideSteps
         _dashboardPage = new DashboardPage(page);
     }
 
-    [When(@"I open the ""([^""]*)"" tab")]
-    public async Task WhenIOpenTheTab(string tabName)
+    [When(@"I navigate to the Weather Override tab")]
+    public async Task WhenINavigateToTheWeatherOverrideTab()
     {
-        if (tabName == "Weather Override")
-            await _settingsPage.NavigateToWeatherOverrideTabAsync();
-        else
-            throw new NotSupportedException($"Tab '{tabName}' is not supported by this step.");
+        await _settingsPage.NavigateToWeatherOverrideTabAsync();
     }
 
     [When(@"I toggle override on")]
@@ -92,8 +89,8 @@ public class WeatherOverrideSteps
     [Then(@"the weather overlay element does not have the class ""([^""]*)""")]
     public async Task ThenTheWeatherOverlayElementDoesNotHaveTheClass(string className)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
         {
             var classes = await _dashboardPage.WeatherOverlay.GetAttributeAsync("class") ?? string.Empty;
             if (!classes.Contains(className))
