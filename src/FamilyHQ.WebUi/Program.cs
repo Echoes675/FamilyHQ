@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.Services.Auth;
 using FamilyHQ.WebUi.Services.Correlation;
+using FamilyHQ.WebUi.Configuration;
 
 namespace FamilyHQ.WebUi;
 
@@ -15,6 +16,12 @@ public class Program
         builder.RootComponents.Add<HeadOutlet>("head::after");
 
         var backendUrl = builder.Configuration["BackendUrl"] ?? "https://localhost:5001";
+
+        var featureFlags = new FeatureFlags
+        {
+            WeatherOverrideEnabled = builder.Configuration.GetValue<bool>("FeatureWeatherOverride")
+        };
+        builder.Services.AddSingleton(featureFlags);
 
         builder.Services.AddScoped<IAuthTokenStore, LocalStorageAuthTokenStore>();
         builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
