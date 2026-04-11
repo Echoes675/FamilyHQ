@@ -1,0 +1,349 @@
+// Jenkinsfile.cleanup
+//
+// Scheduled cleanup pipeline. Runs daily at ~03:00.
+//
+// Responsibilities:
+//   1. Checkout the repo (inherits credentials from the Jenkins job config)
+//      and list live branches via `git ls-remote`.
+//   2. List tags for each familyhq image in the private Docker registry.
+//   3. Delete tags whose branch prefix no longer has a matching live branch
+//      (orphans from deleted branches).
+//   4. Run `registry garbage-collect` via SSH to reclaim disk space.
+//
+// Safe by design:
+//   - DRY_RUN defaults to true. First run prints what WOULD be deleted without
+//     touching the registry. Flip DRY_RUN=false only after eyeballing the log.
+//   - RUN_GC is gated on DRY_RUN=false to prevent accidental GC in dry runs.
+//   - `latest` and any `master-*` tag are always skipped (managed by the build
+//     pipeline itself).
+//
+// Configuration:
+//   GitHub access reuses whatever credentials the Jenkins job is configured
+//   with for SCM checkout (same pattern as Jenkinsfile.build) — nothing to set
+//   in the Jenkinsfile itself. Registry SSH access and compose layout MUST be
+//   set via the environment block below before the GC stage will work.
+//   Placeholders are marked TODO.
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    triggers {
+        cron('H 3 * * *')
+    }
+
+    parameters {
+        // DRY_RUN defaults to false so the nightly cron trigger actually
+        // performs cleanup. To audit without touching anything, click
+        // "Build with Parameters" and tick DRY_RUN manually.
+        booleanParam(
+            name: 'DRY_RUN',
+            defaultValue: false,
+            description: 'If true, list candidate deletions and GC actions without executing them. Tick this for audit-only manual runs.'
+        )
+        booleanParam(
+            name: 'RUN_GC',
+            defaultValue: true,
+            description: 'Run registry garbage-collect after tag deletion. Ignored when DRY_RUN=true.'
+        )
+        booleanParam(
+            name: 'VERBOSE',
+            defaultValue: true,
+            description: 'Log the full live-branch list and each tag decision (KEEP/ORPHAN/SKIP). Useful signal during bring-up; can be disabled later if log noise becomes an issue.'
+        )
+    }
+
+    environment {
+        // ---- Registry ----
+        REGISTRY = 'registry.alphaepsilon.co.uk'
+        REGISTRY_URL = "https://${REGISTRY}"
+
+        // ---- Registry host SSH access (for garbage-collect) ----
+        REGISTRY_SSH_HOST = 'registry.alphaepsilon.co.uk'
+        REGISTRY_SSH_USER = 'docker_user'
+        REGISTRY_SSH_CREDENTIALS_ID = 'jenkins_docker_prod'
+        // Path to the docker-compose project directory on the registry host.
+        REGISTRY_COMPOSE_DIR = '/home/docker_user/docker-registry'
+        // Service name of the registry container inside docker-compose.yml.
+        REGISTRY_COMPOSE_SERVICE = 'registry'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '======= Checkout ======='
+                checkout scm
+            }
+        }
+
+        stage('Fetch Live Branches') {
+            steps {
+                echo '======= Fetch Live Branches ======='
+                script {
+                    // `git ls-remote --heads origin` queries the remote using the
+                    // credential helper that `checkout scm` already set up for the
+                    // workspace. No GitHub PAT needed in the Jenkinsfile.
+                    def raw = sh(
+                        script: 'git ls-remote --heads origin',
+                        returnStdout: true
+                    ).trim()
+
+                    def liveBranches = raw.readLines().collect { line ->
+                        // Format: "<sha>\trefs/heads/<branch>"
+                        def parts = line.split('\t')
+                        parts.length == 2 ? parts[1].replaceFirst('^refs/heads/', '') : null
+                    }.findAll { it != null }
+
+                    def sanitized = liveBranches.collect { sanitizeBranch(it) }.toSet()
+                    env.LIVE_BRANCHES_JSON = writeJSON(json: sanitized.toList(), returnText: true)
+                    echo "Discovered ${sanitized.size()} live branches on origin."
+
+                    if (params.VERBOSE) {
+                        echo "Live branches (sanitized):"
+                        sanitized.toSorted().each { echo "  ${it}" }
+                    }
+                }
+            }
+        }
+
+        stage('Identify Orphan Tags') {
+            steps {
+                echo '======= Identify Orphan Tags ======='
+                script {
+                    def liveBranches = readJSON(text: env.LIVE_BRANCHES_JSON).toSet()
+
+                    def images = [
+                        'familyhq-webapi',
+                        'familyhq-webui',
+                        'familyhq-simulator'
+                    ]
+
+                    def orphansByImage = [:]
+
+                    withCredentials([usernameColonPassword(
+                        credentialsId: 'alphaepsilon-docker-registry',
+                        variable: 'REGISTRY_CREDS'
+                    )]) {
+                        for (imageName in images) {
+                            def tagsJson = sh(
+                                script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/${imageName}/tags/list",
+                                returnStdout: true
+                            ).trim()
+
+                            def tags = readJSON(text: tagsJson).tags ?: []
+                            def orphans = []
+                            def kept = 0
+                            def skipped = 0
+
+                            for (tag in tags) {
+                                // Skip protected tags managed elsewhere.
+                                if (tag == 'latest' || tag.startsWith('master-')) {
+                                    if (params.VERBOSE) {
+                                        echo "  SKIP   ${imageName}:${tag} (protected)"
+                                    }
+                                    skipped++
+                                    continue
+                                }
+
+                                def branchPrefix = extractBranchPrefix(tag)
+                                if (branchPrefix == null) {
+                                    echo "  SKIP   ${imageName}:${tag} (unrecognised tag format)"
+                                    skipped++
+                                    continue
+                                }
+
+                                if (liveBranches.contains(branchPrefix)) {
+                                    if (params.VERBOSE) {
+                                        echo "  KEEP   ${imageName}:${tag} -> branch '${branchPrefix}'"
+                                    }
+                                    kept++
+                                } else {
+                                    if (params.VERBOSE) {
+                                        echo "  ORPHAN ${imageName}:${tag} -> branch '${branchPrefix}' (no match)"
+                                    }
+                                    orphans << tag
+                                }
+                            }
+
+                            orphansByImage[imageName] = orphans
+                            echo "${imageName}: ${tags.size()} total, ${kept} kept, ${orphans.size()} orphaned, ${skipped} skipped"
+                        }
+                    }
+
+                    env.ORPHANS_JSON = writeJSON(json: orphansByImage, returnText: true)
+                }
+            }
+        }
+
+        stage('Delete Orphan Tags') {
+            steps {
+                echo '======= Delete Orphan Tags ======='
+                script {
+                    def orphansByImage = readJSON(text: env.ORPHANS_JSON)
+                    def totalDeleted = 0
+
+                    withCredentials([usernameColonPassword(
+                        credentialsId: 'alphaepsilon-docker-registry',
+                        variable: 'REGISTRY_CREDS'
+                    )]) {
+                        orphansByImage.each { imageName, orphans ->
+                            for (tag in orphans) {
+                                if (params.DRY_RUN) {
+                                    echo "  [DRY_RUN] would delete ${imageName}:${tag}"
+                                } else {
+                                    deleteRegistryTag(imageName, tag)
+                                    totalDeleted++
+                                }
+                            }
+                        }
+                    }
+
+                    if (params.DRY_RUN) {
+                        def candidateCount = orphansByImage.values().sum { it.size() } ?: 0
+                        echo "DRY_RUN: ${candidateCount} tags would be deleted (no changes made)."
+                    } else {
+                        echo "Deleted ${totalDeleted} orphaned tags."
+                    }
+                }
+            }
+        }
+
+        stage('Registry Garbage Collect') {
+            when {
+                expression { return params.RUN_GC && !params.DRY_RUN }
+            }
+            steps {
+                echo '======= Registry Garbage Collect ======='
+                // Strategy: read-only mode via docker-compose override.
+                //
+                // 1. Drop an override file that sets REGISTRY_STORAGE_MAINTENANCE_READONLY.
+                // 2. `docker compose up -d` re-creates the registry container in read-only
+                //    mode (pulls still serve, pushes return 503).
+                // 3. Run `registry garbage-collect` inside the container.
+                // 4. Remove the override file.
+                // 5. `docker compose up -d` again to restore writable mode.
+                //
+                // TODO: adapt the command block below if your registry is NOT managed by
+                // docker compose. For a plain `docker run`, you'll need to record the
+                // original run args and re-launch with `--env REGISTRY_STORAGE_MAINTENANCE_READONLY=...`.
+                sshagent(credentials: [env.REGISTRY_SSH_CREDENTIALS_ID]) {
+                    // Jenkins env vars live on the agent, NOT inside the SSH
+                    // session. The heredoc is quoted (<<'REMOTE') so its body is
+                    // sent to the remote bash literally. We therefore pass the
+                    // compose dir and service as positional arguments to
+                    // `bash -s`, and the remote script picks them up via $1/$2.
+                    sh '''
+                        set -euo pipefail
+                        ssh -o StrictHostKeyChecking=accept-new \
+                            "${REGISTRY_SSH_USER}@${REGISTRY_SSH_HOST}" \
+                            bash -s "${REGISTRY_COMPOSE_DIR}" "${REGISTRY_COMPOSE_SERVICE}" <<'REMOTE'
+set -euo pipefail
+
+COMPOSE_DIR="$1"
+SERVICE="$2"
+OVERRIDE_FILE="docker-compose.gc-readonly.yml"
+
+if [ -z "$COMPOSE_DIR" ] || [ -z "$SERVICE" ]; then
+    echo "ERROR: COMPOSE_DIR and SERVICE must both be set (got '$COMPOSE_DIR' / '$SERVICE')." >&2
+    exit 1
+fi
+
+cd "$COMPOSE_DIR"
+
+cleanup() {
+    if [ -f "$OVERRIDE_FILE" ]; then
+        echo "Restoring writable mode..."
+        rm -f "$OVERRIDE_FILE"
+        docker compose up -d "$SERVICE"
+    fi
+}
+trap cleanup EXIT
+
+echo "Enabling read-only maintenance mode..."
+cat > "$OVERRIDE_FILE" <<EOF
+services:
+  ${SERVICE}:
+    environment:
+      REGISTRY_STORAGE_MAINTENANCE_READONLY: '{"enabled":true}'
+EOF
+
+docker compose -f docker-compose.yml -f "$OVERRIDE_FILE" up -d "$SERVICE"
+
+# Give the container a couple of seconds to come back up.
+sleep 3
+
+echo "Running garbage-collect..."
+docker compose exec -T "$SERVICE" \\
+    /bin/registry garbage-collect --delete-untagged=false /etc/docker/registry/config.yml
+
+echo "Garbage collect complete."
+REMOTE
+                    '''
+                }
+            }
+        }
+
+        stage('Summary') {
+            steps {
+                script {
+                    def orphansByImage = readJSON(text: env.ORPHANS_JSON)
+                    def lines = ['======= Cleanup Summary =======']
+                    orphansByImage.each { imageName, orphans ->
+                        lines << "  ${imageName}: ${orphans.size()} orphaned tag(s)"
+                    }
+                    lines << "  DRY_RUN=${params.DRY_RUN}"
+                    lines << "  RUN_GC=${params.RUN_GC && !params.DRY_RUN}"
+                    echo lines.join('\n')
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Cleanup pipeline finished successfully."
+        }
+        failure {
+            echo "Cleanup pipeline failed. Check logs; registry state may be inconsistent if the GC stage failed mid-flight."
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// Must match Jenkinsfile.build:15 exactly, so tag prefixes line up.
+def sanitizeBranch(String name) {
+    return name.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
+}
+
+// Tag format (from Jenkinsfile.build): "<branch-sanitized>-<BUILD_NUMBER>-<GIT_COMMIT_SHORT>"
+// Branch names can contain '-', so we split from the RIGHT: drop the last two
+// '-'-delimited segments (build number and commit) and rejoin the rest.
+def extractBranchPrefix(String tag) {
+    def parts = tag.split('-')
+    if (parts.length < 3) {
+        return null
+    }
+    return parts[0..(parts.length - 3)].join('-')
+}
+
+def deleteRegistryTag(String imageName, String tag) {
+    def digest = sh(
+        script: "curl -sk -u \$REGISTRY_CREDS -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${env.REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
+        returnStdout: true
+    ).trim()
+
+    if (digest) {
+        sh "curl -sk -u \$REGISTRY_CREDS -X DELETE ${env.REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
+        echo "Deleted ${imageName}:${tag} (${digest})"
+    } else {
+        echo "No digest for ${imageName}:${tag} (already deleted?)"
+    }
+}
