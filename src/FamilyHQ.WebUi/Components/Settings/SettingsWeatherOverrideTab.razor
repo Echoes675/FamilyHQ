@@ -1,0 +1,94 @@
+@using FamilyHQ.Core.Enums
+@using FamilyHQ.WebUi.Services
+@implements IDisposable
+@inject IWeatherOverrideService OverrideService
+
+<div class="settings-section-content">
+    <h2 class="settings-section__title">Weather Override</h2>
+    <p class="settings-section__description">
+        Dev/staging only. Force the full-screen weather animation to a chosen
+        condition for visual testing. Does not affect the weather strip, your
+        weather settings, or any data served by the API.
+    </p>
+
+    <div class="settings-section">
+        <div class="weather-override__toggle-row">
+            <span class="settings-label">Override active</span>
+            <button type="button"
+                    class="@($"pill-toggle {(OverrideService.IsActive ? "pill-toggle--on" : "pill-toggle--off")}")"
+                    data-testid="weather-override-toggle"
+                    @onclick="ToggleOverride">
+                @(OverrideService.IsActive ? "On" : "Off")
+            </button>
+        </div>
+
+        @if (OverrideService.IsActive)
+        {
+            <p class="settings-hint mt-3">Tap a condition to engage its animation immediately.</p>
+
+            <div class="weather-override__modifier-row mt-2">
+                <span class="settings-label">Windy</span>
+                <button type="button"
+                        class="@($"pill-toggle {(OverrideService.IsWindy ? "pill-toggle--on" : "pill-toggle--off")}")"
+                        data-testid="weather-override-windy"
+                        @onclick="ToggleWindy">
+                    @(OverrideService.IsWindy ? "On" : "Off")
+                </button>
+            </div>
+
+            <div class="weather-override__condition-grid mt-2">
+                @foreach (var condition in AllConditions)
+                {
+                    var isSelected = OverrideService.ActiveCondition == condition;
+                    <button type="button"
+                            class="@($"pill-toggle {(isSelected ? "pill-toggle--on" : "pill-toggle--off")}")"
+                            data-testid="@($"weather-override-condition-{condition}")"
+                            @onclick="() => SelectCondition(condition)">
+                        @FormatCondition(condition)
+                    </button>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private static readonly WeatherCondition[] AllConditions = Enum.GetValues<WeatherCondition>();
+
+    protected override void OnInitialized()
+    {
+        OverrideService.OnOverrideChanged += HandleChanged;
+    }
+
+    private void HandleChanged() => InvokeAsync(StateHasChanged);
+
+    private void ToggleOverride()
+    {
+        if (OverrideService.IsActive)
+        {
+            OverrideService.Deactivate();
+        }
+        else
+        {
+            // Default to Clear when first enabling so the user sees something change.
+            OverrideService.Activate(WeatherCondition.Clear);
+        }
+    }
+
+    private void ToggleWindy() => OverrideService.SetWindy(!OverrideService.IsWindy);
+
+    private void SelectCondition(WeatherCondition condition) => OverrideService.SelectCondition(condition);
+
+    private static string FormatCondition(WeatherCondition condition) => condition switch
+    {
+        WeatherCondition.PartlyCloudy => "Partly Cloudy",
+        WeatherCondition.LightRain => "Light Rain",
+        WeatherCondition.HeavyRain => "Heavy Rain",
+        _ => condition.ToString()
+    };
+
+    public void Dispose()
+    {
+        OverrideService.OnOverrideChanged -= HandleChanged;
+    }
+}
