@@ -1292,6 +1292,22 @@ html, body {
     border-color: var(--theme-accent-hover, var(--theme-accent));
 }
 
+.weather-override__toggle-row,
+.weather-override__modifier-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.weather-override__condition-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
+}
+
 /* =============================================
    Section 17 — Error boundary
    ============================================= */
