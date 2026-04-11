@@ -229,14 +229,28 @@ pipeline {
                 // docker compose. For a plain `docker run`, you'll need to record the
                 // original run args and re-launch with `--env REGISTRY_STORAGE_MAINTENANCE_READONLY=...`.
                 sshagent(credentials: [env.REGISTRY_SSH_CREDENTIALS_ID]) {
+                    // Jenkins env vars live on the agent, NOT inside the SSH
+                    // session. The heredoc is quoted (<<'REMOTE') so its body is
+                    // sent to the remote bash literally. We therefore pass the
+                    // compose dir and service as positional arguments to
+                    // `bash -s`, and the remote script picks them up via $1/$2.
                     sh '''
                         set -euo pipefail
-                        ssh -o StrictHostKeyChecking=accept-new ${REGISTRY_SSH_USER}@${REGISTRY_SSH_HOST} bash -s <<'REMOTE'
+                        ssh -o StrictHostKeyChecking=accept-new \
+                            "${REGISTRY_SSH_USER}@${REGISTRY_SSH_HOST}" \
+                            bash -s "${REGISTRY_COMPOSE_DIR}" "${REGISTRY_COMPOSE_SERVICE}" <<'REMOTE'
 set -euo pipefail
-cd "${REGISTRY_COMPOSE_DIR:-/opt/registry}"
 
-SERVICE="${REGISTRY_COMPOSE_SERVICE:-registry}"
+COMPOSE_DIR="$1"
+SERVICE="$2"
 OVERRIDE_FILE="docker-compose.gc-readonly.yml"
+
+if [ -z "$COMPOSE_DIR" ] || [ -z "$SERVICE" ]; then
+    echo "ERROR: COMPOSE_DIR and SERVICE must both be set (got '$COMPOSE_DIR' / '$SERVICE')." >&2
+    exit 1
+fi
+
+cd "$COMPOSE_DIR"
 
 cleanup() {
     if [ -f "$OVERRIDE_FILE" ]; then
