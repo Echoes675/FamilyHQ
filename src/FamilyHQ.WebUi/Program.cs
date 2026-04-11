@@ -68,6 +68,7 @@ public class Program
         });
 
         builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
+        builder.Services.AddScoped<IWeatherOverrideService, WeatherOverrideService>();
 
         await builder.Build().RunAsync();
     }
