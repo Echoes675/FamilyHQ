@@ -2,6 +2,7 @@
 @using FamilyHQ.WebUi.Services
 @implements IAsyncDisposable
 @inject IWeatherUiService WeatherService
+@inject IWeatherOverrideService OverrideService
 @inject IJSRuntime JsRuntime
 
 @code {
@@ -14,11 +15,17 @@
         {
             _module = await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./js/weather.js");
             WeatherService.OnWeatherChanged += HandleWeatherChanged;
+            OverrideService.OnOverrideChanged += HandleOverrideChanged;
             await UpdateOverlay();
         }
     }
 
     private void HandleWeatherChanged()
+    {
+        InvokeAsync(UpdateOverlay);
+    }
+
+    private void HandleOverrideChanged()
     {
         InvokeAsync(UpdateOverlay);
     }
@@ -29,6 +36,18 @@
 
         try
         {
+            // Override wins when active: force the chosen condition regardless of
+            // real weather or the user's weather-enabled setting, so dev/staging can
+            // see every animation even when no real weather data exists.
+            if (OverrideService.IsActive && OverrideService.ActiveCondition is { } overrideCondition)
+            {
+                await _module.InvokeVoidAsync(
+                    "setWeatherOverlay",
+                    overrideCondition.ToString(),
+                    OverrideService.IsWindy);
+                return;
+            }
+
             if (!WeatherService.IsEnabled || WeatherService.CurrentWeather is null)
             {
                 await _module.InvokeVoidAsync("clearWeatherOverlay");
@@ -46,6 +65,7 @@
     {
         _disposed = true;
         WeatherService.OnWeatherChanged -= HandleWeatherChanged;
+        OverrideService.OnOverrideChanged -= HandleOverrideChanged;
         if (_module is not null)
         {
             try

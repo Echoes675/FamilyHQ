@@ -17,10 +17,11 @@ public class SettingsPage : BasePage
     public ILocator BackBtn => Page.Locator(".dashboard-header__back");
 
     // Tab navigation
-    public ILocator GeneralTab  => Page.GetByTestId("tab-general");
-    public ILocator LocationTab => Page.GetByTestId("tab-location");
-    public ILocator WeatherTab  => Page.GetByTestId("tab-weather");
-    public ILocator DisplayTab  => Page.GetByTestId("tab-display");
+    public ILocator GeneralTab          => Page.GetByTestId("tab-general");
+    public ILocator LocationTab         => Page.GetByTestId("tab-location");
+    public ILocator WeatherTab          => Page.GetByTestId("tab-weather");
+    public ILocator DisplayTab          => Page.GetByTestId("tab-display");
+    public ILocator WeatherOverrideTab  => Page.GetByTestId("tab-weather-override");
 
     // General tab
     public ILocator AccountName => Page.GetByTestId("account-name");
@@ -41,6 +42,12 @@ public class SettingsPage : BasePage
     public ILocator WeatherSaveBtn        => Page.Locator(".settings-btn").First;
     public ILocator WeatherCancelBtn      => Page.Locator(".settings-btn--ghost");
     public ILocator WeatherSuccessMessage => Page.Locator(".settings-hint").Filter(new() { HasText = "Settings saved." });
+
+    // Weather Override tab (dev/staging only)
+    public ILocator WeatherOverrideToggle    => Page.GetByTestId("weather-override-toggle");
+    public ILocator WeatherOverrideWindyPill => Page.GetByTestId("weather-override-windy");
+    public ILocator WeatherOverrideConditionPill(string condition) =>
+        Page.GetByTestId($"weather-override-condition-{condition}");
 
     // Calendars tab
     public ILocator CalendarsTab           => Page.GetByTestId("tab-calendars");
@@ -79,6 +86,14 @@ public class SettingsPage : BasePage
         await NavigateAndWaitAsync();
         await WeatherTab.ClickAsync();
         await WeatherEnabledToggle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    public async Task NavigateToWeatherOverrideTabAsync()
+    {
+        await NavigateAndWaitAsync();
+        await WeatherOverrideTab.ClickAsync();
+        await Page.GetByTestId("weather-override-toggle").WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
