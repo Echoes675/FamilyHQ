@@ -1,8 +1,10 @@
 @page "/settings"
 @using FamilyHQ.WebUi.Services.Auth
 @using FamilyHQ.WebUi.Components.Settings
+@using FamilyHQ.WebUi.Configuration
 @inject IAuthenticationService AuthService
 @inject NavigationManager Navigation
+@inject FeatureFlags FeatureFlags
 
 <DashboardHeader BackUrl="/" />
 
@@ -38,6 +40,15 @@
             <span class="settings-tab__icon" aria-hidden="true">🖥</span>
             <span class="settings-tab__label">Display</span>
         </button>
+        @if (FeatureFlags.WeatherOverrideEnabled)
+        {
+            <button class="settings-tab @(_activeTab == "weather-override" ? "settings-tab--active" : "")"
+                    data-testid="tab-weather-override"
+                    @onclick='() => SetTab("weather-override")'>
+                <span class="settings-tab__icon" aria-hidden="true">🧪</span>
+                <span class="settings-tab__label">Weather Override</span>
+            </button>
+        }
     </nav>
 
     <div class="settings-tab-content">
@@ -57,6 +68,9 @@
                 break;
             case "calendars":
                 <SettingsCalendarsTab />
+                break;
+            case "weather-override" when FeatureFlags.WeatherOverrideEnabled:
+                <SettingsWeatherOverrideTab />
                 break;
         }
     </div>
