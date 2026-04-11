@@ -38,10 +38,13 @@ pipeline {
     }
 
     parameters {
+        // DRY_RUN defaults to false so the nightly cron trigger actually
+        // performs cleanup. To audit without touching anything, click
+        // "Build with Parameters" and tick DRY_RUN manually.
         booleanParam(
             name: 'DRY_RUN',
-            defaultValue: true,
-            description: 'If true, list candidate deletions and GC actions without executing them.'
+            defaultValue: false,
+            description: 'If true, list candidate deletions and GC actions without executing them. Tick this for audit-only manual runs.'
         )
         booleanParam(
             name: 'RUN_GC',
@@ -51,7 +54,7 @@ pipeline {
         booleanParam(
             name: 'VERBOSE',
             defaultValue: true,
-            description: 'Log the full live-branch list and each tag decision (KEEP/ORPHAN/SKIP). Recommended for first runs; can be disabled once the pipeline is trusted.'
+            description: 'Log the full live-branch list and each tag decision (KEEP/ORPHAN/SKIP). Useful signal during bring-up; can be disabled later if log noise becomes an issue.'
         )
     }
 
