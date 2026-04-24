@@ -89,6 +89,16 @@ The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface
   - **Display tab**: Surface Opacity (0–100%), Opaque surfaces toggle, Theme subsection (auto/manual selection, theme tiles, transition speed).
 - Settings accessed via a gear icon (⚙️) in the DashboardHeader. User name and sign-out are on the Settings page, not the header.
 
+## Feature Flags
+
+Runtime feature flags are exposed to Blazor WASM via a `FeatureFlags` POCO, registered as a singleton in `Program.cs` and bound from `wwwroot/appsettings.json`. Flags are injected into the published bundle at container startup by `docker/webui/docker-entrypoint.sh`, which `sed`-substitutes values based on environment variables. Local `dotnet run` reads `wwwroot/appsettings.Development.json` instead.
+
+### Weather Override (dev/staging only)
+
+The Settings page has a fifth tab, **Weather Override**, rendered only when `FeatureFlags.WeatherOverrideEnabled` is true. The flag is sourced from the WebUi's `appsettings.json` key `FeatureWeatherOverride`, which is injected into the published bundle at container startup by `docker/webui/docker-entrypoint.sh` based on the `FEATURE_WEATHER_OVERRIDE_ENABLED` environment variable. Dev and staging set this to `true`; preprod and production set it to `false`. Local `dotnet run` inherits `true` from `wwwroot/appsettings.Development.json`.
+
+When the tab's "Override active" pill is on, a developer can tap any `WeatherCondition` and optionally toggle the Windy modifier to immediately force the full-screen weather animation (`WeatherOverlay`) to that condition. The override is purely client-side transient state held in a scoped `IWeatherOverrideService` and is never persisted — refreshing the browser reverts to the real weather pipeline. The `WeatherStrip`, backend API, user `WeatherSetting`, and real weather data flow are untouched.
+
 ## Performance Targets
 - Responsiveness: API endpoints should target < 200ms response time.
 - EF Core Efficiency:
