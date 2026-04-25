@@ -72,16 +72,6 @@ pipeline {
             }
         }
 
-        stage('Confirm') {
-            steps {
-                echo '======= Confirm ======='
-                script {
-                    def action = params.DIRECTION == 'backward' ? 'ROLL BACK' : 'Deploy'
-                    input message: "${action} PRODUCTION to ${env.RESOLVED_IMAGE_TAG}?", ok: action
-                }
-            }
-        }
-
         stage('Prepare') {
             steps {
                 echo '======= Prepare ======='
