@@ -5,21 +5,80 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    parameters {
+        choice(name: 'DIRECTION', choices: ['forward', 'backward'], description: 'forward = deploy latest master image, backward = deploy previous master image')
+    }
+
     environment {
         REGISTRY = 'registry.alphaepsilon.co.uk'
         REGISTRY_URL = "https://${REGISTRY}"
         DEPLOY_HOST = 'alphaepsilon.co.uk'
         DEPLOY_PATH = '/home/docker_user/apps/familyhq'
-        IMAGE_TAG = 'latest'
         WEBUI_BASE_URL = 'https://familyhq.alphaepsilon.co.uk'
         WEBAPI_BASE_URL = 'https://familyhq.api.alphaepsilon.co.uk'
     }
 
     stages {
+        stage('Verify Branch') {
+            steps {
+                echo '======= Verify Branch ======='
+                script {
+                    def branch = env.BRANCH_NAME ?: env.GIT_BRANCH?.replaceAll('origin/', '') ?: ''
+                    if (branch != 'master') {
+                        error "Production deployments are only allowed from the master branch. Current branch: ${branch}"
+                    }
+                }
+            }
+        }
+
+        stage('Resolve Image') {
+            steps {
+                echo '======= Resolve Image ======='
+                script {
+                    def tagsJson = ''
+                    withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                        tagsJson = sh(
+                            script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                            returnStdout: true
+                        ).trim()
+                    }
+
+                    def rawTags = readJSON(text: tagsJson).tags
+                    def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
+                    def masterTags = []
+                    for (int i = 0; i < tags.size(); i++) {
+                        def t = tags[i]
+                        if (t != null && "${t}".startsWith('master-')) {
+                            masterTags.add("${t}")
+                        }
+                    }
+                    masterTags.sort()
+
+                    if (masterTags.isEmpty()) {
+                        error 'No master images found in the registry'
+                    }
+
+                    if (params.DIRECTION == 'backward') {
+                        if (masterTags.size() < 2) {
+                            error 'No previous master image available to roll back to'
+                        }
+                        env.RESOLVED_IMAGE_TAG = masterTags[masterTags.size() - 2]
+                        echo "Rolling back to previous image: ${env.RESOLVED_IMAGE_TAG}"
+                    } else {
+                        env.RESOLVED_IMAGE_TAG = masterTags.last()
+                        echo "Deploying latest image: ${env.RESOLVED_IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+
         stage('Confirm') {
             steps {
                 echo '======= Confirm ======='
-                input message: 'Deploy to PRODUCTION using the latest master build?', ok: 'Deploy'
+                script {
+                    def action = params.DIRECTION == 'backward' ? 'ROLL BACK' : 'Deploy'
+                    input message: "${action} PRODUCTION to ${env.RESOLVED_IMAGE_TAG}?", ok: action
+                }
             }
         }
 
@@ -38,6 +97,7 @@ pipeline {
                             scp docker-compose.yml docker-compose.prod.yml docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/
                             scp \$ENV_FILE docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/.env
                             scp \$DP_CERT docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                            ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'chmod 640 ${DEPLOY_PATH}/.env && chmod 640 ${DEPLOY_PATH}/dataprotection.pfx'
                         """
                     }
                 }
@@ -51,7 +111,7 @@ pipeline {
                     sh """
                         ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
-                            export IMAGE_TAG=latest &&
+                            export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
                             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull &&
                             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
                         '
@@ -99,10 +159,10 @@ pipeline {
 
     post {
         success {
-            echo 'Production deployment successful'
+            echo "Production deployment successful: ${env.RESOLVED_IMAGE_TAG}"
         }
         failure {
-            echo 'Production deployment failed'
+            echo "Production deployment failed: ${env.RESOLVED_IMAGE_TAG}"
         }
     }
 }

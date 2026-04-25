@@ -24,6 +24,8 @@ services:
       - FrontendBaseUrl=${FrontendBaseUrl}
       - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
       - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
+      - Weather__BaseUrl=${Weather__BaseUrl}
+      - Geocoding__BaseUrl=${Geocoding__BaseUrl}
       - ReverseProxy__Enabled=true
       - VIRTUAL_HOST=${VIRTUAL_HOST_API}
       - VIRTUAL_PORT=8080
