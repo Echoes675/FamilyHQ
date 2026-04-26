@@ -21,7 +21,8 @@ public class WebhookRegistrationSteps
     public async Task ThenAWebhookChannelIsRegisteredForEachCalendar()
     {
         var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-        var expectedCalendarCount = template.Calendars.Count;
+        var userCalendarIds = template.Calendars.Select(c => c.Id).ToHashSet();
+        var expectedCalendarCount = userCalendarIds.Count;
 
         // Allow some time for async webhook registration after login
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -29,7 +30,10 @@ public class WebhookRegistrationSteps
 
         while (DateTime.UtcNow < deadline)
         {
-            registrations = await _simulatorApi.GetWebhookRegistrationsAsync();
+            var allRegistrations = await _simulatorApi.GetWebhookRegistrationsAsync();
+            registrations = allRegistrations
+                .Where(r => userCalendarIds.Contains(r.CalendarId))
+                .ToList();
             if (registrations.Count >= expectedCalendarCount)
                 break;
             await Task.Delay(500);
