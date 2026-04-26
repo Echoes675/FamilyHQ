@@ -1,4 +1,6 @@
+using FamilyHQ.Simulator.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Simulator.Controllers;
 
@@ -7,10 +9,12 @@ namespace FamilyHQ.Simulator.Controllers;
 public class WebhookController : ControllerBase
 {
     private readonly IConfiguration _configuration;
+    private readonly SimContext _db;
 
-    public WebhookController(IConfiguration configuration)
+    public WebhookController(IConfiguration configuration, SimContext db)
     {
         _configuration = configuration;
+        _db = db;
     }
 
     [HttpPost]
@@ -22,7 +26,13 @@ public class WebhookController : ControllerBase
         var webhookRequest = new HttpRequestMessage(HttpMethod.Post, webApiUrl);
         webhookRequest.Headers.Add("x-goog-resource-state", "sync");
         webhookRequest.Headers.Add("x-goog-resource-id", "simulated_resource_" + Guid.NewGuid().ToString());
-        
+
+        var storedChannel = await _db.WatchChannels.FirstOrDefaultAsync();
+        if (storedChannel != null)
+        {
+            webhookRequest.Headers.Add("x-goog-channel-id", storedChannel.ChannelId);
+        }
+
         try
         {
             var result = await client.SendAsync(webhookRequest);
