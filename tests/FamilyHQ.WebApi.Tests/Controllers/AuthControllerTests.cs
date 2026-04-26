@@ -98,6 +98,38 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public async Task Callback_WhenWebhookRegistrationEnabled_CallsRegisterAllAsync()
+    {
+        // Arrange
+        var webhookServiceMock = new Mock<IWebhookRegistrationService>();
+        var sut = CreateSut(webhookRegistrationEnabled: true, webhookRegistrationService: webhookServiceMock.Object);
+
+        // Act
+        await sut.Callback("dummy_code_for_user1");
+
+        // Assert
+        webhookServiceMock.Verify(
+            w => w.RegisterAllAsync("user1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Callback_WhenWebhookRegistrationDisabled_DoesNotCallRegisterAllAsync()
+    {
+        // Arrange
+        var webhookServiceMock = new Mock<IWebhookRegistrationService>();
+        var sut = CreateSut(webhookRegistrationEnabled: false, webhookRegistrationService: webhookServiceMock.Object);
+
+        // Act
+        await sut.Callback("dummy_code_for_user1");
+
+        // Assert
+        webhookServiceMock.Verify(
+            w => w.RegisterAllAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task Callback_WhenRefreshTokenIsNull_DoesNotSaveToTokenStore()
     {
         // Arrange
@@ -128,7 +160,9 @@ public class AuthControllerTests
         ITokenStore? tokenStore = null,
         string? frontendBaseUrl = "https://frontend.test",
         bool includeRefreshToken = true,
-        DefaultHttpContext? httpContext = null)
+        DefaultHttpContext? httpContext = null,
+        bool webhookRegistrationEnabled = false,
+        IWebhookRegistrationService? webhookRegistrationService = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -186,24 +220,28 @@ public class AuthControllerTests
 
         var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
 
+        var webhookServiceObj = webhookRegistrationService ?? new Mock<IWebhookRegistrationService>().Object;
+
         var scopeMock = new Mock<IServiceScope>();
         var providerMock = new Mock<IServiceProvider>();
         providerMock.Setup(p => p.GetService(typeof(IAccessTokenProvider))).Returns(accessTokenProviderMock.Object);
         providerMock.Setup(p => p.GetService(typeof(ICalendarSyncService))).Returns(syncServiceMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IHubContext<CalendarHub>))).Returns(hubContextMock.Object);
+        providerMock.Setup(p => p.GetService(typeof(IWebhookRegistrationService))).Returns(webhookServiceObj);
         scopeMock.Setup(s => s.ServiceProvider).Returns(providerMock.Object);
 
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
-        var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = false });
+        var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = webhookRegistrationEnabled });
 
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
             scopeFactoryMock.Object,
             configuration,
-            syncOptions)
+            syncOptions,
+            new Mock<ILogger<AuthController>>().Object)
         {
             ControllerContext = new ControllerContext
             {

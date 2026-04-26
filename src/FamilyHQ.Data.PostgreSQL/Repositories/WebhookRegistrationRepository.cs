@@ -8,6 +8,7 @@ public class WebhookRegistrationRepository(FamilyHqDbContext context) : IWebhook
 {
     public async Task<WebhookRegistration?> GetByChannelIdAsync(string channelId, CancellationToken ct = default)
         => await context.WebhookRegistrations
+            .AsNoTracking()
             .FirstOrDefaultAsync(w => w.ChannelId == channelId, ct);
 
     public async Task<IReadOnlyList<WebhookRegistration>> GetAllAsync(CancellationToken ct = default)

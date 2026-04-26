@@ -17,7 +17,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.0")
+                .HasAnnotation("ProductVersion", "10.0.7")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -399,6 +399,39 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("WeatherSettings");
                 });
 
+            modelBuilder.Entity("FamilyHQ.Core.Models.WebhookRegistration", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CalendarInfoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChannelId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("RegisteredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ResourceId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalendarInfoId")
+                        .IsUnique();
+
+                    b.ToTable("WebhookRegistrations", (string)null);
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
                 {
                     b.Property<int>("Id")
@@ -460,6 +493,17 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasForeignKey("LocationSettingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.WebhookRegistration", b =>
+                {
+                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", "CalendarInfo")
+                        .WithMany()
+                        .HasForeignKey("CalendarInfoId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("CalendarInfo");
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.CalendarInfo", b =>

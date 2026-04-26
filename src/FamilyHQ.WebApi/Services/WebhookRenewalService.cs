@@ -38,6 +38,9 @@ public class WebhookRenewalService(
         }
     }
 
+    // Iterates users manually rather than calling WebhookRegistrationService.RenewAllAsync
+    // because each user needs BackgroundUserContext set and a fresh DI scope so that
+    // scoped services (ICalendarRepository, ICurrentUserService) resolve correctly.
     private async Task RegisterAllWebhooksAsync(CancellationToken ct)
     {
         using var scope = serviceProvider.CreateScope();

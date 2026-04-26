@@ -4,6 +4,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
@@ -21,19 +22,22 @@ public class AuthController : ControllerBase
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;
     private readonly IOptions<SyncOptions> _syncOptions;
+    private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         GoogleAuthService authService,
         ITokenStore tokenStore,
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
-        IOptions<SyncOptions> syncOptions)
+        IOptions<SyncOptions> syncOptions,
+        ILogger<AuthController> logger)
     {
         _authService = authService;
         _tokenStore = tokenStore;
         _scopeFactory = scopeFactory;
         _configuration = configuration;
         _syncOptions = syncOptions;
+        _logger = logger;
     }
 
     /// <summary>
@@ -86,7 +90,7 @@ public class AuthController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Webhook registration error during login: {ex.Message}");
+                    _logger.LogWarning(ex, "Webhook registration failed during login for user {UserId}.", userId);
                 }
             }
         }
