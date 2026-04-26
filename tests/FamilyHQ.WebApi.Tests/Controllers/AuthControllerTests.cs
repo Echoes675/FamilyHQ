@@ -196,11 +196,14 @@ public class AuthControllerTests
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
+        var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = false });
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
             scopeFactoryMock.Object,
-            configuration)
+            configuration,
+            syncOptions)
         {
             ControllerContext = new ControllerContext
             {
