@@ -34,6 +34,19 @@ public class CalendarRepository : ICalendarRepository
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<CalendarInfo>> GetCalendarsByUserIdAsync(string userId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(userId))
+            return Array.Empty<CalendarInfo>();
+
+        return await _context.Calendars
+            .AsNoTracking()
+            .Where(c => c.UserId == userId)
+            .OrderBy(c => c.DisplayOrder)
+            .ThenBy(c => c.Id)
+            .ToListAsync(ct);
+    }
+
     public async Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default)
     {
         return await _context.Calendars

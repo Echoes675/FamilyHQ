@@ -46,3 +46,8 @@ internal record GoogleApiCalendarList(
     [property: JsonPropertyName("items")]         IReadOnlyList<GoogleApiCalendarListEntry> Items,
     [property: JsonPropertyName("nextPageToken")] string? NextPageToken,
     [property: JsonPropertyName("nextSyncToken")] string? NextSyncToken);
+
+internal record GoogleApiWatchResponse(
+    [property: JsonPropertyName("id")]         string Id,
+    [property: JsonPropertyName("resourceId")] string ResourceId,
+    [property: JsonPropertyName("expiration")] long   Expiration);

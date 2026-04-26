@@ -23,4 +23,14 @@ public interface IGoogleCalendarClient
 
     /// <summary>Returns null if the event is not found (404). Includes the content-hash extended property.</summary>
     Task<GoogleEventDetail?> GetEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Creates a push-notification channel for calendar events via the Google Calendar watch API.
+    /// </summary>
+    Task<WatchChannelResponse> WatchEventsAsync(string googleCalendarId, string channelId, string webhookUrl, CancellationToken ct = default);
+
+    /// <summary>
+    /// Stops an existing push-notification channel.
+    /// </summary>
+    Task StopChannelAsync(string channelId, string resourceId, CancellationToken ct = default);
 }

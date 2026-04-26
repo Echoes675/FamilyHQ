@@ -5,6 +5,7 @@ namespace FamilyHQ.Core.Interfaces;
 public interface ICalendarRepository
 {
     Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<CalendarInfo>> GetCalendarsByUserIdAsync(string userId, CancellationToken ct = default);
     Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default);
     Task<CalendarInfo?> GetSharedCalendarAsync(CancellationToken ct = default);
 

@@ -234,6 +234,31 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
     }
 
+    public async Task<WatchChannelResponse> WatchEventsAsync(
+        string googleCalendarId,
+        string channelId,
+        string webhookUrl,
+        CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/watch";
+        var body = new { id = channelId, type = "web_hook", address = webhookUrl };
+        var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiWatchResponse>(cancellationToken: ct);
+        return new WatchChannelResponse(result!.Id, result.ResourceId, result.Expiration);
+    }
+
+    public async Task StopChannelAsync(string channelId, string resourceId, CancellationToken ct = default)
+    {
+        await SetAuthorizationHeaderAsync(ct);
+        var endpoint = $"{_options.CalendarApiBaseUrl}/channels/stop";
+        var body = new { id = channelId, resourceId };
+        var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     private static object MapToGoogleEvent(CalendarEvent evt, string contentHash)
     {
         var extendedProperties = new

@@ -1,8 +1,11 @@
 using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
@@ -18,17 +21,23 @@ public class AuthController : ControllerBase
     private readonly ITokenStore _tokenStore;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;
+    private readonly IOptions<SyncOptions> _syncOptions;
+    private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         GoogleAuthService authService,
         ITokenStore tokenStore,
         IServiceScopeFactory scopeFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IOptions<SyncOptions> syncOptions,
+        ILogger<AuthController> logger)
     {
         _authService = authService;
         _tokenStore = tokenStore;
         _scopeFactory = scopeFactory;
         _configuration = configuration;
+        _syncOptions = syncOptions;
+        _logger = logger;
     }
 
     /// <summary>
@@ -69,6 +78,21 @@ public class AuthController : ControllerBase
         try
         {
             await SyncCalendarEventsAsync(userId, accessToken);
+
+            // Register webhook channels for push notifications (non-blocking)
+            if (_syncOptions.Value.WebhookRegistrationEnabled)
+            {
+                try
+                {
+                    using var webhookScope = _scopeFactory.CreateScope();
+                    var webhookService = webhookScope.ServiceProvider.GetRequiredService<IWebhookRegistrationService>();
+                    await webhookService.RegisterAllAsync(userId, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Webhook registration failed during login for user {UserId}.", userId);
+                }
+            }
         }
         catch (Exception ex)
         {

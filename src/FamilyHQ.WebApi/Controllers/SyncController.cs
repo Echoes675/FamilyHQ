@@ -17,19 +17,25 @@ public class SyncController : ControllerBase
     private readonly ITokenStore _tokenStore;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SyncController> _logger;
+    private readonly IWebhookRegistrationRepository _webhookRegistrationRepo;
+    private readonly ICalendarRepository _calendarRepo;
 
     public SyncController(
         ICalendarSyncService syncService,
         IHubContext<CalendarHub> hubContext,
         ITokenStore tokenStore,
         IServiceScopeFactory scopeFactory,
-        ILogger<SyncController> logger)
+        ILogger<SyncController> logger,
+        IWebhookRegistrationRepository webhookRegistrationRepo,
+        ICalendarRepository calendarRepo)
     {
         _syncService = syncService;
         _hubContext = hubContext;
         _tokenStore = tokenStore;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _webhookRegistrationRepo = webhookRegistrationRepo;
+        _calendarRepo = calendarRepo;
     }
 
     /// <summary>
@@ -63,7 +69,7 @@ public class SyncController : ControllerBase
     {
         // Google sends headers indicating the resource that changed:
         // x-goog-resource-id, x-goog-resource-uri, x-goog-resource-state (e.g. "exists", "sync")
-        
+
         if (Request.Headers.TryGetValue("x-goog-resource-state", out var state))
         {
             _logger.LogInformation("Received Google Push Webhook with state: {State}", state.ToString());
@@ -73,38 +79,86 @@ public class SyncController : ControllerBase
             _logger.LogInformation("Received Sync trigger (e.g. from Simulator).");
         }
 
-        // 1. Acknowledge immediately to Google (or Simulator) that we received it
-        // We shouldn't await the sync inline if it takes a while, but for MVF1 it is okay
-        // as we want to test the flow end-to-end. In prod: background task queue.
-        
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
 
         try
         {
-            var userIds = (await _tokenStore.GetAllUserIdsAsync(ct)).ToList();
-            _logger.LogInformation("Webhook sync: found {Count} registered user(s).", userIds.Count);
+            var synced = false;
 
-            foreach (var userId in userIds)
+            // Attempt targeted sync via channel-id lookup
+            if (Request.Headers.TryGetValue("x-goog-channel-id", out var channelIdHeader))
             {
-                BackgroundUserContext.Current = userId;
-                try
+                var channelId = channelIdHeader.ToString();
+                _logger.LogInformation("Webhook contains channel ID: {ChannelId}", channelId);
+
+                var registration = await _webhookRegistrationRepo.GetByChannelIdAsync(channelId, ct);
+                if (registration is not null)
                 {
-                    using var scope = _scopeFactory.CreateScope();
-                    var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-                    await syncService.SyncAllAsync(startDate, endDate, ct);
+                    var calendarInfo = await _calendarRepo.GetCalendarByIdAsync(registration.CalendarInfoId, ct);
+                    if (calendarInfo is not null)
+                    {
+                        _logger.LogInformation(
+                            "Targeted sync for calendar {CalendarInfoId} (user {UserId}) via channel {ChannelId}.",
+                            registration.CalendarInfoId, calendarInfo.UserId, channelId);
+
+                        BackgroundUserContext.Current = calendarInfo.UserId;
+                        try
+                        {
+                            using var scope = _scopeFactory.CreateScope();
+                            var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
+                            await syncService.SyncAsync(registration.CalendarInfoId, startDate, endDate, ct);
+                            synced = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error during targeted sync for calendar {CalendarInfoId}.", registration.CalendarInfoId);
+                        }
+                        finally
+                        {
+                            BackgroundUserContext.Current = null;
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Webhook channel {ChannelId} maps to calendar {CalendarInfoId} but calendar not found. Falling back to sync-all.",
+                            channelId, registration.CalendarInfoId);
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogError(ex, "Error syncing user {UserId} during webhook.", userId);
-                }
-                finally
-                {
-                    BackgroundUserContext.Current = null;
+                    _logger.LogWarning("No webhook registration found for channel {ChannelId}. Falling back to sync-all.", channelId);
                 }
             }
 
-            // 2. Notify clients via SignalR
+            // Fall back to sync-all if targeted sync was not performed
+            if (!synced)
+            {
+                var userIds = (await _tokenStore.GetAllUserIdsAsync(ct)).ToList();
+                _logger.LogInformation("Webhook sync: found {Count} registered user(s).", userIds.Count);
+
+                foreach (var userId in userIds)
+                {
+                    BackgroundUserContext.Current = userId;
+                    try
+                    {
+                        using var scope = _scopeFactory.CreateScope();
+                        var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
+                        await syncService.SyncAllAsync(startDate, endDate, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error syncing user {UserId} during webhook.", userId);
+                    }
+                    finally
+                    {
+                        BackgroundUserContext.Current = null;
+                    }
+                }
+            }
+
+            // Notify clients via SignalR
             await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
         }
         catch (Exception ex)

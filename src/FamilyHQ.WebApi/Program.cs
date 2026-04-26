@@ -80,6 +80,9 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IThemeBroadcaster, FamilyHQ.WebApi.Hubs.SignalRThemeBroadcaster>();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IWeatherBroadcaster, FamilyHQ.WebApi.Hubs.SignalRWeatherBroadcaster>();
 
+// Add background webhook renewal service
+builder.Services.AddHostedService<FamilyHQ.WebApi.Services.WebhookRenewalService>();
+
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("JWT signing key is not configured.");
