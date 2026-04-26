@@ -101,6 +101,5 @@ Feature: Google Calendar Webhook Sync
 
   Scenario: Webhook channels are registered for each calendar after login
     Given I have a user like "TestFamilyMember"
-    And I view the dashboard
-    When I sign in as the user "TestFamilyMember"
+    And I login as the user "TestFamilyMember"
     Then a webhook channel is registered for each of the user's calendars
