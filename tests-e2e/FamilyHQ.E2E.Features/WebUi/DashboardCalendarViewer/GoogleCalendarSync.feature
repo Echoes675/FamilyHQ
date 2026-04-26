@@ -98,3 +98,8 @@ Feature: Google Calendar Webhook Sync
     When the event "School Holiday" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
     Then the dashboard live-updates to remove "School Holiday"
+
+  Scenario: Webhook channels are registered for each calendar after login
+    Given I have a user like "TestFamilyMember"
+    When I login as the user "TestFamilyMember"
+    Then a webhook channel is registered for each of the user's calendars
