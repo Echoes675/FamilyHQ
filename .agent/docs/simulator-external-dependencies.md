@@ -10,6 +10,7 @@ All external API dependencies are abstracted behind interfaces with config-drive
 |---|---|---|---|
 | Google Calendar API | `GoogleCalendar:CalendarApiBaseUrl` | `https://www.googleapis.com` | `https://localhost:7199` (simulator) |
 | Google OAuth | `GoogleCalendar:AuthBaseUrl` | `https://accounts.google.com` | `https://localhost:7199` (simulator) |
+| Google Calendar Watch | `GoogleCalendar:CalendarApiBaseUrl` | `https://www.googleapis.com` | `https://localhost:7199` (simulator) |
 | Open-Meteo Weather API | `Weather:BaseUrl` | `https://api.open-meteo.com` | `https://localhost:7199` (simulator) |
 | Nominatim Geocoding | `Geocoding:BaseUrl` | `https://nominatim.openstreetmap.org` | `https://localhost:7199` (simulator) |
 | ip-api.com IP Geolocation | `Location:IpApiBaseUrl` | `http://ip-api.com` | `https://localhost:7199` (simulator) |
@@ -34,6 +35,8 @@ For E2E test isolation, the simulator exposes `POST/DELETE /api/simulator/backdo
 | `DELETE /api/simulator/backdoor/location?placeName=X` | Clear geocoding result |
 | `POST /api/simulator/configure` | Configure user templates |
 | `POST /api/simulator/backdoor/events` | Seed calendar events |
+| `GET /api/simulator/backdoor/webhooks` | Query registered watch channels |
+| `DELETE /api/simulator/backdoor/webhooks` | Clear registered watch channels |
 
 ## Seeded Locations
 
