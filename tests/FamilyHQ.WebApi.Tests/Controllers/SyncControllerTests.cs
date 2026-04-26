@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
@@ -62,11 +63,113 @@ public class SyncControllerTests
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task GooglePushWebhook_WithMatchingChannelId_SyncsOnlyThatCalendar()
+    {
+        // Arrange
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var userId = "user1";
+        var channelId = "test-channel-123";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = userId,
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo
+        };
+
+        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(
+            webhookRegistration: registration,
+            calendarInfo: calendarInfo);
+
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+
+        // Act
+        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkResult>();
+
+        scopedSync.Verify(
+            s => s.SyncAsync(calendarInfoId, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        scopedSync.Verify(
+            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithUnknownChannelId_FallsBackToSyncAll()
+    {
+        // Arrange
+        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
+
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", "unknown-channel");
+
+        // Act
+        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkResult>();
+
+        scopedSync.Verify(
+            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        scopedSync.Verify(
+            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithoutChannelId_FallsBackToSyncAll()
+    {
+        // Arrange
+        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
+
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        // No x-goog-channel-id header
+
+        // Act
+        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkResult>();
+
+        scopedSync.Verify(
+            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        scopedSync.Verify(
+            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static (
         Mock<ICalendarSyncService> ConstructorSync,
         Mock<ICalendarSyncService> ScopedSync,
         Mock<IClientProxy> Proxy,
-        SyncController SystemUnderTest) CreateSut(IEnumerable<string>? userIds = null)
+        SyncController SystemUnderTest) CreateSut(
+        IEnumerable<string>? userIds = null,
+        WebhookRegistration? webhookRegistration = null,
+        CalendarInfo? calendarInfo = null)
     {
         var syncServiceMock = new Mock<ICalendarSyncService>();
         var scopedSyncServiceMock = new Mock<ICalendarSyncService>();
@@ -75,6 +178,8 @@ public class SyncControllerTests
         var loggerMock = new Mock<ILogger<SyncController>>();
         var tokenStoreMock = new Mock<ITokenStore>();
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
+        var webhookRepoMock = new Mock<IWebhookRegistrationRepository>();
+        var calendarRepoMock = new Mock<ICalendarRepository>();
 
         var clientsMock = new Mock<IHubClients>();
         clientsMock.Setup(c => c.All).Returns(clientProxyMock.Object);
@@ -83,6 +188,20 @@ public class SyncControllerTests
         tokenStoreMock
             .Setup(ts => ts.GetAllUserIdsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(userIds ?? ["user1"]);
+
+        if (webhookRegistration is not null)
+        {
+            webhookRepoMock
+                .Setup(r => r.GetByChannelIdAsync(webhookRegistration.ChannelId, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(webhookRegistration);
+        }
+
+        if (calendarInfo is not null)
+        {
+            calendarRepoMock
+                .Setup(r => r.GetCalendarByIdAsync(calendarInfo.Id, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(calendarInfo);
+        }
 
         var serviceProviderMock = new Mock<IServiceProvider>();
         serviceProviderMock
@@ -98,7 +217,9 @@ public class SyncControllerTests
             hubContextMock.Object,
             tokenStoreMock.Object,
             scopeFactoryMock.Object,
-            loggerMock.Object)
+            loggerMock.Object,
+            webhookRepoMock.Object,
+            calendarRepoMock.Object)
         {
             ControllerContext = new ControllerContext
             {

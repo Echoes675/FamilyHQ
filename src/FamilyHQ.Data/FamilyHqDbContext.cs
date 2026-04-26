@@ -20,6 +20,7 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     public DbSet<DisplaySetting> DisplaySettings => Set<DisplaySetting>();
     public DbSet<WeatherDataPoint> WeatherDataPoints => Set<WeatherDataPoint>();
     public DbSet<WeatherSetting> WeatherSettings => Set<WeatherSetting>();
+    public DbSet<WebhookRegistration> WebhookRegistrations => Set<WebhookRegistration>();
 
     /// <summary>
     /// Required for ASP.NET Core Data Protection key storage in the database.

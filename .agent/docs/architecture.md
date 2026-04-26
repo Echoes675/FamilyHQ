@@ -33,6 +33,7 @@
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
 - **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp.
 - **WeatherSetting**: Stores weather preferences (Enabled, PollIntervalMinutes, TemperatureUnit, WindThresholdKmh). One row per UserId.
+- **WebhookRegistration**: Tracks Google Calendar push notification watch channel registrations. One row per CalendarInfo. Stores ChannelId (UUID sent to Google), ResourceId (returned by Google), ExpiresAt, RegisteredAt.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
@@ -45,6 +46,8 @@
 - **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
 - **IWeatherRefreshService**: Shared between WeatherPollerService and the refresh endpoint. Extracts the poll logic (fetch, store, broadcast) into a reusable service.
 - **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving.
+- **IWebhookRegistrationService / WebhookRegistrationService**: Registers Google Calendar push notification watch channels per-calendar. Called after login and periodically by WebhookRenewalService. Config-gated via `Sync:WebhookRegistrationEnabled`.
+- **WebhookRenewalService** (IHostedService, lives in WebApi): Background service that re-registers all webhook watch channels on startup (1-min delay) and every 6 days. Iterates all users via ITokenStore. Disabled when `Sync:WebhookRegistrationEnabled` is false.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
 ## API Endpoints

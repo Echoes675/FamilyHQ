@@ -131,6 +131,16 @@ public class SimulatorApiClient : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Retrieves all webhook channel registrations from the Simulator backdoor.
+    /// </summary>
+    public async Task<List<WebhookRegistrationDto>> GetWebhookRegistrationsAsync()
+    {
+        var response = await _httpClient.GetAsync("api/simulator/backdoor/webhooks");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<WebhookRegistrationDto>>() ?? [];
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();
