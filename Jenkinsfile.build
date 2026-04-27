@@ -104,23 +104,19 @@ pipeline {
                         // Resolve the current image's digest so we never delete it
                         def currentDigest = getTagDigest(imageName, IMAGE_TAG)
 
-                        if (env.BRANCH_NAME == 'master') {
-                            // Keep current + previous build, remove older ones
-                            def masterTags = tags.findAll { it.startsWith('master-') && it != IMAGE_TAG }
-                            masterTags.sort { a, b ->
-                                def numA = (a =~ /master-(\d+)-/)[0][1] as int
-                                def numB = (b =~ /master-(\d+)-/)[0][1] as int
-                                numA <=> numB
-                            }
-                            if (masterTags.size() > 1) {
-                                def tagsToDelete = masterTags.dropRight(1)
-                                for (tag in tagsToDelete) {
-                                    deleteRegistryTag(imageName, tag, currentDigest)
-                                }
-                            }
-                        } else {
-                            // Non-main branches: delete all previous tags for this branch
-                            for (tag in branchTags) {
+                        // Sort previous tags numerically by build number
+                        branchTags.sort { a, b ->
+                            def numA = (a =~ /-(\d+)-/)[0][1] as int
+                            def numB = (b =~ /-(\d+)-/)[0][1] as int
+                            numA <=> numB
+                        }
+
+                        // Keep current + previous build, remove older ones.
+                        // The previous tag must survive because downstream deploy
+                        // pipelines (staging, preprod) may still reference it.
+                        if (branchTags.size() > 1) {
+                            def tagsToDelete = branchTags.dropRight(1)
+                            for (tag in tagsToDelete) {
                                 deleteRegistryTag(imageName, tag, currentDigest)
                             }
                         }
