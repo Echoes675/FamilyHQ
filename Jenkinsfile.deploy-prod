@@ -52,7 +52,11 @@ pipeline {
                             masterTags.add("${t}")
                         }
                     }
-                    masterTags.sort()
+                    masterTags.sort { a, b ->
+                        def numA = (a =~ /master-(\d+)-/)[0][1] as int
+                        def numB = (b =~ /master-(\d+)-/)[0][1] as int
+                        numA <=> numB
+                    }
 
                     if (masterTags.isEmpty()) {
                         error 'No master images found in the registry'

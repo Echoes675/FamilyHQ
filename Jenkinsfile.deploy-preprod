@@ -52,7 +52,11 @@ pipeline {
                             branchTags.add("${t}")
                         }
                     }
-                    branchTags.sort()
+                    branchTags.sort { a, b ->
+                        def numA = (a =~ /-(\d+)-/)[0][1] as int
+                        def numB = (b =~ /-(\d+)-/)[0][1] as int
+                        numA <=> numB
+                    }
 
                     if (branchTags.isEmpty()) {
                         error "No images found for branch '${branch}' (prefix: ${branchSanitized}-)"
