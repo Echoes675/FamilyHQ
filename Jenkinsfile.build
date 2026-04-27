@@ -99,16 +99,25 @@ pipeline {
                             ).trim()
 
                         def tags = readJSON(text: tagsJson).tags ?: []
-                        def branchTags = tags.findAll { it.startsWith("${BRANCH_SANITIZED}-") && it != IMAGE_TAG }
 
                         // Resolve the current image's digest so we never delete it
                         def currentDigest = getTagDigest(imageName, IMAGE_TAG)
 
-                        // Sort previous tags numerically by build number
-                        branchTags.sort { a, b ->
-                            def numA = (a =~ /-(\d+)-/)[0][1] as int
-                            def numB = (b =~ /-(\d+)-/)[0][1] as int
-                            numA <=> numB
+                        // Sort previous tags numerically by build number using a map
+                        // (closure-based sort is rejected by the Jenkins CPS sandbox)
+                        def pruneTagsByNum = [:]
+                        for (int j = 0; j < tags.size(); j++) {
+                            def pt = tags[j]
+                            if (pt != null && "${pt}".startsWith("${BRANCH_SANITIZED}-") && "${pt}" != IMAGE_TAG) {
+                                def num = ("${pt}" =~ /-(\d+)-/)[0][1] as int
+                                pruneTagsByNum[num] = "${pt}"
+                            }
+                        }
+                        def pruneKeys = new ArrayList(pruneTagsByNum.keySet())
+                        Collections.sort(pruneKeys)
+                        def branchTags = []
+                        for (int j = 0; j < pruneKeys.size(); j++) {
+                            branchTags.add(pruneTagsByNum[pruneKeys[j]])
                         }
 
                         // Keep current + previous build, remove older ones.
