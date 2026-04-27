@@ -127,4 +127,25 @@ public class CalendarSettingsSteps
         actualText.Should().Be(expectedText,
             $"The visibility toggle for '{calendarName}' should read '{expectedText}'.");
     }
+
+    [Then(@"the Register Webhooks button is visible")]
+    public async Task ThenTheRegisterWebhooksButtonIsVisible()
+    {
+        await Assertions.Expect(_settingsPage.RegisterWebhooksBtn)
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    [When(@"I click the Register Webhooks button")]
+    public async Task WhenIClickTheRegisterWebhooksButton()
+    {
+        await _settingsPage.ClickRegisterWebhooksAsync();
+    }
+
+    [Then(@"I see a success message ""([^""]*)""")]
+    public async Task ThenISeeASuccessMessage(string expectedMessage)
+    {
+        var successBanner = _page.Locator(".alert-success").Filter(new() { HasText = expectedMessage });
+        await Assertions.Expect(successBanner)
+            .ToBeVisibleAsync(new() { Timeout = 10000 });
+    }
 }

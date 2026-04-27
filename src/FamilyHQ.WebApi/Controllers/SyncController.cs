@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +20,8 @@ public class SyncController : ControllerBase
     private readonly ILogger<SyncController> _logger;
     private readonly IWebhookRegistrationRepository _webhookRegistrationRepo;
     private readonly ICalendarRepository _calendarRepo;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IWebhookRegistrationService _webhookRegistrationService;
 
     public SyncController(
         ICalendarSyncService syncService,
@@ -27,7 +30,9 @@ public class SyncController : ControllerBase
         IServiceScopeFactory scopeFactory,
         ILogger<SyncController> logger,
         IWebhookRegistrationRepository webhookRegistrationRepo,
-        ICalendarRepository calendarRepo)
+        ICalendarRepository calendarRepo,
+        ICurrentUserService currentUser,
+        IWebhookRegistrationService webhookRegistrationService)
     {
         _syncService = syncService;
         _hubContext = hubContext;
@@ -36,6 +41,8 @@ public class SyncController : ControllerBase
         _logger = logger;
         _webhookRegistrationRepo = webhookRegistrationRepo;
         _calendarRepo = calendarRepo;
+        _currentUser = currentUser;
+        _webhookRegistrationService = webhookRegistrationService;
     }
 
     /// <summary>
@@ -57,6 +64,23 @@ public class SyncController : ControllerBase
         await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
         
         return Ok(new { Message = "Sync completed successfully." });
+    }
+
+    /// <summary>
+    /// Force-registers webhook channels for all calendars belonging to the authenticated user.
+    /// </summary>
+    [Authorize]
+    [HttpPost("register-webhooks")]
+    public async Task<IActionResult> RegisterWebhooks(CancellationToken ct)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        _logger.LogInformation("Manual webhook registration triggered by user {UserId}.", userId);
+        await _webhookRegistrationService.RegisterAllAsync(userId, force: true, ct);
+
+        return Ok(new { Message = "Webhook registration completed." });
     }
 
     /// <summary>

@@ -11,6 +11,11 @@ public class WebhookRegistrationRepository(FamilyHqDbContext context) : IWebhook
             .AsNoTracking()
             .FirstOrDefaultAsync(w => w.ChannelId == channelId, ct);
 
+    public async Task<WebhookRegistration?> GetByCalendarIdAsync(Guid calendarInfoId, CancellationToken ct = default)
+        => await context.WebhookRegistrations
+            .AsNoTracking()
+            .FirstOrDefaultAsync(w => w.CalendarInfoId == calendarInfoId, ct);
+
     public async Task<IReadOnlyList<WebhookRegistration>> GetAllAsync(CancellationToken ct = default)
         => await context.WebhookRegistrations
             .AsNoTracking()

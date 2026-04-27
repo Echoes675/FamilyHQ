@@ -56,7 +56,7 @@ public class WebhookRenewalService(
             {
                 using var userScope = serviceProvider.CreateScope();
                 var registrationService = userScope.ServiceProvider.GetRequiredService<IWebhookRegistrationService>();
-                await registrationService.RegisterAllAsync(userId, ct);
+                await registrationService.RegisterAllAsync(userId, ct: ct);
             }
             catch (Exception ex)
             {
