@@ -78,3 +78,9 @@ Feature: Calendar Settings
     When I navigate to the calendar settings tab
     Then the visibility toggle for "Family Calendar" is disabled
     And the visibility toggle for "Family Calendar" reads "Hidden"
+
+  Scenario: Register Webhooks button triggers webhook registration
+    When I navigate to the calendar settings tab
+    Then the Register Webhooks button is visible
+    When I click the Register Webhooks button
+    Then I see a success message "Webhooks registered."

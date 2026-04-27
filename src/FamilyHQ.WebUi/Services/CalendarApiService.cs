@@ -146,4 +146,10 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var response = await httpClient.PostAsync("api/sync/trigger", content: null, ct);
         response.EnsureSuccessStatusCode();
     }
+
+    public async Task RegisterWebhooksAsync(CancellationToken ct = default)
+    {
+        var response = await httpClient.PostAsync("api/sync/register-webhooks", content: null, ct);
+        response.EnsureSuccessStatusCode();
+    }
 }

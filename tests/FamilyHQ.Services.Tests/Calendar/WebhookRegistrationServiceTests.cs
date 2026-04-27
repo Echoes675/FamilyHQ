@@ -17,7 +17,7 @@ public class WebhookRegistrationServiceTests
     private const string ExpectedWebhookUrl = "https://familyhq.example.com/api/sync/webhook";
 
     [Fact]
-    public async Task RegisterForCalendarAsync_CallsWatchAndUpserts()
+    public async Task RegisterForCalendarAsync_CallsWatchAndUpserts_WhenNoExistingRegistration()
     {
         // Arrange
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
@@ -25,6 +25,9 @@ public class WebhookRegistrationServiceTests
         var channelId = "generated-channel-id";
         var resourceId = "resource-123";
         var expiration = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds();
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
 
         client.Setup(c => c.WatchEventsAsync(
                 GoogleCalendarId,
@@ -78,6 +81,9 @@ public class WebhookRegistrationServiceTests
     {
         // Arrange
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
 
         client.Setup(c => c.WatchEventsAsync(
                 It.IsAny<string>(),
@@ -197,6 +203,107 @@ public class WebhookRegistrationServiceTests
 
         client.Verify(c => c.WatchEventsAsync(
             "u2-cal@google.com",
+            It.IsAny<string>(),
+            ExpectedWebhookUrl,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_SkipsWhenRegistrationNotExpired()
+    {
+        // Arrange
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert — should not call Google API
+        client.Verify(c => c.WatchEventsAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_RegistersWhenRegistrationExpiringSoon()
+    {
+        // Arrange — expires in 12 hours (< 24h threshold)
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(12),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-6)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert — should call Google API since expiry is within 24h
+        client.Verify(c => c.WatchEventsAsync(
+            GoogleCalendarId,
+            It.IsAny<string>(),
+            ExpectedWebhookUrl,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_ForceOverridesExpiryCheck()
+    {
+        // Arrange — registration is still valid (3 days left)
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("forced-ch", "forced-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        // Act — force: true should bypass expiry check
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId, force: true);
+
+        // Assert — should call Google API despite valid registration
+        client.Verify(c => c.WatchEventsAsync(
+            GoogleCalendarId,
             It.IsAny<string>(),
             ExpectedWebhookUrl,
             It.IsAny<CancellationToken>()), Times.Once);

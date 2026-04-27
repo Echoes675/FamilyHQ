@@ -24,6 +24,21 @@
                 <span>Sync Now</span>
             }
         </button>
+        <button type="button"
+                class="btn btn-secondary"
+                data-testid="register-webhooks-btn"
+                @onclick="RegisterWebhooksAsync"
+                disabled="@_isRegisteringWebhooks">
+            @if (_isRegisteringWebhooks)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Registering…</span>
+            }
+            else
+            {
+                <span>Register Webhooks</span>
+            }
+        </button>
         @if (!string.IsNullOrEmpty(_syncMessage))
         {
             <span class="alert-success ml-2">@_syncMessage</span>
@@ -120,6 +135,7 @@
     private string? _error;
     private bool _saved;
     private bool _isSyncing;
+    private bool _isRegisteringWebhooks;
     private string? _syncMessage;
     private string? _syncError;
     private Guid? _pendingSharedId;
@@ -133,7 +149,6 @@
         try
         {
             await CalendarApi.TriggerSyncAsync();
-            // Refresh the calendar list so any newly synced calendars appear immediately.
             await LoadCalendarsAsync();
             _syncMessage = "Sync completed.";
         }
@@ -144,6 +159,26 @@
         finally
         {
             _isSyncing = false;
+        }
+    }
+
+    private async Task RegisterWebhooksAsync()
+    {
+        _isRegisteringWebhooks = true;
+        _syncMessage = null;
+        _syncError = null;
+        try
+        {
+            await CalendarApi.RegisterWebhooksAsync();
+            _syncMessage = "Webhooks registered.";
+        }
+        catch
+        {
+            _syncError = "Webhook registration failed. Please try again.";
+        }
+        finally
+        {
+            _isRegisteringWebhooks = false;
         }
     }
 

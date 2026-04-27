@@ -151,6 +151,7 @@ public class SettingsPage : BasePage
     }
 
     public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");
+    public ILocator RegisterWebhooksBtn => Page.GetByTestId("register-webhooks-btn");
 
     public async Task ClickSyncNowAsync()
     {
@@ -162,6 +163,16 @@ public class SettingsPage : BasePage
             new() { Timeout = 30000 });
 
         await SyncNowBtn.ClickAsync();
+        await responseTask;
+    }
+
+    public async Task ClickRegisterWebhooksAsync()
+    {
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/sync/register-webhooks") && r.Status == 200,
+            new() { Timeout = 30000 });
+
+        await RegisterWebhooksBtn.ClickAsync();
         await responseTask;
     }
 }

@@ -86,7 +86,7 @@ public class AuthController : ControllerBase
                 {
                     using var webhookScope = _scopeFactory.CreateScope();
                     var webhookService = webhookScope.ServiceProvider.GetRequiredService<IWebhookRegistrationService>();
-                    await webhookService.RegisterAllAsync(userId, CancellationToken.None);
+                    await webhookService.RegisterAllAsync(userId, ct: CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
