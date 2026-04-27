@@ -219,7 +219,9 @@ public class SyncControllerTests
             scopeFactoryMock.Object,
             loggerMock.Object,
             webhookRepoMock.Object,
-            calendarRepoMock.Object)
+            calendarRepoMock.Object,
+            new Mock<ICurrentUserService>().Object,
+            new Mock<IWebhookRegistrationService>().Object)
         {
             ControllerContext = new ControllerContext
             {

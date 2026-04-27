@@ -16,7 +16,7 @@ public class WebhookRegistrationService(
 {
     private const string WebhookPath = "/api/sync/webhook";
 
-    public async Task RegisterForCalendarAsync(Guid calendarInfoId, string googleCalendarId, CancellationToken ct = default)
+    public async Task RegisterForCalendarAsync(Guid calendarInfoId, string googleCalendarId, bool force = false, CancellationToken ct = default)
     {
         var syncOptions = options.Value;
 
@@ -30,6 +30,18 @@ public class WebhookRegistrationService(
         {
             logger.LogWarning("WebhookBaseUrl is not configured, skipping webhook registration for calendar {CalendarInfoId}", calendarInfoId);
             return;
+        }
+
+        if (!force)
+        {
+            var existing = await webhookRegistrationRepository.GetByCalendarIdAsync(calendarInfoId, ct);
+            if (existing is not null && existing.ExpiresAt > DateTimeOffset.UtcNow.AddHours(24))
+            {
+                logger.LogInformation(
+                    "Webhook for calendar {CalendarInfoId} still valid until {ExpiresAt}, skipping registration",
+                    calendarInfoId, existing.ExpiresAt);
+                return;
+            }
         }
 
         try
@@ -60,7 +72,7 @@ public class WebhookRegistrationService(
         }
     }
 
-    public async Task RegisterAllAsync(string userId, CancellationToken ct = default)
+    public async Task RegisterAllAsync(string userId, bool force = false, CancellationToken ct = default)
     {
         if (!options.Value.WebhookRegistrationEnabled)
         {
@@ -72,7 +84,7 @@ public class WebhookRegistrationService(
 
         foreach (var calendar in calendars)
         {
-            await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, ct);
+            await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, force, ct);
         }
     }
 
@@ -88,7 +100,7 @@ public class WebhookRegistrationService(
 
         foreach (var userId in userIds)
         {
-            await RegisterAllAsync(userId, ct);
+            await RegisterAllAsync(userId, ct: ct);
         }
     }
 }

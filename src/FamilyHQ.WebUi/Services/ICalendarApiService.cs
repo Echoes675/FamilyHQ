@@ -14,4 +14,5 @@ public interface ICalendarApiService
     Task DeleteEventAsync(Guid eventId, CancellationToken ct = default);
     Task<CalendarEventViewModel> SetEventMembersAsync(Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default);
     Task TriggerSyncAsync(CancellationToken ct = default);
+    Task RegisterWebhooksAsync(CancellationToken ct = default);
 }

@@ -109,7 +109,7 @@ public class AuthControllerTests
 
         // Assert
         webhookServiceMock.Verify(
-            w => w.RegisterAllAsync("user1", It.IsAny<CancellationToken>()),
+            w => w.RegisterAllAsync("user1", It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -125,7 +125,7 @@ public class AuthControllerTests
 
         // Assert
         webhookServiceMock.Verify(
-            w => w.RegisterAllAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            w => w.RegisterAllAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
