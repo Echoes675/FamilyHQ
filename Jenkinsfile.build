@@ -104,11 +104,11 @@ pipeline {
                         if (env.BRANCH_NAME == 'master') {
                             // Keep current + previous build, remove older ones
                             def masterTags = tags.findAll { it.startsWith('master-') && it != IMAGE_TAG }
-                                .sort { a, b ->
-                                    def numA = (a =~ /master-(\d+)-/)[0][1] as int
-                                    def numB = (b =~ /master-(\d+)-/)[0][1] as int
-                                    numA <=> numB
-                                }
+                            masterTags.sort { a, b ->
+                                def numA = (a =~ /master-(\d+)-/)[0][1] as int
+                                def numB = (b =~ /master-(\d+)-/)[0][1] as int
+                                numA <=> numB
+                            }
                             if (masterTags.size() > 1) {
                                 def tagsToDelete = masterTags.dropRight(1)
                                 for (tag in tagsToDelete) {
