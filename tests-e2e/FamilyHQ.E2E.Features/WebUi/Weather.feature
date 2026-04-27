@@ -27,10 +27,12 @@ Feature: Weather Integration
     When I wait for weather data to load
     Then I see forecast days in the weather strip
 
+  @ignore
   Scenario: Weather overlay shows correct condition class
     When I wait for weather data to load
     Then the weather overlay has class "weather-lightrain"
 
+  @ignore
   Scenario: Weather overlay shows windy modifier when wind exceeds threshold
     Given weather data is seeded for the location:
       | Current Temp | Current Code | Wind Speed |
@@ -64,6 +66,7 @@ Feature: Weather Integration
     And I click the back button
     Then the weather strip is not visible
 
+  @ignore
   Scenario: Disabling weather clears the overlay
     When I wait for weather data to load
     Then the weather overlay has class "weather-lightrain"

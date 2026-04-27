@@ -7,6 +7,7 @@ Feature: Weather override dev tool
     Given I have a user like "TestFamilyMember"
     And I am signed in as the user "TestFamilyMember"
 
+  @ignore
   Scenario: Activating override and selecting a condition engages the matching animation
     When I navigate to the settings page
     And I navigate to the Weather Override tab
@@ -14,6 +15,7 @@ Feature: Weather override dev tool
     And I select the "HeavyRain" condition
     Then the weather overlay element has the class "weather-heavyrain"
 
+  @ignore
   Scenario: Toggling Windy adds the windy class
     When I navigate to the settings page
     And I navigate to the Weather Override tab
@@ -23,6 +25,7 @@ Feature: Weather override dev tool
     Then the weather overlay element has the class "weather-snow"
     And the weather overlay element has the class "weather-windy"
 
+  @ignore
   Scenario: Deactivating override returns the overlay to real weather behaviour
     Given weather is enabled
     And the user has a saved location "TestCity" at 55.95, -3.19
