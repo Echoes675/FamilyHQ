@@ -101,6 +101,9 @@ pipeline {
                         def tags = readJSON(text: tagsJson).tags ?: []
                         def branchTags = tags.findAll { it.startsWith("${BRANCH_SANITIZED}-") && it != IMAGE_TAG }
 
+                        // Resolve the current image's digest so we never delete it
+                        def currentDigest = getTagDigest(imageName, IMAGE_TAG)
+
                         if (env.BRANCH_NAME == 'master') {
                             // Keep current + previous build, remove older ones
                             def masterTags = tags.findAll { it.startsWith('master-') && it != IMAGE_TAG }
@@ -112,13 +115,13 @@ pipeline {
                             if (masterTags.size() > 1) {
                                 def tagsToDelete = masterTags.dropRight(1)
                                 for (tag in tagsToDelete) {
-                                    deleteRegistryTag(imageName, tag)
+                                    deleteRegistryTag(imageName, tag, currentDigest)
                                 }
                             }
                         } else {
                             // Non-main branches: delete all previous tags for this branch
                             for (tag in branchTags) {
-                                deleteRegistryTag(imageName, tag)
+                                deleteRegistryTag(imageName, tag, currentDigest)
                             }
                         }
                     }
@@ -154,11 +157,20 @@ pipeline {
     }
 }
 
-def deleteRegistryTag(String imageName, String tag) {
-    def digest = sh(
+def getTagDigest(String imageName, String tag) {
+    return sh(
         script: "curl -sk -u \$REGISTRY_CREDS -I -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' ${REGISTRY_URL}/v2/${imageName}/manifests/${tag} | grep -i Docker-Content-Digest | awk '{print \$2}' | tr -d '\\r'",
         returnStdout: true
     ).trim()
+}
+
+def deleteRegistryTag(String imageName, String tag, String protectedDigest) {
+    def digest = getTagDigest(imageName, tag)
+
+    if (digest && digest == protectedDigest) {
+        echo "Skipped ${imageName}:${tag} — shares digest with current image"
+        return
+    }
 
     if (digest) {
         sh "curl -sk -u \$REGISTRY_CREDS -X DELETE ${REGISTRY_URL}/v2/${imageName}/manifests/${digest}"
