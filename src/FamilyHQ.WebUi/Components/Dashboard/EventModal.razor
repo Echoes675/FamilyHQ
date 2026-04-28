@@ -132,14 +132,18 @@
 
     private DateTime _endDate
     {
+        // For all-day events, End is stored as the exclusive next-day boundary
+        // (matching Google's contract). Display the inclusive last day so the
+        // user sees the date they picked. AddTicks(-1).Date also handles legacy
+        // rows where End may have been stored as the inclusive end-of-day tick.
         get => _eventModel.IsAllDay
-            ? _eventModel.End.LocalDateTime.Date
+            ? _eventModel.End.LocalDateTime.AddTicks(-1).Date
             : _eventModel.End.LocalDateTime.Date;
         set
         {
             var time = _eventModel.End.LocalDateTime.TimeOfDay;
             var dt = _eventModel.IsAllDay
-                ? value.Date.AddDays(1).AddTicks(-1)
+                ? value.Date.AddDays(1)
                 : value.Date + time;
             _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
         }

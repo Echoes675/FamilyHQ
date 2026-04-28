@@ -6,7 +6,7 @@
 @inject IWeatherUiService WeatherUiService
 
 <div class="page">
-    <WeatherOverlay />
+    @* <WeatherOverlay /> — temporarily disabled while animations are reworked *@
     <ErrorBoundary @ref="_errorBoundary">
         <ChildContent>
             @Body

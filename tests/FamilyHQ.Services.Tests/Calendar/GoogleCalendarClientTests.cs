@@ -251,6 +251,77 @@ public class GoogleCalendarClientTests
         result.Title.Should().Be("Test Event");
     }
 
+    [Theory]
+    // Inclusive end-of-day (legacy EventModal representation): 23:59:59.9999999 → next day exclusive
+    [InlineData("2026-04-28T00:00:00Z", "2026-04-28T23:59:59.9999999Z", "2026-04-28", "2026-04-29")]
+    // Already-exclusive next-day midnight: pass through unchanged
+    [InlineData("2026-04-28T00:00:00Z", "2026-04-29T00:00:00Z",         "2026-04-28", "2026-04-29")]
+    // Multi-day inclusive end: roll up to next-day exclusive
+    [InlineData("2026-04-28T00:00:00Z", "2026-04-30T23:59:59.9999999Z", "2026-04-28", "2026-05-01")]
+    // Multi-day already-exclusive: pass through unchanged
+    [InlineData("2026-04-28T00:00:00Z", "2026-05-01T00:00:00Z",         "2026-04-28", "2026-05-01")]
+    // Pathological End == Start (the post-sync corruption case): force a one-day exclusive end
+    [InlineData("2026-04-28T00:00:00Z", "2026-04-28T00:00:00Z",         "2026-04-28", "2026-04-29")]
+    // Mid-day End (e.g. user toggled IsAllDay without resetting times): treat the day as inclusive
+    [InlineData("2026-04-28T00:00:00Z", "2026-04-28T10:00:00Z",         "2026-04-28", "2026-04-29")]
+    public async Task CreateEventAsync_AllDayEvent_SendsExclusiveEndDateToGoogle(
+        string startIso, string endIso, string expectedStartDate, string expectedEndDate)
+    {
+        // Arrange — Google Calendar API requires `end.date` to be the day AFTER the last day of an
+        // all-day event (exclusive). FamilyHQ's local model has historically stored End as either an
+        // inclusive end-of-day tick or an exclusive next-day midnight; the boundary mapping must
+        // normalise both into Google's exclusive format.
+        string? capturedBody = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "new-id" }))
+            });
+
+        var newEvent = new CalendarEvent
+        {
+            Title = "All Day",
+            Start = DateTimeOffset.Parse(startIso, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
+            End = DateTimeOffset.Parse(endIso, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
+            IsAllDay = true
+        };
+
+        // Act
+        await systemUnderTest.CreateEventAsync("cal1", newEvent, "testhash");
+
+        // Assert
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var root = doc.RootElement;
+        root.GetProperty("start").GetProperty("date").GetString().Should().Be(expectedStartDate);
+        root.GetProperty("end").GetProperty("date").GetString().Should().Be(expectedEndDate);
+        root.GetProperty("start").TryGetProperty("dateTime", out _).Should().BeFalse("all-day events use date, not dateTime");
+        root.GetProperty("end").TryGetProperty("dateTime", out _).Should().BeFalse("all-day events use date, not dateTime");
+    }
+
     [Fact]
     public async Task UpdateEventAsync_ReturnsUpdatedEvent()
     {
