@@ -268,13 +268,24 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         if (evt.IsAllDay)
         {
+            // Google requires end.date to be the day AFTER the last day of the event (exclusive).
+            // Local End may be next-day midnight (already exclusive), an inclusive end-of-day tick,
+            // a same-instant-as-Start (post-sync corruption), or a mid-day time (IsAllDay toggled
+            // without resetting times). Normalise all of these to a strict next-day boundary using
+            // each instant's wall-clock date in its own offset, matching how Start is serialised.
+            var startWallDate = evt.Start.DateTime.Date;
+            var endWallDate   = evt.End.DateTime.Date;
+            var exclusiveEndDate = evt.End.TimeOfDay == TimeSpan.Zero && endWallDate > startWallDate
+                ? endWallDate
+                : endWallDate.AddDays(1);
+
             return new
             {
                 summary = evt.Title,
                 description = evt.Description,
                 location = evt.Location,
                 start = new { date = evt.Start.ToString("yyyy-MM-dd") },
-                end = new { date = evt.End.ToString("yyyy-MM-dd") },
+                end = new { date = exclusiveEndDate.ToString("yyyy-MM-dd") },
                 extendedProperties
             };
         }
