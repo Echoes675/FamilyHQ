@@ -1,0 +1,156 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+<div class="time-picker" role="group" aria-label="@(AriaLabel ?? "Time picker")">
+    <div class="time-picker-stepper">
+        <button type="button" class="time-picker-step" aria-label="Decrease hour"
+                @onclick="DecrementHour">−</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Hour.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Increase hour"
+                @onclick="IncrementHour">+</button>
+    </div>
+    <span class="time-picker-separator" aria-hidden="true">:</span>
+    <div class="time-picker-stepper">
+        <button type="button" class="time-picker-step" aria-label="Decrease minute"
+                @onclick="DecrementMinute">−</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Minute.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Increase minute"
+                @onclick="IncrementMinute">+</button>
+    </div>
+    <input type="text"
+           class="@TextInputClass"
+           inputmode="numeric"
+           pattern="[0-9:]*"
+           maxlength="5"
+           placeholder="HH:mm"
+           aria-label="@(AriaLabel ?? "Time") (type as HH:mm)"
+           value="@_textValue"
+           @onchange="OnTextChanged" />
+</div>
+
+<style>
+    .time-picker {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .time-picker-stepper {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .time-picker-step {
+        width: 44px;
+        height: 44px;
+        border-radius: 6px;
+        border: 1px solid var(--theme-glass-border);
+        background: transparent;
+        color: var(--theme-accent);
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1;
+        cursor: pointer;
+        font-family: inherit;
+        padding: 0;
+        transition:
+            background-color var(--theme-transition-duration, 15s) ease-in-out,
+            color var(--theme-transition-duration, 15s) ease-in-out,
+            border-color var(--theme-transition-duration, 15s) ease-in-out,
+            transform 80ms ease-out;
+        will-change: transform;
+    }
+
+    .time-picker-step:active {
+        transform: scale(0.94);
+        background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+    }
+
+    .time-picker-display {
+        min-width: 42px;
+        text-align: center;
+        font-size: 20px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--theme-text);
+        padding: 6px 4px;
+    }
+
+    .time-picker-separator {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--theme-text-muted);
+        padding: 0 2px;
+    }
+
+    .time-picker-text {
+        flex: 0 0 64px;
+        margin-left: 6px;
+        background: transparent;
+        border: 1px solid var(--theme-glass-border);
+        border-radius: 6px;
+        color: var(--theme-text);
+        padding: 6px 8px;
+        font-size: 14px;
+        font-family: inherit;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .time-picker-text.is-invalid {
+        border-color: #ef4444;
+    }
+</style>
+
+@code {
+    [Parameter] public TimeOnly Value { get; set; }
+    [Parameter] public EventCallback<TimeOnly> ValueChanged { get; set; }
+    [Parameter] public string? AriaLabel { get; set; }
+
+    private string _textValue = "";
+    private bool _isInvalid;
+    private TimeOnly _lastSyncedValue;
+    private bool _initialised;
+
+    private string TextInputClass => _isInvalid ? "time-picker-text is-invalid" : "time-picker-text";
+
+    protected override void OnParametersSet()
+    {
+        if (!_initialised || Value != _lastSyncedValue)
+        {
+            _textValue = Value.ToString("HH:mm");
+            _lastSyncedValue = Value;
+            _isInvalid = false;
+            _initialised = true;
+        }
+    }
+
+    private Task IncrementHour() => UpdateValue(TimePickerLogic.IncrementHour(Value));
+    private Task DecrementHour() => UpdateValue(TimePickerLogic.DecrementHour(Value));
+    private Task IncrementMinute() => UpdateValue(TimePickerLogic.IncrementMinute(Value));
+    private Task DecrementMinute() => UpdateValue(TimePickerLogic.DecrementMinute(Value));
+
+    private async Task UpdateValue(TimeOnly newValue)
+    {
+        Value = newValue;
+        _lastSyncedValue = newValue;
+        _textValue = newValue.ToString("HH:mm");
+        _isInvalid = false;
+        await ValueChanged.InvokeAsync(newValue);
+    }
+
+    private async Task OnTextChanged(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString() ?? "";
+        if (TimePickerLogic.TryParse(text, out var parsed))
+        {
+            await UpdateValue(parsed);
+        }
+        else
+        {
+            // Keep the user's input visible so they can correct their typo; flag visually with .is-invalid.
+            _isInvalid = true;
+        }
+    }
+}

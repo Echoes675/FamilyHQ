@@ -121,11 +121,11 @@
                         {
                             <div class="day-event-block"
                                  style="@GetEventStyle(p, SelectedDate)"
-                                 title="@($"{p.Event.Title}\n{p.Event.Start.LocalDateTime:t} - {p.Event.End.LocalDateTime:t}\n{p.Event.Location}")"
+                                 title="@($"{p.Event.Title}\n{p.Event.StartLocal():t} - {p.Event.EndLocal():t}\n{p.Event.Location}")"
                                  @onclick:stopPropagation="true"
                                  @onclick="() => OnEditEvent.InvokeAsync(p.Event)">
                                 <div class="fw-bold">@p.Event.Title</div>
-                                <div>@p.Event.Start.LocalDateTime.ToString("h:mm tt")</div>
+                                <div>@p.Event.StartLocal().ToString("h:mm tt")</div>
                             </div>
                         }
                     </div>
@@ -289,8 +289,8 @@
 
     private string GetEventStyle(PlacedEvent p, DateTime expectedDate)
     {
-        var localStart = p.Event.Start.LocalDateTime;
-        var localEnd = p.Event.End.LocalDateTime;
+        var localStart = p.Event.StartLocal();
+        var localEnd = p.Event.EndLocal();
         if (localStart < expectedDate.Date) localStart = expectedDate.Date;
         if (localEnd > expectedDate.Date.AddDays(1)) localEnd = expectedDate.Date.AddDays(1);
         var startMins = localStart.Hour * 60 + localStart.Minute;

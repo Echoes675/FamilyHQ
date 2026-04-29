@@ -83,6 +83,10 @@ Theme switching is driven by the `data-theme` attribute on `<body>`. CSS custom 
 
 The UI uses a **glassmorphism-lite** design — semi-transparent `.glass-surface` components with white border glow and layered box-shadows. Bootstrap has been removed; all styles live in `wwwroot/css/app.css`. The DM Sans font is self-hosted.
 
+### Event time formatting
+
+`CalendarEventViewModel.Start` / `.End` are `DateTimeOffset` values returned from the API in UTC. **All views must render times via `evt.StartLocal()` / `evt.EndLocal()`** (in `FamilyHQ.WebUi.ViewModels.CalendarEventViewModelExtensions`) — never call `.ToString(...)` directly on the `DateTimeOffset`, which formats the stored offset (UTC) and produces the wrong time for users outside UTC.
+
 ## Pages & Navigation
 - `/` — Dashboard (Month / Day / Agenda views)
 - `/settings` — Settings page — tabbed layout (General, Location, Weather, Display). Settings cog only shown when authenticated.
