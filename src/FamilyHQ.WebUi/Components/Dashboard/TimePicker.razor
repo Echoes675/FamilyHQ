@@ -1,22 +1,20 @@
 @namespace FamilyHQ.WebUi.Components.Dashboard
 
 <div class="time-picker" role="group" aria-label="@(AriaLabel ?? "Time picker")">
-    <div class="time-picker-spinners">
-        <div class="time-picker-column">
-            <button type="button" class="time-picker-step" aria-label="Increase hour"
-                    @onclick="IncrementHour">+</button>
-            <div class="time-picker-display" aria-live="polite">@Value.Hour.ToString("00")</div>
-            <button type="button" class="time-picker-step" aria-label="Decrease hour"
-                    @onclick="DecrementHour">−</button>
-        </div>
-        <div class="time-picker-separator" aria-hidden="true">:</div>
-        <div class="time-picker-column">
-            <button type="button" class="time-picker-step" aria-label="Increase minute"
-                    @onclick="IncrementMinute">+</button>
-            <div class="time-picker-display" aria-live="polite">@Value.Minute.ToString("00")</div>
-            <button type="button" class="time-picker-step" aria-label="Decrease minute"
-                    @onclick="DecrementMinute">−</button>
-        </div>
+    <div class="time-picker-stepper">
+        <button type="button" class="time-picker-step" aria-label="Decrease hour"
+                @onclick="DecrementHour">−</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Hour.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Increase hour"
+                @onclick="IncrementHour">+</button>
+    </div>
+    <span class="time-picker-separator" aria-hidden="true">:</span>
+    <div class="time-picker-stepper">
+        <button type="button" class="time-picker-step" aria-label="Decrease minute"
+                @onclick="DecrementMinute">−</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Minute.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Increase minute"
+                @onclick="IncrementMinute">+</button>
     </div>
     <input type="text"
            class="@TextInputClass"
@@ -32,38 +30,30 @@
 <style>
     .time-picker {
         display: flex;
-        flex-direction: column;
-        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
     }
 
-    .time-picker-spinners {
+    .time-picker-stepper {
         display: flex;
         align-items: center;
-        justify-content: center;
-        gap: 8px;
-    }
-
-    .time-picker-column {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
-        flex: 1;
-        max-width: 96px;
+        gap: 4px;
     }
 
     .time-picker-step {
-        min-height: 48px;
-        min-width: 48px;
+        width: 44px;
+        height: 44px;
         border-radius: 6px;
         border: 1px solid var(--theme-glass-border);
         background: transparent;
         color: var(--theme-accent);
-        font-size: 22px;
+        font-size: 20px;
         font-weight: 600;
         line-height: 1;
         cursor: pointer;
         font-family: inherit;
+        padding: 0;
         transition:
             background-color var(--theme-transition-duration, 15s) ease-in-out,
             color var(--theme-transition-duration, 15s) ease-in-out,
@@ -73,40 +63,43 @@
     }
 
     .time-picker-step:active {
-        transform: scale(0.96);
+        transform: scale(0.94);
         background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
     }
 
     .time-picker-display {
+        min-width: 42px;
         text-align: center;
-        font-size: 28px;
+        font-size: 20px;
         font-weight: 600;
         font-variant-numeric: tabular-nums;
         color: var(--theme-text);
-        padding: 8px 4px;
-        border-radius: 6px;
-        border: 1px solid var(--theme-glass-border);
-        background: color-mix(in srgb, var(--theme-accent) 6%, transparent);
-        min-height: 48px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        padding: 6px 4px;
     }
 
     .time-picker-separator {
-        font-size: 28px;
+        font-size: 20px;
         font-weight: 600;
         color: var(--theme-text-muted);
-        padding-bottom: 2px;
+        padding: 0 2px;
     }
 
-    .time-picker .form-input.is-invalid {
-        border-color: #ef4444;
-    }
-
-    .time-picker .form-input {
+    .time-picker-text {
+        flex: 0 0 64px;
+        margin-left: 6px;
+        background: transparent;
+        border: 1px solid var(--theme-glass-border);
+        border-radius: 6px;
+        color: var(--theme-text);
+        padding: 6px 8px;
+        font-size: 14px;
+        font-family: inherit;
         text-align: center;
         font-variant-numeric: tabular-nums;
+    }
+
+    .time-picker-text.is-invalid {
+        border-color: #ef4444;
     }
 </style>
 
@@ -118,16 +111,18 @@
     private string _textValue = "";
     private bool _isInvalid;
     private TimeOnly _lastSyncedValue;
+    private bool _initialised;
 
-    private string TextInputClass => _isInvalid ? "form-input is-invalid" : "form-input";
+    private string TextInputClass => _isInvalid ? "time-picker-text is-invalid" : "time-picker-text";
 
     protected override void OnParametersSet()
     {
-        if (Value != _lastSyncedValue || string.IsNullOrEmpty(_textValue))
+        if (!_initialised || Value != _lastSyncedValue)
         {
             _textValue = Value.ToString("HH:mm");
             _lastSyncedValue = Value;
             _isInvalid = false;
+            _initialised = true;
         }
     }
 
