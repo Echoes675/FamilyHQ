@@ -49,11 +49,11 @@
                         <div class="grid-2 mb-3">
                             <div>
                                 <label class="form-label">Start Time</label>
-                                <input type="time" class="form-input" @bind="_startTime" />
+                                <TimePicker Value="_startTime" ValueChanged="v => _startTime = v" AriaLabel="Start time" />
                             </div>
                             <div>
                                 <label class="form-label">End Time</label>
-                                <input type="time" class="form-input" @bind="_endTime" />
+                                <TimePicker Value="_endTime" ValueChanged="v => _endTime = v" AriaLabel="End time" />
                             </div>
                         </div>
                     }
