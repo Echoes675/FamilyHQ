@@ -53,7 +53,7 @@
                             {
                                 <div class="event-capsule"
                                      style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)"); cursor: pointer;"
-                                     title="@evt.Title (@evt.Start.ToString("t")) - @evt.Location"
+                                     title="@evt.Title (@evt.StartLocal().ToString("t")) - @evt.Location"
                                      @onclick="() => OnEditEvent.InvokeAsync(evt)">
                                     @if (evt.IsAllDay)
                                     {
@@ -61,7 +61,7 @@
                                     }
                                     else
                                     {
-                                        <span><b>@evt.Start.ToString("h:mm tt")</b> @evt.Title</span>
+                                        <span><b>@evt.StartLocal().ToString("h:mm tt")</b> @evt.Title</span>
                                     }
                                 </div>
                             }

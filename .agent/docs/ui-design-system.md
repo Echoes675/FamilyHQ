@@ -44,6 +44,10 @@ When a user taps an `<input>`, the OS virtual keyboard slides up and covers the 
 
 This pattern applies to: the Settings page location input, the Event modal, and any future form fields.
 
+### Time inputs on touchscreens
+
+Native `<input type="time">` on Firefox/Linux opens a small spinner that does **not** invoke the OS on-screen keyboard, so it cannot be edited via touch on the kiosk. Use the `TimePicker` Blazor component (`Components/Dashboard/TimePicker.razor`) for any new time field. It provides large +/- step buttons (≥ 48 px touch targets) and a typeable `inputmode="numeric"` text fallback that DOES trigger the OSK. Bind via `Value` / `ValueChanged` on a `TimeOnly`.
+
 ## Time-of-Day Theme System
 
 ### Periods & Boundaries

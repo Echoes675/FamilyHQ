@@ -97,7 +97,7 @@
                                 ? dayList
                                 : new List<CalendarEventViewModel>())
                             .Where(e => e.CalendarInfoId == cal.Id)
-                            .OrderBy(e => (e.IsAllDay || e.Start.Date < date.Date) ? 0 : 1)
+                            .OrderBy(e => (e.IsAllDay || e.StartLocal().Date < date.Date) ? 0 : 1)
                             .ThenBy(e => e.Start)
                             .ToList();
 
@@ -109,10 +109,10 @@
                             }">
                             @foreach (var evt in calDayEvents.Take(3))
                             {
-                                var isContinuation = !evt.IsAllDay && evt.Start.Date < date.Date;
+                                var isContinuation = !evt.IsAllDay && evt.StartLocal().Date < date.Date;
                                 var displayText = (evt.IsAllDay || isContinuation)
                                     ? evt.Title
-                                    : $"{evt.Start.LocalDateTime:HH:mm} {evt.Title}";
+                                    : $"{evt.StartLocal():HH:mm} {evt.Title}";
                                 <div data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
                                      class="agenda-event-line">
                                     @displayText
