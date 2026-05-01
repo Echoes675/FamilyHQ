@@ -2,19 +2,19 @@
 
 <div class="time-picker" role="group" aria-label="@(AriaLabel ?? "Time picker")">
     <div class="time-picker-stepper">
-        <button type="button" class="time-picker-step" aria-label="Decrease hour"
-                @onclick="DecrementHour">−</button>
-        <div class="time-picker-display" aria-live="polite">@Value.Hour.ToString("00")</div>
         <button type="button" class="time-picker-step" aria-label="Increase hour"
                 @onclick="IncrementHour">+</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Hour.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Decrease hour"
+                @onclick="DecrementHour">−</button>
     </div>
     <span class="time-picker-separator" aria-hidden="true">:</span>
     <div class="time-picker-stepper">
-        <button type="button" class="time-picker-step" aria-label="Decrease minute"
-                @onclick="DecrementMinute">−</button>
-        <div class="time-picker-display" aria-live="polite">@Value.Minute.ToString("00")</div>
         <button type="button" class="time-picker-step" aria-label="Increase minute"
                 @onclick="IncrementMinute">+</button>
+        <div class="time-picker-display" aria-live="polite">@Value.Minute.ToString("00")</div>
+        <button type="button" class="time-picker-step" aria-label="Decrease minute"
+                @onclick="DecrementMinute">−</button>
     </div>
     <input type="text"
            class="@TextInputClass"
@@ -37,18 +37,19 @@
 
     .time-picker-stepper {
         display: flex;
+        flex-direction: column;
         align-items: center;
         gap: 4px;
     }
 
     .time-picker-step {
-        width: 44px;
+        width: 48px;
         height: 44px;
         border-radius: 6px;
         border: 1px solid var(--theme-glass-border);
         background: transparent;
         color: var(--theme-accent);
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 600;
         line-height: 1;
         cursor: pointer;
@@ -68,13 +69,13 @@
     }
 
     .time-picker-display {
-        min-width: 42px;
+        min-width: 48px;
         text-align: center;
         font-size: 20px;
         font-weight: 600;
         font-variant-numeric: tabular-nums;
         color: var(--theme-text);
-        padding: 6px 4px;
+        padding: 4px 4px;
     }
 
     .time-picker-separator {
@@ -82,6 +83,7 @@
         font-weight: 600;
         color: var(--theme-text-muted);
         padding: 0 2px;
+        align-self: center;
     }
 
     .time-picker-text {
@@ -96,6 +98,7 @@
         font-family: inherit;
         text-align: center;
         font-variant-numeric: tabular-nums;
+        align-self: center;
     }
 
     .time-picker-text.is-invalid {

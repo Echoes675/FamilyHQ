@@ -46,7 +46,39 @@ This pattern applies to: the Settings page location input, the Event modal, and 
 
 ### Time inputs on touchscreens
 
-Native `<input type="time">` on Firefox/Linux opens a small spinner that does **not** invoke the OS on-screen keyboard, so it cannot be edited via touch on the kiosk. Use the `TimePicker` Blazor component (`Components/Dashboard/TimePicker.razor`) for any new time field. It provides large +/- step buttons (≥ 48 px touch targets) and a typeable `inputmode="numeric"` text fallback that DOES trigger the OSK. Bind via `Value` / `ValueChanged` on a `TimeOnly`.
+Native `<input type="time">` on Firefox/Linux opens a small spinner that does **not** invoke the OS on-screen keyboard, so it cannot be edited via touch on the kiosk. Use the `TimePicker` Blazor component (`Components/Dashboard/TimePicker.razor`) for any new time field. The component lays out each digit as a vertical stack — `+` button on top, the digit display in the middle, `−` button on the bottom — so both step controls remain at ≥ 48 × 48 px touch targets. A typeable `inputmode="numeric"` text fallback sits alongside the steppers and DOES trigger the OSK. Bind via `Value` / `ValueChanged` on a `TimeOnly`.
+
+When the start time of an event is edited, the consumer is responsible for shifting the end time by the same delta to preserve the user-visible duration; editing the end time independently must not move the start. See `EventModal.razor` for the canonical implementation.
+
+### Boolean toggles — pill buttons, not checkboxes
+
+Native `<input type="checkbox">` is **not** used for boolean settings on the kiosk. The hit target is too small for reliable touch and the styling cannot follow the theme system without additional CSS. Instead, every binary toggle uses the `.pill-toggle` pattern:
+
+```razor
+<div class="pill-toggle-row">
+    <span class="pill-toggle-label" id="myLabel">Setting name</span>
+    <button type="button"
+            class="@($"pill-toggle {(_state ? "pill-toggle--on" : "pill-toggle--off")}")"
+            aria-labelledby="myLabel"
+            aria-pressed="@_state.ToString().ToLowerInvariant()"
+            @onclick="Toggle">
+        @(_state ? "On" : "Off")
+    </button>
+</div>
+```
+
+Rules:
+- Button reflects the current state in its label (`On`/`Off`, or domain wording such as `Visible`/`Hidden`, `Shared`/`Make Shared`).
+- Apply `pill-toggle--on` when the state is true, `pill-toggle--off` when false.
+- Always ≥ 48 × 48 px (the `.pill-toggle` class enforces this).
+- Always include `aria-pressed` for assistive tech.
+- Use `.pill-toggle-row` + `.pill-toggle-label` for the standard label-on-left, pill-on-right layout.
+
+Examples in the codebase:
+- `SettingsCalendarsTab.razor` — Visible/Hidden and Shared toggles (canonical pattern)
+- `EventModal.razor` — All Day Event toggle
+- `SettingsWeatherTab.razor` — Enable weather display
+- `SettingsDisplayTab.razor` — Opaque surfaces lock
 
 ## Time-of-Day Theme System
 
