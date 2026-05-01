@@ -9,6 +9,16 @@
         ],
         "Events": []
     },
+    "TimePickerUser": {
+        "Calendars": [
+            {
+                "Id": "template_timepicker_family",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    },
     "MultiCalendarUser": {
         "Calendars": [
             {
