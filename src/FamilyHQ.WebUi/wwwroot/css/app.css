@@ -1297,6 +1297,20 @@ html, body {
     border-color: var(--theme-accent-hover, var(--theme-accent));
 }
 
+.pill-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.pill-toggle-label {
+    color: var(--theme-text);
+    font-size: 1rem;
+    font-weight: 500;
+    flex: 1;
+}
+
 .weather-override__toggle-row,
 .weather-override__modifier-row {
     display: flex;

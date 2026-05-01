@@ -30,9 +30,16 @@
                         <label class="form-label">Event Title</label>
                         <input type="text" class="form-input" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
                     </div>
-                    <div class="form-check mb-3">
-                        <input class="form-check-input" type="checkbox" id="allDayCheck" @bind="_eventModel.IsAllDay">
-                        <label class="form-check-label" for="allDayCheck">All Day Event</label>
+                    <div class="pill-toggle-row mb-3">
+                        <span class="pill-toggle-label" id="allDayLabel">All Day Event</span>
+                        <button type="button"
+                                class="@($"pill-toggle {(_eventModel.IsAllDay ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                data-testid="all-day-toggle"
+                                aria-labelledby="allDayLabel"
+                                aria-pressed="@_eventModel.IsAllDay.ToString().ToLowerInvariant()"
+                                @onclick="() => _eventModel.IsAllDay = !_eventModel.IsAllDay">
+                            @(_eventModel.IsAllDay ? "On" : "Off")
+                        </button>
                     </div>
                     <div class="grid-2 mb-3">
                         <div>
@@ -47,11 +54,11 @@
                     @if (!_eventModel.IsAllDay)
                     {
                         <div class="grid-2 mb-3">
-                            <div>
+                            <div data-testid="start-time-picker">
                                 <label class="form-label">Start Time</label>
                                 <TimePicker Value="_startTime" ValueChanged="v => _startTime = v" AriaLabel="Start time" />
                             </div>
-                            <div>
+                            <div data-testid="end-time-picker">
                                 <label class="form-label">End Time</label>
                                 <TimePicker Value="_endTime" ValueChanged="v => _endTime = v" AriaLabel="End time" />
                             </div>
@@ -154,8 +161,15 @@
         get => TimeOnly.FromTimeSpan(_eventModel.Start.LocalDateTime.TimeOfDay);
         set
         {
-            var dt = _eventModel.Start.LocalDateTime.Date + value.ToTimeSpan();
-            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            // Shift end by the same delta so the user-visible duration is preserved
+            // when only the start time is moved. Editing the end time independently
+            // (see _endTime) does not touch the start.
+            var oldStart = _eventModel.Start;
+            var newStartLocal = oldStart.LocalDateTime.Date + value.ToTimeSpan();
+            var newStart = new DateTimeOffset(newStartLocal, TimeZoneInfo.Local.GetUtcOffset(newStartLocal));
+            var delta = newStart - oldStart;
+            _eventModel.Start = newStart;
+            _eventModel.End = _eventModel.End + delta;
         }
     }
 

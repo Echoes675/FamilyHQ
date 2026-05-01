@@ -25,10 +25,17 @@
             </div>
         </div>
 
-        <div class="form-check mb-4">
-            <input type="checkbox" class="form-check-input" id="opaque-toggle"
-                   checked="@_opaqueSurfaces" @onchange="OnOpaqueToggled" />
-            <label class="form-check-label" for="opaque-toggle">Opaque surfaces — lock at 100%</label>
+        <div class="pill-toggle-row mb-4">
+            <span class="pill-toggle-label" id="opaqueLabel">Opaque surfaces — lock at 100%</span>
+            <button type="button"
+                    class="@($"pill-toggle {(_opaqueSurfaces ? "pill-toggle--on" : "pill-toggle--off")}")"
+                    id="opaque-toggle"
+                    data-testid="opaque-toggle"
+                    aria-labelledby="opaqueLabel"
+                    aria-pressed="@_opaqueSurfaces.ToString().ToLowerInvariant()"
+                    @onclick="ToggleOpaque">
+                @(_opaqueSurfaces ? "On" : "Off")
+            </button>
         </div>
     </div>
 
@@ -141,9 +148,9 @@
         }
     }
 
-    private async Task OnOpaqueToggled(ChangeEventArgs e)
+    private async Task ToggleOpaque()
     {
-        _opaqueSurfaces = (bool)(e.Value ?? false);
+        _opaqueSurfaces = !_opaqueSurfaces;
         if (_opaqueSurfaces)
         {
             await DisplaySettingService.UpdatePropertyAsync("--user-surface-multiplier", "1.00");

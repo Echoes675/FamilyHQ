@@ -12,10 +12,17 @@
         }
         else
         {
-            <div class="form-check mb-4">
-                <input type="checkbox" class="form-check-input" id="weather-enabled-toggle"
-                       checked="@_enabled" @onchange="OnEnabledToggled" />
-                <label class="form-check-label" for="weather-enabled-toggle">Enable weather display</label>
+            <div class="pill-toggle-row mb-4">
+                <span class="pill-toggle-label" id="weatherEnabledLabel">Enable weather display</span>
+                <button type="button"
+                        class="@($"pill-toggle {(_enabled ? "pill-toggle--on" : "pill-toggle--off")}")"
+                        id="weather-enabled-toggle"
+                        data-testid="weather-enabled-toggle"
+                        aria-labelledby="weatherEnabledLabel"
+                        aria-pressed="@_enabled.ToString().ToLowerInvariant()"
+                        @onclick="ToggleEnabled">
+                    @(_enabled ? "On" : "Off")
+                </button>
             </div>
 
             <div class="mb-4">
@@ -102,9 +109,9 @@
         _hasChanges = false;
     }
 
-    private void OnEnabledToggled(ChangeEventArgs e)
+    private void ToggleEnabled()
     {
-        _enabled = (bool)(e.Value ?? false);
+        _enabled = !_enabled;
         UpdateHasChanges();
     }
 
