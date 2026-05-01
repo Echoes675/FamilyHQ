@@ -332,8 +332,7 @@ public class WeatherSteps
     [When(@"I disable weather")]
     public async Task WhenIDisableWeather()
     {
-        var isChecked = await _weatherSettingsPage.EnabledToggle.IsCheckedAsync();
-        if (isChecked)
+        if (await IsWeatherEnabledToggleOnAsync())
         {
             await _weatherSettingsPage.EnabledToggle.ClickAsync();
         }
@@ -342,11 +341,18 @@ public class WeatherSteps
     [When(@"I enable weather")]
     public async Task WhenIEnableWeather()
     {
-        var isChecked = await _weatherSettingsPage.EnabledToggle.IsCheckedAsync();
-        if (!isChecked)
+        if (!await IsWeatherEnabledToggleOnAsync())
         {
             await _weatherSettingsPage.EnabledToggle.ClickAsync();
         }
+    }
+
+    private async Task<bool> IsWeatherEnabledToggleOnAsync()
+    {
+        // The toggle is a .pill-toggle button with aria-pressed reflecting state,
+        // not a native checkbox — IsCheckedAsync is unsupported on it.
+        var pressed = await _weatherSettingsPage.EnabledToggle.GetAttributeAsync("aria-pressed");
+        return string.Equals(pressed, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     [When(@"I save weather settings")]
