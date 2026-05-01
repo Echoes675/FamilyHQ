@@ -19,11 +19,11 @@ Feature: Event Modal Time Picker
     Then the start time picker shows "15:00"
     And the end time picker shows "16:00"
     When I press the "Increase minute" button on the start time picker 3 times
-    Then the start time picker shows "15:30"
-    And the end time picker shows "16:30"
+    Then the start time picker shows "15:15"
+    And the end time picker shows "16:15"
     When I press the "Decrease hour" button on the start time picker 2 times
-    Then the start time picker shows "13:30"
-    And the end time picker shows "14:30"
+    Then the start time picker shows "13:15"
+    And the end time picker shows "14:15"
 
   Scenario: Adjusting the end time leaves the start time unchanged
     When I view the dashboard
@@ -33,7 +33,7 @@ Feature: Event Modal Time Picker
     And the end time picker shows "15:00"
     When I press the "Decrease minute" button on the end time picker 4 times
     Then the start time picker shows "14:00"
-    And the end time picker shows "14:20"
+    And the end time picker shows "14:40"
     When I press the "Increase hour" button on the end time picker 2 times
     Then the start time picker shows "14:00"
-    And the end time picker shows "16:20"
+    And the end time picker shows "16:40"
