@@ -138,8 +138,17 @@ pipeline {
                     // (jenkins_github). git push inherits it transparently — no
                     // sshagent or withCredentials wrapper needed. Same pattern as
                     // Jenkinsfile.cleanup uses for git ls-remote --heads origin.
+                    //
+                    // Identity is supplied via Jenkins Global Properties →
+                    // Environment variables (FAMILYHQ_GIT_TAG_EMAIL, _NAME) so it
+                    // isn't hard-coded in the repo. -c user.email/-c user.name
+                    // applies the values for THIS command only (no git config
+                    // update — AGENTS.md forbids that).
+                    if (!env.FAMILYHQ_GIT_TAG_EMAIL?.trim() || !env.FAMILYHQ_GIT_TAG_NAME?.trim()) {
+                        error 'FAMILYHQ_GIT_TAG_EMAIL and FAMILYHQ_GIT_TAG_NAME must be set as Jenkins global env vars (Manage Jenkins → System → Global properties → Environment variables).'
+                    }
                     sh """
-                        git tag -a ${env.SEMVER_TAG} -m 'Release ${env.SEMVER_TAG}'
+                        git -c user.email='${env.FAMILYHQ_GIT_TAG_EMAIL}' -c user.name='${env.FAMILYHQ_GIT_TAG_NAME}' tag -a ${env.SEMVER_TAG} -m 'Release ${env.SEMVER_TAG}'
                         git push origin ${env.SEMVER_TAG}
                     """
                 }
@@ -229,10 +238,12 @@ pipeline {
         failure {
             // If SEMVER_TAG was created locally but the remote push step never ran
             // (or failed), drop the local tag so the next master build re-uses the
-            // same patch number rather than skipping ahead.
+            // same patch number rather than skipping ahead. The "git tag -d" itself
+            // exits non-zero when the tag doesn't exist (failures earlier in the
+            // pipeline can leave us in that state), hence the redirect + true.
             script {
                 if (env.SEMVER_TAG) {
-                    sh "git tag -d ${env.SEMVER_TAG} || true"
+                    sh "git tag -d ${env.SEMVER_TAG} >/dev/null 2>&1 || true"
                 }
             }
             echo "Build failed: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (attempted ' + env.SEMVER_TAG + ')' : ''}"
