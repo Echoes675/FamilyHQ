@@ -44,7 +44,7 @@ public class HealthControllerTests
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var doc = SerializeResponse(ok);
         var version = doc.RootElement.GetProperty("version").GetString();
-        version.Should().MatchRegex(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.+-]+)?(\+[0-9A-Za-z.-]+)?$");
+        version.Should().MatchRegex(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$");
     }
 
     [Fact]

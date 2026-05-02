@@ -86,6 +86,11 @@ public class VersionService : IVersionService
                 return;
             }
 
+            if (_updateTriggered)
+            {
+                return;
+            }
+
             _updateTriggered = true;
             UpdateAvailable?.Invoke();
 
@@ -98,9 +103,16 @@ public class VersionService : IVersionService
         }
     }
 
-    private void OnReconnected()
+    private async void OnReconnected()
     {
-        _ = CheckAsync();
+        try
+        {
+            await CheckAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Reconnect-driven version check failed");
+        }
     }
 
     private static bool VersionsMatch(string a, string b)
