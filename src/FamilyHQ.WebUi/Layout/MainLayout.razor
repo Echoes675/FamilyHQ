@@ -1,11 +1,13 @@
 @inherits LayoutComponentBase
 @using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Components
 @using FamilyHQ.WebUi.Components.Weather
 @inject IThemeService ThemeService
 @inject IDisplaySettingService DisplaySettingService
 @inject IWeatherUiService WeatherUiService
 
 <div class="page">
+    <UpdateBanner />
     @* <WeatherOverlay /> — temporarily disabled while animations are reworked *@
     <ErrorBoundary @ref="_errorBoundary">
         <ChildContent>
@@ -21,6 +23,7 @@
             </div>
         </ErrorContent>
     </ErrorBoundary>
+    <Footer />
 </div>
 
 @code {

@@ -2,12 +2,13 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 namespace FamilyHQ.WebUi.Services;
 
-public class SignalRService : IAsyncDisposable
+public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
 {
     private readonly HubConnection _hubConnection;
     public event Action? OnEventsUpdated;
     public event Action<string>? OnThemeChanged;
     public event Action? OnWeatherUpdated;
+    public event Action? Reconnected;
 
     public SignalRService(string backendUrl)
     {
@@ -24,6 +25,12 @@ public class SignalRService : IAsyncDisposable
         _hubConnection.On<string>("ThemeChanged", period => OnThemeChanged?.Invoke(period));
 
         _hubConnection.On("WeatherUpdated", () => OnWeatherUpdated?.Invoke());
+
+        _hubConnection.Reconnected += _ =>
+        {
+            Reconnected?.Invoke();
+            return Task.CompletedTask;
+        };
     }
 
     public async Task StartAsync()

@@ -40,19 +40,64 @@ pipeline {
             }
         }
 
+        stage('Compute SemVer') {
+            when { branch 'master' }
+            steps {
+                echo '======= Compute SemVer ======='
+                script {
+                    // Read MAJOR.MINOR floor from Directory.Build.props.
+                    def buildProps = readFile('Directory.Build.props')
+                    def m = (buildProps =~ /<MinVerMinimumMajorMinor>([0-9]+\.[0-9]+)<\/MinVerMinimumMajorMinor>/)
+                    if (!m) {
+                        error 'MinVerMinimumMajorMinor not found in Directory.Build.props'
+                    }
+                    def majorMinor = m[0][1]
+
+                    // Find the highest existing v{majorMinor}.* tag and increment patch.
+                    sh 'git fetch --tags --force'
+                    def tagListRaw = sh(
+                        script: "git tag -l 'v${majorMinor}.*'",
+                        returnStdout: true
+                    ).trim()
+
+                    def maxPatch = -1
+                    if (tagListRaw) {
+                        for (line in tagListRaw.split('\n')) {
+                            def tm = (line.trim() =~ /^v${majorMinor}\.([0-9]+)$/)
+                            if (tm) {
+                                def p = tm[0][1] as int
+                                if (p > maxPatch) {
+                                    maxPatch = p
+                                }
+                            }
+                        }
+                    }
+
+                    def nextPatch = maxPatch + 1
+                    env.SEMVER_TAG = "v${majorMinor}.${nextPatch}"
+                    env.SEMVER_VERSION = "${majorMinor}.${nextPatch}"
+                    echo "Next SemVer tag: ${env.SEMVER_TAG} (version: ${env.SEMVER_VERSION})"
+                }
+            }
+        }
+
         stage('Build Images') {
             steps {
                 echo '======= Build Images ======='
                 script {
+                    // SEMVER_VERSION is empty on non-master branches. Empty --build-arg
+                    // means MINVER_VERSION_OVERRIDE is unset inside the build, and
+                    // MinVer falls back to its prerelease default (1.0.0-alpha.0...).
+                    def versionArg = env.SEMVER_VERSION ?: ''
                     parallel(
                         'WebApi': {
-                            sh "docker build -f docker/webapi/Dockerfile -t ${WEBAPI_IMAGE}:${IMAGE_TAG} ."
+                            sh "docker build --build-arg VERSION=${versionArg} -f docker/webapi/Dockerfile -t ${WEBAPI_IMAGE}:${IMAGE_TAG} ."
                         },
                         'WebUi': {
-                            sh "docker build -f docker/webui/Dockerfile -t ${WEBUI_IMAGE}:${IMAGE_TAG} ."
+                            sh "docker build --build-arg VERSION=${versionArg} -f docker/webui/Dockerfile -t ${WEBUI_IMAGE}:${IMAGE_TAG} ."
                         },
                         'Simulator': {
-                            sh "docker build -f docker/simulator/Dockerfile -t ${SIMULATOR_IMAGE}:${IMAGE_TAG} ."
+                            sh "docker build --build-arg VERSION=${versionArg} -f docker/simulator/Dockerfile -t ${SIMULATOR_IMAGE}:${IMAGE_TAG} ."
                         }
                     )
                 }
@@ -69,14 +114,46 @@ pipeline {
 
                     script {
                         if (env.BRANCH_NAME == 'master') {
+                            // :latest mirror
                             sh "docker tag ${WEBAPI_IMAGE}:${IMAGE_TAG} ${WEBAPI_IMAGE}:latest"
                             sh "docker tag ${WEBUI_IMAGE}:${IMAGE_TAG} ${WEBUI_IMAGE}:latest"
                             sh "docker tag ${SIMULATOR_IMAGE}:${IMAGE_TAG} ${SIMULATOR_IMAGE}:latest"
                             sh "docker push ${WEBAPI_IMAGE}:latest"
                             sh "docker push ${WEBUI_IMAGE}:latest"
                             sh "docker push ${SIMULATOR_IMAGE}:latest"
+
+                            // Durable SemVer tag — used by deploy-prod for release pinning
+                            if (env.SEMVER_TAG) {
+                                sh "docker tag ${WEBAPI_IMAGE}:${IMAGE_TAG} ${WEBAPI_IMAGE}:${env.SEMVER_TAG}"
+                                sh "docker tag ${WEBUI_IMAGE}:${IMAGE_TAG} ${WEBUI_IMAGE}:${env.SEMVER_TAG}"
+                                sh "docker tag ${SIMULATOR_IMAGE}:${IMAGE_TAG} ${SIMULATOR_IMAGE}:${env.SEMVER_TAG}"
+                                sh "docker push ${WEBAPI_IMAGE}:${env.SEMVER_TAG}"
+                                sh "docker push ${WEBUI_IMAGE}:${env.SEMVER_TAG}"
+                                sh "docker push ${SIMULATOR_IMAGE}:${env.SEMVER_TAG}"
+                            }
                         }
                     }
+                }
+            }
+        }
+
+        stage('Push Git Tag') {
+            when { branch 'master' }
+            steps {
+                echo '======= Push Git Tag ======='
+                script {
+                    if (!env.SEMVER_TAG) {
+                        error 'SEMVER_TAG was not computed — refusing to push.'
+                    }
+                    // checkout scm has already configured a credential helper for the
+                    // workspace using the multibranch pipeline's SCM credential
+                    // (jenkins_github). git push inherits it transparently — no
+                    // sshagent or withCredentials wrapper needed. Same pattern as
+                    // Jenkinsfile.cleanup uses for git ls-remote --heads origin.
+                    sh """
+                        git tag -a ${env.SEMVER_TAG} -m 'Release ${env.SEMVER_TAG}'
+                        git push origin ${env.SEMVER_TAG}
+                    """
                 }
             }
         }
@@ -146,6 +223,11 @@ pipeline {
                         sh "docker rmi ${WEBAPI_IMAGE}:latest || true"
                         sh "docker rmi ${WEBUI_IMAGE}:latest || true"
                         sh "docker rmi ${SIMULATOR_IMAGE}:latest || true"
+                        if (env.SEMVER_TAG) {
+                            sh "docker rmi ${WEBAPI_IMAGE}:${env.SEMVER_TAG} || true"
+                            sh "docker rmi ${WEBUI_IMAGE}:${env.SEMVER_TAG} || true"
+                            sh "docker rmi ${SIMULATOR_IMAGE}:${env.SEMVER_TAG} || true"
+                        }
                     }
                 }
             }
@@ -154,10 +236,18 @@ pipeline {
 
     post {
         success {
-            echo "Build successful: ${IMAGE_TAG}"
+            echo "Build successful: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (' + env.SEMVER_TAG + ')' : ''}"
         }
         failure {
-            echo "Build failed: ${IMAGE_TAG}"
+            // If SEMVER_TAG was created locally but the remote push step never ran
+            // (or failed), drop the local tag so the next master build re-uses the
+            // same patch number rather than skipping ahead.
+            script {
+                if (env.SEMVER_TAG) {
+                    sh "git tag -d ${env.SEMVER_TAG} || true"
+                }
+            }
+            echo "Build failed: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (attempted ' + env.SEMVER_TAG + ')' : ''}"
         }
     }
 }

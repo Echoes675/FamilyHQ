@@ -1,0 +1,35 @@
+.update-banner {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    color: var(--theme-text);
+    font-size: 14px;
+    font-weight: 500;
+    max-width: calc(100vw - 32px);
+    pointer-events: none;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out,
+                color var(--theme-transition-duration, 15s) ease-in-out;
+}
+
+.update-banner__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--theme-accent);
+    flex: 0 0 auto;
+}
+
+.update-banner__text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

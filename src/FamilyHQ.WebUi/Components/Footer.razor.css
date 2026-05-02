@@ -1,0 +1,18 @@
+.app-footer {
+    position: fixed;
+    right: 8px;
+    bottom: 6px;
+    z-index: 3;
+    pointer-events: none;
+    font-size: 11px;
+    line-height: 1;
+    color: var(--theme-text-muted);
+    opacity: 0.55;
+    transition: color var(--theme-transition-duration, 15s) ease-in-out,
+                opacity 0.2s ease-in-out;
+}
+
+.app-footer__version {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
