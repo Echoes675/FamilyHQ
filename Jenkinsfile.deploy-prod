@@ -6,7 +6,8 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'DIRECTION', choices: ['forward', 'backward'], description: 'forward = deploy latest master image, backward = deploy previous master image')
+        choice(name: 'DIRECTION', choices: ['forward', 'backward', 'specific'], description: 'forward = deploy latest master image, backward = deploy previous master image, specific = deploy by SemVer tag (release pinning)')
+        string(name: 'SEMVER_TAG', defaultValue: '', description: 'Required when DIRECTION=specific. SemVer tag to deploy, e.g. v1.0.42. Must already exist in the registry.')
     }
 
     environment {
@@ -45,6 +46,22 @@ pipeline {
 
                     def rawTags = readJSON(text: tagsJson).tags
                     def tags = (rawTags != null && rawTags instanceof List) ? rawTags : []
+
+                    if (params.DIRECTION == 'specific') {
+                        if (!params.SEMVER_TAG?.trim()) {
+                            error 'SEMVER_TAG is required when DIRECTION=specific'
+                        }
+                        if (!(params.SEMVER_TAG ==~ /^v\d+\.\d+\.\d+$/)) {
+                            error "SEMVER_TAG must look like v{MAJOR}.{MINOR}.{PATCH} (e.g. v1.0.42). Got: ${params.SEMVER_TAG}"
+                        }
+                        if (!tags.contains(params.SEMVER_TAG)) {
+                            error "SemVer tag ${params.SEMVER_TAG} not found in registry. Available SemVer tags: ${tags.findAll { it ==~ /^v\d+\.\d+\.\d+$/ }}"
+                        }
+                        env.RESOLVED_IMAGE_TAG = params.SEMVER_TAG
+                        echo "Deploying SemVer release: ${env.RESOLVED_IMAGE_TAG}"
+                        return
+                    }
+
                     def tagsByBuildNum = [:]
                     for (int i = 0; i < tags.size(); i++) {
                         def t = tags[i]
