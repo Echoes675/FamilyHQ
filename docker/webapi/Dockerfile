@@ -13,6 +13,8 @@ RUN dotnet restore src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj
 
 # Stage 2: Build
 FROM restore AS build
+ARG VERSION=
+ENV MINVER_VERSION_OVERRIDE=$VERSION
 COPY src/ src/
 
 RUN dotnet publish src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj -c Release -o /app/publish

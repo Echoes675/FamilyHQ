@@ -37,7 +37,9 @@ For local `dotnet build` (where `.git` is present), the override is empty and Mi
 
 ### Git tag push
 
-After a successful master build and image push, `Jenkinsfile.build` pushes an annotated tag `v{M}.{m}.{p}` to the master commit using a deploy key/PAT credential `familyhq-git-tagger`. The credential should be scoped to write tags only — not commits. The pipeline never modifies repository content; only tags are pushed.
+After a successful master build and image push, `Jenkinsfile.build` pushes an annotated tag `v{M}.{m}.{p}` to the master commit. No explicit credential block is required in the Jenkinsfile — `checkout scm` sets up a credential helper for the workspace using whatever credential the multibranch pipeline is configured with for SCM (currently `jenkins_github`). Subsequent `git push origin v{M}.{m}.{p}` inherits that helper transparently. This is the same pattern `Jenkinsfile.cleanup` uses for `git ls-remote --heads origin`.
+
+The pipeline never modifies repository content; only tags are pushed.
 
 ### Failure recovery
 
