@@ -10,6 +10,8 @@ RUN dotnet restore src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj
 
 # Stage 2: Build
 FROM restore AS build
+ARG VERSION=
+ENV MINVER_VERSION_OVERRIDE=$VERSION
 COPY src/FamilyHQ.Core/ src/FamilyHQ.Core/
 COPY src/FamilyHQ.WebUi/ src/FamilyHQ.WebUi/
 

@@ -106,6 +106,21 @@ The Settings page has a fifth tab, **Weather Override**, rendered only when `Fea
 
 When the tab's "Override active" pill is on, a developer can tap any `WeatherCondition` and optionally toggle the Windy modifier to immediately force the full-screen weather animation (`WeatherOverlay`) to that condition. The override is purely client-side transient state held in a scoped `IWeatherOverrideService` and is never persisted — refreshing the browser reverts to the real weather pipeline. The `WeatherStrip`, backend API, user `WeatherSetting`, and real weather data flow are untouched.
 
+## Versioning
+
+Application version is a SemVer string (`MAJOR.MINOR.PATCH`) derived at build time by [MinVer](https://github.com/adamralph/minver). MAJOR/MINOR are pinned in `Directory.Build.props` via `<MinVerMinimumMajorMinor>`; PATCH auto-increments based on git tags pushed by Jenkins on master builds. See `.agent/docs/ci-cd.md` for the full pipeline mechanics and `.agent/skills/git-workflow/SKILL.md` for when to bump MAJOR/MINOR.
+
+Surfacing:
+- **`/api/health`** returns the WebApi version in a `version` field with `Cache-Control: no-store`.
+- **WebUi footer** (`Components/Footer.razor`) renders `v{ClientVersion}` in the bottom-right corner. The version is read from `AssemblyInformationalVersionAttribute` on the WebUi assembly.
+
+Auto-reload of active clients on a new prod deploy:
+- `IVersionService` / `VersionService` (singleton, registered in `Program.cs`) caches the WASM build's `ClientVersion` and the latest `ServerVersion` from `/api/health`.
+- On startup, `InitializeAsync()` fetches `/api/health` once.
+- `SignalRService` exposes a `Reconnected` event (via `ISignalRConnectionEvents`); `VersionService` subscribes and calls `CheckAsync()` on every reconnect. A WebApi deploy restarts the server, dropping the `CalendarHub` connection — when the auto-reconnect succeeds, `CheckAsync` runs and compares versions.
+- On a SemVer-core mismatch (build metadata stripped), `UpdateAvailable` fires (showing `<UpdateBanner />` with "New version available — reloading…"), then `IJSRuntime.InvokeVoidAsync("location.reload")` runs after a 5s delay (via `TimeProvider`, so testable with `FakeTimeProvider`).
+- A `_updateTriggered` flag enforces fire-once semantics so transient SignalR blips never trigger multiple banners or reload cycles.
+
 ## Performance Targets
 - Responsiveness: API endpoints should target < 200ms response time.
 - EF Core Efficiency:

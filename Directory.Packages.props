@@ -32,6 +32,8 @@
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.7" />
+    <!-- Versioning -->
+    <PackageVersion Include="MinVer" Version="6.0.0" />
     <!-- Testing -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
