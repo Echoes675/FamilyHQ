@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.JSInterop;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.Services.Auth;
 using FamilyHQ.WebUi.Services.Correlation;
@@ -35,8 +36,9 @@ public class Program
         })
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
-        
+
         builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
+        builder.Services.AddSingleton<ISignalRConnectionEvents>(sp => sp.GetRequiredService<SignalRService>());
 
         builder.Services.AddHttpClient<IThemeService, ThemeService>(client =>
         {
@@ -59,6 +61,21 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddHttpClient("Version", client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        })
+        .AddHttpMessageHandler<CorrelationIdMessageHandler>();
+
+        builder.Services.AddSingleton(TimeProvider.System);
+
+        builder.Services.AddSingleton<IVersionService>(sp => new VersionService(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("Version"),
+            sp.GetRequiredService<IJSRuntime>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<ILogger<VersionService>>(),
+            sp.GetRequiredService<ISignalRConnectionEvents>()));
+
         builder.Services.AddScoped<IWeatherUiService>(sp =>
         {
             var factory = sp.GetRequiredService<IHttpClientFactory>();
@@ -70,6 +87,8 @@ public class Program
         builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
         builder.Services.AddScoped<IWeatherOverrideService, WeatherOverrideService>();
 
-        await builder.Build().RunAsync();
+        var host = builder.Build();
+        await host.Services.GetRequiredService<IVersionService>().InitializeAsync();
+        await host.RunAsync();
     }
 }

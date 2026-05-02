@@ -1,0 +1,6 @@
+@using FamilyHQ.WebUi.Services
+@inject IVersionService VersionService
+
+<footer class="app-footer" aria-label="Application version">
+    <span class="app-footer__version" data-testid="app-version">v@VersionService.ClientVersion</span>
+</footer>

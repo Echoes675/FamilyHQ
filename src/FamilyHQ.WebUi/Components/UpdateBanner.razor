@@ -1,0 +1,31 @@
+@using FamilyHQ.WebUi.Services
+@implements IDisposable
+@inject IVersionService VersionService
+
+@if (_visible)
+{
+    <div class="update-banner glass-surface" role="status" aria-live="polite" data-testid="update-banner">
+        <span class="update-banner__dot" aria-hidden="true"></span>
+        <span class="update-banner__text">New version available — reloading…</span>
+    </div>
+}
+
+@code {
+    private bool _visible;
+
+    protected override void OnInitialized()
+    {
+        VersionService.UpdateAvailable += OnUpdateAvailable;
+    }
+
+    private void OnUpdateAvailable()
+    {
+        _visible = true;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        VersionService.UpdateAvailable -= OnUpdateAvailable;
+    }
+}
