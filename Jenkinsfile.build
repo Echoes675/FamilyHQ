@@ -45,35 +45,23 @@ pipeline {
             steps {
                 echo '======= Compute SemVer ======='
                 script {
-                    // Read MAJOR.MINOR floor from Directory.Build.props.
+                    // Regex helpers below are @NonCPS — Matcher objects are not
+                    // serialisable across CPS continuations, so the matching must
+                    // run inside an annotated method that returns plain values.
                     def buildProps = readFile('Directory.Build.props')
-                    def m = (buildProps =~ /<MinVerMinimumMajorMinor>([0-9]+\.[0-9]+)<\/MinVerMinimumMajorMinor>/)
-                    if (!m) {
+                    def majorMinor = extractMajorMinor(buildProps)
+                    if (!majorMinor) {
                         error 'MinVerMinimumMajorMinor not found in Directory.Build.props'
                     }
-                    def majorMinor = m[0][1]
 
-                    // Find the highest existing v{majorMinor}.* tag and increment patch.
                     sh 'git fetch --tags --force'
                     def tagListRaw = sh(
                         script: "git tag -l 'v${majorMinor}.*'",
                         returnStdout: true
                     ).trim()
 
-                    def maxPatch = -1
-                    if (tagListRaw) {
-                        for (line in tagListRaw.split('\n')) {
-                            def tm = (line.trim() =~ /^v${majorMinor}\.([0-9]+)$/)
-                            if (tm) {
-                                def p = tm[0][1] as int
-                                if (p > maxPatch) {
-                                    maxPatch = p
-                                }
-                            }
-                        }
-                    }
+                    def nextPatch = computeNextPatch(tagListRaw, majorMinor)
 
-                    def nextPatch = maxPatch + 1
                     env.SEMVER_TAG = "v${majorMinor}.${nextPatch}"
                     env.SEMVER_VERSION = "${majorMinor}.${nextPatch}"
                     echo "Next SemVer tag: ${env.SEMVER_TAG} (version: ${env.SEMVER_VERSION})"
@@ -250,6 +238,34 @@ pipeline {
             echo "Build failed: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (attempted ' + env.SEMVER_TAG + ')' : ''}"
         }
     }
+}
+
+// Regex matching is wrapped in @NonCPS methods because Groovy's java.util.regex.Matcher
+// is not Serializable. CPS persistence (suspending across sh steps) would otherwise
+// throw NotSerializableException as soon as the next sh runs.
+@NonCPS
+def extractMajorMinor(String buildProps) {
+    def m = buildProps =~ /<MinVerMinimumMajorMinor>([0-9]+\.[0-9]+)<\/MinVerMinimumMajorMinor>/
+    return m.find() ? m.group(1) : null
+}
+
+@NonCPS
+def computeNextPatch(String tagListRaw, String majorMinor) {
+    int maxPatch = -1
+    if (tagListRaw) {
+        def quoted = java.util.regex.Pattern.quote(majorMinor)
+        def pattern = ~("^v" + quoted + "\\.([0-9]+)\$")
+        for (String line : tagListRaw.split('\n')) {
+            def m = pattern.matcher(line.trim())
+            if (m.matches()) {
+                int p = m.group(1) as int
+                if (p > maxPatch) {
+                    maxPatch = p
+                }
+            }
+        }
+    }
+    return maxPatch + 1
 }
 
 def getTagDigest(String imageName, String tag) {
