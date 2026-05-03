@@ -190,6 +190,26 @@ pipeline {
     post {
         success {
             echo "PreProd deployment successful: ${env.RESOLVED_IMAGE_TAG}"
+            script {
+                // Chain to production only when this run was triggered from upstream
+                // (i.e. from Jenkinsfile.deploy-staging's post.success on a master
+                // release run) AND a SemVer tag was threaded through. Manual runs
+                // never chain to prod.
+                def upstreamCauses = currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause')
+                def semverTag = params.SEMVER_TAG?.trim()
+                if (upstreamCauses && semverTag) {
+                    echo "Chaining to FamilyHQ-Deploy-Production with SEMVER_TAG=${semverTag}"
+                    build job: 'FamilyHQ-Deploy-Production',
+                          parameters: [
+                              string(name: 'DIRECTION', value: 'specific'),
+                              string(name: 'SEMVER_TAG', value: semverTag)
+                          ],
+                          wait: false,
+                          propagate: false
+                } else {
+                    echo "Not chaining to prod (upstreamCause=${upstreamCauses ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
+                }
+            }
         }
         failure {
             echo "PreProd deployment failed: ${env.RESOLVED_IMAGE_TAG}"
