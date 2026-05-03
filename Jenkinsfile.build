@@ -133,24 +133,38 @@ pipeline {
                     if (!env.SEMVER_TAG) {
                         error 'SEMVER_TAG was not computed — refusing to push.'
                     }
-                    // checkout scm has already configured a credential helper for the
-                    // workspace using the multibranch pipeline's SCM credential
-                    // (jenkins_github). git push inherits it transparently — no
-                    // sshagent or withCredentials wrapper needed. Same pattern as
-                    // Jenkinsfile.cleanup uses for git ls-remote --heads origin.
-                    //
-                    // Identity is supplied via Jenkins Global Properties →
-                    // Environment variables (FAMILYHQ_GIT_TAG_EMAIL, _NAME) so it
-                    // isn't hard-coded in the repo. -c user.email/-c user.name
-                    // applies the values for THIS command only (no git config
-                    // update — AGENTS.md forbids that).
+                    // Identity for the annotated tag comes from Jenkins Global
+                    // Properties → Environment variables so it isn't hard-coded.
                     if (!env.FAMILYHQ_GIT_TAG_EMAIL?.trim() || !env.FAMILYHQ_GIT_TAG_NAME?.trim()) {
                         error 'FAMILYHQ_GIT_TAG_EMAIL and FAMILYHQ_GIT_TAG_NAME must be set as Jenkins global env vars (Manage Jenkins → System → Global properties → Environment variables).'
                     }
-                    sh """
-                        git -c user.email='${env.FAMILYHQ_GIT_TAG_EMAIL}' -c user.name='${env.FAMILYHQ_GIT_TAG_NAME}' tag -a ${env.SEMVER_TAG} -m 'Release ${env.SEMVER_TAG}'
-                        git push origin ${env.SEMVER_TAG}
-                    """
+                    // checkout scm sets up a workspace credential helper that
+                    // suffices for fetch/ls-remote, but it is not retained for
+                    // an arbitrary `git push`. Wrap the push in withCredentials
+                    // and feed the same multibranch SCM credential (jenkins_github)
+                    // to git via an inline credential.helper expression. The
+                    // helper is a one-line shell function that reads $GIT_USERNAME
+                    // and $GIT_PASSWORD from the env at runtime — credentials
+                    // never leave process memory, no file is written, no .gitconfig
+                    // is mutated, no value is in the URL.
+                    withCredentials([usernamePassword(
+                        credentialsId: 'jenkins_github',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_PASSWORD'
+                    )]) {
+                        // Single-quoted Groovy ''' string: Groovy does NOT
+                        // interpolate, so secret values never enter the script
+                        // source. The shell helper is single-quoted, so $X
+                        // references stay literal until git's helper subshell
+                        // expands them. set +x prevents bash from tracing the
+                        // command line. withCredentials masking is a final
+                        // defence layer over the build log.
+                        sh '''
+                            set +x
+                            git -c "user.email=$FAMILYHQ_GIT_TAG_EMAIL" -c "user.name=$FAMILYHQ_GIT_TAG_NAME" tag -a "$SEMVER_TAG" -m "Release $SEMVER_TAG"
+                            git -c 'credential.helper=!h() { printf "username=%s\npassword=%s\n" "$GIT_USERNAME" "$GIT_PASSWORD"; }; h' push origin "$SEMVER_TAG"
+                        '''
+                    }
                 }
             }
         }
