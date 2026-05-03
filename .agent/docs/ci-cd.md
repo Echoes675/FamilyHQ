@@ -4,11 +4,11 @@
 
 | Pipeline | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| Build | `Jenkinsfile.build` | Push on any branch | Run unit tests, build Docker images, push to registry, prune old tags |
+| Build | `Jenkinsfile.build` | Push on any branch | Run unit tests, build Docker images, push to registry, prune old tags. On `master`, also computes/pushes a SemVer tag and starts the master release chain. |
 | Deploy Dev | `Jenkinsfile.deploy-dev` | Upstream success on `dev` branch build | Resolve latest `dev-*` image and deploy to 192.168.86.23:8200 |
-| Deploy Staging | `Jenkinsfile.deploy-staging` | Upstream success on `dev` or `master` build | Parameterised deploy of either branch line to staging |
-| Deploy Preprod | `Jenkinsfile.deploy-preprod` | Upstream success on `master` build | Auto-deploy latest master image to preprod |
-| Deploy Prod | `Jenkinsfile.deploy-prod` | Manual only | Deploy a specific image to prod, with safety checks |
+| Deploy Staging | `Jenkinsfile.deploy-staging` | Upstream success on `dev` build (deploys latest `dev-*` image), OR explicit invocation from master build with `SEMVER_TAG` (master release chain — deploys that exact SemVer image and chains to preprod) | Parameterised deploy of either the dev image line or a pinned master release |
+| Deploy Preprod | `Jenkinsfile.deploy-preprod` | Explicit invocation only — from master release chain (Deploy-Staging post.success) or manual run | Deploy a master image (or pinned SemVer) to preprod; chains to production on master release runs |
+| Deploy Production | `Jenkinsfile.deploy-prod` | Explicit invocation only — from master release chain (Deploy-PreProd post.success) or manual run | Deploy a specific image to prod, with safety checks |
 
 ## Image Tagging
 
@@ -65,7 +65,43 @@ Values are applied per-command via `git -c user.email=… -c user.name=…` (no 
 - `backward` — rolls back one master image revision.
 - `specific` — requires a `SEMVER_TAG` parameter (e.g. `v1.2.0`). Validated against the registry's `tags/list` for `familyhq-webapi` before deploy.
 
-For releases use `DIRECTION=specific` with the `vX.Y.Z` tag, so the deploy is reproducible by tag rather than by build number.
+For releases use `DIRECTION=specific` with the `vX.Y.Z` tag, so the deploy is reproducible by tag rather than by build number. The master release chain (below) invokes prod automatically using exactly this surface.
+
+## Master Release Chain
+
+Each successful master build automatically promotes its images through staging → preprod → production. The chain is driven by explicit `build job:` calls in each upstream pipeline's `post { success }` block, with the SemVer tag (`vX.Y.Z`) threaded through as a parameter so every link deploys the exact same image set. Manual runs of any deploy pipeline never cascade.
+
+### Flow
+
+1. `Jenkinsfile.build` succeeds on master → computes `SEMVER_TAG=vX.Y.Z`, pushes images and the git tag → `post.success` triggers `FamilyHQ-Deploy-Staging` with `BRANCH=master, SEMVER_TAG=vX.Y.Z`.
+2. `Jenkinsfile.deploy-staging` resolves `RESOLVED_IMAGE_TAG=vX.Y.Z` (short-circuiting branch-tag resolution), deploys, runs the E2E suite. On success, `post.success` triggers `FamilyHQ-Deploy-PreProd` with the same `SEMVER_TAG`.
+3. `Jenkinsfile.deploy-preprod` deploys the same SemVer image. On success, `post.success` triggers `FamilyHQ-Deploy-Production` with `DIRECTION=specific, SEMVER_TAG=vX.Y.Z`.
+4. `Jenkinsfile.deploy-prod` deploys the SemVer image to prod via its existing `DIRECTION=specific` surface. Browsers connected to prod auto-reload via the version-mismatch banner (see Auto-Reload Mechanism below).
+
+All `build job:` calls use `wait: false, propagate: false`, so each pipeline reports its own status independently — a downstream failure never retroactively fails an upstream that already succeeded.
+
+### Manual runs do not chain
+
+Each `post.success` chain trigger is gated on the conjunction:
+
+```
+currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause') is non-empty
+AND params.SEMVER_TAG is non-empty
+```
+
+| Trigger source | UpstreamCause? | SEMVER_TAG set? | Chains downstream? |
+|---|---|---|---|
+| Manual run, no params | no | no | no |
+| Manual run, SEMVER_TAG set by hand | no | yes | no |
+| Dev build → staging via `upstream` | yes | no | no |
+| Master release chain | yes | yes | yes |
+
+### Recovering from a mid-chain failure
+
+If staging or preprod fails on a master release run, the chain stops at the failed link. Two recovery options:
+
+- **Re-run the master build** (cleanest) — the build pipeline computes a fresh `SEMVER_TAG` (next patch number) and re-walks the chain end-to-end.
+- **Manually invoke the failed pipeline** with the original `SEMVER_TAG` — this WILL deploy that environment, but will NOT chain further (no `UpstreamCause`). Subsequent environments must be progressed manually too. This is intentional: any human-touched run requires explicit human progression.
 
 ## Auto-Reload Mechanism
 
