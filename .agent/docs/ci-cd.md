@@ -41,6 +41,17 @@ After a successful master build and image push, `Jenkinsfile.build` pushes an an
 
 The pipeline never modifies repository content; only tags are pushed.
 
+### Required Jenkins env vars
+
+Annotated tag creation needs `user.email` and `user.name`. To avoid hard-coding identity in the repo, the Jenkinsfile reads them from controller-level environment variables. Configure both in **Manage Jenkins → System → Global properties → Environment variables** before the first master build:
+
+| Variable | Example |
+|----------|---------|
+| `FAMILYHQ_GIT_TAG_EMAIL` | `jenkins@familyhq.alphaepsilon.co.uk` |
+| `FAMILYHQ_GIT_TAG_NAME`  | `FamilyHQ Jenkins` |
+
+Values are applied per-command via `git -c user.email=… -c user.name=…` (no global git config mutation). If either variable is missing or blank, the master build fails fast at the `Push Git Tag` stage with a clear error pointing back here.
+
 ### Failure recovery
 
 - **Local SemVer tag created but registry push failed** — `post { failure }` in `Jenkinsfile.build` deletes the local tag on the agent so the next attempt re-uses the same number. The remote tag is only pushed in the dedicated final stage, so origin never sees a "tag without image" state.
