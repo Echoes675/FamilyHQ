@@ -64,7 +64,7 @@ if (semverTag) {
     def rawTagsForSemver = readJSON(text: tagsJsonForSemver).tags
     def tagsForSemver = (rawTagsForSemver != null && rawTagsForSemver instanceof List) ? rawTagsForSemver : []
     if (!tagsForSemver.contains(semverTag)) {
-        error "SemVer tag ${semverTag} not found in registry. Available SemVer tags: ${tagsForSemver.findAll { it ==~ /^v\d+\.\d+\.\d+\$/ }}"
+        error "SemVer tag ${semverTag} not found in registry. Available SemVer tags: ${tagsForSemver.findAll { it ==~ /^v\d+\.\d+\.\d+$/ }}"
     }
     env.RESOLVED_IMAGE_TAG = semverTag
     echo "Resolved image tag from SEMVER_TAG: ${env.RESOLVED_IMAGE_TAG}"
@@ -248,7 +248,7 @@ if (semverTag) {
     def rawTagsForSemver = readJSON(text: tagsJsonForSemver).tags
     def tagsForSemver = (rawTagsForSemver != null && rawTagsForSemver instanceof List) ? rawTagsForSemver : []
     if (!tagsForSemver.contains(semverTag)) {
-        error "SemVer tag ${semverTag} not found in registry. Available SemVer tags: ${tagsForSemver.findAll { it ==~ /^v\d+\.\d+\.\d+\$/ }}"
+        error "SemVer tag ${semverTag} not found in registry. Available SemVer tags: ${tagsForSemver.findAll { it ==~ /^v\d+\.\d+\.\d+$/ }}"
     }
     env.RESOLVED_IMAGE_TAG = semverTag
     echo "Resolved image tag from SEMVER_TAG: ${env.RESOLVED_IMAGE_TAG}"
