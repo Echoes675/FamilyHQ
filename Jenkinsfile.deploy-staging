@@ -6,7 +6,10 @@ pipeline {
     }
 
     triggers {
-        upstream(upstreamProjects: 'FamilyHQ/dev, FamilyHQ/master', threshold: hudson.model.Result.SUCCESS)
+        // Only dev triggers staging via this implicit channel. The master path is
+        // now driven by an explicit `build job:` call from Jenkinsfile.build's
+        // post.success so the SemVer tag can be passed through as a parameter.
+        upstream(upstreamProjects: 'FamilyHQ/dev', threshold: hudson.model.Result.SUCCESS)
     }
 
     tools {
