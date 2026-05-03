@@ -85,11 +85,13 @@ All `build job:` calls use `wait: false, propagate: false`, so each pipeline rep
 Each `post.success` chain trigger is gated on the conjunction:
 
 ```
-currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause') is non-empty
+currentBuild.upstreamBuilds is non-empty
 AND params.SEMVER_TAG is non-empty
 ```
 
-| Trigger source | UpstreamCause? | SEMVER_TAG set? | Chains downstream? |
+(`upstreamBuilds` is preferred over `getBuildCauses('hudson.model.Cause$UpstreamCause')` because the class-filtered `getBuildCauses` overload returns empty under the current Jenkins/Pipeline version even when the upstream cause is set — first observed on master #27 → staging #84.)
+
+| Trigger source | upstreamBuilds non-empty? | SEMVER_TAG set? | Chains downstream? |
 |---|---|---|---|
 | Manual run, no params | no | no | no |
 | Manual run, SEMVER_TAG set by hand | no | yes | no |

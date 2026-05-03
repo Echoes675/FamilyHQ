@@ -190,10 +190,13 @@ pipeline {
                 // Chain to production only when this run was triggered from upstream
                 // (i.e. from Jenkinsfile.deploy-staging's post.success on a master
                 // release run) AND a SemVer tag was threaded through. Manual runs
-                // never chain to prod.
-                def upstreamCauses = currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause')
+                // never chain to prod. Use currentBuild.upstreamBuilds rather than
+                // getBuildCauses('hudson.model.Cause$UpstreamCause') because the
+                // class-filtered getBuildCauses overload returns empty under this
+                // Jenkins/Pipeline version even when the upstream cause is set.
+                def upstreamBuilds = currentBuild.upstreamBuilds
                 def semverTag = params.SEMVER_TAG?.trim()
-                if (upstreamCauses && semverTag) {
+                if (upstreamBuilds && semverTag) {
                     echo "Chaining to FamilyHQ-Deploy-Production with SEMVER_TAG=${semverTag}"
                     build job: 'FamilyHQ-Deploy-Production',
                           parameters: [
@@ -203,7 +206,7 @@ pipeline {
                           wait: false,
                           propagate: false
                 } else {
-                    echo "Not chaining to prod (upstreamCause=${upstreamCauses ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
+                    echo "Not chaining to prod (upstreamBuilds=${upstreamBuilds ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
                 }
             }
         }
