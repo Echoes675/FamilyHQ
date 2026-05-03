@@ -141,14 +141,17 @@ pipeline {
                     // checkout scm sets up a workspace credential helper that
                     // suffices for fetch/ls-remote, but it is not retained for
                     // an arbitrary `git push`. Wrap the push in withCredentials
-                    // and feed the same multibranch SCM credential (jenkins_github)
-                    // to git via an inline credential.helper expression. The
-                    // helper is a one-line shell function that reads $GIT_USERNAME
-                    // and $GIT_PASSWORD from the env at runtime — credentials
-                    // never leave process memory, no file is written, no .gitconfig
-                    // is mutated, no value is in the URL.
+                    // and feed the FamilyHQ_PAT credential (a GitHub PAT with
+                    // public_repo scope) to git via an inline credential.helper
+                    // expression. The helper is a one-line shell function that
+                    // reads $GIT_USERNAME and $GIT_PASSWORD from the env at
+                    // runtime — credentials never leave process memory, no
+                    // file is written, no .gitconfig is mutated, no value is
+                    // in the URL. The dedicated tag-push credential is kept
+                    // separate from jenkins_github (clone-only) for least
+                    // privilege.
                     withCredentials([usernamePassword(
-                        credentialsId: 'jenkins_github',
+                        credentialsId: 'FamilyHQ_PAT',
                         usernameVariable: 'GIT_USERNAME',
                         passwordVariable: 'GIT_PASSWORD'
                     )]) {
