@@ -258,10 +258,14 @@ pipeline {
                 // Chain to preprod only when this run was triggered from upstream
                 // (i.e. by Jenkinsfile.build's master post.success) AND a SemVer
                 // tag was threaded through. Manual runs and dev-triggered runs
-                // never chain.
-                def upstreamCauses = currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause')
+                // never chain. Use currentBuild.upstreamBuilds rather than
+                // getBuildCauses('hudson.model.Cause$UpstreamCause') because the
+                // class-filtered getBuildCauses overload returns empty under
+                // this Jenkins/Pipeline version (observed 2026-05-03 on master
+                // run #27 → staging #84) even when the upstream cause is set.
+                def upstreamBuilds = currentBuild.upstreamBuilds
                 def semverTag = params.SEMVER_TAG?.trim()
-                if (upstreamCauses && semverTag) {
+                if (upstreamBuilds && semverTag) {
                     echo "Chaining to FamilyHQ-Deploy-PreProd with SEMVER_TAG=${semverTag}"
                     build job: 'FamilyHQ-Deploy-PreProd',
                           parameters: [
@@ -271,7 +275,7 @@ pipeline {
                           wait: false,
                           propagate: false
                 } else {
-                    echo "Not chaining downstream (upstreamCause=${upstreamCauses ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
+                    echo "Not chaining downstream (upstreamBuilds=${upstreamBuilds ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
                 }
             }
         }
