@@ -6,7 +6,10 @@ pipeline {
     }
 
     triggers {
-        upstream(upstreamProjects: 'FamilyHQ/dev, FamilyHQ/master', threshold: hudson.model.Result.SUCCESS)
+        // Only dev triggers staging via this implicit channel. The master path is
+        // now driven by an explicit `build job:` call from Jenkinsfile.build's
+        // post.success so the SemVer tag can be passed through as a parameter.
+        upstream(upstreamProjects: 'FamilyHQ/dev', threshold: hudson.model.Result.SUCCESS)
     }
 
     tools {
@@ -14,7 +17,8 @@ pipeline {
     }
 
     parameters {
-        string(name: 'BRANCH', defaultValue: 'dev', description: 'Branch name to deploy (default: dev)')
+        string(name: 'BRANCH', defaultValue: 'dev', description: 'Branch name to deploy (default: dev). Ignored when SEMVER_TAG is set.')
+        string(name: 'SEMVER_TAG', defaultValue: '', description: 'When set (master release chain), deploy this SemVer tag verbatim (e.g. v1.0.42) and skip branch-tag resolution.')
     }
 
     environment {
@@ -32,6 +36,27 @@ pipeline {
             steps {
                 echo '======= Resolve Image ======='
                 script {
+                    def semverTag = params.SEMVER_TAG?.trim()
+                    if (semverTag) {
+                        if (!(semverTag ==~ /^v\d+\.\d+\.\d+$/)) {
+                            error "SEMVER_TAG must look like v{MAJOR}.{MINOR}.{PATCH} (e.g. v1.0.42). Got: ${semverTag}"
+                        }
+                        def tagsJsonForSemver = ''
+                        withCredentials([usernameColonPassword(credentialsId: 'alphaepsilon-docker-registry', variable: 'REGISTRY_CREDS')]) {
+                            tagsJsonForSemver = sh(
+                                script: "curl -sk -u \$REGISTRY_CREDS ${REGISTRY_URL}/v2/familyhq-webapi/tags/list",
+                                returnStdout: true
+                            ).trim()
+                        }
+                        def rawTagsForSemver = readJSON(text: tagsJsonForSemver).tags
+                        def tagsForSemver = (rawTagsForSemver != null && rawTagsForSemver instanceof List) ? rawTagsForSemver : []
+                        if (!tagsForSemver.contains(semverTag)) {
+                            error "SemVer tag ${semverTag} not found in registry. Available SemVer tags: ${tagsForSemver.findAll { it ==~ /^v\d+\.\d+\.\d+$/ }}"
+                        }
+                        env.RESOLVED_IMAGE_TAG = semverTag
+                        echo "Resolved image tag from SEMVER_TAG: ${env.RESOLVED_IMAGE_TAG}"
+                        return
+                    }
                     def branch = params.BRANCH?.trim() ?: 'dev'
                     def branchSanitized = branch.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()
                     echo "Resolving latest image for branch: ${branch} (sanitized: ${branchSanitized})"
@@ -229,6 +254,26 @@ pipeline {
     post {
         success {
             echo "Staging deployment successful: ${env.RESOLVED_IMAGE_TAG}"
+            script {
+                // Chain to preprod only when this run was triggered from upstream
+                // (i.e. by Jenkinsfile.build's master post.success) AND a SemVer
+                // tag was threaded through. Manual runs and dev-triggered runs
+                // never chain.
+                def upstreamCauses = currentBuild.getBuildCauses('hudson.model.Cause$UpstreamCause')
+                def semverTag = params.SEMVER_TAG?.trim()
+                if (upstreamCauses && semverTag) {
+                    echo "Chaining to FamilyHQ-Deploy-PreProd with SEMVER_TAG=${semverTag}"
+                    build job: 'FamilyHQ-Deploy-PreProd',
+                          parameters: [
+                              string(name: 'BRANCH', value: 'master'),
+                              string(name: 'SEMVER_TAG', value: semverTag)
+                          ],
+                          wait: false,
+                          propagate: false
+                } else {
+                    echo "Not chaining downstream (upstreamCause=${upstreamCauses ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
+                }
+            }
         }
         failure {
             echo "Staging deployment failed: ${env.RESOLVED_IMAGE_TAG}"

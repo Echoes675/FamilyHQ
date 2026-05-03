@@ -251,6 +251,21 @@ pipeline {
     post {
         success {
             echo "Build successful: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (' + env.SEMVER_TAG + ')' : ''}"
+            script {
+                // Master release chain entry point. Only fire on master, and only
+                // when SemVer computation succeeded (env.SEMVER_TAG is set). Dev
+                // and feature-branch builds rely on existing upstream triggers.
+                if (env.BRANCH_NAME == 'master' && env.SEMVER_TAG?.trim()) {
+                    echo "Starting master release chain: FamilyHQ-Deploy-Staging with SEMVER_TAG=${env.SEMVER_TAG}"
+                    build job: 'FamilyHQ-Deploy-Staging',
+                          parameters: [
+                              string(name: 'BRANCH', value: 'master'),
+                              string(name: 'SEMVER_TAG', value: env.SEMVER_TAG)
+                          ],
+                          wait: false,
+                          propagate: false
+                }
+            }
         }
         failure {
             // If SEMVER_TAG was created locally but the remote push step never ran
