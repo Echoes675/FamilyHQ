@@ -18,7 +18,7 @@
     {
         <!-- Not Authenticated - Show centered login button -->
         <div class="flex flex-col items-center justify-center" style="min-height: 60vh;">
-            <h1 class="mb-4">Family HQ Dashboard</h1>
+            <BrandLogo Class="brand-logo--login mb-4" />
             <p style="color: var(--theme-text-muted);" class="mb-4">Please sign in to view your calendar</p>
             <button class="btn btn-primary btn-lg" @onclick="OnLoginClicked">Login to Google</button>
         </div>
@@ -152,10 +152,10 @@
         // Authenticated - load calendar data
         _calendars = await CalendarApi.GetCalendarsAsync();
         _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
-        
+
         SignalR.OnEventsUpdated += RefreshDataFromSignalR;
         await SignalR.StartAsync();
-        
+
         await LoadMonthDataAsync();
     }
 
