@@ -855,6 +855,22 @@ body:not([data-theme]) .brand-logo__img--morning {
     color: var(--theme-on-accent);
 }
 
+.dashboard-header__right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.dashboard-header__clock {
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    color: var(--theme-text);
+    transition: color var(--theme-transition-duration, 15s) ease-in-out;
+    user-select: none;
+}
+
 /* =============================================
    Section 16 — Settings page
    ============================================= */
