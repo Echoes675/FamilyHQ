@@ -42,11 +42,17 @@
     <!-- Theme subsection -->
     <h3 class="settings-subsection__title">Theme</h3>
     <div class="settings-section">
-        <div class="settings-toggle-row">
-            <span class="settings-label">Auto-change with time of day</span>
-            <input type="checkbox" class="settings-toggle-input" id="auto-theme-toggle"
-                   checked="@_isAutoTheme" @onchange="OnAutoThemeToggled" />
-            <label class="settings-toggle-label" for="auto-theme-toggle"></label>
+        <div class="pill-toggle-row mb-4">
+            <span class="pill-toggle-label" id="autoThemeLabel">Auto-change with time of day</span>
+            <button type="button"
+                    class="@($"pill-toggle {(_isAutoTheme ? "pill-toggle--on" : "pill-toggle--off")}")"
+                    id="auto-theme-toggle"
+                    data-testid="auto-theme-toggle"
+                    aria-labelledby="autoThemeLabel"
+                    aria-pressed="@_isAutoTheme.ToString().ToLowerInvariant()"
+                    @onclick="ToggleAutoTheme">
+                @(_isAutoTheme ? "On" : "Off")
+            </button>
         </div>
 
         @if (_isAutoTheme)
@@ -164,9 +170,9 @@
         await SaveDisplayAsync();
     }
 
-    private async Task OnAutoThemeToggled(ChangeEventArgs e)
+    private async Task ToggleAutoTheme()
     {
-        _isAutoTheme = (bool)(e.Value ?? false);
+        _isAutoTheme = !_isAutoTheme;
         var themeSelection = _isAutoTheme ? "auto" : _selectedTheme;
         await SaveDisplayAsync(themeSelection);
 
