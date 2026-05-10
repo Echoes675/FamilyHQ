@@ -1240,17 +1240,6 @@ body:not([data-theme]) .brand-logo__img--morning {
     font-size: 0.85rem;
 }
 
-.settings-toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    background: rgba(255,255,255,0.12);
-    border: 1px solid var(--theme-border);
-    border-radius: 8px;
-}
-
 .settings-label--muted {
     opacity: 0.4;
 }

@@ -169,8 +169,8 @@ public class SettingsSteps
     [When(@"I disable auto-change theme")]
     public async Task WhenIDisableAutoChangeTheme()
     {
-        var isChecked = await _settingsPage.AutoThemeToggle.IsCheckedAsync();
-        if (isChecked)
+        var isOn = await _settingsPage.IsAutoThemeOnAsync();
+        if (isOn)
         {
             await _settingsPage.AutoThemeToggle.ClickAsync();
             // Wait for the hint that confirms manual mode is active
