@@ -277,33 +277,26 @@ public class DashboardPage : BasePage
 
     public async Task ClickDayGridSlotAsync(string calendarName, string timeString)
     {
-        // Finds the specific calendar column and clicks roughly around the time slot
         var calHeader = Page.Locator(".calendar-header-col").Filter(new() { HasText = calendarName });
-        // Since we know the index of the header, we can find the equivalent col in day-body-flex
-        var idxTask = calHeader.EvaluateAsync<int>("el => Array.from(el.parentNode.children).indexOf(el) - 1"); // -1 for time-axis
-        int colIndex = await idxTask;
-        
+        int colIndex = await calHeader.EvaluateAsync<int>(
+            "el => Array.from(el.parentNode.children).indexOf(el) - 1"); // -1 for time-axis
         var col = Page.Locator(".calendar-col").Nth(colIndex);
-        
-        // Time string e.g. "10:00". Calculate Y offset... Actually just clicking the column is enough to open the modal!
-        // The modal opens with start time based on the height clicked.
-        // For E2E we might just want to trigger the event. Playwright allows clicking at X/Y offsets!
+
         var hParts = timeString.Split(':');
-        int hours = int.Parse(hParts[0]);
-        int minutes = int.Parse(hParts[1]);
-        int totalMinutes = (hours * 60) + minutes;
-        
-        // The day body is 1440px tall (1px/minute).
-        // Let's scroll into view first.
-        var colBox = await col.BoundingBoxAsync();
-        if (colBox != null)
-        {
-            await col.ClickAsync(new() { Position = new Position { X = 10, Y = totalMinutes } });
-        }
-        else 
-        {
-            await col.ClickAsync(); 
-        }
+        int totalMinutes = int.Parse(hParts[0]) * 60 + int.Parse(hParts[1]);
+
+        // Pin the day-view-container scroll so Playwright's geometry and the
+        // production click handler agree on what column-relative Y means. This
+        // overrides the app's OnAfterRenderAsync scroll-to-now behaviour for the
+        // duration of the test interaction, removing the race window that produced
+        // the wrong-time click on Deploy-Staging #89 (2026-05-09). See FHQ-17.
+        await Page.EvaluateAsync(@"(targetY) => {
+            const c = document.getElementById('day-view-container');
+            if (!c) return;
+            c.scrollTop = Math.max(0, targetY - c.clientHeight / 2);
+        }", totalMinutes);
+
+        await col.ClickAsync(new() { Position = new Position { X = 10, Y = totalMinutes } });
 
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }

@@ -14,7 +14,14 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-*(none currently — see Resolved issues below.)*
+### 1. EventModalTimePicker scenario clicks wrong row when day-view auto-scrolls
+
+**First seen:** Deploy-Staging #89 (2026-05-09).
+**Component:** `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs` → `ClickDayGridSlotAsync`.
+**Symptom:** Picker shows wrong hour (`18` instead of `14`) after `WhenIClickAnEmptyGridSlotForCalendarAt("…", "14:00")`. Other scenarios that exercise the same step pass on the same run, so it is not a uniform regression — the failure pattern is order- and timing-dependent.
+**Cause:** Race between Playwright's scroll-into-view and `DayView.OnAfterRenderAsync`'s scroll-to-now JS, on the `#day-view-container` (75vh / overflow-y:auto). Pixel-based `Position` click resolved to a different `MouseEvent.offsetY` than the test intended.
+**Fix (FHQ-17):** test pins `#day-view-container.scrollTop` deterministically before the Playwright click — see `ClickDayGridSlotAsync` in `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs`.
+**If symptom returns:** the JSRuntime scroll in `DayView.OnAfterRenderAsync` may have changed shape (e.g. now writes after a delay). Re-pin scroll closer to the click, or expose a per-hour `data-testid` on grid slots and switch the test to address by testid.
 
 ---
 
