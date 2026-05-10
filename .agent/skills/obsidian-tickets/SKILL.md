@@ -17,10 +17,11 @@ D:\Obsidian Vault\FamilyHQ\
 ├── Tickets/
 │   └── FHQ-N/
 │       ├── FHQ-N.md
-│       ├── FHQ-N-spec.md       (when In Progress)
-│       ├── FHQ-N-plan.md       (when In Progress)
+│       ├── FHQ-N-spec.md       (created when brainstorming for this ticket)
+│       ├── FHQ-N-plan.md       (created when planning for this ticket)
 │       └── FHQ-N.X.md          (subtasks, flat files)
 └── Archive/
+    └── FHQ-N/                  (Cancelled tickets moved here on user confirmation)
 ```
 
 ## ID scheme
@@ -40,19 +41,19 @@ D:\Obsidian Vault\FamilyHQ\
 |---|---|---|
 | 1 | User says "add an idea / log a bug / throw in the vault" | Compute next `FHQ-N`. Create `Tickets/FHQ-N/FHQ-N.md` from the appropriate template (Idea/Bug/Feature/etc.), `status: Inbox`. Confirm: "Logged as FHQ-N." |
 | 2 | User says "let's flesh out FHQ-N" | Open the ticket. Walk through the structured body sections. Promote `type` if needed (e.g., Idea → Feature). |
-| 3 | User says "FHQ-N is ready" or acceptance criteria look complete | Set `status: Ready`, bump `updated`. |
+| 3 | User says "FHQ-N is ready" OR every acceptance-criteria checkbox in the ticket body is ticked | Set `status: Ready`, bump `updated`. |
 | 4a | About to write a spec via `superpowers:brainstorming` for FHQ-N | Save spec output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-spec.md` (overrides skill default `docs/superpowers/specs/...`). Status remains `Ready`. |
 | 4b | About to invoke `superpowers:writing-plans` for FHQ-N | Set `status: In Progress`, bump `updated`. Save plan output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-plan.md` (overrides skill default `docs/superpowers/plans/...`). |
-| 5 | After plan completes with M implementation steps | Auto-create M subtasks `FHQ-N.1` through `FHQ-N.M`, each from the Subtask template with `parent: FHQ-N`, `plan_step: <i>`, `status: Ready`. Each subtask body must include `Parent: [[FHQ-N]]` directly under the H1 heading. |
-| 6 | I create a feature branch (`git checkout -b feat/FHQ-N-...`) | Set `branch: feat/FHQ-N-...` on the parent ticket, bump `updated`. |
-| 7 | I run `gh pr create` and a PR opens successfully | Refuse if any subtask is not in terminal state (`Done` / `Cancelled` / `Promoted`); list which. Otherwise set `pr: <url>`, `status: In Review`, bump `updated`. |
-| 8 | Session start, for each ticket with `status: In Review` | Run `gh pr view <num> --json state,mergedAt`. If merged: set `status: Done`, `merged: <date>`, bump `updated`. |
+| 5 | After plan completes for FHQ-N (the plan file `FHQ-N-plan.md` was just written and FHQ-N is `In Progress`). M = count of numbered top-level tasks in the plan body (lines matching `### Task <N>:`). | Auto-create M subtasks `FHQ-N.1` through `FHQ-N.M`, each from the Subtask template with `parent: FHQ-N`, `plan_step: <i>`, `status: Ready`. Each subtask body must include `Parent: [[FHQ-N]]` directly under the H1 heading. **Idempotent**: if `FHQ-N.1` already exists, skip the rule entirely (no partial creation). |
+| 6 | A branch matching `<feat\|fix\|chore\|spike>/FHQ-N-<slug>` is created (by user or agent) | Set `branch: <full branch name>` on the parent ticket, bump `updated`. |
+| 7 | `gh pr create` succeeds and a PR is opened (by user or agent) | Refuse if any subtask is not in terminal state (`Done` / `Cancelled` / `Promoted`); list which. Otherwise set `pr: <PR URL>`, `status: In Review`, bump `updated`. |
+| 8 | Session start, for each ticket with `status: In Review` (**runs before Rule #11** so the summary reflects today's merges) | Run `gh pr view <pr-stored-value> --json state,mergedAt` (the URL stored in `pr:` works for `gh pr view`). If state is `MERGED`: set `status: Done`, `merged: <mergedAt date>`, bump `updated`. If state is `CLOSED` and not merged: prompt the user — "FHQ-N's PR was closed without merging; revert to Ready, leave at In Review, or Cancel?" — and act on the response. |
 | 9 | User says "I merged FHQ-N" or "close FHQ-N" | Same as #8 on demand. |
-| 10 | User says "cancel FHQ-N" | Set `status: Cancelled`. Ask whether to move folder to `Archive/`. |
-| 11 | Session start (every session) | One-line summary: "Backlog: X In Progress, Y In Review, Z Ready, W Inbox." Skip silently if vault unreachable. |
-| 12 | A review agent (`superpowers:code-reviewer`, `superpowers:requesting-code-review`, ultrareview) returns findings while a subtask is `In Review` | Append findings to subtask's "Review notes" section, severity-tagged (Blocker/Major/Minor/Nit). If any Blocker/Major: keep status `In Review`. Else: prompt to move to `Done`. |
+| 10 | User says "cancel FHQ-N" | Set `status: Cancelled`. Ask whether to move folder to `Archive/FHQ-N/`. |
+| 11 | Session start (every session) — runs **after Rule #8** | One-line summary: "Backlog: X In Progress, Y In Review, Z Ready, W Inbox." Skip silently if vault unreachable. |
+| 12 | A review-agent skill (`superpowers:code-reviewer`, `superpowers:requesting-code-review`, ultrareview, or any subagent that returns severity-tagged findings) reports while a subtask is `In Review`. The Subtask template provides a `## Review notes` section by default, so this section always exists. | Append the agent's findings under `## Review notes`, prefixing each with severity (Blocker/Major/Minor/Nit). If any Blocker/Major remain: keep status `In Review`. Otherwise: prompt the user to move the subtask to `Done`. |
 | 13 | About to move ticket to `In Progress` | Check `blocked_by`. Refuse if any blocker is not in terminal state (`Done`/`Cancelled`/`Promoted`); list which. |
-| 14 | A blocker becomes `Done` | If exactly one ticket was blocked only by it, surface "FHQ-X is now unblocked." |
+| 14 | A blocker becomes `Done` (or any other terminal state) | For each ticket whose `blocked_by` array contained the blocker, recompute remaining blockers. For each ticket that now has no remaining open blockers, surface "FHQ-X is now unblocked." individually (multiple unblockings on a single transition are surfaced as separate lines). |
 | 15 | Subtask should become a top-level ticket | Apply Promotion rule: create new top-level `FHQ-M` (next main counter) from Feature template with `replaces: FHQ-N.S`. Set the subtask `status: Promoted`, `promoted_to: FHQ-M`. Append body line "Promoted to [[FHQ-M]] on YYYY-MM-DD". |
 
 ## MCP usage
