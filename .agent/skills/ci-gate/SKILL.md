@@ -40,7 +40,7 @@ Note the branch name — you'll use it throughout.
 There is no GitHub webhook configured, so Jenkins will not pick up the push automatically. Trigger a multibranch pipeline scan first:
 
 ```bash
-jk run start FamilyHQ
+jk job scan FamilyHQ
 ```
 
 This tells Jenkins to scan for new/updated branches. Wait a moment for the scan to complete, then check whether a build has been queued for your branch:

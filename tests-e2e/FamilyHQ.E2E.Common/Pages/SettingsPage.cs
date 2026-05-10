@@ -58,6 +58,12 @@ public class SettingsPage : BasePage
     // Display tab — auto-change toggle
     public ILocator AutoThemeToggle => Page.Locator("#auto-theme-toggle");
 
+    public async Task<bool> IsAutoThemeOnAsync()
+    {
+        var pressed = await AutoThemeToggle.GetAttributeAsync("aria-pressed");
+        return string.Equals(pressed, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
     // Display tab — theme tiles
     public ILocator MorningTile => Page.GetByTestId("theme-tile-morning");
     public ILocator DaytimeTile => Page.GetByTestId("theme-tile-daytime");
