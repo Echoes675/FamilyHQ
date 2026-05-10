@@ -51,6 +51,16 @@ Read the relevant skill file before starting any task of that type:
 - **Frontend UI development**: Read `.agent/skills/frontend-design/SKILL.md`
 - **Any CSS, component, layout, or page changes**: Read `.agent/skills/ui-theming/SKILL.md` (project-specific theme rules — takes precedence over frontend-design for colour and animation decisions)
 - **Pushing a branch and verifying CI (before raising a PR)**: Read `.agent/skills/ci-gate/SKILL.md`
+- **Obsidian ticket workflow (any session, any task)**: Read `.agent/skills/obsidian-tickets/SKILL.md`
+
+## Ticket workflow (Obsidian vault)
+
+All FamilyHQ work is tracked in the Obsidian vault at `D:\Obsidian Vault\FamilyHQ`. Two non-negotiables:
+
+- Specs and plans for any `FHQ-N` ticket land in the vault at `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\` — **not** `docs/superpowers/`.
+- A session-start scan runs at the start of every session in this repo: list `In Progress` and `In Review` tickets, check `gh pr view` for any merged PRs that should auto-transition to `Done`, and produce a one-line summary.
+
+See `.agent/skills/obsidian-tickets/SKILL.md` for the full trigger → action playbook.
 
 ### Skill Registration Rule
 When creating a new skill:
