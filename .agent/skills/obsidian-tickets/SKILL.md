@@ -15,19 +15,23 @@ D:\Obsidian Vault\FamilyHQ\
 ├── _Templates/        (8 templates: Idea, Feature, Bug, Investigation, Chore, Subtask, Spec, Plan)
 ├── _Dashboards/       (5 dashboards: Inbox, Backlog, Active, Done, All Tickets)
 ├── Tickets/
-│   └── FHQ-N/
+│   └── FHQ-N/                  (active tickets: Inbox / Ready / In Progress / In Review)
 │       ├── FHQ-N.md
 │       ├── FHQ-N-spec.md       (created when brainstorming for this ticket)
 │       ├── FHQ-N-plan.md       (created when planning for this ticket)
 │       └── FHQ-N.X.md          (subtasks, flat files)
+├── Done/
+│   └── FHQ-N/                  (Done tickets — folder moved here automatically when PR merges)
 └── Archive/
     └── FHQ-N/                  (Cancelled tickets moved here on user confirmation)
 ```
 
+A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at any time. Subtasks always live inside their parent's folder regardless of subtask state — when a parent moves, subtasks (and the spec/plan files) come with it as part of the folder.
+
 ## ID scheme
 
-- Top-level: `FHQ-N` (monotonic, never reused). Counter: scan `Tickets/FHQ-*/` directories, take max N → next is N+1.
-- Subtasks: `FHQ-P.S`. Counter: scan `Tickets/FHQ-P/FHQ-P.*.md` for max S → next is S+1.
+- Top-level: `FHQ-N` (monotonic, never reused). Counter: scan `Tickets/FHQ-*/`, `Done/FHQ-*/`, and `Archive/FHQ-*/` directories — take max N across all three → next is N+1. (A ticket may live in any one of these locations depending on its terminal/active state.)
+- Subtasks: `FHQ-P.S`. Counter: locate the parent's folder (in `Tickets/`, `Done/`, or `Archive/`) and scan that folder for `FHQ-P.*.md` for max S → next is S+1.
 
 ## Lifecycle states
 
@@ -47,9 +51,9 @@ D:\Obsidian Vault\FamilyHQ\
 | 5 | After plan completes for FHQ-N (the plan file `FHQ-N-plan.md` was just written and FHQ-N is `In Progress`). M = count of numbered top-level tasks in the plan body (lines matching `### Task <N>:`). | Auto-create M subtasks `FHQ-N.1` through `FHQ-N.M`, each from the Subtask template with `parent: FHQ-N`, `plan_step: <i>`, `status: Ready`. Each subtask body must include `Parent: [[FHQ-N]]` directly under the H1 heading. **Idempotent**: if `FHQ-N.1` already exists, skip the rule entirely (no partial creation). |
 | 6 | A branch matching `<feat\|fix\|chore\|spike>/FHQ-N-<slug>` is created (by user or agent) | Set `branch: <full branch name>` on the parent ticket, bump `updated`. |
 | 7 | `gh pr create` succeeds and a PR is opened (by user or agent) | Refuse if any subtask is not in terminal state (`Done` / `Cancelled` / `Promoted`); list which. Otherwise set `pr: <PR URL>`, `status: In Review`, bump `updated`. |
-| 8 | Session start, for each ticket with `status: In Review` (**runs before Rule #11** so the summary reflects today's merges) | Run `gh pr view <pr-stored-value> --json state,mergedAt` (the URL stored in `pr:` works for `gh pr view`). If state is `MERGED`: set `status: Done`, `merged: <mergedAt date>`, bump `updated`. If state is `CLOSED` and not merged: prompt the user — "FHQ-N's PR was closed without merging; revert to Ready, leave at In Review, or Cancel?" — and act on the response. |
-| 9 | User says "I merged FHQ-N" or "close FHQ-N" | Same as #8 on demand. |
-| 10 | User says "cancel FHQ-N" | Set `status: Cancelled`. Ask whether to move folder to `Archive/FHQ-N/`. |
+| 8 | Session start, for each ticket with `status: In Review` (**runs before Rule #11** so the summary reflects today's merges) | Run `gh pr view <pr-stored-value> --json state,mergedAt` (the URL stored in `pr:` works for `gh pr view`). If state is `MERGED`: set `status: Done`, `merged: <mergedAt date>`, bump `updated`, **then move the ticket folder from `Tickets/FHQ-N/` to `Done/FHQ-N/`** (the parent's folder, with all its subtask/spec/plan files inside, moves as one unit). If state is `CLOSED` and not merged: prompt the user — "FHQ-N's PR was closed without merging; revert to Ready, leave at In Review, or Cancel?" — and act on the response. |
+| 9 | User says "I merged FHQ-N" or "close FHQ-N" | Same as #8 on demand, including the folder move to `Done/FHQ-N/`. |
+| 10 | User says "cancel FHQ-N" | Set `status: Cancelled`, bump `updated`. Ask whether to move folder to `Archive/FHQ-N/`. On yes, move the ticket folder (with all subtask/spec/plan files) as one unit. |
 | 11 | Session start (every session) — runs **after Rule #8** | One-line summary: "Backlog: X In Progress, Y In Review, Z Ready, W Inbox." Skip silently if vault unreachable. |
 | 12 | A review-agent skill (`superpowers:code-reviewer`, `superpowers:requesting-code-review`, ultrareview, or any subagent that returns severity-tagged findings) reports while a subtask is `In Review`. The Subtask template provides a `## Review notes` section by default, so this section always exists. | Append the agent's findings under `## Review notes`, prefixing each with severity (Blocker/Major/Minor/Nit). If any Blocker/Major remain: keep status `In Review`. Otherwise: prompt the user to move the subtask to `Done`. |
 | 13 | About to move ticket to `In Progress` | Check `blocked_by`. Refuse if any blocker is not in terminal state (`Done`/`Cancelled`/`Promoted`); list which. |

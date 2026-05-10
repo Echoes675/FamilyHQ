@@ -27,17 +27,23 @@ slug_to_title() {
 }
 
 next_top_level_id() {
-  # Scan vault for max FHQ-N folder, return N+1 (skips dotted subtask folders).
+  # Scan vault for max FHQ-N folder across Tickets/, Done/, and Archive/
+  # (a ticket may live in any one depending on its terminal/active state).
+  # Skips dotted subtask folders.
   local max=0
-  if [[ -d "$VAULT_ROOT/Tickets" ]]; then
-    while IFS= read -r dir; do
-      local name="${dir##*/}"
-      if [[ "$name" =~ ^FHQ-([0-9]+)$ ]]; then
-        local n="${BASH_REMATCH[1]}"
-        (( n > max )) && max=$n
-      fi
-    done < <(find "$VAULT_ROOT/Tickets" -maxdepth 1 -type d -name "FHQ-*")
-  fi
+  for top in Tickets Done Archive; do
+    if [[ -d "$VAULT_ROOT/$top" ]]; then
+      while IFS= read -r dir; do
+        local name="${dir##*/}"
+        if [[ "$name" =~ ^FHQ-([0-9]+)$ ]]; then
+          local n="${BASH_REMATCH[1]}"
+          if (( n > max )); then
+            max=$n
+          fi
+        fi
+      done < <(find "$VAULT_ROOT/$top" -maxdepth 1 -type d -name "FHQ-*")
+    fi
+  done
   echo $(( max + 1 ))
 }
 
@@ -49,7 +55,8 @@ merge_date_for_file() {
 write_ticket() {
   local id="$1" date="$2" slug="$3" spec_path="$4" plan_path="$5"
   local title; title="$(slug_to_title "$slug")"
-  local folder="$VAULT_ROOT/Tickets/$id"
+  # Bridge-migrated tickets are born status:Done, so they live in Done/ not Tickets/.
+  local folder="$VAULT_ROOT/Done/$id"
   local file="$folder/$id.md"
 
   mkdir -p "$folder"
@@ -104,18 +111,25 @@ main() {
     local slug="${parsed#*|}"
 
     # Idempotency: skip if a bridge-migrated ticket already references this spec filename.
-    # Search only top-level ticket files (FHQ-N/FHQ-N.md with purely numeric N) that carry
-    # the bridge-migration tag. This avoids false positives from planning docs in FHQ-1 that
-    # list spec filenames as examples in tables.
+    # Search only top-level ticket files (FHQ-N/FHQ-N.md with purely numeric N) under
+    # Tickets/, Done/, or Archive/ — and only when they carry the bridge-migration tag.
+    # This avoids false positives from planning docs in FHQ-1 that list spec filenames
+    # as examples in tables.
     local already_migrated=false
-    while IFS= read -r dir; do
-      local ticket_name; ticket_name="${dir##*/}"
-      local candidate="$dir/$ticket_name.md"
-      if [[ -f "$candidate" ]] && grep -qF "bridge-migration" "$candidate" 2>/dev/null && grep -qF "$fn" "$candidate" 2>/dev/null; then
-        already_migrated=true
-        break
-      fi
-    done < <(find "$VAULT_ROOT/Tickets" -maxdepth 1 -type d -regextype posix-extended -regex ".*/FHQ-[0-9]+$" 2>/dev/null)
+    for top in Tickets Done Archive; do
+      [[ -d "$VAULT_ROOT/$top" ]] || continue
+      while IFS= read -r dir; do
+        local ticket_name; ticket_name="${dir##*/}"
+        if [[ ! "$ticket_name" =~ ^FHQ-[0-9]+$ ]]; then
+          continue
+        fi
+        local candidate="$dir/$ticket_name.md"
+        if [[ -f "$candidate" ]] && grep -qF "bridge-migration" "$candidate" 2>/dev/null && grep -qF "$fn" "$candidate" 2>/dev/null; then
+          already_migrated=true
+          break 2
+        fi
+      done < <(find "$VAULT_ROOT/$top" -maxdepth 1 -type d -name "FHQ-*" 2>/dev/null)
+    done
     if $already_migrated; then
       echo "skip $fn (already migrated)"
       continue
