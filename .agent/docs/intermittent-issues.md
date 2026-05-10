@@ -14,18 +14,41 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-### 1. EventModalTimePicker scenario clicks wrong row when day-view auto-scrolls
-
-**First seen:** Deploy-Staging #89 (2026-05-09).
-**Component:** `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs` → `ClickDayGridSlotAsync`.
-**Symptom:** Picker shows wrong hour (`18` instead of `14`) after `WhenIClickAnEmptyGridSlotForCalendarAt("…", "14:00")`. Other scenarios that exercise the same step pass on the same run, so it is not a uniform regression — the failure pattern is order- and timing-dependent.
-**Cause:** Race between Playwright's scroll-into-view and `DayView.OnAfterRenderAsync`'s scroll-to-now JS, on the `#day-view-container` (75vh / overflow-y:auto). Pixel-based `Position` click resolved to a different `MouseEvent.offsetY` than the test intended.
-**Fix (FHQ-17):** test pins `#day-view-container.scrollTop` deterministically before the Playwright click — see `ClickDayGridSlotAsync` in `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs`.
-**If symptom returns:** the JSRuntime scroll in `DayView.OnAfterRenderAsync` may have changed shape (e.g. now writes after a delay). Re-pin scroll closer to the click, or expose a per-hour `data-testid` on grid slots and switch the test to address by testid.
+*(none currently — see Resolved issues below.)*
 
 ---
 
 ## Resolved issues
+
+### 2. EventModalTimePicker scenario clicks wrong row when day-view auto-scrolls
+
+**Resolved:** branch `fix/FHQ-17-day-grid-click-scroll-pin`, commit `9bab7f8` (2026-05-10). Tracked as FHQ-17.
+**Component:** `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs` → `ClickDayGridSlotAsync`.
+**First seen:** Deploy-Staging #89 (2026-05-09).
+**Occurrences:** Deploy-Staging #89 only. The same commit passed Deploy-Dev #307–#310 and the failed scenario's sibling `Adjusting the end time leaves the start time unchanged` passed on the same staging run, confirming an order- and timing-dependent race rather than a uniform regression.
+
+**Symptom:**
+```
+Locator expected to have text '14'
+But was: '18'
+  - waiting for GetByTestId("start-time-picker").Locator(".time-picker-display").First
+  -   14 × locator resolved to <div aria-live="polite" class="time-picker-display">18</div>
+```
+
+**What we knew:**
+- The click step `ClickDayGridSlotAsync` used `col.ClickAsync(new() { Position = new Position { X = 10, Y = totalMinutes } })` on a `.calendar-col` element rendered at exactly 1440 px tall (1 px = 1 minute).
+- The column lives inside `#day-view-container { height: 75vh; overflow-y: auto }` so only ~75 vh of the 1440 px column is ever in view.
+- `DayView.OnAfterRenderAsync` asynchronously sets `#day-view-container.scrollTop = currentMins - clientHeight/4` whenever `SelectedDate == Today`, via a `JSRuntime.InvokeVoidAsync("eval", …)`.
+- Playwright independently scrolls the scrollable ancestor to bring the `Position` click target into view before dispatching the click.
+- When these two scrolls interleaved unfavourably, Playwright's `BoundingBoxAsync` snapshot disagreed with the dispatched click coordinates. The browser then computed `event.target` / `event.offsetY` against a different row, and the production handler `DayView.HandleGridClick` (`totalMinutes = (int)e.OffsetY`) opened the modal with the wrong start time.
+
+**Root-cause fix:**
+- `ClickDayGridSlotAsync` now pins `#day-view-container.scrollTop` deterministically from the test (`Page.EvaluateAsync(...)`) **before** dispatching the Playwright click. The pin centres the target row in the visible band, so both Playwright's geometry and the production click handler agree on what column-relative Y means. The app's auto-scroll-to-now feature is unchanged — it remains a real product behaviour for users.
+- The dead `colBox` / `BoundingBoxAsync` null-check fallback (which would have produced wrong times if it ever triggered) was removed in the same change.
+
+**If the symptom returns:**
+1. The JSRuntime scroll in `DayView.OnAfterRenderAsync` may have changed shape — e.g. now writes after a `Task.Delay` or in response to a separate event. Move the test's scroll pin closer to the click, or pin twice (before *and* after a short wait).
+2. Consider exposing a per-hour `data-testid` on the grid slots in `DayView.razor` and switching the test to address by testid rather than pixel offset. More invasive but eliminates pixel-based geometry from the test surface entirely.
 
 ### 1. Weather refresh returns 200 but `/current` returns 204
 
