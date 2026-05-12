@@ -9,6 +9,7 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
 using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Hubs;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -78,6 +79,11 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 
 // JWT issuer — stateless, safe as a singleton.
 builder.Services.AddSingleton<IJwtIssuer, JwtIssuer>();
+
+// Configure the opt-in /api/auth/issue-token endpoint. Defaults to disabled; non-prod
+// environments must explicitly set Auth:IssueTokenEndpoint:Enabled=true and supply a Secret.
+builder.Services.Configure<IssueTokenEndpointOptions>(
+    builder.Configuration.GetSection(IssueTokenEndpointOptions.SectionName));
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();

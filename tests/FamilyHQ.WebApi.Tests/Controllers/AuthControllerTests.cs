@@ -1,13 +1,16 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Data;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
+using FamilyHQ.WebApi.Configuration;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -238,6 +241,13 @@ public class AuthControllerTests
 
         var jwtIssuer = new JwtIssuer(configuration);
 
+        var dbOptions = new DbContextOptionsBuilder<FamilyHqDbContext>()
+            .UseInMemoryDatabase(databaseName: $"auth-controller-tests-{Guid.NewGuid()}")
+            .Options;
+        var dbContext = new FamilyHqDbContext(dbOptions);
+
+        var issueTokenOptions = Options.Create(new IssueTokenEndpointOptions());
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
@@ -245,7 +255,9 @@ public class AuthControllerTests
             configuration,
             syncOptions,
             jwtIssuer,
-            new Mock<ILogger<AuthController>>().Object)
+            new Mock<ILogger<AuthController>>().Object,
+            dbContext,
+            issueTokenOptions)
         {
             ControllerContext = new ControllerContext
             {
