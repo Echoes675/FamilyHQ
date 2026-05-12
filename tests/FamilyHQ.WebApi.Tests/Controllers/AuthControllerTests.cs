@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
+using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
@@ -235,12 +236,15 @@ public class AuthControllerTests
 
         var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = webhookRegistrationEnabled });
 
+        var jwtIssuer = new JwtIssuer(configuration);
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
             scopeFactoryMock.Object,
             configuration,
             syncOptions,
+            jwtIssuer,
             new Mock<ILogger<AuthController>>().Object)
         {
             ControllerContext = new ControllerContext

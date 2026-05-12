@@ -1,15 +1,13 @@
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.SignalR;
-using System.Security.Claims;
-using System.IdentityModel.Tokens.Jwt;
-using Microsoft.IdentityModel.Tokens;
 
 namespace FamilyHQ.WebApi.Controllers;
 
@@ -22,6 +20,7 @@ public class AuthController : ControllerBase
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;
     private readonly IOptions<SyncOptions> _syncOptions;
+    private readonly IJwtIssuer _jwtIssuer;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
@@ -30,6 +29,7 @@ public class AuthController : ControllerBase
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
         IOptions<SyncOptions> syncOptions,
+        IJwtIssuer jwtIssuer,
         ILogger<AuthController> logger)
     {
         _authService = authService;
@@ -37,6 +37,7 @@ public class AuthController : ControllerBase
         _scopeFactory = scopeFactory;
         _configuration = configuration;
         _syncOptions = syncOptions;
+        _jwtIssuer = jwtIssuer;
         _logger = logger;
     }
 
@@ -70,7 +71,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(userId))
             return BadRequest("Authentication failed: user identity could not be determined.");
 
-        var apiToken = GenerateJwt(userId, email);
+        var (apiToken, _) = _jwtIssuer.Issue(userId, email);
 
         // Propagate userId into the ExecutionContext so ICurrentUserService can
         // resolve it without an active HttpContext during the sync.
@@ -104,31 +105,6 @@ public class AuthController : ControllerBase
         }
 
         return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
-    }
-
-    private string GenerateJwt(string userId, string? email)
-    {
-        var claims = new List<Claim>
-        {
-            new Claim(JwtRegisteredClaimNames.Sub, userId),
-            new Claim(JwtRegisteredClaimNames.UniqueName, userId)
-        };
-        if (!string.IsNullOrEmpty(email))
-            claims.Add(new Claim(JwtRegisteredClaimNames.Name, email));
-        
-        var jwtKey = _configuration["Jwt:SigningKey"]
-            ?? throw new InvalidOperationException("JWT signing key is not configured.");
-        
-        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var token = new JwtSecurityToken(
-            issuer: "FamilyHQ",
-            audience: "FamilyHQ",
-            claims: claims.ToArray(),
-            expires: DateTime.Now.AddDays(1),
-            signingCredentials: creds
-        );
-        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     private async Task SyncCalendarEventsAsync(string userId, string accessToken)

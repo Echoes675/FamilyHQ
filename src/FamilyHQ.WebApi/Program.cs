@@ -7,6 +7,7 @@ using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
+using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
@@ -74,6 +75,9 @@ else if (!builder.Environment.IsDevelopment())
 // Register DatabaseTokenStore (overrides the FileTokenStore from AddFamilyHqServices)
 // DatabaseTokenStore is scoped because it depends on DbContext which is scoped
 builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
+
+// JWT issuer — stateless, safe as a singleton.
+builder.Services.AddSingleton<IJwtIssuer, JwtIssuer>();
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();
