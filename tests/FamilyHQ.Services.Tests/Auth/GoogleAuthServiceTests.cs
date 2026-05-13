@@ -111,10 +111,15 @@ public class GoogleAuthServiceTests
     }
 
     [Fact]
-    public async Task RefreshAccessTokenAsync_WhenFails_ThrowsException()
+    public async Task RefreshAccessTokenAsync_WhenInvalidGrant_ThrowsGoogleReauthRequiredException()
     {
         // Arrange
         var (httpMock, systemUnderTest) = CreateSut();
+        var body = JsonSerializer.Serialize(new
+        {
+            error = "invalid_grant",
+            error_description = "Token has been expired or revoked."
+        });
         httpMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
                 "SendAsync",
@@ -123,13 +128,93 @@ public class GoogleAuthServiceTests
             .ReturnsAsync(new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.BadRequest,
-                Content = new StringContent("invalid_grant")
+                Content = new StringContent(body)
             });
 
         // Act & Assert
-        await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("bad-token"))
+        var ex = await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("rt"))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.Source.Should().Be(GoogleAuthFailureSource.TokenRefresh);
+        ex.Which.ErrorDescription.Should().Be("Token has been expired or revoked.");
+    }
+
+    [Theory]
+    [InlineData("unauthorized_client")]
+    [InlineData("invalid_token")]
+    public async Task RefreshAccessTokenAsync_WhenReauthErrorCode_ThrowsGoogleReauthRequiredException(string error)
+    {
+        // Arrange
+        var (httpMock, systemUnderTest) = CreateSut();
+        var body = JsonSerializer.Serialize(new { error, error_description = "needs reconsent" });
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent(body)
+            });
+
+        // Act & Assert
+        await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("rt"))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenNonReauth4xx_ThrowsInvalidOperationWithParsedError()
+    {
+        // Arrange
+        var (httpMock, systemUnderTest) = CreateSut();
+        var body = JsonSerializer.Serialize(new
+        {
+            error = "rate_limit_exceeded",
+            error_description = "Too many requests"
+        });
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent(body)
+            });
+
+        // Act & Assert
+        await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("rt"))
             .Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*Failed to refresh token*");
+            .WithMessage("*rate_limit_exceeded*");
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenFails_DoesNotLogRefreshTokenValue()
+    {
+        // Arrange — verifying the refresh token secret never reaches the log scope, per security skill.
+        var (httpMock, systemUnderTest, loggerMock) = CreateSutWithLogger();
+        var body = JsonSerializer.Serialize(new { error = "invalid_grant", error_description = "revoked" });
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent(body)
+            });
+        const string secretToken = "super-secret-refresh-token-VALUE";
+
+        // Act
+        try { await systemUnderTest.RefreshAccessTokenAsync(secretToken); } catch { /* expected */ }
+
+        // Assert
+        loggerMock.Invocations
+            .SelectMany(i => i.Arguments)
+            .Select(a => a?.ToString() ?? string.Empty)
+            .Should().NotContain(s => s.Contains(secretToken));
     }
 
     [Fact]
@@ -181,6 +266,12 @@ public class GoogleAuthServiceTests
 
     private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService SystemUnderTest) CreateSut()
     {
+        var (httpMock, sut, _) = CreateSutWithLogger();
+        return (httpMock, sut);
+    }
+
+    private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService SystemUnderTest, Mock<ILogger<GoogleAuthService>> LoggerMock) CreateSutWithLogger()
+    {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(httpMessageHandlerMock.Object);
 
@@ -195,6 +286,6 @@ public class GoogleAuthServiceTests
         var loggerMock = new Mock<ILogger<GoogleAuthService>>();
 
         var systemUnderTest = new GoogleAuthService(httpClient, options, loggerMock.Object);
-        return (httpMessageHandlerMock, systemUnderTest);
+        return (httpMessageHandlerMock, systemUnderTest, loggerMock);
     }
 }
