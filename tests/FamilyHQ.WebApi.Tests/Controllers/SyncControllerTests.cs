@@ -1,5 +1,7 @@
+using System.Net;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
@@ -137,6 +139,71 @@ public class SyncControllerTests
     }
 
     [Fact]
+    public async Task TriggerSync_WhenSyncThrowsGoogleReauthRequired_Returns409Conflict()
+    {
+        // Arrange
+        var (constructorSync, _, _, systemUnderTest) = CreateSut();
+        constructorSync
+            .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked."));
+
+        // Act
+        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
+
+        // Assert
+        var conflict = result.Should().BeOfType<ConflictObjectResult>().Subject;
+        conflict.Value.Should().NotBeNull();
+        var payload = conflict.Value!.GetType().GetProperties()
+            .ToDictionary(p => p.Name, p => p.GetValue(conflict.Value));
+        payload["status"].Should().Be("needs_reauth");
+        payload["source"].Should().Be("token_refresh");
+        payload["reconnectUrl"].Should().Be("/api/auth/login");
+    }
+
+    [Fact]
+    public async Task TriggerSync_WhenSyncThrowsGoogleApiException_Returns502BadGateway()
+    {
+        // Arrange
+        var (constructorSync, _, _, systemUnderTest) = CreateSut();
+        constructorSync
+            .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "server boom"));
+
+        // Act
+        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
+
+        // Assert
+        var status = result.Should().BeOfType<ObjectResult>().Subject;
+        status.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+        var payload = status.Value!.GetType().GetProperties()
+            .ToDictionary(p => p.Name, p => p.GetValue(status.Value));
+        payload["status"].Should().Be("upstream_error");
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WhenUserSyncThrowsReauthRequired_MarksUserAndReturnsOk()
+    {
+        // Arrange
+        var (_, scopedSync, _, systemUnderTest, tokenStore) = CreateSutExposingTokenStore(userIds: ["user-fail"]);
+        scopedSync
+            .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.CalendarApi, "Insufficient Permission"));
+
+        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
+
+        // Act
+        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        // Assert — endpoint still returns 200 to Google, but the user is flagged.
+        result.Should().BeOfType<OkResult>();
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("user-fail", "Insufficient Permission", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task GooglePushWebhook_WithoutChannelId_FallsBackToSyncAll()
     {
         // Arrange
@@ -170,6 +237,33 @@ public class SyncControllerTests
         IEnumerable<string>? userIds = null,
         WebhookRegistration? webhookRegistration = null,
         CalendarInfo? calendarInfo = null)
+    {
+        var (constructorSync, scopedSync, proxy, sut, _) = CreateSutInternal(userIds, webhookRegistration, calendarInfo);
+        return (constructorSync, scopedSync, proxy, sut);
+    }
+
+    private static (
+        Mock<ICalendarSyncService> ConstructorSync,
+        Mock<ICalendarSyncService> ScopedSync,
+        Mock<IClientProxy> Proxy,
+        SyncController SystemUnderTest,
+        Mock<ITokenStore> TokenStore) CreateSutExposingTokenStore(
+        IEnumerable<string>? userIds = null,
+        WebhookRegistration? webhookRegistration = null,
+        CalendarInfo? calendarInfo = null)
+    {
+        return CreateSutInternal(userIds, webhookRegistration, calendarInfo);
+    }
+
+    private static (
+        Mock<ICalendarSyncService> ConstructorSync,
+        Mock<ICalendarSyncService> ScopedSync,
+        Mock<IClientProxy> Proxy,
+        SyncController SystemUnderTest,
+        Mock<ITokenStore> TokenStore) CreateSutInternal(
+        IEnumerable<string>? userIds,
+        WebhookRegistration? webhookRegistration,
+        CalendarInfo? calendarInfo)
     {
         var syncServiceMock = new Mock<ICalendarSyncService>();
         var scopedSyncServiceMock = new Mock<ICalendarSyncService>();
@@ -229,6 +323,6 @@ public class SyncControllerTests
             }
         };
 
-        return (syncServiceMock, scopedSyncServiceMock, clientProxyMock, systemUnderTest);
+        return (syncServiceMock, scopedSyncServiceMock, clientProxyMock, systemUnderTest, tokenStoreMock);
     }
 }

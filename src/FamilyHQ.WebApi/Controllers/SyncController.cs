@@ -1,7 +1,9 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -54,15 +56,42 @@ public class SyncController : ControllerBase
     public async Task<IActionResult> TriggerSync(CancellationToken ct)
     {
         _logger.LogInformation("Manual sync triggered via API.");
-        
+
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
-        
-        await _syncService.SyncAllAsync(startDate, endDate, ct);
-        
+
+        try
+        {
+            await _syncService.SyncAllAsync(startDate, endDate, ct);
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            _logger.LogWarning(
+                "Manual sync rejected: Google re-authentication required ({Source}). {Description}",
+                ex.Source, ex.ErrorDescription);
+            return Conflict(new
+            {
+                status = "needs_reauth",
+                source = ex.Source == GoogleAuthFailureSource.TokenRefresh ? "token_refresh" : "calendar_api",
+                message = ex.ErrorDescription ?? "Google connection requires re-consent.",
+                reconnectUrl = "/api/auth/login"
+            });
+        }
+        catch (GoogleApiException ex)
+        {
+            _logger.LogError(
+                "Manual sync failed: upstream Google API error {Status} ({Operation}).",
+                (int)ex.StatusCode, ex.Operation);
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                status = "upstream_error",
+                message = $"Google API {ex.Operation} returned {(int)ex.StatusCode}."
+            });
+        }
+
         // Notify all connected UI clients that events changed
         await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
-        
+
         return Ok(new { Message = "Sync completed successfully." });
     }
 
@@ -134,6 +163,19 @@ public class SyncController : ControllerBase
                             await syncService.SyncAsync(registration.CalendarInfoId, startDate, endDate, ct);
                             synced = true;
                         }
+                        catch (GoogleReauthRequiredException ex)
+                        {
+                            _logger.LogWarning(
+                                "Targeted sync for calendar {CalendarInfoId} (user {UserId}) needs re-auth ({Source}): {Description}",
+                                registration.CalendarInfoId, calendarInfo.UserId, ex.Source, ex.ErrorDescription);
+                            await _tokenStore.MarkNeedsReauthAsync(calendarInfo.UserId, ex.ErrorDescription, ct);
+                        }
+                        catch (GoogleApiException ex)
+                        {
+                            _logger.LogWarning(
+                                "Targeted sync for calendar {CalendarInfoId} (user {UserId}) failed with upstream {Status} ({Operation}).",
+                                registration.CalendarInfoId, calendarInfo.UserId, (int)ex.StatusCode, ex.Operation);
+                        }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "Error during targeted sync for calendar {CalendarInfoId}.", registration.CalendarInfoId);
@@ -170,6 +212,19 @@ public class SyncController : ControllerBase
                         using var scope = _scopeFactory.CreateScope();
                         var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
                         await syncService.SyncAllAsync(startDate, endDate, ct);
+                    }
+                    catch (GoogleReauthRequiredException ex)
+                    {
+                        _logger.LogWarning(
+                            "Webhook sync for user {UserId} needs re-auth ({Source}): {Description}",
+                            userId, ex.Source, ex.ErrorDescription);
+                        await _tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
+                    }
+                    catch (GoogleApiException ex)
+                    {
+                        _logger.LogWarning(
+                            "Webhook sync for user {UserId} failed with upstream {Status} ({Operation}).",
+                            userId, (int)ex.StatusCode, ex.Operation);
                     }
                     catch (Exception ex)
                     {
