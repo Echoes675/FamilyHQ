@@ -47,25 +47,15 @@ public class DiagnosticsController : ControllerBase
         var statusText = auth.Status == TokenAuthStatus.NeedsReauth ? "needs_reauth" : "active";
 
         var calendars = await _calendarRepository.GetCalendarsByUserIdAsync(userId, ct);
-        var calendarPayloads = new List<object>(calendars.Count);
-        foreach (var cal in calendars)
-        {
-            var syncState = await _calendarRepository.GetSyncStateAsync(cal.Id, ct);
-            calendarPayloads.Add(new
-            {
-                calendarId = cal.Id,
-                displayName = cal.DisplayName,
-                lastSyncedAt = syncState?.LastSyncedAt
-            });
-        }
+        var calendarDtos = calendars
+            .Select(c => new ConnectionStatusCalendarDto(c.Id, c.DisplayName, c.SyncState?.LastSyncedAt))
+            .ToList();
 
-        return Ok(new
-        {
-            status = statusText,
-            lastError = auth.LastError,
-            since = auth.Since,
-            calendars = calendarPayloads
-        });
+        return Ok(new ConnectionStatusWithCalendarsDto(
+            statusText,
+            auth.LastError,
+            auth.Since,
+            calendarDtos));
     }
 
     [HttpGet("sync-failures")]

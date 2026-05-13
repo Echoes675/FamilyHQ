@@ -49,23 +49,16 @@ public class DiagnosticsControllerTests
 
         // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = ok.Value!.GetType().GetProperties()
-            .ToDictionary(p => p.Name, p => p.GetValue(ok.Value));
-        payload["status"].Should().Be("active");
-        payload["lastError"].Should().BeNull();
-        payload["since"].Should().BeNull();
-
-        var calendars = payload["calendars"]
-            .Should().BeAssignableTo<System.Collections.IEnumerable>().Subject
-            .Cast<object>()
-            .Select(o => o.GetType().GetProperties().ToDictionary(p => p.Name, p => p.GetValue(o)))
-            .ToList();
-        calendars.Should().HaveCount(2);
-        calendars[0]["calendarId"].Should().Be(CalAId);
-        calendars[0]["displayName"].Should().Be("A");
-        calendars[0]["lastSyncedAt"].Should().Be(lastSyncedA);
-        calendars[1]["calendarId"].Should().Be(CalBId);
-        calendars[1]["lastSyncedAt"].Should().BeNull();
+        var dto = ok.Value.Should().BeOfType<ConnectionStatusWithCalendarsDto>().Subject;
+        dto.Status.Should().Be("active");
+        dto.LastError.Should().BeNull();
+        dto.Since.Should().BeNull();
+        dto.Calendars.Should().HaveCount(2);
+        dto.Calendars[0].CalendarId.Should().Be(CalAId);
+        dto.Calendars[0].DisplayName.Should().Be("A");
+        dto.Calendars[0].LastSyncedAt.Should().Be(lastSyncedA);
+        dto.Calendars[1].CalendarId.Should().Be(CalBId);
+        dto.Calendars[1].LastSyncedAt.Should().BeNull();
     }
 
     [Fact]
@@ -85,11 +78,10 @@ public class DiagnosticsControllerTests
 
         // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
-        var payload = ok.Value!.GetType().GetProperties()
-            .ToDictionary(p => p.Name, p => p.GetValue(ok.Value));
-        payload["status"].Should().Be("needs_reauth");
-        payload["lastError"].Should().Be("expired");
-        payload["since"].Should().Be(since);
+        var dto = ok.Value.Should().BeOfType<ConnectionStatusWithCalendarsDto>().Subject;
+        dto.Status.Should().Be("needs_reauth");
+        dto.LastError.Should().Be("expired");
+        dto.Since.Should().Be(since);
     }
 
     [Fact]

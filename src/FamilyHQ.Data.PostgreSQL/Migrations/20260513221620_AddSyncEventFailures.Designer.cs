@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyHQ.Data.PostgreSQL.Migrations
 {
     [DbContext(typeof(FamilyHqDbContext))]
-    [Migration("20260513214553_AddSyncEventFailures")]
+    [Migration("20260513221620_AddSyncEventFailures")]
     partial class AddSyncEventFailures
     {
         /// <inheritdoc />
@@ -247,7 +247,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("CalendarInfoId")
+                    b.Property<Guid?>("CalendarInfoId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("EventTitle")
@@ -547,8 +547,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.HasOne("FamilyHQ.Core.Models.CalendarInfo", "CalendarInfo")
                         .WithMany()
                         .HasForeignKey("CalendarInfoId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("CalendarInfo");
                 });

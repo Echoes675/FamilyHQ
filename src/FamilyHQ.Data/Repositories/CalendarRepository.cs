@@ -41,6 +41,7 @@ public class CalendarRepository : ICalendarRepository
 
         return await _context.Calendars
             .AsNoTracking()
+            .Include(c => c.SyncState)
             .Where(c => c.UserId == userId)
             .OrderBy(c => c.DisplayOrder)
             .ThenBy(c => c.Id)

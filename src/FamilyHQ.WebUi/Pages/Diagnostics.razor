@@ -168,8 +168,11 @@
     private ConnectionStatusWithCalendarsDto? _connectionStatus;
     private IReadOnlyList<SyncFailureDto>? _failures;
     private bool _isLoading;
-    private bool _loadFailed;
+    private bool _connectionStatusFailed;
+    private bool _failuresFailed;
     private DateTimeOffset _now;
+
+    private bool _loadFailed => _connectionStatusFailed || _failuresFailed;
 
     protected override async Task OnInitializedAsync()
     {
@@ -187,7 +190,8 @@
     private async Task LoadAsync()
     {
         _isLoading = true;
-        _loadFailed = false;
+        _connectionStatusFailed = false;
+        _failuresFailed = false;
         _now = TimeProvider.GetUtcNow();
         StateHasChanged();
 
@@ -195,18 +199,23 @@
         var failuresTask = DiagnosticsApi.GetSyncFailuresAsync();
         await Task.WhenAll(statusTask, failuresTask);
 
-        _connectionStatus = await statusTask;
-        _failures = await failuresTask;
-        _loadFailed = _connectionStatus is null && (_failures is null || _failures.Count == 0);
+        var statusResult = await statusTask;
+        var failuresResult = await failuresTask;
+
+        _connectionStatus = statusResult.Data;
+        _connectionStatusFailed = !statusResult.Loaded;
+        _failures = failuresResult.Data;
+        _failuresFailed = !failuresResult.Loaded;
         _isLoading = false;
         StateHasChanged();
     }
 
-    private string ResolveCalendarName(Guid calendarInfoId)
+    private string ResolveCalendarName(Guid? calendarInfoId)
     {
-        if (_connectionStatus is null) return calendarInfoId.ToString();
-        var match = _connectionStatus.Calendars.FirstOrDefault(c => c.CalendarId == calendarInfoId);
-        return match?.DisplayName ?? calendarInfoId.ToString();
+        if (calendarInfoId is null) return "(deleted calendar)";
+        if (_connectionStatus is null) return calendarInfoId.Value.ToString();
+        var match = _connectionStatus.Calendars.FirstOrDefault(c => c.CalendarId == calendarInfoId.Value);
+        return match?.DisplayName ?? calendarInfoId.Value.ToString();
     }
 
     private void ReconnectToGoogle()

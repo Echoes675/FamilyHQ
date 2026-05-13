@@ -17,7 +17,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     UserId = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
-                    CalendarInfoId = table.Column<Guid>(type: "uuid", nullable: false),
+                    CalendarInfoId = table.Column<Guid>(type: "uuid", nullable: true),
                     GoogleEventId = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
                     EventTitle = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: true),
                     FailureReason = table.Column<string>(type: "character varying(512)", maxLength: 512, nullable: false),
@@ -33,7 +33,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         column: x => x.CalendarInfoId,
                         principalTable: "Calendars",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.SetNull);
                 });
 
             migrationBuilder.CreateIndex(

@@ -26,34 +26,37 @@ public class DiagnosticsApiServiceTests
 
         var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
 
-        result.Should().NotBeNull();
-        result!.Status.Should().Be("needs_reauth");
-        result.LastError.Should().Be("Token has been expired or revoked.");
-        result.Since.Should().Be(new DateTimeOffset(2026, 5, 13, 18, 34, 0, TimeSpan.Zero));
-        result.Calendars.Should().HaveCount(2);
-        result.Calendars[0].DisplayName.Should().Be("Family");
-        result.Calendars[0].LastSyncedAt.Should().Be(new DateTimeOffset(2026, 5, 13, 18, 0, 0, TimeSpan.Zero));
-        result.Calendars[1].LastSyncedAt.Should().BeNull();
+        result.Loaded.Should().BeTrue();
+        result.Data.Should().NotBeNull();
+        result.Data!.Status.Should().Be("needs_reauth");
+        result.Data.LastError.Should().Be("Token has been expired or revoked.");
+        result.Data.Since.Should().Be(new DateTimeOffset(2026, 5, 13, 18, 34, 0, TimeSpan.Zero));
+        result.Data.Calendars.Should().HaveCount(2);
+        result.Data.Calendars[0].DisplayName.Should().Be("Family");
+        result.Data.Calendars[0].LastSyncedAt.Should().Be(new DateTimeOffset(2026, 5, 13, 18, 0, 0, TimeSpan.Zero));
+        result.Data.Calendars[1].LastSyncedAt.Should().BeNull();
     }
 
     [Fact]
-    public async Task GetConnectionStatusAsync_OnUnauthorized_ReturnsNull()
+    public async Task GetConnectionStatusAsync_OnUnauthorized_ReturnsFailedResult()
     {
         var sut = CreateSut(HttpStatusCode.Unauthorized, "");
 
         var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
 
-        result.Should().BeNull();
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
     }
 
     [Fact]
-    public async Task GetConnectionStatusAsync_OnHttpRequestException_ReturnsNull()
+    public async Task GetConnectionStatusAsync_OnHttpRequestException_ReturnsFailedResult()
     {
         var sut = CreateSutThatThrows(new HttpRequestException("network down"));
 
         var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
 
-        result.Should().BeNull();
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
     }
 
     [Fact]
@@ -77,31 +80,34 @@ public class DiagnosticsApiServiceTests
 
         var result = await sut.GetSyncFailuresAsync(100, CancellationToken.None);
 
-        result.Should().HaveCount(1);
-        result[0].GoogleEventId.Should().Be("gid-1");
-        result[0].EventTitle.Should().Be("Soccer practice");
-        result[0].FailureReason.Should().Be("Invalid recurrence rule");
-        result[0].ExceptionType.Should().Be("FormatException");
+        result.Loaded.Should().BeTrue();
+        result.Data.Should().NotBeNull().And.HaveCount(1);
+        result.Data![0].GoogleEventId.Should().Be("gid-1");
+        result.Data[0].EventTitle.Should().Be("Soccer practice");
+        result.Data[0].FailureReason.Should().Be("Invalid recurrence rule");
+        result.Data[0].ExceptionType.Should().Be("FormatException");
     }
 
     [Fact]
-    public async Task GetSyncFailuresAsync_OnFailure_ReturnsEmptyList()
+    public async Task GetSyncFailuresAsync_OnFailure_ReturnsFailedResult()
     {
         var sut = CreateSut(HttpStatusCode.InternalServerError, "");
 
         var result = await sut.GetSyncFailuresAsync(100, CancellationToken.None);
 
-        result.Should().BeEmpty();
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
     }
 
     [Fact]
-    public async Task GetSyncFailuresAsync_OnHttpRequestException_ReturnsEmptyList()
+    public async Task GetSyncFailuresAsync_OnHttpRequestException_ReturnsFailedResult()
     {
         var sut = CreateSutThatThrows(new HttpRequestException("network down"));
 
         var result = await sut.GetSyncFailuresAsync(100, CancellationToken.None);
 
-        result.Should().BeEmpty();
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
     }
 
     [Fact]

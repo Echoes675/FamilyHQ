@@ -259,19 +259,29 @@ public class CalendarSyncService(
             ex.GetType().Name,
             ex.Message);
 
+        // Column widths are enforced by EF/Postgres. EF Core constraint-violation
+        // messages can easily exceed 512 chars, so truncating defensively here
+        // prevents the failure-write itself from throwing inside the catch and
+        // losing the diagnostic record entirely.
         var failure = new SyncEventFailure
         {
             UserId = userId,
             CalendarInfoId = calendarInfoId,
             GoogleEventId = evt.GoogleEventId,
-            EventTitle = evt.Title,
-            FailureReason = ex.Message,
-            ExceptionType = ex.GetType().FullName ?? ex.GetType().Name,
+            EventTitle = Truncate(evt.Title, 256),
+            FailureReason = Truncate(ex.Message, 512) ?? string.Empty,
+            ExceptionType = Truncate(ex.GetType().FullName ?? ex.GetType().Name, 256) ?? "Exception",
             FailedAt = DateTimeOffset.UtcNow,
             Resolved = false
         };
 
         await syncFailureRepository.AddAsync(failure, ct);
+    }
+
+    private static string? Truncate(string? value, int max)
+    {
+        if (value is null) return null;
+        return value.Length <= max ? value : value[..max];
     }
 
     private async Task MarkCurrentUserNeedsReauthAsync(GoogleReauthRequiredException ex, CancellationToken ct)

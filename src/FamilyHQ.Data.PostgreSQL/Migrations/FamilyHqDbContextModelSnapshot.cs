@@ -244,7 +244,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("CalendarInfoId")
+                    b.Property<Guid?>("CalendarInfoId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("EventTitle")
@@ -544,8 +544,7 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.HasOne("FamilyHQ.Core.Models.CalendarInfo", "CalendarInfo")
                         .WithMany()
                         .HasForeignKey("CalendarInfoId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("CalendarInfo");
                 });

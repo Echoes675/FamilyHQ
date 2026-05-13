@@ -44,7 +44,7 @@ public class SyncEventFailureConfiguration : IEntityTypeConfiguration<SyncEventF
         builder.HasOne(f => f.CalendarInfo)
             .WithMany()
             .HasForeignKey(f => f.CalendarInfoId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasIndex(f => new { f.UserId, f.FailedAt })
             .HasDatabaseName("IX_SyncEventFailures_UserId_FailedAt")

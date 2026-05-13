@@ -11,7 +11,10 @@ public class SyncEventFailure
 
     public string UserId { get; set; } = null!;
 
-    public Guid CalendarInfoId { get; set; }
+    // Nullable so deleting a calendar (Google removes it from the user's list) preserves
+    // the failure history for diagnostics — the calendar reference is set to null instead
+    // of cascading the delete.
+    public Guid? CalendarInfoId { get; set; }
 
     public string GoogleEventId { get; set; } = null!;
 
@@ -25,5 +28,5 @@ public class SyncEventFailure
 
     public bool Resolved { get; set; }
 
-    public CalendarInfo CalendarInfo { get; set; } = null!;
+    public CalendarInfo? CalendarInfo { get; set; }
 }
