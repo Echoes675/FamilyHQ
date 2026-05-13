@@ -473,7 +473,7 @@ public class GoogleCalendarClientTests
         // Act & Assert
         var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
             .Should().ThrowAsync<GoogleReauthRequiredException>();
-        ex.Which.Source.Should().Be(GoogleAuthFailureSource.CalendarApi);
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
         ex.Which.ResponseBody.Should().Contain("Insufficient Permission");
     }
 
@@ -509,7 +509,7 @@ public class GoogleCalendarClientTests
         // Act & Assert
         var ex = await systemUnderTest.Invoking(s => s.GetEventsAsync("cal1", null, null))
             .Should().ThrowAsync<GoogleReauthRequiredException>();
-        ex.Which.Source.Should().Be(GoogleAuthFailureSource.CalendarApi);
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
     }
 
     [Fact]

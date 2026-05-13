@@ -134,7 +134,7 @@ public class GoogleAuthServiceTests
         // Act & Assert
         var ex = await systemUnderTest.Invoking(s => s.RefreshAccessTokenAsync("rt"))
             .Should().ThrowAsync<GoogleReauthRequiredException>();
-        ex.Which.Source.Should().Be(GoogleAuthFailureSource.TokenRefresh);
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.TokenRefresh);
         ex.Which.ErrorDescription.Should().Be("Token has been expired or revoked.");
     }
 

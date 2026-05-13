@@ -14,7 +14,7 @@ public class GoogleApiException : Exception
     public string? ResponseBody { get; }
 
     public GoogleApiException(HttpStatusCode statusCode, string operation, string? responseBody)
-        : base($"Google API {operation} failed with status {(int)statusCode} {statusCode}: {responseBody}")
+        : base($"Google API {operation} failed with status {(int)statusCode} {statusCode}.")
     {
         StatusCode = statusCode;
         Operation = operation;

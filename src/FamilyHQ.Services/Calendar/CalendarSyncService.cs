@@ -80,6 +80,11 @@ public class CalendarSyncService(
         // every event with no member tags would be persisted with Members=[] and
         // then get stranded off the dashboard once the user picks a different
         // shared calendar in settings.
+        // FHQ-25 (WS1): a reauth/permission failure on any calendar aborts the loop
+        // because all of this user's calendars share the same OAuth token — once Google
+        // rejects it once, every remaining calendar would reject it too. Per-event
+        // resilience (so one malformed event in one calendar doesn't abort the rest of
+        // that calendar's events) is FHQ-26 / WS2.
         try
         {
             foreach (var calendarId in calendarIdsToSync)
@@ -239,9 +244,9 @@ public class CalendarSyncService(
         var userId = currentUserService.UserId;
         if (string.IsNullOrEmpty(userId))
         {
-            logger.LogWarning(
-                "Google re-auth required ({Source}) but no current user id available to mark.",
-                ex.Source);
+            logger.LogError(
+                "Google re-auth required ({Source}) but no current user id available to mark — banner will not appear for this user.",
+                ex.FailureSource);
             return;
         }
 

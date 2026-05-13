@@ -8,7 +8,7 @@ public class GoogleReauthRequiredException : Exception
 {
     public string? UserId { get; }
     public string? ErrorDescription { get; }
-    public new GoogleAuthFailureSource Source { get; }
+    public GoogleAuthFailureSource FailureSource { get; }
     public string? ResponseBody { get; }
 
     public GoogleReauthRequiredException(
@@ -18,7 +18,7 @@ public class GoogleReauthRequiredException : Exception
         string? userId = null)
         : base($"Google re-authentication required ({source}): {errorDescription ?? "no description"}")
     {
-        Source = source;
+        FailureSource = source;
         ErrorDescription = errorDescription;
         ResponseBody = responseBody;
         UserId = userId;

@@ -68,11 +68,11 @@ public class SyncController : ControllerBase
         {
             _logger.LogWarning(
                 "Manual sync rejected: Google re-authentication required ({Source}). {Description}",
-                ex.Source, ex.ErrorDescription);
+                ex.FailureSource, ex.ErrorDescription);
             return Conflict(new
             {
                 status = "needs_reauth",
-                source = ex.Source == GoogleAuthFailureSource.TokenRefresh ? "token_refresh" : "calendar_api",
+                source = ex.FailureSource == GoogleAuthFailureSource.TokenRefresh ? "token_refresh" : "calendar_api",
                 message = ex.ErrorDescription ?? "Google connection requires re-consent.",
                 reconnectUrl = "/api/auth/login"
             });
@@ -167,7 +167,7 @@ public class SyncController : ControllerBase
                         {
                             _logger.LogWarning(
                                 "Targeted sync for calendar {CalendarInfoId} (user {UserId}) needs re-auth ({Source}): {Description}",
-                                registration.CalendarInfoId, calendarInfo.UserId, ex.Source, ex.ErrorDescription);
+                                registration.CalendarInfoId, calendarInfo.UserId, ex.FailureSource, ex.ErrorDescription);
                             await _tokenStore.MarkNeedsReauthAsync(calendarInfo.UserId, ex.ErrorDescription, ct);
                         }
                         catch (GoogleApiException ex)
@@ -217,7 +217,7 @@ public class SyncController : ControllerBase
                     {
                         _logger.LogWarning(
                             "Webhook sync for user {UserId} needs re-auth ({Source}): {Description}",
-                            userId, ex.Source, ex.ErrorDescription);
+                            userId, ex.FailureSource, ex.ErrorDescription);
                         await _tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
                     }
                     catch (GoogleApiException ex)
