@@ -1,6 +1,7 @@
 @page "/"
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.Services.Auth
+@using FamilyHQ.WebUi.Components.Reauth
 @using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.Core.DTOs
 @implements IAsyncDisposable
@@ -26,6 +27,23 @@
     else
     {
         <DashboardHeader />
+        @if (ReauthBanner.ShouldShow(_connectionStatus))
+        {
+            <div class="alert alert-warning reauth-banner reauth-banner--dashboard"
+                 role="alert"
+                 data-testid="reauth-banner-dashboard">
+                <div class="reauth-banner__body">
+                    <strong class="reauth-banner__heading">Reconnect to Google to resume sync</strong>
+                    <p class="reauth-banner__message">@ReauthBanner.FormatMessage(_connectionStatus?.LastError)</p>
+                </div>
+                <button type="button"
+                        class="btn btn-primary reauth-banner__cta"
+                        data-testid="reauth-banner-dashboard-cta"
+                        @onclick="OnLoginClicked">
+                    Reconnect
+                </button>
+            </div>
+        }
         <WeatherStrip ActiveView="@(_currentView == DashboardView.Day ? "Day" : _currentView == DashboardView.MonthAgenda ? "Agenda" : "Month")" />
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
@@ -135,6 +153,7 @@
     private EventModal _eventModal = default!;
     private IReadOnlyList<CalendarSummaryViewModel> _calendars = Array.Empty<CalendarSummaryViewModel>();
     private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
+    private ConnectionStatusDto? _connectionStatus;
 
     protected override async Task OnInitializedAsync()
     {
@@ -148,6 +167,8 @@
             // Not authenticated - show login prompt only
             return;
         }
+
+        await LoadConnectionStatusAsync();
 
         // Authenticated - load calendar data
         _calendars = await CalendarApi.GetCalendarsAsync();
@@ -351,6 +372,18 @@
         var backendUrl = Configuration["BackendUrl"]
             ?? throw new InvalidOperationException("BackendUrl is not configured.");
         NavigationManager.NavigateTo($"{backendUrl}/api/auth/login", forceLoad: true);
+    }
+
+    private async Task LoadConnectionStatusAsync()
+    {
+        try
+        {
+            _connectionStatus = await CalendarApi.GetConnectionStatusAsync();
+        }
+        catch
+        {
+            _connectionStatus = null;
+        }
     }
 
     private async Task OnSignOutClicked()
