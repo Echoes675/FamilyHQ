@@ -497,10 +497,130 @@ public class CalendarSyncServiceTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task SyncAsync_WhenAddEventThrowsForOneEvent_RecordsFailureAndContinues()
+    {
+        // Arrange — three events; the middle one throws on persistence. Remaining
+        // events should still persist and exactly one SyncEventFailure row recorded
+        // with the offending GoogleEventId.
+        var (client, calendarRepository, _, _, _, _, syncFailureRepo, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-resilience");
+        var calendarId       = Guid.Parse("a1111111-1111-1111-1111-111111111111");
+        var googleCalendarId = "resilience@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = start.AddDays(7);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Resilience" };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+
+        var goodA = new CalendarEvent { GoogleEventId = "evt-a", Title = "A" };
+        var bad   = new CalendarEvent { GoogleEventId = "evt-bad", Title = "Bad" };
+        var goodB = new CalendarEvent { GoogleEventId = "evt-b", Title = "B" };
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { goodA, bad, goodB }, "next-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        calendarRepository.Setup(r => r.AddEventAsync(It.Is<CalendarEvent>(e => e.GoogleEventId == "evt-bad"), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated event-level failure"));
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert — the two good events still persisted, exactly one failure recorded
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "evt-a"), It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "evt-b"), It.IsAny<CancellationToken>()), Times.Once);
+        syncFailureRepo.Verify(s => s.AddAsync(
+            It.Is<SyncEventFailure>(f =>
+                f.GoogleEventId == "evt-bad" &&
+                f.CalendarInfoId == calendarId &&
+                f.UserId == "u-resilience" &&
+                f.EventTitle == "Bad" &&
+                f.FailureReason == "simulated event-level failure" &&
+                f.ExceptionType.Contains("InvalidOperationException") &&
+                !f.Resolved),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // Sync still completes — token advanced
+        calendarRepository.Verify(r => r.AddSyncStateAsync(It.Is<SyncState>(s => s.SyncToken == "next-token"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_WhenAddEventThrowsGoogleReauthRequired_PropagatesNotCaught()
+    {
+        // Arrange
+        var (client, calendarRepository, _, _, _, _, syncFailureRepo, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-reauth");
+        var calendarId       = Guid.Parse("b2222222-2222-2222-2222-222222222222");
+        var googleCalendarId = "reauth@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = start.AddDays(7);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "R" };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-x", Title = "X" } }, "tok"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-x", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+        calendarRepository.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "rejected"));
+
+        // Act
+        var act = () => systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+        syncFailureRepo.Verify(s => s.AddAsync(It.IsAny<SyncEventFailure>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_WhenAddEventThrowsOperationCanceled_PropagatesNotCaught()
+    {
+        // Arrange
+        var (client, calendarRepository, _, _, _, _, syncFailureRepo, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-cancel");
+        var calendarId       = Guid.Parse("c3333333-3333-3333-3333-333333333333");
+        var googleCalendarId = "cancel@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = start.AddDays(7);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "C" };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-y", Title = "Y" } }, "tok"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-y", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+        calendarRepository.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("cancelled"));
+
+        // Act
+        var act = () => systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        syncFailureRepo.Verify(s => s.AddAsync(It.IsAny<SyncEventFailure>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {
-        var (client, repo, tagParser, _, _, _, sut) = CreateSutWithReauthDeps(userId: "test-user");
+        var (client, repo, tagParser, _, _, _, _, sut) = CreateSutWithAllDeps(userId: "test-user");
         return (client, repo, tagParser, sut);
     }
 
@@ -509,12 +629,23 @@ public class CalendarSyncServiceTests
         Mock<ITokenStore> tokenStore, Mock<ICurrentUserService> currentUser,
         CalendarSyncService sut) CreateSutWithReauthDeps(string userId)
     {
-        var clientMock        = new Mock<IGoogleCalendarClient>();
-        var repoMock          = new Mock<ICalendarRepository>();
-        var tagParserMock     = new Mock<IMemberTagParser>();
-        var loggerMock        = new Mock<ILogger<CalendarSyncService>>();
-        var tokenStoreMock    = new Mock<ITokenStore>();
-        var currentUserMock   = new Mock<ICurrentUserService>();
+        var (client, repo, tagParser, logger, tokenStore, currentUser, _, sut) = CreateSutWithAllDeps(userId);
+        return (client, repo, tagParser, logger, tokenStore, currentUser, sut);
+    }
+
+    private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
+        Mock<IMemberTagParser> tagParser, Mock<ILogger<CalendarSyncService>> logger,
+        Mock<ITokenStore> tokenStore, Mock<ICurrentUserService> currentUser,
+        Mock<ISyncFailureRepository> syncFailureRepo,
+        CalendarSyncService sut) CreateSutWithAllDeps(string userId)
+    {
+        var clientMock           = new Mock<IGoogleCalendarClient>();
+        var repoMock             = new Mock<ICalendarRepository>();
+        var tagParserMock        = new Mock<IMemberTagParser>();
+        var loggerMock           = new Mock<ILogger<CalendarSyncService>>();
+        var tokenStoreMock       = new Mock<ITokenStore>();
+        var currentUserMock      = new Mock<ICurrentUserService>();
+        var syncFailureRepoMock  = new Mock<ISyncFailureRepository>();
         currentUserMock.SetupGet(c => c.UserId).Returns(userId);
 
         // Default tag parser returns empty list
@@ -527,8 +658,9 @@ public class CalendarSyncServiceTests
             tagParserMock.Object,
             loggerMock.Object,
             tokenStoreMock.Object,
-            currentUserMock.Object);
+            currentUserMock.Object,
+            syncFailureRepoMock.Object);
 
-        return (clientMock, repoMock, tagParserMock, loggerMock, tokenStoreMock, currentUserMock, sut);
+        return (clientMock, repoMock, tagParserMock, loggerMock, tokenStoreMock, currentUserMock, syncFailureRepoMock, sut);
     }
 }

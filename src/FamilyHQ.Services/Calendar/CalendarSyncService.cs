@@ -11,7 +11,8 @@ public class CalendarSyncService(
     IMemberTagParser memberTagParser,
     ILogger<CalendarSyncService> logger,
     ITokenStore tokenStore,
-    ICurrentUserService currentUserService) : ICalendarSyncService
+    ICurrentUserService currentUserService,
+    ISyncFailureRepository syncFailureRepository) : ICalendarSyncService
 {
     public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
@@ -175,42 +176,49 @@ public class CalendarSyncService(
 
             foreach (var evt in events)
             {
-                if (evt.Title == "CANCELLED_TOMBSTONE")
+                try
                 {
-                    var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                    if (tracked != null)
-                        await calendarRepository.DeleteEventAsync(tracked.Id, ct);
-                    continue;
+                    if (evt.Title == "CANCELLED_TOMBSTONE")
+                    {
+                        var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                        if (tracked != null)
+                            await calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                        continue;
+                    }
+
+                    // Derive members from description
+                    var parsedNames   = memberTagParser.ParseMembers(evt.Description, knownMemberNames);
+                    var parsedMembers = parsedNames
+                        .Where(n => calendarByName.ContainsKey(n))
+                        .Select(n => calendarByName[n])
+                        .ToList();
+
+                    // If no members parsed and this is an individual calendar, default to owning calendar's member
+                    if (parsedMembers.Count == 0 && !calendar.IsShared)
+                        parsedMembers.Add(calendar);
+
+                    var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                    if (existing != null)
+                    {
+                        existing.Title       = evt.Title;
+                        existing.Start       = evt.Start;
+                        existing.End         = evt.End;
+                        existing.IsAllDay    = evt.IsAllDay;
+                        existing.Location    = evt.Location;
+                        existing.Description = evt.Description;
+                        existing.Members     = parsedMembers;
+                        await calendarRepository.UpdateEventAsync(existing, ct);
+                    }
+                    else
+                    {
+                        evt.OwnerCalendarInfoId = calendar.Id;
+                        evt.Members             = parsedMembers;
+                        await calendarRepository.AddEventAsync(evt, ct);
+                    }
                 }
-
-                // Derive members from description
-                var parsedNames   = memberTagParser.ParseMembers(evt.Description, knownMemberNames);
-                var parsedMembers = parsedNames
-                    .Where(n => calendarByName.ContainsKey(n))
-                    .Select(n => calendarByName[n])
-                    .ToList();
-
-                // If no members parsed and this is an individual calendar, default to owning calendar's member
-                if (parsedMembers.Count == 0 && !calendar.IsShared)
-                    parsedMembers.Add(calendar);
-
-                var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                if (existing != null)
+                catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
                 {
-                    existing.Title       = evt.Title;
-                    existing.Start       = evt.Start;
-                    existing.End         = evt.End;
-                    existing.IsAllDay    = evt.IsAllDay;
-                    existing.Location    = evt.Location;
-                    existing.Description = evt.Description;
-                    existing.Members     = parsedMembers;
-                    await calendarRepository.UpdateEventAsync(existing, ct);
-                }
-                else
-                {
-                    evt.OwnerCalendarInfoId = calendar.Id;
-                    evt.Members             = parsedMembers;
-                    await calendarRepository.AddEventAsync(evt, ct);
+                    await RecordEventFailureAsync(evt, calendar.Id, ex, ct);
                 }
             }
 
@@ -237,6 +245,33 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
+    }
+
+    private async Task RecordEventFailureAsync(CalendarEvent evt, Guid calendarInfoId, Exception ex, CancellationToken ct)
+    {
+        var userId = currentUserService.UserId ?? string.Empty;
+        logger.LogError(
+            ex,
+            "Sync failed for event {GoogleEventId} on calendar {CalendarInfoId} (user {UserId}): {ExceptionType} — {Message}",
+            evt.GoogleEventId,
+            calendarInfoId,
+            userId,
+            ex.GetType().Name,
+            ex.Message);
+
+        var failure = new SyncEventFailure
+        {
+            UserId = userId,
+            CalendarInfoId = calendarInfoId,
+            GoogleEventId = evt.GoogleEventId,
+            EventTitle = evt.Title,
+            FailureReason = ex.Message,
+            ExceptionType = ex.GetType().FullName ?? ex.GetType().Name,
+            FailedAt = DateTimeOffset.UtcNow,
+            Resolved = false
+        };
+
+        await syncFailureRepository.AddAsync(failure, ct);
     }
 
     private async Task MarkCurrentUserNeedsReauthAsync(GoogleReauthRequiredException ex, CancellationToken ct)
