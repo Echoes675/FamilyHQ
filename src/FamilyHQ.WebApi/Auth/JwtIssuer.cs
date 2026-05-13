@@ -20,6 +20,7 @@ public class JwtIssuer : IJwtIssuer
 
     public JwtIssuer(IConfiguration configuration)
     {
+        ArgumentNullException.ThrowIfNull(configuration);
         _configuration = configuration;
     }
 

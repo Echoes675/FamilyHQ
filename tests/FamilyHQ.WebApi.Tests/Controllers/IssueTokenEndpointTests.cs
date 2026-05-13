@@ -1,18 +1,14 @@
-using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Data;
-using FamilyHQ.Services.Auth;
-using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Models;
-using FamilyHQ.WebApi.Configuration;
+using FamilyHQ.WebApi.Options;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -36,7 +32,7 @@ public class IssueTokenEndpointTests
         SetAuthorizationHeader(sut, $"Bearer {ConfiguredSecret}");
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = SeededUserId });
+        var result = await sut.IssueToken(new IssueTokenRequest(SeededUserId));
 
         // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
@@ -56,7 +52,7 @@ public class IssueTokenEndpointTests
         SetAuthorizationHeader(sut, $"Bearer {ConfiguredSecret}");
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = "unknown-sub" });
+        var result = await sut.IssueToken(new IssueTokenRequest("unknown-sub"));
 
         // Assert
         result.Should().BeOfType<NotFoundResult>();
@@ -71,7 +67,7 @@ public class IssueTokenEndpointTests
         SetAuthorizationHeader(sut, "Bearer wrong-secret");
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = SeededUserId });
+        var result = await sut.IssueToken(new IssueTokenRequest(SeededUserId));
 
         // Assert
         result.Should().BeOfType<NotFoundResult>();
@@ -86,7 +82,7 @@ public class IssueTokenEndpointTests
         // No Authorization header set.
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = SeededUserId });
+        var result = await sut.IssueToken(new IssueTokenRequest(SeededUserId));
 
         // Assert
         result.Should().BeOfType<NotFoundResult>();
@@ -101,7 +97,7 @@ public class IssueTokenEndpointTests
         SetAuthorizationHeader(sut, $"Bearer {ConfiguredSecret}");
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = "" });
+        var result = await sut.IssueToken(new IssueTokenRequest(""));
 
         // Assert
         result.Should().BeOfType<BadRequestObjectResult>();
@@ -116,7 +112,7 @@ public class IssueTokenEndpointTests
         SetAuthorizationHeader(sut, $"Bearer {ConfiguredSecret}");
 
         // Act
-        var result = await sut.IssueToken(new IssueTokenRequest { UserId = SeededUserId });
+        var result = await sut.IssueToken(new IssueTokenRequest(SeededUserId));
 
         // Assert
         result.Should().BeOfType<NotFoundResult>();
@@ -137,7 +133,30 @@ public class IssueTokenEndpointTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
-    private static void SetAuthorizationHeader(AuthController controller, string headerValue)
+    // Regression test for the spec-compliance fix in this dispatch. Body validation must run
+    // before authentication so callers with a malformed body get 400 regardless of whether
+    // their bearer secret happens to be correct. Otherwise the response code becomes a clean
+    // oracle for secret correctness: 400 ↔ secret correct, 404 ↔ secret wrong.
+    [Fact]
+    public async Task WrongSecret_WithMalformedBody_Returns400()
+    {
+        // Arrange
+        await using var db = CreateDb(seedUserToken: true);
+        var sut = CreateSut(db, enabled: true);
+        SetAuthorizationHeader(sut, "Bearer definitely-not-the-secret");
+
+        // Act
+        var result = await sut.IssueToken(new IssueTokenRequest(""));
+
+        // Assert
+        // Body validation precedes auth, so an empty userId returns 400 even when the
+        // caller's secret is wrong. This proves bad-body responses are publicly observable
+        // (acceptable: malformed body is a structural error) while preserving secret
+        // confidentiality (the secret-correct vs secret-wrong response is identical here).
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    private static void SetAuthorizationHeader(IssueTokenController controller, string headerValue)
     {
         controller.ControllerContext.HttpContext.Request.Headers["Authorization"] = headerValue;
     }
@@ -166,9 +185,9 @@ public class IssueTokenEndpointTests
         return db;
     }
 
-    private static AuthController CreateSut(FamilyHqDbContext db, bool enabled)
+    private static IssueTokenController CreateSut(FamilyHqDbContext db, bool enabled)
     {
-        var options = Options.Create(new IssueTokenEndpointOptions
+        var options = Microsoft.Extensions.Options.Options.Create(new IssueTokenEndpointOptions
         {
             Enabled = enabled,
             Secret = ConfiguredSecret,
@@ -183,30 +202,11 @@ public class IssueTokenEndpointTests
 
         var jwtIssuer = new JwtIssuer(configuration);
 
-        // The remaining AuthController dependencies are unused by IssueToken.
-        var scopeFactoryMock = new Mock<IServiceScopeFactory>();
-        var googleOptions = Options.Create(new GoogleCalendarOptions
-        {
-            ClientId = "x",
-            ClientSecret = "x",
-            AuthPromptUrl = "https://sim.test/oauth2/auth",
-            AuthBaseUrl = "https://sim.test",
-        });
-        var authService = new GoogleAuthService(
-            new HttpClient(),
-            googleOptions,
-            new Mock<ILogger<GoogleAuthService>>().Object);
-
-        var controller = new AuthController(
-            authService,
-            new Mock<ITokenStore>().Object,
-            scopeFactoryMock.Object,
-            configuration,
-            Options.Create(new SyncOptions()),
-            jwtIssuer,
-            new Mock<ILogger<AuthController>>().Object,
+        var controller = new IssueTokenController(
+            options,
             db,
-            options)
+            jwtIssuer,
+            new Mock<ILogger<IssueTokenController>>().Object)
         {
             ControllerContext = new ControllerContext
             {

@@ -1,16 +1,13 @@
 using FamilyHQ.Core.Interfaces;
-using FamilyHQ.Data;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
-using FamilyHQ.WebApi.Configuration;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -191,7 +188,7 @@ public class AuthControllerTests
                 Content = new StringContent(responseJson)
             });
 
-        var options = Options.Create(new GoogleCalendarOptions
+        var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
         {
             ClientId = "simulator-client",
             ClientSecret = "simulator-secret",
@@ -237,16 +234,9 @@ public class AuthControllerTests
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
-        var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = webhookRegistrationEnabled });
+        var syncOptions = Microsoft.Extensions.Options.Options.Create(new SyncOptions { WebhookRegistrationEnabled = webhookRegistrationEnabled });
 
         var jwtIssuer = new JwtIssuer(configuration);
-
-        var dbOptions = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: $"auth-controller-tests-{Guid.NewGuid()}")
-            .Options;
-        var dbContext = new FamilyHqDbContext(dbOptions);
-
-        var issueTokenOptions = Options.Create(new IssueTokenEndpointOptions());
 
         var controller = new AuthController(
             authService,
@@ -255,9 +245,7 @@ public class AuthControllerTests
             configuration,
             syncOptions,
             jwtIssuer,
-            new Mock<ILogger<AuthController>>().Object,
-            dbContext,
-            issueTokenOptions)
+            new Mock<ILogger<AuthController>>().Object)
         {
             ControllerContext = new ControllerContext
             {

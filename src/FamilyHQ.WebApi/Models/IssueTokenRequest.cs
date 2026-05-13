@@ -5,7 +5,4 @@ namespace FamilyHQ.WebApi.Models;
 /// JWT for. <see cref="UserId"/> is the Google subject identifier stored as
 /// <c>UserToken.UserId</c>.
 /// </summary>
-public class IssueTokenRequest
-{
-    public string UserId { get; set; } = string.Empty;
-}
+public sealed record IssueTokenRequest(string UserId);

@@ -9,7 +9,7 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
 using FamilyHQ.WebApi.Auth;
 using FamilyHQ.WebApi.Hubs;
-using FamilyHQ.WebApi.Configuration;
+using FamilyHQ.WebApi.Options;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;

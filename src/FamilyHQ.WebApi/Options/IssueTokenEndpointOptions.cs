@@ -1,4 +1,4 @@
-namespace FamilyHQ.WebApi.Configuration;
+namespace FamilyHQ.WebApi.Options;
 
 /// <summary>
 /// Configuration for the trusted-system <c>POST /api/auth/issue-token</c> endpoint.
