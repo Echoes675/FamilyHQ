@@ -263,6 +263,100 @@ public class DatabaseTokenStoreTests : IDisposable
         dbContext.Dispose();
     }
 
+    [Fact]
+    public async Task MarkNeedsReauthAsync_PersistsStatusDescriptionAndTimestamp()
+    {
+        // Arrange
+        var userId = "test-user-needs-reauth";
+        var sut = CreateSut(userId);
+        await sut.SaveRefreshTokenAsync("initial-token");
+
+        // Act
+        await sut.MarkNeedsReauthAsync(userId, "Token has been expired or revoked.", CancellationToken.None);
+
+        // Assert
+        var stored = await _dbContext.UserTokens.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.UserId == userId);
+        Assert.NotNull(stored);
+        Assert.Equal(TokenAuthStatus.NeedsReauth, stored.AuthStatus);
+        Assert.Equal("Token has been expired or revoked.", stored.LastAuthErrorDescription);
+        Assert.NotNull(stored.AuthStatusChangedAt);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_AfterNeedsReauth_ResetsToActiveAndClearsError()
+    {
+        // Arrange
+        var userId = "test-user-reset";
+        var sut = CreateSut(userId);
+        await sut.SaveRefreshTokenAsync("first-token");
+        await sut.MarkNeedsReauthAsync(userId, "previous error", CancellationToken.None);
+
+        // Act — re-consent flow saves a fresh refresh token
+        await sut.SaveRefreshTokenAsync("brand-new-token");
+
+        // Assert
+        var stored = await _dbContext.UserTokens.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.UserId == userId);
+        Assert.NotNull(stored);
+        Assert.Equal(TokenAuthStatus.Active, stored.AuthStatus);
+        Assert.Null(stored.LastAuthErrorDescription);
+        Assert.NotNull(stored.AuthStatusChangedAt);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_WithExplicitUserId_AfterNeedsReauth_ResetsToActive()
+    {
+        // Arrange
+        var userId = "test-user-callback-reset";
+        var sut = CreateSut(userId);
+        await sut.SaveRefreshTokenAsync("first-token");
+        await sut.MarkNeedsReauthAsync(userId, "old error", CancellationToken.None);
+
+        // Act — the explicit-userId overload is used by AuthController.Callback
+        await sut.SaveRefreshTokenAsync("post-reconsent-token", userId);
+
+        // Assert
+        var stored = await _dbContext.UserTokens.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.UserId == userId);
+        Assert.NotNull(stored);
+        Assert.Equal(TokenAuthStatus.Active, stored.AuthStatus);
+        Assert.Null(stored.LastAuthErrorDescription);
+    }
+
+    [Fact]
+    public async Task GetAuthStatusAsync_WhenNoToken_ReturnsActiveWithNullError()
+    {
+        // Arrange
+        var sut = CreateSut("any-user");
+
+        // Act
+        var result = await sut.GetAuthStatusAsync("unknown-user", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(TokenAuthStatus.Active, result.Status);
+        Assert.Null(result.LastError);
+        Assert.Null(result.Since);
+    }
+
+    [Fact]
+    public async Task GetAuthStatusAsync_AfterMarkNeedsReauth_ReturnsNeedsReauthWithErrorAndTimestamp()
+    {
+        // Arrange
+        var userId = "test-user-get-status";
+        var sut = CreateSut(userId);
+        await sut.SaveRefreshTokenAsync("a-token");
+        await sut.MarkNeedsReauthAsync(userId, "invalid_grant occurred", CancellationToken.None);
+
+        // Act
+        var result = await sut.GetAuthStatusAsync(userId, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(TokenAuthStatus.NeedsReauth, result.Status);
+        Assert.Equal("invalid_grant occurred", result.LastError);
+        Assert.NotNull(result.Since);
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();

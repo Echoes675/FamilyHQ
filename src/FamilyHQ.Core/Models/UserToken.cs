@@ -42,4 +42,21 @@ public class UserToken
     /// When the token was last updated
     /// </summary>
     public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Indicates whether the stored token is usable or has been rejected by Google
+    /// and the user must re-consent.
+    /// </summary>
+    public TokenAuthStatus AuthStatus { get; set; } = TokenAuthStatus.Active;
+
+    /// <summary>
+    /// Last error description returned by Google when the token was rejected
+    /// (e.g., "Token has been expired or revoked.").
+    /// </summary>
+    public string? LastAuthErrorDescription { get; set; }
+
+    /// <summary>
+    /// When <see cref="AuthStatus"/> last transitioned.
+    /// </summary>
+    public DateTimeOffset? AuthStatusChangedAt { get; set; }
 }
