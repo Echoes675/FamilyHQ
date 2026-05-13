@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -42,6 +43,32 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _logger = logger;
     }
 
+    private const int MaxLoggedBodyLength = 4096;
+
+    private async Task ThrowIfFailedAsync(HttpResponseMessage response, string operation, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        var truncated = body.Length <= MaxLoggedBodyLength ? body : body.Substring(0, MaxLoggedBodyLength);
+
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            _logger.LogWarning(
+                "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
+                operation, (int)response.StatusCode, truncated);
+            throw new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.CalendarApi,
+                response.ReasonPhrase,
+                truncated);
+        }
+
+        _logger.LogWarning(
+            "Google {Operation} returned {Status}. Body: {Body}",
+            operation, (int)response.StatusCode, truncated);
+        throw new GoogleApiException(response.StatusCode, operation, truncated);
+    }
+
     private async Task SetAuthorizationHeaderAsync(CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(_accessTokenProvider.AccessToken))
@@ -64,7 +91,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await SetAuthorizationHeaderAsync(ct);
         var endpoint = $"{_options.CalendarApiBaseUrl}/users/me/calendarList";
         var response = await _httpClient.GetAsync(endpoint, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "GetCalendars", ct);
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiCalendarList>(cancellationToken: ct);
         return result?.Items.Select(item => new CalendarInfo
@@ -110,10 +137,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events?{string.Join("&", query)}";
             var response = await _httpClient.GetAsync(endpoint, ct);
 
-            if (response.StatusCode == System.Net.HttpStatusCode.Gone)
+            if (response.StatusCode == HttpStatusCode.Gone)
                 throw new InvalidOperationException("Sync token is no longer valid. Full sync required.");
 
-            response.EnsureSuccessStatusCode();
+            await ThrowIfFailedAsync(response, "GetEvents", ct);
 
             var result = await response.Content.ReadFromJsonAsync<GoogleApiEventList>(cancellationToken: ct);
             if (result != null)
@@ -164,7 +191,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
         var body = MapToGoogleEvent(calendarEvent, contentHash);
         var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "CreateEvent", ct);
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
@@ -181,7 +208,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
         var body = MapToGoogleEvent(calendarEvent, contentHash);
         var response = await _httpClient.PutAsJsonAsync(endpoint, body, _jsonOptions, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "UpdateEvent", ct);
         return calendarEvent;
     }
 
@@ -191,13 +218,13 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.DeleteAsync(endpoint, ct);
 
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        if (response.StatusCode == HttpStatusCode.NotFound)
         {
             _logger.LogWarning("Delete event {GoogleEventId} returned 404 — treating as success.", googleEventId);
             return;
         }
 
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "DeleteEvent", ct);
     }
 
     public async Task<string> MoveEventAsync(
@@ -209,7 +236,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await SetAuthorizationHeaderAsync(ct);
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(sourceCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}/move?destination={Uri.EscapeDataString(destinationCalendarId)}";
         var response = await _httpClient.PostAsync(endpoint, null, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "MoveEvent", ct);
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         return result!.Id;
@@ -224,8 +251,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(googleEventId)}";
         var response = await _httpClient.GetAsync(endpoint, ct);
 
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await ThrowIfFailedAsync(response, "GetEvent", ct);
 
         var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         if (apiEvent is null) return null;
@@ -244,7 +271,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/watch";
         var body = new { id = channelId, type = "web_hook", address = webhookUrl };
         var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "WatchEvents", ct);
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiWatchResponse>(cancellationToken: ct);
         return new WatchChannelResponse(result!.Id, result.ResourceId, result.Expiration);
@@ -256,7 +283,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var endpoint = $"{_options.CalendarApiBaseUrl}/channels/stop";
         var body = new { id = channelId, resourceId };
         var response = await _httpClient.PostAsJsonAsync(endpoint, body, _jsonOptions, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
     private static object MapToGoogleEvent(CalendarEvent evt, string contentHash)

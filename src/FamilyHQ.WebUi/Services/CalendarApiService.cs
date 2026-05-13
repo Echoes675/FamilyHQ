@@ -152,4 +152,24 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var response = await httpClient.PostAsync("api/sync/register-webhooks", content: null, ct);
         response.EnsureSuccessStatusCode();
     }
+
+    public async Task<ConnectionStatusDto?> GetConnectionStatusAsync(CancellationToken ct = default)
+    {
+        // Banner is a non-critical signal — match GetCalendarsAsync's degrade-gracefully pattern
+        // rather than throwing on 401/5xx/network errors. Caller treats null as "unknown".
+        try
+        {
+            var response = await httpClient.GetAsync("api/calendars/connection-status", ct);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<ConnectionStatusDto>(cancellationToken: ct);
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            return null;
+        }
+    }
 }

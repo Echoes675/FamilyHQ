@@ -1,8 +1,30 @@
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Components.Reauth
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.ViewModels
 @inject ICalendarApiService CalendarApi
+@inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 
 <div class="settings-section-content">
+    @if (ReauthBanner.ShouldShow(_connectionStatus))
+    {
+        <div class="alert alert-warning reauth-banner reauth-banner--settings"
+             role="alert"
+             data-testid="reauth-banner-settings">
+            <div class="reauth-banner__body">
+                <strong class="reauth-banner__heading">Your Google connection needs attention</strong>
+                <p class="reauth-banner__message">@ReauthBanner.FormatMessage(_connectionStatus?.LastError)</p>
+            </div>
+            <button type="button"
+                    class="btn btn-primary reauth-banner__cta"
+                    data-testid="reauth-banner-settings-cta"
+                    @onclick="ReconnectToGoogle">
+                Reconnect to Google
+            </button>
+        </div>
+    }
+
     <h2 class="settings-section__title">Calendars</h2>
     <p class="settings-section__description">
         Control which calendars are shown on the kiosk and designate the shared calendar used for multi-member events.
@@ -140,6 +162,7 @@
     private string? _syncError;
     private Guid? _pendingSharedId;
     private string? _pendingSharedName;
+    private ConnectionStatusDto? _connectionStatus;
 
     private async Task TriggerSyncAsync()
     {
@@ -182,7 +205,30 @@
         }
     }
 
-    protected override Task OnInitializedAsync() => LoadCalendarsAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadConnectionStatusAsync();
+        await LoadCalendarsAsync();
+    }
+
+    private async Task LoadConnectionStatusAsync()
+    {
+        try
+        {
+            _connectionStatus = await CalendarApi.GetConnectionStatusAsync();
+        }
+        catch
+        {
+            _connectionStatus = null;
+        }
+    }
+
+    private void ReconnectToGoogle()
+    {
+        var backendUrl = Configuration["BackendUrl"]
+            ?? throw new InvalidOperationException("BackendUrl is not configured.");
+        NavigationManager.NavigateTo($"{backendUrl}/api/auth/login", forceLoad: true);
+    }
 
     private async Task LoadCalendarsAsync()
     {

@@ -440,6 +440,115 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetCalendarsAsync_WhenForbidden_ThrowsGoogleReauthRequiredException()
+    {
+        // Arrange — Google 403 (e.g. scope missing post-consent, API disabled) must surface as
+        // a needs-reauth signal so the user is prompted to reconnect rather than swallowing a 500.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var forbiddenBody = JsonSerializer.Serialize(new { error = new { code = 403, message = "Insufficient Permission" } });
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Forbidden,
+                Content = new StringContent(forbiddenBody)
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
+        ex.Which.ResponseBody.Should().Contain("Insufficient Permission");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenUnauthorized_ThrowsGoogleReauthRequiredException()
+    {
+        // Arrange — 401 from the events endpoint is also a reauth signal.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":\"invalid_credentials\"}")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetEventsAsync("cal1", null, null))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When500_ThrowsGoogleApiExceptionWithBody()
+    {
+        // Arrange — non-auth upstream errors surface as GoogleApiException with body captured.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.InternalServerError,
+                Content = new StringContent("backend boom")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        ex.Which.ResponseBody.Should().Contain("backend boom");
+    }
+
+    [Fact]
     public async Task DeleteEventAsync_WhenEventNotFound_TreatsAsSuccess()
     {
         // Arrange — 404 means the event is already gone; we should not throw

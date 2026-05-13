@@ -14,11 +14,37 @@ public class CalendarsController : ControllerBase
 {
     private readonly ICalendarRepository _calendarRepository;
     private readonly ILogger<CalendarsController> _logger;
+    private readonly ITokenStore _tokenStore;
+    private readonly ICurrentUserService _currentUser;
 
-    public CalendarsController(ICalendarRepository calendarRepository, ILogger<CalendarsController> logger)
+    public CalendarsController(
+        ICalendarRepository calendarRepository,
+        ILogger<CalendarsController> logger,
+        ITokenStore tokenStore,
+        ICurrentUserService currentUser)
     {
         _calendarRepository = calendarRepository;
         _logger = logger;
+        _tokenStore = tokenStore;
+        _currentUser = currentUser;
+    }
+
+    [HttpGet("connection-status")]
+    public async Task<IActionResult> GetConnectionStatus(CancellationToken ct)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var auth = await _tokenStore.GetAuthStatusAsync(userId, ct);
+        var statusText = auth.Status == TokenAuthStatus.NeedsReauth ? "needs_reauth" : "active";
+
+        return Ok(new
+        {
+            status = statusText,
+            lastError = auth.LastError,
+            since = auth.Since
+        });
     }
 
     [HttpGet]

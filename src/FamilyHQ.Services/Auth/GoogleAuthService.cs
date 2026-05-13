@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
@@ -89,13 +90,45 @@ public class GoogleAuthService
 
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Failed to refresh token: {Error}", error);
-            throw new InvalidOperationException($"Failed to refresh token. Status: {response.StatusCode}");
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var (error, description) = ParseOAuthError(body);
+
+            // Refresh-token value is intentionally never logged — only the parsed Google error.
+            _logger.LogError(
+                "Failed to refresh token. Status: {Status} Error: {Error} Description: {Description}",
+                response.StatusCode, error, description);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest
+                && error is "invalid_grant" or "unauthorized_client" or "invalid_token")
+            {
+                throw new GoogleReauthRequiredException(
+                    GoogleAuthFailureSource.TokenRefresh,
+                    description,
+                    body);
+            }
+
+            throw new InvalidOperationException(
+                $"Failed to refresh token. Status: {response.StatusCode}. Error: {error ?? "<none>"}. Description: {description ?? "<none>"}.");
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
         return result!.AccessToken;
     }
 
+    private static (string? Error, string? Description) ParseOAuthError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return (null, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            var error = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+            var description = root.TryGetProperty("error_description", out var d) ? d.GetString() : null;
+            return (error, description);
+        }
+        catch (JsonException)
+        {
+            return (null, null);
+        }
+    }
 }

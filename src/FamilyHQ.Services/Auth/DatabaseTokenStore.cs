@@ -127,51 +127,14 @@ public class DatabaseTokenStore : ITokenStore
     public async Task SaveRefreshTokenAsync(string refreshToken, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(refreshToken);
-        
+
         var userId = _currentUserService.UserId;
         if (string.IsNullOrEmpty(userId))
         {
             throw new InvalidOperationException("Cannot save refresh token: no user ID available");
         }
 
-        await _lock.WaitAsync(ct);
-        try
-        {
-            // Encrypt the token before storing
-            var encryptedToken = _dataProtector.Protect(refreshToken);
-
-            var existingToken = await _dbContext.UserTokens
-                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
-
-            if (existingToken != null)
-            {
-                // Update existing token
-                _logger.LogDebug("Updating existing refresh token for user {UserId}", userId);
-                existingToken.RefreshToken = encryptedToken;
-                existingToken.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-            else
-            {
-                // Insert new token
-                _logger.LogDebug("Creating new refresh token for user {UserId}", userId);
-                var userToken = new UserToken
-                {
-                    UserId = userId,
-                    Provider = _provider,
-                    RefreshToken = encryptedToken,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                };
-                _dbContext.UserTokens.Add(userToken);
-            }
-
-            await _dbContext.SaveChangesAsync(ct);
-            _logger.LogInformation("Saved refresh token for user {UserId}", userId);
-        }
-        finally
-        {
-            _lock.Release();
-        }
+        await SaveRefreshTokenInternalAsync(refreshToken, userId, ct);
     }
 
     /// <summary>
@@ -186,33 +149,111 @@ public class DatabaseTokenStore : ITokenStore
             throw new InvalidOperationException("Cannot save refresh token: no user ID provided");
         }
 
+        await SaveRefreshTokenInternalAsync(refreshToken, userId, ct);
+    }
+
+    public async Task<IEnumerable<string>> GetAllUserIdsAsync(CancellationToken ct = default)
+    {
+        return await _dbContext.UserTokens
+            .Select(t => t.UserId)
+            .Distinct()
+            .ToListAsync(ct);
+    }
+
+    public async Task MarkNeedsReauthAsync(string userId, string? errorDescription, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            throw new InvalidOperationException("Cannot mark token as needing re-auth: no user ID provided");
+        }
+
         await _lock.WaitAsync(ct);
         try
         {
-            // Encrypt the token before storing
+            var existingToken = await _dbContext.UserTokens
+                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
+
+            if (existingToken == null)
+            {
+                _logger.LogWarning(
+                    "MarkNeedsReauthAsync called for user {UserId} but no token exists",
+                    userId);
+                return;
+            }
+
+            existingToken.AuthStatus = TokenAuthStatus.NeedsReauth;
+            existingToken.LastAuthErrorDescription = Truncate(errorDescription, 512);
+            existingToken.AuthStatusChangedAt = DateTimeOffset.UtcNow;
+            existingToken.UpdatedAt = DateTimeOffset.UtcNow;
+
+            await _dbContext.SaveChangesAsync(ct);
+            _logger.LogWarning(
+                "Marked user {UserId} token as NeedsReauth ({ErrorDescription})",
+                userId, existingToken.LastAuthErrorDescription);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<AuthStatusResult> GetAuthStatusAsync(string userId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            return new AuthStatusResult(TokenAuthStatus.Active, null, null);
+        }
+
+        var token = await _dbContext.UserTokens.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
+
+        if (token == null)
+        {
+            return new AuthStatusResult(TokenAuthStatus.Active, null, null);
+        }
+
+        return new AuthStatusResult(token.AuthStatus, token.LastAuthErrorDescription, token.AuthStatusChangedAt);
+    }
+
+    private async Task SaveRefreshTokenInternalAsync(string refreshToken, string userId, CancellationToken ct)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
             var encryptedToken = _dataProtector.Protect(refreshToken);
 
             var existingToken = await _dbContext.UserTokens
                 .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
 
+            var now = DateTimeOffset.UtcNow;
+
             if (existingToken != null)
             {
-                // Update existing token
                 _logger.LogDebug("Updating existing refresh token for user {UserId}", userId);
                 existingToken.RefreshToken = encryptedToken;
-                existingToken.UpdatedAt = DateTimeOffset.UtcNow;
+                existingToken.UpdatedAt = now;
+
+                // Re-consent restores the token; clear any previous NeedsReauth flag.
+                if (existingToken.AuthStatus != TokenAuthStatus.Active
+                    || existingToken.LastAuthErrorDescription != null)
+                {
+                    existingToken.AuthStatus = TokenAuthStatus.Active;
+                    existingToken.LastAuthErrorDescription = null;
+                    existingToken.AuthStatusChangedAt = now;
+                }
             }
             else
             {
-                // Insert new token
                 _logger.LogDebug("Creating new refresh token for user {UserId}", userId);
                 var userToken = new UserToken
                 {
                     UserId = userId,
                     Provider = _provider,
                     RefreshToken = encryptedToken,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    AuthStatus = TokenAuthStatus.Active,
+                    AuthStatusChangedAt = now
                 };
                 _dbContext.UserTokens.Add(userToken);
             }
@@ -226,11 +267,9 @@ public class DatabaseTokenStore : ITokenStore
         }
     }
 
-    public async Task<IEnumerable<string>> GetAllUserIdsAsync(CancellationToken ct = default)
+    private static string? Truncate(string? value, int maxLength)
     {
-        return await _dbContext.UserTokens
-            .Select(t => t.UserId)
-            .Distinct()
-            .ToListAsync(ct);
+        if (value == null) return null;
+        return value.Length <= maxLength ? value : value.Substring(0, maxLength);
     }
 }

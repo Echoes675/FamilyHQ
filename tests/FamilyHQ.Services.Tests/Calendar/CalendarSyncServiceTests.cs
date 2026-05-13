@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -452,13 +453,69 @@ public class CalendarSyncServiceTests
         calendarRepository.Verify(r => r.DeleteEventAsync(obsoleteEventId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task SyncAllAsync_WhenGetCalendarsThrowsReauthRequired_MarksTokenAndRethrows()
+    {
+        // Arrange — token refresh failure surfaces during the entry-point Google call.
+        var (client, repo, _, _, tokenStore, currentUser, systemUnderTest) = CreateSutWithReauthDeps(userId: "u-1");
+        var ex = new GoogleReauthRequiredException(
+            GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.");
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(ex);
+
+        // Act
+        var act = () => systemUnderTest.SyncAllAsync(
+            DateTimeOffset.UtcNow.AddDays(-30),
+            DateTimeOffset.UtcNow.AddDays(30));
+
+        // Assert — original exception preserved and the user is marked.
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("u-1", "Token has been expired or revoked.", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAllAsync_WhenCalendarApi403_MarksTokenAndRethrows()
+    {
+        // Arrange — 403 from Calendar API also marks the user (different Source).
+        var (client, repo, _, _, tokenStore, currentUser, systemUnderTest) = CreateSutWithReauthDeps(userId: "u-2");
+        var ex = new GoogleReauthRequiredException(
+            GoogleAuthFailureSource.CalendarApi, "Insufficient Permission");
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(ex);
+
+        // Act
+        var act = () => systemUnderTest.SyncAllAsync(
+            DateTimeOffset.UtcNow.AddDays(-30),
+            DateTimeOffset.UtcNow.AddDays(30));
+
+        // Assert
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("u-2", "Insufficient Permission", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {
-        var clientMock     = new Mock<IGoogleCalendarClient>();
-        var repoMock       = new Mock<ICalendarRepository>();
-        var tagParserMock  = new Mock<IMemberTagParser>();
-        var loggerMock     = new Mock<ILogger<CalendarSyncService>>();
+        var (client, repo, tagParser, _, _, _, sut) = CreateSutWithReauthDeps(userId: "test-user");
+        return (client, repo, tagParser, sut);
+    }
+
+    private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
+        Mock<IMemberTagParser> tagParser, Mock<ILogger<CalendarSyncService>> logger,
+        Mock<ITokenStore> tokenStore, Mock<ICurrentUserService> currentUser,
+        CalendarSyncService sut) CreateSutWithReauthDeps(string userId)
+    {
+        var clientMock        = new Mock<IGoogleCalendarClient>();
+        var repoMock          = new Mock<ICalendarRepository>();
+        var tagParserMock     = new Mock<IMemberTagParser>();
+        var loggerMock        = new Mock<ILogger<CalendarSyncService>>();
+        var tokenStoreMock    = new Mock<ITokenStore>();
+        var currentUserMock   = new Mock<ICurrentUserService>();
+        currentUserMock.SetupGet(c => c.UserId).Returns(userId);
 
         // Default tag parser returns empty list
         tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
@@ -468,8 +525,10 @@ public class CalendarSyncServiceTests
             clientMock.Object,
             repoMock.Object,
             tagParserMock.Object,
-            loggerMock.Object);
+            loggerMock.Object,
+            tokenStoreMock.Object,
+            currentUserMock.Object);
 
-        return (clientMock, repoMock, tagParserMock, sut);
+        return (clientMock, repoMock, tagParserMock, loggerMock, tokenStoreMock, currentUserMock, sut);
     }
 }
