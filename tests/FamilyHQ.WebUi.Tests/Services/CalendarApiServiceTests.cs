@@ -201,10 +201,82 @@ public class CalendarApiServiceTests
         result.Days.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task GetConnectionStatusAsync_ParsesNeedsReauthResponse()
+    {
+        // Backend serialises an anonymous object → camelCase keys.
+        const string json = """
+        {
+          "status": "needs_reauth",
+          "lastError": "Token has been expired or revoked.",
+          "since": "2026-05-13T18:34:00+00:00"
+        }
+        """;
+
+        var sut = CreateSutWithRawResponse(HttpStatusCode.OK, json);
+
+        var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be("needs_reauth");
+        result.LastError.Should().Be("Token has been expired or revoked.");
+        result.Since.Should().Be(new DateTimeOffset(2026, 5, 13, 18, 34, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task GetConnectionStatusAsync_ParsesActiveResponse()
+    {
+        const string json = """{"status":"active","lastError":null,"since":null}""";
+
+        var sut = CreateSutWithRawResponse(HttpStatusCode.OK, json);
+
+        var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Status.Should().Be("active");
+        result.LastError.Should().BeNull();
+        result.Since.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConnectionStatusAsync_OnUnauthorized_ReturnsNull()
+    {
+        var sut = CreateSutWithRawResponse(HttpStatusCode.Unauthorized, "");
+
+        var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConnectionStatusAsync_OnNetworkFailure_ReturnsNull()
+    {
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("connection refused"));
+
+        var sut = new CalendarApiService(new HttpClient(handlerMock.Object)
+        {
+            BaseAddress = new Uri("https://test.local/")
+        });
+
+        var result = await sut.GetConnectionStatusAsync(CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
     private static CalendarApiService CreateSut(MonthViewDto responseBody)
     {
         var json = JsonSerializer.Serialize(responseBody);
+        return CreateSutWithRawResponse(HttpStatusCode.OK, json);
+    }
 
+    private static CalendarApiService CreateSutWithRawResponse(HttpStatusCode status, string body)
+    {
         var handlerMock = new Mock<HttpMessageHandler>();
         handlerMock.Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -213,8 +285,8 @@ public class CalendarApiServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage
             {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+                StatusCode = status,
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
             });
 
         var httpClient = new HttpClient(handlerMock.Object)
