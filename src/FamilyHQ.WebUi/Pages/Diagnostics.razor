@@ -1,0 +1,218 @@
+@page "/diagnostics"
+@using FamilyHQ.Core.DTOs
+@using FamilyHQ.WebUi.Components.Diagnostics
+@using FamilyHQ.WebUi.Services
+@using FamilyHQ.WebUi.Services.Auth
+@inject IDiagnosticsApiService DiagnosticsApi
+@inject IAuthenticationService AuthService
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject TimeProvider TimeProvider
+
+<PageTitle>Diagnostics</PageTitle>
+
+<DashboardHeader BackUrl="/settings" />
+
+<div class="diagnostics-page">
+    <div class="diagnostics-header">
+        <h1 class="diagnostics-page__title">Diagnostics</h1>
+        <button type="button"
+                class="btn btn-secondary diagnostics-refresh-btn"
+                data-testid="diagnostics-refresh-btn"
+                @onclick="RefreshAsync"
+                disabled="@_isLoading">
+            @if (_isLoading)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Refreshing…</span>
+            }
+            else
+            {
+                <span>Refresh</span>
+            }
+        </button>
+    </div>
+
+    @if (_loadFailed)
+    {
+        <div class="alert alert-warning" data-testid="diagnostics-load-error">
+            Unable to load diagnostics. Please try again.
+        </div>
+    }
+
+    <section class="diagnostics-section" aria-labelledby="diagnostics-connection-heading">
+        <h2 id="diagnostics-connection-heading" class="diagnostics-section__title">Connection status</h2>
+
+        @if (_connectionStatus is null && !_loadFailed)
+        {
+            <p class="diagnostics-empty" data-testid="diagnostics-connection-loading">Loading connection status…</p>
+        }
+        else if (_connectionStatus is not null)
+        {
+            <div class="diagnostics-connection">
+                <div class="diagnostics-connection__summary">
+                    <span class="@DiagnosticsView.StatusBadgeCssClass(_connectionStatus)"
+                          data-testid="diagnostics-status-badge">
+                        @DiagnosticsView.StatusBadgeLabel(_connectionStatus)
+                    </span>
+
+                    @if (DiagnosticsView.IsNeedsReauth(_connectionStatus))
+                    {
+                        <div class="diagnostics-connection__detail">
+                            @if (!string.IsNullOrWhiteSpace(_connectionStatus.LastError))
+                            {
+                                <p class="diagnostics-connection__error" data-testid="diagnostics-last-error">
+                                    @_connectionStatus.LastError
+                                </p>
+                            }
+                            @if (_connectionStatus.Since.HasValue)
+                            {
+                                <p class="diagnostics-connection__since" data-testid="diagnostics-since">
+                                    Since <time title="@DiagnosticsView.FormatAbsolute(_connectionStatus.Since.Value)">
+                                        @DiagnosticsView.FormatRelative(_connectionStatus.Since.Value, _now)
+                                    </time>
+                                </p>
+                            }
+                        </div>
+                    }
+                </div>
+
+                @if (DiagnosticsView.IsNeedsReauth(_connectionStatus))
+                {
+                    <button type="button"
+                            class="btn btn-primary diagnostics-reconnect-btn"
+                            data-testid="diagnostics-reconnect-btn"
+                            @onclick="ReconnectToGoogle">
+                        Reconnect to Google
+                    </button>
+                }
+            </div>
+
+            @if (_connectionStatus.Calendars.Count > 0)
+            {
+                <table class="diagnostics-table" data-testid="diagnostics-calendars-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Calendar</th>
+                            <th scope="col">Last synced</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var cal in _connectionStatus.Calendars)
+                        {
+                            <tr>
+                                <td>@cal.DisplayName</td>
+                                <td>
+                                    @if (cal.LastSyncedAt.HasValue)
+                                    {
+                                        <time title="@DiagnosticsView.FormatAbsolute(cal.LastSyncedAt.Value)">
+                                            @DiagnosticsView.FormatRelative(cal.LastSyncedAt.Value, _now)
+                                        </time>
+                                    }
+                                    else
+                                    {
+                                        <span class="diagnostics-muted">Never</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+    </section>
+
+    <section class="diagnostics-section" aria-labelledby="diagnostics-failures-heading">
+        <h2 id="diagnostics-failures-heading" class="diagnostics-section__title">Recent sync failures</h2>
+
+        @if (DiagnosticsView.ShouldShowEmptyState(_failures))
+        {
+            <p class="diagnostics-empty" data-testid="diagnostics-failures-empty">
+                No failures recorded — sync is healthy.
+            </p>
+        }
+        else
+        {
+            <table class="diagnostics-table" data-testid="diagnostics-failures-table">
+                <thead>
+                    <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Calendar</th>
+                        <th scope="col">Event</th>
+                        <th scope="col">Failure reason</th>
+                        <th scope="col">Exception</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var failure in _failures!)
+                    {
+                        <tr>
+                            <td>
+                                <time title="@DiagnosticsView.FormatAbsolute(failure.FailedAt)">
+                                    @DiagnosticsView.FormatRelative(failure.FailedAt, _now)
+                                </time>
+                            </td>
+                            <td>@ResolveCalendarName(failure.CalendarInfoId)</td>
+                            <td>@(string.IsNullOrWhiteSpace(failure.EventTitle) ? failure.GoogleEventId : failure.EventTitle)</td>
+                            <td>@failure.FailureReason</td>
+                            <td><code>@failure.ExceptionType</code></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+</div>
+
+@code {
+    private ConnectionStatusWithCalendarsDto? _connectionStatus;
+    private IReadOnlyList<SyncFailureDto>? _failures;
+    private bool _isLoading;
+    private bool _loadFailed;
+    private DateTimeOffset _now;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!await AuthService.IsAuthenticatedAsync())
+        {
+            Navigation.NavigateTo("/");
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task RefreshAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _loadFailed = false;
+        _now = TimeProvider.GetUtcNow();
+        StateHasChanged();
+
+        var statusTask = DiagnosticsApi.GetConnectionStatusAsync();
+        var failuresTask = DiagnosticsApi.GetSyncFailuresAsync();
+        await Task.WhenAll(statusTask, failuresTask);
+
+        _connectionStatus = await statusTask;
+        _failures = await failuresTask;
+        _loadFailed = _connectionStatus is null && (_failures is null || _failures.Count == 0);
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private string ResolveCalendarName(Guid calendarInfoId)
+    {
+        if (_connectionStatus is null) return calendarInfoId.ToString();
+        var match = _connectionStatus.Calendars.FirstOrDefault(c => c.CalendarId == calendarInfoId);
+        return match?.DisplayName ?? calendarInfoId.ToString();
+    }
+
+    private void ReconnectToGoogle()
+    {
+        var backendUrl = Configuration["BackendUrl"]
+            ?? throw new InvalidOperationException("BackendUrl is not configured.");
+        Navigation.NavigateTo($"{backendUrl}/api/auth/login", forceLoad: true);
+    }
+}
