@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Services.Calendar;
@@ -8,13 +9,24 @@ public class CalendarSyncService(
     IGoogleCalendarClient googleCalendarClient,
     ICalendarRepository calendarRepository,
     IMemberTagParser memberTagParser,
-    ILogger<CalendarSyncService> logger) : ICalendarSyncService
+    ILogger<CalendarSyncService> logger,
+    ITokenStore tokenStore,
+    ICurrentUserService currentUserService) : ICalendarSyncService
 {
     public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
         logger.LogInformation("Starting full sync from {Start} to {End}", startDate, endDate);
 
-        var googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+        List<CalendarInfo> googleCalendars;
+        try
+        {
+            googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            await MarkCurrentUserNeedsReauthAsync(ex, ct);
+            throw;
+        }
         var localCalendars  = await calendarRepository.GetCalendarsAsync(ct);
 
         // Remove obsolete local calendars
@@ -68,9 +80,17 @@ public class CalendarSyncService(
         // every event with no member tags would be persisted with Members=[] and
         // then get stranded off the dashboard once the user picks a different
         // shared calendar in settings.
-        foreach (var calendarId in calendarIdsToSync)
+        try
         {
-            await SyncAsync(calendarId, startDate, endDate, ct);
+            foreach (var calendarId in calendarIdsToSync)
+            {
+                await SyncAsync(calendarId, startDate, endDate, ct);
+            }
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            await MarkCurrentUserNeedsReauthAsync(ex, ct);
+            throw;
         }
 
         // First-login default: if the user has more than one calendar but none is
@@ -212,5 +232,19 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
+    }
+
+    private async Task MarkCurrentUserNeedsReauthAsync(GoogleReauthRequiredException ex, CancellationToken ct)
+    {
+        var userId = currentUserService.UserId;
+        if (string.IsNullOrEmpty(userId))
+        {
+            logger.LogWarning(
+                "Google re-auth required ({Source}) but no current user id available to mark.",
+                ex.Source);
+            return;
+        }
+
+        await tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
     }
 }
