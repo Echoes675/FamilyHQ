@@ -16,7 +16,21 @@ public class CalendarSyncService(
 {
     public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
-        logger.LogInformation("Starting full sync from {Start} to {End}", startDate, endDate);
+        // Capture the current user id ONCE at sync entry. IHttpContextAccessor.HttpContext
+        // is AsyncLocal-backed and can become null after the response has been sent or
+        // when async continuations resume on a thread without the request's execution
+        // context. Resolving userId lazily inside a catch block (after multiple awaits)
+        // races against that lifetime; the user could be authoritatively known at sync
+        // start but unobservable by the time we want to mark them NeedsReauth. Capturing
+        // up front pins the value to the sync's logical scope and eliminates the race.
+        var capturedUserId = currentUserService.UserId;
+        if (string.IsNullOrEmpty(capturedUserId))
+        {
+            logger.LogWarning("SyncAllAsync invoked with no current user id; aborting sync.");
+            return;
+        }
+
+        logger.LogInformation("Starting full sync from {Start} to {End} for user {UserId}", startDate, endDate, capturedUserId);
 
         List<CalendarInfo> googleCalendars;
         try
@@ -25,7 +39,7 @@ public class CalendarSyncService(
         }
         catch (GoogleReauthRequiredException ex)
         {
-            await MarkCurrentUserNeedsReauthAsync(ex, ct);
+            await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
             throw;
         }
         var localCalendars  = await calendarRepository.GetCalendarsAsync(ct);
@@ -95,7 +109,7 @@ public class CalendarSyncService(
         }
         catch (GoogleReauthRequiredException ex)
         {
-            await MarkCurrentUserNeedsReauthAsync(ex, ct);
+            await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
             throw;
         }
 
@@ -328,17 +342,23 @@ public class CalendarSyncService(
         return value.Length <= max ? value : value[..max];
     }
 
-    private async Task MarkCurrentUserNeedsReauthAsync(GoogleReauthRequiredException ex, CancellationToken ct)
+    private async Task MarkUserNeedsReauthAsync(string capturedUserId, GoogleReauthRequiredException ex, CancellationToken ct)
     {
-        var userId = currentUserService.UserId;
-        if (string.IsNullOrEmpty(userId))
+        // Diagnostic: compare the userId we captured at sync start with the value
+        // the current-user service resolves to right now (post-catch). If these
+        // diverge in production traffic, the AsyncLocal/HttpContext race tracked
+        // by FHQ-27 fired and the captured value just prevented a silent failure.
+        // The log line is the forensic trail; the captured value drives the mark.
+        var lateUserId = currentUserService.UserId;
+        var diverged = !string.Equals(capturedUserId, lateUserId, StringComparison.Ordinal);
+        if (diverged)
         {
-            logger.LogError(
-                "Google re-auth required ({Source}) but no current user id available to mark — banner will not appear for this user.",
-                ex.FailureSource);
-            return;
+            logger.LogWarning(
+                "Reauth marking userId divergence detected: captured={CapturedUserId}, lateResolved={LateUserId}, source={Source}. " +
+                "Using captured value (FHQ-27 race guard).",
+                capturedUserId, lateUserId ?? "(null)", ex.FailureSource);
         }
 
-        await tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
+        await tokenStore.MarkNeedsReauthAsync(capturedUserId, ex.ErrorDescription, ct);
     }
 }
