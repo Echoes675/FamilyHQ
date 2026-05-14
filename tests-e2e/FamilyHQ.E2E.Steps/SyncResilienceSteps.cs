@@ -102,20 +102,19 @@ public class SyncResilienceSteps
         ctaText.Should().NotBeNullOrWhiteSpace("the reauth banner CTA must expose a visible action label");
     }
 
-    [Then(@"the reauth banner shows the Google-supplied reason")]
-    public async Task ThenTheReauthBannerShowsTheGoogleSuppliedReason()
+    [Then(@"I see the upstream HTTP reason as the last error")]
+    public async Task ThenISeeTheUpstreamHttpReasonAsTheLastError()
     {
-        var bannerText = await _dashboardPage.GetReauthBannerTextAsync();
-
         // GoogleCalendarClient.ThrowIfFailedAsync passes response.ReasonPhrase
         // into GoogleReauthRequiredException.ErrorDescription, which flows
-        // through to UserToken.LastAuthErrorDescription and into the banner
-        // message line. For an HTTP 403 the reason phrase is "Forbidden" —
-        // a non-default, status-specific reason that the banner surfaces to
-        // the user. The richer body fields (errors[0].message) are captured
-        // in the exception's ResponseBody and logs but not in the banner.
-        bannerText.Should().Contain("Forbidden",
-            "the banner must surface the upstream HTTP reason phrase for the 403, not the default placeholder");
+        // through to UserToken.LastAuthErrorDescription and the diagnostics
+        // page renders that as the "last error" line. For an HTTP 403 the
+        // reason phrase is "Forbidden" — a non-default, status-specific
+        // reason. The richer body fields (errors[0].message) are captured
+        // in the exception's ResponseBody and logs but not in this field.
+        var lastError = await _diagnosticsPage.GetLastErrorTextAsync();
+        lastError.Should().Contain("Forbidden",
+            "the diagnostics last-error must surface the upstream HTTP reason phrase for the 403, not the default placeholder");
     }
 
     [Then(@"I see the needs-reauth status badge")]

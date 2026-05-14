@@ -14,11 +14,12 @@ Feature: Sync resilience and diagnostics
     Then I see the reauth banner on the dashboard
     And the reauth banner shows a reconnect link
 
-  Scenario: Reauth banner shows the Google-supplied reason when Calendar API returns 403
+  Scenario: Diagnostics page shows the upstream HTTP reason when Calendar API returns 403
     Given the Google Calendar API rejects requests with "403"
     When I trigger a manual sync
-    Then I see the reauth banner on the dashboard
-    And the reauth banner shows the Google-supplied reason
+    And I view the diagnostics page
+    Then I see the needs-reauth status badge
+    And I see the upstream HTTP reason as the last error
 
   Scenario: Diagnostics page shows needs-reauth status with reconnect button
     Given Google rejects refresh tokens with "invalid_grant"
