@@ -342,23 +342,6 @@ public class CalendarSyncService(
         return value.Length <= max ? value : value[..max];
     }
 
-    private async Task MarkUserNeedsReauthAsync(string capturedUserId, GoogleReauthRequiredException ex, CancellationToken ct)
-    {
-        // Diagnostic: compare the userId we captured at sync start with the value
-        // the current-user service resolves to right now (post-catch). If these
-        // diverge in production traffic, the AsyncLocal/HttpContext race tracked
-        // by FHQ-27 fired and the captured value just prevented a silent failure.
-        // The log line is the forensic trail; the captured value drives the mark.
-        var lateUserId = currentUserService.UserId;
-        var diverged = !string.Equals(capturedUserId, lateUserId, StringComparison.Ordinal);
-        if (diverged)
-        {
-            logger.LogWarning(
-                "Reauth marking userId divergence detected: captured={CapturedUserId}, lateResolved={LateUserId}, source={Source}. " +
-                "Using captured value (FHQ-27 race guard).",
-                capturedUserId, lateUserId ?? "(null)", ex.FailureSource);
-        }
-
-        await tokenStore.MarkNeedsReauthAsync(capturedUserId, ex.ErrorDescription, ct);
-    }
+    private Task MarkUserNeedsReauthAsync(string capturedUserId, GoogleReauthRequiredException ex, CancellationToken ct)
+        => tokenStore.MarkNeedsReauthAsync(capturedUserId, ex.ErrorDescription, ct);
 }
