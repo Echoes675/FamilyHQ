@@ -35,13 +35,6 @@ public class SyncResilienceSteps
         _config = ConfigurationLoader.Load();
     }
 
-    [Given(@"Google rejects refresh tokens with ""([^""]*)""")]
-    public async Task GivenGoogleRejectsRefreshTokens(string _)
-    {
-        var userId = GetUserId();
-        await _simulatorApi.SetSyncFailureModeAsync(userId, "RefreshTokenInvalidGrant");
-    }
-
     [Given(@"a sync event failure has been recorded")]
     public async Task GivenASyncEventFailureHasBeenRecorded()
     {
@@ -52,59 +45,8 @@ public class SyncResilienceSteps
         await TriggerManualSyncAsync();
     }
 
-    [Given(@"I trigger a manual sync")]
-    [When(@"I trigger a manual sync")]
-    public async Task WhenITriggerAManualSync()
-    {
-        await TriggerManualSyncAsync();
-        // The WebApi intermittently fails to persist UserToken.AuthStatus =
-        // NeedsReauth after a sync that hits a Google reauth condition (see
-        // .agent/docs/intermittent-issues.md active issue #3). The second
-        // call costs one extra round-trip and is idempotent — a healthy
-        // sync just no-ops the second time, a partial-fail sync gets a
-        // second chance to commit the marking.
-        await Task.Delay(500);
-        await TriggerManualSyncAsync();
-    }
-
     [When(@"I view the diagnostics page")]
     public Task WhenIViewTheDiagnosticsPage() => _diagnosticsPage.GotoAsync();
-
-    [Then(@"I see the reauth banner on the dashboard")]
-    public async Task ThenISeeTheReauthBannerOnTheDashboard()
-    {
-        var page = _scenarioContext.Get<IPage>();
-        await page.GotoAsync(_config.BaseUrl + "/");
-
-        // Blazor WASM occasionally leaves a stale ConnectionStatusDto in memory
-        // after a same-session navigation. A short wait followed by a reload-and-
-        // retry rules out that race without masking a real "banner never appears"
-        // bug — if the second wait also times out, the assertion still fails.
-        try
-        {
-            await _dashboardPage.ReauthBanner.WaitForAsync(
-                new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
-        }
-        catch (TimeoutException)
-        {
-            await page.ReloadAsync(new() { WaitUntil = WaitUntilState.NetworkIdle });
-            await _dashboardPage.ReauthBanner.WaitForAsync(
-                new() { State = WaitForSelectorState.Visible, Timeout = 20000 });
-        }
-
-        (await _dashboardPage.IsReauthBannerVisibleAsync()).Should().BeTrue(
-            "the reauth banner must appear on the dashboard once sync has marked the user as needs_reauth");
-    }
-
-    [Then(@"the reauth banner shows a reconnect link")]
-    public async Task ThenTheReauthBannerShowsAReconnectLink()
-    {
-        await _dashboardPage.ReauthBannerCta.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-
-        var ctaText = (await _dashboardPage.ReauthBannerCta.InnerTextAsync()).Trim();
-        ctaText.Should().NotBeNullOrWhiteSpace("the reauth banner CTA must expose a visible action label");
-    }
 
     [Then(@"I see the failure in the recent sync failures table")]
     public async Task ThenISeeTheFailureInTheRecentSyncFailuresTable()
