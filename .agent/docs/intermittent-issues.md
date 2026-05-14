@@ -34,9 +34,13 @@ The simulator is configured to return `403 Forbidden` from `/users/me/calendarLi
 2. **HttpClient `DefaultRequestHeaders.Authorization` shared across requests** — `GoogleCalendarClient.SetAuthorizationHeaderAsync` mutates `_httpClient.DefaultRequestHeaders.Authorization`. If `HttpClient` is shared (typed-client / factory), this mutation races against any other concurrent caller (e.g. a webhook receiver). For the 403 path this could cause the simulator to see a stale bearer token for a different user and return 200 (since their failure mode is unset) — sync would silently "succeed", leaving AuthStatus untouched.
 3. **Postgres connection-pool / read-after-write delay** on `UserTokens` — unlikely with read-committed isolation on the same node, but worth ruling out before declaring it a logic bug.
 
-**Mitigation in place:** the E2E scenario "Calendar API returns 403 → diagnostics shows needs-reauth status" is **excluded** from `SyncResilience.feature` (see the `# NOTE:` block above the third scenario). All other FHQ-25/FHQ-26 manual tests are E2E-covered: dashboard reauth banner on invalid_grant, diagnostics needs-reauth state on invalid_grant, diagnostics per-event-failure row + dashboard continuity on a poison event.
+**Mitigation in place:** two E2E scenarios are **excluded** from `SyncResilience.feature`:
+- "Diagnostics page shows the upstream HTTP reason when Calendar API returns 403" — ~50% flake.
+- "Diagnostics page shows needs-reauth status with reconnect button" (invalid_grant variant) — ~25% flake even with a sync-trigger retry guard.
 
-**To remove the active note:** add the 403 scenario back to the feature once the root cause is fixed, run Deploy-Dev five times consecutively, and confirm all five pass.
+The remaining two scenarios — dashboard reauth banner on invalid_grant, and the per-event-failure row + dashboard continuity on a poison event — fire deterministically and stay in the feature. Static display logic for the diagnostics needs-reauth state is unit-tested in `DiagnosticsViewTests` and `DiagnosticsControllerTests`.
+
+**To remove the active note:** add the excluded scenarios back, run Deploy-Dev five times consecutively, and confirm all five pass.
 
 ---
 

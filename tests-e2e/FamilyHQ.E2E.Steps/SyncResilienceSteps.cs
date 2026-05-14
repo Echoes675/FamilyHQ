@@ -35,8 +35,8 @@ public class SyncResilienceSteps
         _config = ConfigurationLoader.Load();
     }
 
-    [Given(@"Google rejects refresh tokens with ""invalid_grant""")]
-    public async Task GivenGoogleRejectsRefreshTokens()
+    [Given(@"Google rejects refresh tokens with ""([^""]*)""")]
+    public async Task GivenGoogleRejectsRefreshTokens(string _)
     {
         var userId = GetUserId();
         await _simulatorApi.SetSyncFailureModeAsync(userId, "RefreshTokenInvalidGrant");
@@ -104,22 +104,6 @@ public class SyncResilienceSteps
 
         var ctaText = (await _dashboardPage.ReauthBannerCta.InnerTextAsync()).Trim();
         ctaText.Should().NotBeNullOrWhiteSpace("the reauth banner CTA must expose a visible action label");
-    }
-
-    [Then(@"I see the needs-reauth status badge")]
-    public async Task ThenISeeTheNeedsReauthStatusBadge()
-    {
-        var label = await _diagnosticsPage.GetStatusBadgeTextAsync();
-        label.Should().Contain("Needs Reauth",
-            "the diagnostics status badge must reflect the needs_reauth connection state");
-    }
-
-    [Then(@"I see a reconnect button")]
-    public async Task ThenISeeAReconnectButton()
-    {
-        await _diagnosticsPage.ReconnectBtn.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        (await _diagnosticsPage.ReconnectBtn.IsVisibleAsync()).Should().BeTrue();
     }
 
     [Then(@"I see the failure in the recent sync failures table")]
