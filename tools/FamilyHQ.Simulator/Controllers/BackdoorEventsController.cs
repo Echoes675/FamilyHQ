@@ -104,17 +104,19 @@ public class BackdoorEventsController : ControllerBase
         if (body == null || string.IsNullOrWhiteSpace(body.UserId) || string.IsNullOrWhiteSpace(body.CalendarId))
             return BadRequest("UserId and CalendarId are required.");
 
-        // 600 chars > CalendarEvent.Title max length (500). The simulator itself
-        // has no max-length on Summary, so the bad value flows through to the
-        // WebApi sync where it triggers the per-event resilience path.
-        var poisonTitle = new string('X', 600);
+        // The simulator's SimulatedEvent.Summary column is HasMaxLength(500), so
+        // we cannot persist the 600-char title here — the poison payload is
+        // reconstituted by EventsController.MapEventResponse based on the
+        // `simulated_evt_poison_` id prefix. Storing "POISONED" is enough to
+        // round-trip the row; the listing endpoint emits the oversize summary
+        // that the WebApi's CalendarEvent.Title (also 500) rejects.
         var tomorrow = DateTime.UtcNow.Date.AddDays(1);
 
         var newEvent = new SimulatedEvent
         {
             Id = "simulated_evt_poison_" + Guid.NewGuid().ToString("N"),
             CalendarId = body.CalendarId,
-            Summary = poisonTitle,
+            Summary = "POISONED",
             StartTime = tomorrow,
             EndTime = tomorrow.AddDays(1),
             IsAllDay = true,

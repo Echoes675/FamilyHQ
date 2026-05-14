@@ -273,11 +273,19 @@ public class EventsController : ControllerBase
         return NoContent();
     }
 
+    // Sentinel prefix written by the poison-event backdoor. The simulator's own
+    // SimulatedEvent.Summary column is HasMaxLength(500) so the poison payload
+    // cannot be persisted as-is; we store a short marker and reconstitute the
+    // oversize value when the events listing is emitted. This is what makes
+    // the WebApi side fail on insert (its CalendarEvent.Title is also 500).
+    private const string PoisonEventIdPrefix = "simulated_evt_poison_";
+    private const int PoisonSummaryLength = 600;
+
     private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
     {
         id          = e.Id,
         status      = e.IsDeleted ? "cancelled" : "confirmed",
-        summary     = e.Summary,
+        summary     = e.Id.StartsWith(PoisonEventIdPrefix) ? new string('X', PoisonSummaryLength) : e.Summary,
         location    = e.Location,
         description = e.Description,
         start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },

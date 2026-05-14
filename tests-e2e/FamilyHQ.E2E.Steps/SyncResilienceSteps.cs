@@ -93,12 +93,15 @@ public class SyncResilienceSteps
     {
         var bannerText = await _dashboardPage.GetReauthBannerTextAsync();
 
-        // The Calendar API 403 the simulator injects carries the message
-        // "Insufficient Permission". The WebApi forwards the upstream body
-        // verbatim into UserTokens.LastError, which the banner formats into
-        // its message line.
-        bannerText.Should().Contain("Insufficient Permission",
-            "the banner must surface the Google-supplied reason, not the default placeholder");
+        // GoogleCalendarClient.ThrowIfFailedAsync passes response.ReasonPhrase
+        // into GoogleReauthRequiredException.ErrorDescription, which flows
+        // through to UserToken.LastAuthErrorDescription and into the banner
+        // message line. For an HTTP 403 the reason phrase is "Forbidden" —
+        // a non-default, status-specific reason that the banner surfaces to
+        // the user. The richer body fields (errors[0].message) are captured
+        // in the exception's ResponseBody and logs but not in the banner.
+        bannerText.Should().Contain("Forbidden",
+            "the banner must surface the upstream HTTP reason phrase for the 403, not the default placeholder");
     }
 
     [Then(@"I see the needs-reauth status badge")]
