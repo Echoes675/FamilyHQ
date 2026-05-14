@@ -49,8 +49,17 @@ pipeline {
                     for (int i = 0; i < tags.size(); i++) {
                         def t = tags[i]
                         if (t != null && "${t}".startsWith("${branchSanitized}-")) {
-                            def num = ("${t}" =~ /-(\d+)-/)[0][1] as int
-                            tagsByBuildNum[num] = "${t}"
+                            // Strip the prefix before extracting the build number — otherwise
+                            // a regex against the full tag matches the FIRST `-N-` in the string,
+                            // which for branches whose name contains digits (e.g. `feat-fhq-26-...`)
+                            // captures the ticket number instead of the build number and collides
+                            // every build of the same branch onto the same map key.
+                            def remainder = "${t}".substring("${branchSanitized}-".length())
+                            def m = (remainder =~ /^(\d+)-/)
+                            if (m.find()) {
+                                def num = m.group(1) as int
+                                tagsByBuildNum[num] = "${t}"
+                            }
                         }
                     }
                     def sortedKeys = new ArrayList(tagsByBuildNum.keySet())
