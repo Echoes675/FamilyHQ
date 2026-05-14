@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
@@ -579,6 +580,60 @@ public class GoogleCalendarClientTests
         // Act & Assert — idempotent delete: 404 is treated as success
         await systemUnderTest.Invoking(s => s.DeleteEventAsync("cal1", "already-gone-id"))
             .Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_AttachesBearerToken_PerRequest_WithoutMutatingDefaultHeaders()
+    {
+        // FHQ-27: mutating HttpClient.DefaultRequestHeaders.Authorization made the
+        // Authorization header process-shared state on the typed client, opening a
+        // cross-request leak window between concurrent users. Per-request headers
+        // on HttpRequestMessage keep auth scoped to a single call.
+        HttpRequestMessage? capturedCalendarRequest = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedCalendarRequest = req)
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { items = Array.Empty<object>() }))
+            });
+
+        // Act
+        await systemUnderTest.GetCalendarsAsync();
+
+        // Assert — the calendar request must carry Authorization on its own headers.
+        capturedCalendarRequest.Should().NotBeNull();
+        capturedCalendarRequest!.Headers.Authorization.Should().NotBeNull(
+            "FHQ-27: Authorization header must be attached per-request on HttpRequestMessage");
+        capturedCalendarRequest.Headers.Authorization!.Scheme.Should().Be("Bearer");
+        capturedCalendarRequest.Headers.Authorization.Parameter.Should().Be("new-access");
+
+        // The shared HttpClient instance must not carry the Authorization header
+        // between requests.
+        var sharedHttpClient = systemUnderTest.GetType()
+            .GetField("_httpClient", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(systemUnderTest);
+        sharedHttpClient.Should().BeOfType<HttpClient>()
+            .Which.DefaultRequestHeaders.Authorization.Should().BeNull(
+                "FHQ-27: Authorization header must be attached per-request on HttpRequestMessage, not mutated on the shared HttpClient");
     }
 
     private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut()
