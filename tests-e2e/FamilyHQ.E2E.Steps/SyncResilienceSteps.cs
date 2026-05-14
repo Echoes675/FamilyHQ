@@ -85,4 +85,65 @@ public class SyncResilienceSteps
         await _settingsPage.NavigateToCalendarsTabAsync();
         await _settingsPage.ClickSyncNowAsync();
     }
+
+    [Given(@"the user's Google refresh token has been revoked")]
+    public async Task GivenRefreshTokenRevoked()
+    {
+        await _simulatorApi.SetSyncFailureModeAsync(GetUserId(), "RefreshTokenInvalidGrant");
+    }
+
+    [Given(@"the Google Calendar API will return a 403 for the user")]
+    public async Task GivenCalendarApi403()
+    {
+        await _simulatorApi.SetSyncFailureModeAsync(GetUserId(), "CalendarApi403");
+    }
+
+    [When(@"I trigger a manual sync from the Settings page")]
+    public async Task WhenITriggerManualSync()
+    {
+        await TriggerManualSyncAsync();
+    }
+
+    [Then(@"I see the reauth banner on the dashboard with a reconnect call to action")]
+    public async Task ThenISeeReauthBannerWithCta()
+    {
+        var page = _scenarioContext.Get<IPage>();
+        await page.GotoAsync(_config.BaseUrl + "/");
+
+        await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        (await _dashboardPage.ReauthBannerCta.IsVisibleAsync()).Should().BeTrue(
+            "the reauth banner must render a reconnect CTA when AuthStatus is NeedsReauth");
+    }
+
+    [Then(@"I see the reauth banner on the dashboard")]
+    public async Task ThenISeeReauthBanner()
+    {
+        var page = _scenarioContext.Get<IPage>();
+        await page.GotoAsync(_config.BaseUrl + "/");
+        await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    [Then(@"the banner shows the reason ""([^""]*)""")]
+    public async Task ThenBannerShowsReason(string expected)
+    {
+        var bannerText = await _dashboardPage.ReauthBanner.InnerTextAsync();
+        bannerText.Should().Contain(expected,
+            $"the reauth banner must surface the Google-supplied reason '{expected}'");
+    }
+
+    [Then(@"the connection status badge reads ""([^""]*)""")]
+    public async Task ThenConnectionStatusBadgeReads(string expected)
+    {
+        await _diagnosticsPage.GotoAsync();
+        var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
+        label.Should().Contain(expected,
+            $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync");
+    }
+
+    [Then(@"I see a reconnect button on the diagnostics page")]
+    public async Task ThenISeeReconnectButton()
+    {
+        (await _diagnosticsPage.ReconnectBtn.IsVisibleAsync()).Should().BeTrue(
+            "the reconnect button must be visible when AuthStatus is NeedsReauth");
+    }
 }

@@ -14,40 +14,41 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
-
-**Component:** `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs` — `SyncAllAsync` outer catch around `GetCalendarsAsync`. Surfaced by an E2E scenario authored under FHQ-26.
-**First seen:** Deploy-Dev #328 (2026-05-14).
-**Occurrences:** Deploy-Dev #328, #330, #331, #332 — same scenario, roughly one run in two. The companion scenario for the `invalid_grant` refresh-token path uses the same `SyncAllAsync.catch (GoogleReauthRequiredException)` block + `tokenStore.MarkNeedsReauthAsync` flow and passes on every observed run, so the divergence is between the two failure entry points, not the marking machinery itself.
-
-**Symptom:**
-The simulator is configured to return `403 Forbidden` from `/users/me/calendarList` for the test user (per-user failure-mode store in `tools/FamilyHQ.Simulator/State/SyncFailureModeStore.cs`). The test triggers a manual sync via Settings → Sync Now and then navigates to `/diagnostics`. On a failing run the status badge renders **Active** instead of **Needs Reauth**, and `/api/calendars/connection-status` returns `status: "active"` — i.e. the WebApi did not actually persist `AuthStatus = NeedsReauth` for this user despite the sync attempt going through.
-
-**What we know:**
-- The simulator hook (`SyncFailureResponse.TryBuild`) is correctly scoped per-user (`_failureStore.Get(userId)`), and the userId extracted from the access token matches the userId the test set the failure mode under (verified by tracing `OAuthController.Token` + `CalendarsController.ExtractUserId`).
-- `MarkNeedsReauthAsync` (`DatabaseTokenStore.cs:163`) commits via `SaveChangesAsync` and works reliably for the invalid_grant path, which goes through the same `SyncAllAsync` catch block.
-- Per-event resilience (`SyncCoreAsync`) is not in play here — the 403 throws from `GetCalendarsAsync` *before* the per-event loop, so the change made for FHQ-26 cannot regress this path.
-- Unit tests for both reauth paths pass (`CalendarSyncServiceTests`, `DatabaseTokenStoreTests`).
-
-**Hypotheses worth investigating next:**
-1. **`ICurrentUserService.UserId` is intermittently null** when the outer `catch` in `SyncAllAsync` runs. The `MarkCurrentUserNeedsReauthAsync` helper short-circuits without throwing when `UserId` is empty (only logs an error), so the symptom would be exactly what we see. The invalid_grant path may pre-load the user context earlier (during `GetRefreshTokenAsync`), masking the same race for that scenario.
-2. **HttpClient `DefaultRequestHeaders.Authorization` shared across requests** — `GoogleCalendarClient.SetAuthorizationHeaderAsync` mutates `_httpClient.DefaultRequestHeaders.Authorization`. If `HttpClient` is shared (typed-client / factory), this mutation races against any other concurrent caller (e.g. a webhook receiver). For the 403 path this could cause the simulator to see a stale bearer token for a different user and return 200 (since their failure mode is unset) — sync would silently "succeed", leaving AuthStatus untouched.
-3. **Postgres connection-pool / read-after-write delay** on `UserTokens` — unlikely with read-committed isolation on the same node, but worth ruling out before declaring it a logic bug.
-
-**Mitigation in place:** *all three* reauth-flow E2E scenarios are **excluded** from `SyncResilience.feature`. They each rely on the sync-marks-user-NeedsReauth invariant the WebApi sometimes breaks, and observed flake rates were too high to gate on:
-- "Reauth banner shows the Google-supplied reason when Calendar API returns 403" — ~50% flake.
-- "Diagnostics page shows needs-reauth status with reconnect button" (invalid_grant variant) — ~25% flake even with a sync-trigger retry guard.
-- "Reauth banner appears when Google revokes the refresh token" — ~10% flake (Deploy-Dev #340).
-
-Only the per-event-resilience scenario remains in the feature — that one does not depend on the reauth marking and has passed every recent run. Static display logic for the reauth UI is unit-tested in `ReauthBannerTests`, `DiagnosticsViewTests`, `DiagnosticsControllerTests`, `CalendarSyncServiceTests`, `DatabaseTokenStoreTests`, and `SyncControllerTests`, so the reauth surface is not unprotected — it just lacks an end-to-end check.
-
-The simulator's `sync-failure-mode` backdoor (`tools/FamilyHQ.Simulator/State/SyncFailureModeStore.cs`) and its hooks in the OAuth and Calendars controllers remain in place. Once the WebApi race is fixed, the excluded scenarios can be restored and the backdoor will be the right way to drive them.
-
-**To remove the active note:** add the excluded scenarios back, run Deploy-Dev five times consecutively, and confirm all five pass.
+(none)
 
 ---
 
 ## Resolved issues
+
+### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
+
+**Resolved:** branch `fix/FHQ-27-reauth-marking-race`, PR #73 (2026-05-14). Tracked as FHQ-27.
+**Component:** `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs` — `SyncAllAsync` outer catch around `GetCalendarsAsync` — plus `src/FamilyHQ.Services/Calendar/GoogleCalendarClient.cs` Authorization-header attachment.
+**First seen:** Deploy-Dev #328 (2026-05-14).
+**Occurrences:** Deploy-Dev #328, #330, #331, #332, #340. Three scenarios pulled from the suite as mitigation; observed flake rates:
+- "Reauth banner shows the Google-supplied reason when Calendar API returns 403" — ~50%.
+- "Diagnostics page shows needs-reauth status with reconnect button" (invalid_grant variant) — ~25%.
+- "Reauth banner appears when Google revokes the refresh token" — ~10%.
+
+**Symptom:**
+After a sync attempt that hit a Google reauth-triggering condition, the diagnostics status badge intermittently rendered **Active** instead of **Needs Reauth**, and `/api/calendars/connection-status` returned `status: "active"`. WebApi caught `GoogleReauthRequiredException` but did not persist `AuthStatus = NeedsReauth`.
+
+**Root cause:**
+Two contributing factors, fixed together — the 5-run verification did not record any divergence on Hypothesis 1, so Hypothesis 2 is the most-likely production mechanism, but the Hypothesis 1 guard is retained as defence-in-depth because the code path was clearly unsafe.
+
+1. **HttpClient `DefaultRequestHeaders.Authorization` shared across requests (Hypothesis 2).** `GoogleCalendarClient.SetAuthorizationHeaderAsync` mutated `_httpClient.DefaultRequestHeaders.Authorization` — process-shared state on a typed client. Concurrent users could race on the header, causing the simulator to receive a bearer for a different user and return `200` (no failure mode set for that user), so sync silently "succeeded" and the catch block was never entered.
+2. **Late `ICurrentUserService.UserId` resolution inside the catch block (Hypothesis 1).** `CalendarSyncService.SyncAllAsync` resolved `currentUserService.UserId` lazily inside the catch handler, after several `await` boundaries. `IHttpContextAccessor.HttpContext` is AsyncLocal-backed; under certain async-flow conditions it would have been unobservable, returning null and silently short-circuiting `MarkCurrentUserNeedsReauthAsync`. No divergence was observed in the 5 verification runs, but the code path was demonstrably unsafe and is fixed defensively.
+
+**Fix:**
+- Capture `userId` once at the top of `SyncAllAsync` and pass it explicitly to a new `MarkUserNeedsReauthAsync(string capturedUserId, ...)` helper. Removed the late-resolve path entirely.
+- Build a fresh `HttpRequestMessage` per call site in `GoogleCalendarClient` (via `BuildAuthorizedRequestAsync`) and attach the Authorization header there. `_httpClient.DefaultRequestHeaders.Authorization` is never mutated.
+
+**Verification:**
+5 consecutive Deploy-Dev passes on branch `fix/FHQ-27-reauth-marking-race`: runs #344, #345, #346, #347, #348. Run #344 explicitly verified all 4 SyncResilience scenarios passed (3 restored + 1 existing per-event-resilience). Zero divergence-diagnostic log lines observed across the 5 runs, supporting Hypothesis 2 as the dominant mechanism.
+
+**If the symptom returns:**
+1. If `/api/calendars/connection-status` returns `active` after a known-failing sync: check the WebApi runtime logs for `Reauth marking` lines — a missing entry means the catch was never entered (Google response was unexpectedly 2xx, pointing back at a HttpClient or simulator regression), and a present entry with no DB row update means the persistence path regressed.
+2. Cross-check that `GoogleCalendarClient` still uses `BuildAuthorizedRequestAsync` for every call site and `_httpClient.DefaultRequestHeaders.Authorization` is never set. Reintroducing the mutation re-opens Hypothesis 2.
 
 ### 2. EventModalTimePicker scenario clicks wrong row when day-view auto-scrolls
 

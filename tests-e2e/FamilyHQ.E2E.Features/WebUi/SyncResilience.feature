@@ -8,28 +8,23 @@ Feature: Sync resilience and diagnostics
     And the "Family Events" calendar is the active calendar
     And I login as the user "TestFamilyMember"
 
-  # NOTE: Three reauth-flow scenarios were authored alongside this feature and
-  # then pulled from the suite. All three rely on `SyncAllAsync.catch` calling
-  # `tokenStore.MarkNeedsReauthAsync` and persisting `UserToken.AuthStatus =
-  # NeedsReauth` deterministically before the response is sent. The WebApi
-  # race tracked as active issue #3 in `.agent/docs/intermittent-issues.md`
-  # leaves the user as Active about 1 run in 4 (invalid_grant path) to 1 run
-  # in 2 (CalendarApi 403 path) — frequently enough to break the CI gate but
-  # not consistently enough to count as a regression. The dropped scenarios
-  # were:
-  #   * "Reauth banner appears when Google revokes the refresh token"
-  #   * "Reauth banner shows the Google-supplied reason when Calendar API
-  #      returns 403"
-  #   * "Diagnostics page shows needs-reauth status with reconnect button"
-  # Until the WebApi race is fixed, the FHQ-25 reauth-flow regression
-  # surface is covered at the unit-test layer only:
-  #   - ReauthBannerTests (dashboard banner ShouldShow + FormatMessage)
-  #   - DiagnosticsViewTests (status badge label + reconnect-button visibility)
-  #   - DiagnosticsControllerTests (connection-status endpoint contract)
-  #   - DiagnosticsApiServiceTests (DiagnosticsLoadResult contract)
-  #   - CalendarSyncServiceTests (mark + rethrow on GoogleReauthRequired)
-  #   - DatabaseTokenStoreTests (MarkNeedsReauthAsync persistence)
-  #   - SyncControllerTests (409 response shape on reauth)
+  Scenario: Reauth banner appears when Google revokes the refresh token
+    Given the user's Google refresh token has been revoked
+    When I trigger a manual sync from the Settings page
+    Then I see the reauth banner on the dashboard with a reconnect call to action
+
+  Scenario: Reauth banner shows the Google-supplied reason when Calendar API returns 403
+    Given the Google Calendar API will return a 403 for the user
+    When I trigger a manual sync from the Settings page
+    Then I see the reauth banner on the dashboard
+    And the banner shows the reason "Forbidden"
+
+  Scenario: Diagnostics page shows needs-reauth status with reconnect button
+    Given the user's Google refresh token has been revoked
+    When I trigger a manual sync from the Settings page
+    And I view the diagnostics page
+    Then the connection status badge reads "Needs Reauth"
+    And I see a reconnect button on the diagnostics page
 
   Scenario: Diagnostics page lists a sync event failure when one event in a sync throws
     Given the user has an all-day event "Soccer practice" tomorrow

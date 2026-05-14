@@ -501,6 +501,57 @@ public class CalendarSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAllAsync_WhenCurrentUserIdGoesNullDuringSync_StillMarksUsingCapturedId()
+    {
+        // Models the production race where IHttpContextAccessor.HttpContext becomes
+        // unobservable across an await boundary, so currentUserService.UserId reads
+        // null at catch time even though the sync request originated under a valid user.
+        // The captured userId from the start of the sync must drive MarkNeedsReauthAsync.
+        var clientMock           = new Mock<IGoogleCalendarClient>();
+        var repoMock             = new Mock<ICalendarRepository>();
+        var tagParserMock        = new Mock<IMemberTagParser>();
+        var loggerMock           = new Mock<ILogger<CalendarSyncService>>();
+        var tokenStoreMock       = new Mock<ITokenStore>();
+        var currentUserMock      = new Mock<ICurrentUserService>();
+        var syncFailureRepoMock  = new Mock<ISyncFailureRepository>();
+
+        // UserId is observable on reads taken before GetCalendarsAsync (the sync's
+        // entry-point Google call), and null on reads taken after — modelling
+        // HttpContext.User vanishing across the await boundary inside the Google
+        // call. Current production code only reads UserId inside the catch block
+        // (post-await), so it observes null and silently short-circuits. The fix
+        // captures UserId at sync entry (pre-await) so the mark still happens.
+        var googleCallObserved = false;
+        currentUserMock.SetupGet(c => c.UserId).Returns(() =>
+            googleCallObserved ? null : "u-race");
+
+        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns(new List<string>());
+
+        var sut = new CalendarSyncService(
+            clientMock.Object, repoMock.Object, tagParserMock.Object,
+            loggerMock.Object, tokenStoreMock.Object, currentUserMock.Object,
+            syncFailureRepoMock.Object);
+
+        var ex = new GoogleReauthRequiredException(
+            GoogleAuthFailureSource.CalendarApi, "Forbidden");
+        clientMock.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => googleCallObserved = true)
+            .ThrowsAsync(ex);
+
+        // Act
+        var act = () => sut.SyncAllAsync(
+            DateTimeOffset.UtcNow.AddDays(-30),
+            DateTimeOffset.UtcNow.AddDays(30));
+
+        // Assert — captured "u-race" was used, even though a later UserId read returned null.
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync("u-race", "Forbidden", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task SyncAsync_WhenAddEventThrowsForOneEvent_RecordsFailureAndContinues()
     {
         // Arrange — three events; the middle one throws on persistence. Remaining
