@@ -197,7 +197,7 @@ public class OAuthControllerTests
 
     private static OAuthController CreateSut(SimContext db, string pathBase = "")
     {
-        var controller = new OAuthController(db, CreateConfiguration(pathBase));
+        var controller = new OAuthController(db, CreateConfiguration(pathBase), new FamilyHQ.Simulator.State.SyncFailureModeStore());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext()
@@ -207,7 +207,7 @@ public class OAuthControllerTests
 
     private static OAuthController CreateSutWithFormData(SimContext db, Dictionary<string, string> formData, string pathBase = "")
     {
-        var controller = new OAuthController(db, CreateConfiguration(pathBase));
+        var controller = new OAuthController(db, CreateConfiguration(pathBase), new FamilyHQ.Simulator.State.SyncFailureModeStore());
 
         var formCollection = new FormCollection(
             formData.ToDictionary(kv => kv.Key, kv => new Microsoft.Extensions.Primitives.StringValues(kv.Value)));

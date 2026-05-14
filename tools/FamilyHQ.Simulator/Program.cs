@@ -2,6 +2,7 @@ using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
 using FamilyHQ.Simulator.Middleware;
+using FamilyHQ.Simulator.State;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddDbContext<SimContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddSingleton<SyncFailureModeStore>();
 
 var app = builder.Build();
 

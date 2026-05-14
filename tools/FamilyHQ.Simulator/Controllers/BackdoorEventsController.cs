@@ -84,4 +84,46 @@ public class BackdoorEventsController : ControllerBase
 
         return NoContent();
     }
+
+    public class PoisonEventRequest
+    {
+        public string UserId { get; set; } = string.Empty;
+        public string CalendarId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Adds an event whose Summary exceeds the WebApi's CalendarEvent.Title
+    /// column limit (HasMaxLength(500)). When the next sync runs, EF Core's
+    /// SaveChangesAsync throws a DbUpdateException for this single event,
+    /// exercising the per-event resilience catch in FHQ-26. Other events in
+    /// the same sync still persist successfully.
+    /// </summary>
+    [HttpPost("poison")]
+    public async Task<IActionResult> AddPoisonEvent([FromBody] PoisonEventRequest body)
+    {
+        if (body == null || string.IsNullOrWhiteSpace(body.UserId) || string.IsNullOrWhiteSpace(body.CalendarId))
+            return BadRequest("UserId and CalendarId are required.");
+
+        // 600 chars > CalendarEvent.Title max length (500). The simulator itself
+        // has no max-length on Summary, so the bad value flows through to the
+        // WebApi sync where it triggers the per-event resilience path.
+        var poisonTitle = new string('X', 600);
+        var tomorrow = DateTime.UtcNow.Date.AddDays(1);
+
+        var newEvent = new SimulatedEvent
+        {
+            Id = "simulated_evt_poison_" + Guid.NewGuid().ToString("N"),
+            CalendarId = body.CalendarId,
+            Summary = poisonTitle,
+            StartTime = tomorrow,
+            EndTime = tomorrow.AddDays(1),
+            IsAllDay = true,
+            UserId = body.UserId
+        };
+
+        _db.Events.Add(newEvent);
+        await _db.SaveChangesAsync();
+
+        return Ok(newEvent.Id);
+    }
 }

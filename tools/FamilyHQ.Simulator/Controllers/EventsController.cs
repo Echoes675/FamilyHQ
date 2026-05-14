@@ -2,6 +2,7 @@ using System.Globalization;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
+using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,11 +15,13 @@ public class EventsController : ControllerBase
 {
     private readonly SimContext _db;
     private readonly ILogger<EventsController> _logger;
+    private readonly SyncFailureModeStore _failureStore;
 
-    public EventsController(SimContext db, ILogger<EventsController> logger)
+    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore)
     {
         _db = db;
         _logger = logger;
+        _failureStore = failureStore;
     }
 
     [HttpGet]
@@ -26,6 +29,10 @@ public class EventsController : ControllerBase
     {
         _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
         var userId = ExtractUserId(Request);
+
+        var injected = SyncFailureResponse.TryBuild(_failureStore.Get(userId ?? string.Empty));
+        if (injected is not null)
+            return injected;
 
         var userEventIds = await _db.Events
             .Where(e => e.UserId == userId)

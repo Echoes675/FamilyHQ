@@ -1,11 +1,12 @@
 using FamilyHQ.Simulator.Data;
+using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Simulator.Controllers;
 
 [ApiController]
-public class OAuthController(SimContext db, IConfiguration configuration) : ControllerBase
+public class OAuthController(SimContext db, IConfiguration configuration, SyncFailureModeStore failureStore) : ControllerBase
 {
     private readonly string _pathBase = (configuration["PathBase"] ?? string.Empty).TrimEnd('/');
 
@@ -78,6 +79,18 @@ public class OAuthController(SimContext db, IConfiguration configuration) : Cont
             userId = "default_simulator_user";
             if (code.StartsWith("dummy_code_for_"))
                 userId = code["dummy_code_for_".Length..];
+        }
+
+        // Test back-door: simulate Google revoking the refresh token. This is the
+        // exact response shape Google returns when a user revokes app access from
+        // their account security page (https://myaccount.google.com/permissions).
+        if (grantType == "refresh_token" && failureStore.Get(userId) == SyncFailureMode.RefreshTokenInvalidGrant)
+        {
+            return BadRequest(new
+            {
+                error = "invalid_grant",
+                error_description = "Token has been expired or revoked."
+            });
         }
 
         var accessToken = $"simulated_{userId}_{Guid.NewGuid():N}";
