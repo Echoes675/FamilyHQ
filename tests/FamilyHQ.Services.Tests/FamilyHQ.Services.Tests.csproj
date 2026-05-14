@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FamilyHQ.Services\FamilyHQ.Services.csproj" />
+    <ProjectReference Include="..\..\src\FamilyHQ.Data.PostgreSQL\FamilyHQ.Data.PostgreSQL.csproj" />
   </ItemGroup>
 
   <ItemGroup>

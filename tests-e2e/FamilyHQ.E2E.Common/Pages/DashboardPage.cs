@@ -26,6 +26,18 @@ public class DashboardPage : BasePage
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
+
+    // Reauth banner (rendered on the dashboard when AuthStatus is needs_reauth)
+    public ILocator ReauthBanner    => Page.GetByTestId("reauth-banner-dashboard");
+    public ILocator ReauthBannerCta => Page.GetByTestId("reauth-banner-dashboard-cta");
+
+    public Task<bool> IsReauthBannerVisibleAsync() => ReauthBanner.IsVisibleAsync();
+
+    public async Task<string> GetReauthBannerTextAsync()
+    {
+        await ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        return (await ReauthBanner.InnerTextAsync()).Trim();
+    }
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next ›" });
     private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "‹ Prev" });
     private ILocator AddEventBtn => Page.GetByTestId("add-event-btn");

@@ -37,6 +37,13 @@ public interface ICalendarRepository
     Task UpdateEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
     Task DeleteEventAsync(Guid id, CancellationToken ct = default);
 
+    /// <summary>
+    /// Detaches the given event from the change tracker. Used by per-event
+    /// resilience after a SaveChangesAsync failure so the offending entity
+    /// does not poison the next per-event save.
+    /// </summary>
+    Task DetachEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default);
+
     Task SaveSyncStateAsync(SyncState syncState, CancellationToken ct = default);
     Task AddSyncStateAsync(SyncState syncState, CancellationToken ct = default);
     Task<int> SaveChangesAsync(CancellationToken ct = default);

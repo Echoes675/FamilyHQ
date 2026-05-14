@@ -88,7 +88,7 @@ public class CalendarsControllerTests
 
     private static CalendarsController CreateSut(SimContext db, string? userId = null, string? bearerToken = "auto")
     {
-        var controller = new CalendarsController(db);
+        var controller = new CalendarsController(db, new FamilyHQ.Simulator.State.SyncFailureModeStore());
         var httpContext = new DefaultHttpContext();
 
         if (bearerToken == "auto" && userId != null)

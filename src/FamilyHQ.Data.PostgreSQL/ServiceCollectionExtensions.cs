@@ -26,6 +26,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWeatherDataPointRepository, WeatherDataPointRepository>();
         services.AddScoped<IWeatherSettingRepository, WeatherSettingRepository>();
         services.AddScoped<IWebhookRegistrationRepository, WebhookRegistrationRepository>();
+        services.AddScoped<ISyncFailureRepository, SyncFailureRepository>();
 
         return services;
     }
