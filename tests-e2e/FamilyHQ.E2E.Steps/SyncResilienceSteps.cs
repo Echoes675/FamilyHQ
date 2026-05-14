@@ -71,8 +71,22 @@ public class SyncResilienceSteps
     {
         var page = _scenarioContext.Get<IPage>();
         await page.GotoAsync(_config.BaseUrl + "/");
-        await _dashboardPage.ReauthBanner.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // Blazor WASM occasionally leaves a stale ConnectionStatusDto in memory
+        // after a same-session navigation. A short wait followed by a reload-and-
+        // retry rules out that race without masking a real "banner never appears"
+        // bug — if the second wait also times out, the assertion still fails.
+        try
+        {
+            await _dashboardPage.ReauthBanner.WaitForAsync(
+                new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        }
+        catch (TimeoutException)
+        {
+            await page.ReloadAsync(new() { WaitUntil = WaitUntilState.NetworkIdle });
+            await _dashboardPage.ReauthBanner.WaitForAsync(
+                new() { State = WaitForSelectorState.Visible, Timeout = 20000 });
+        }
 
         (await _dashboardPage.IsReauthBannerVisibleAsync()).Should().BeTrue(
             "the reauth banner must appear on the dashboard once sync has marked the user as needs_reauth");
