@@ -22,7 +22,7 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
 
-**Resolved:** branch `fix/FHQ-27-reauth-marking-race`, PR #<TBD> (2026-05-14). Tracked as FHQ-27.
+**Resolved:** branch `fix/FHQ-27-reauth-marking-race`, PR #73 (2026-05-14). Tracked as FHQ-27.
 **Component:** `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs` — `SyncAllAsync` outer catch around `GetCalendarsAsync` — plus `src/FamilyHQ.Services/Calendar/GoogleCalendarClient.cs` Authorization-header attachment.
 **First seen:** Deploy-Dev #328 (2026-05-14).
 **Occurrences:** Deploy-Dev #328, #330, #331, #332, #340. Three scenarios pulled from the suite as mitigation; observed flake rates:
