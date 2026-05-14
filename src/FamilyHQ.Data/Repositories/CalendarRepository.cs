@@ -253,6 +253,14 @@ public class CalendarRepository : ICalendarRepository
             _context.Events.Remove(evt);
     }
 
+    public Task DetachEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
+    {
+        var entry = _context.Entry(calendarEvent);
+        if (entry.State != EntityState.Detached)
+            entry.State = EntityState.Detached;
+        return Task.CompletedTask;
+    }
+
     public Task SaveSyncStateAsync(SyncState syncState, CancellationToken ct = default)
     {
         var entry = _context.Entry(syncState);

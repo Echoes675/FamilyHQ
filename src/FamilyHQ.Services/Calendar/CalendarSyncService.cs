@@ -176,13 +176,22 @@ public class CalendarSyncService(
 
             foreach (var evt in events)
             {
+                // The entity actually written to the change tracker for this event.
+                // If a downstream SaveChangesAsync throws (e.g. Postgres rejects the
+                // value as too long), we need to detach this specific entity so the
+                // failure does not poison subsequent per-event saves.
+                CalendarEvent? touched = null;
                 try
                 {
                     if (evt.Title == "CANCELLED_TOMBSTONE")
                     {
                         var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
                         if (tracked != null)
+                        {
+                            touched = tracked;
                             await calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                            await calendarRepository.SaveChangesAsync(ct);
+                        }
                         continue;
                     }
 
@@ -200,6 +209,7 @@ public class CalendarSyncService(
                     var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
                     if (existing != null)
                     {
+                        touched = existing;
                         existing.Title       = evt.Title;
                         existing.Start       = evt.Start;
                         existing.End         = evt.End;
@@ -211,14 +221,48 @@ public class CalendarSyncService(
                     }
                     else
                     {
+                        touched = evt;
                         evt.OwnerCalendarInfoId = calendar.Id;
                         evt.Members             = parsedMembers;
                         await calendarRepository.AddEventAsync(evt, ct);
                     }
+
+                    // Commit each event individually. A constraint violation
+                    // (e.g. Title longer than the column max length) throws here
+                    // and is handled by the catch below; legitimate events that
+                    // were committed earlier in the loop are not rolled back.
+                    await calendarRepository.SaveChangesAsync(ct);
                 }
                 catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
                 {
+                    if (touched != null)
+                    {
+                        try
+                        {
+                            await calendarRepository.DetachEventAsync(touched, ct);
+                        }
+                        catch (Exception detachEx)
+                        {
+                            logger.LogWarning(
+                                detachEx,
+                                "Failed to detach {GoogleEventId} after sync failure; subsequent per-event saves may be affected.",
+                                evt.GoogleEventId);
+                        }
+                    }
+
                     await RecordEventFailureAsync(evt, calendar.Id, ex, ct);
+
+                    try
+                    {
+                        await calendarRepository.SaveChangesAsync(ct);
+                    }
+                    catch (Exception saveEx)
+                    {
+                        logger.LogError(
+                            saveEx,
+                            "Failed to persist SyncEventFailure for {GoogleEventId}; failure will not appear in diagnostics.",
+                            evt.GoogleEventId);
+                    }
                 }
             }
 

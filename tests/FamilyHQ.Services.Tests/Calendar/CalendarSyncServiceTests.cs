@@ -53,7 +53,10 @@ public class CalendarSyncServiceTests
             s.SyncToken == "new_sync_token" &&
             s.SyncWindowStart == startDate &&
             s.SyncWindowEnd == endDate), It.IsAny<CancellationToken>()), Times.Once);
-        calendarRepository.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        // Per-event resilience: one SaveChanges per event (so a constraint
+        // violation on event N does not roll back events 1..N-1) plus the
+        // final SaveChanges that commits the SyncState update.
+        calendarRepository.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -615,6 +618,80 @@ public class CalendarSyncServiceTests
         // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
         syncFailureRepo.Verify(s => s.AddAsync(It.IsAny<SyncEventFailure>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncAsync_WhenSaveChangesThrowsForOneEvent_DetachesAndContinues()
+    {
+        // Real-world scenario: AddEventAsync only stages the entity; the actual
+        // Postgres constraint violation (e.g. "value too long for type character
+        // varying(500)") surfaces from SaveChangesAsync, AFTER the per-event Add
+        // call has succeeded. This test pins the behaviour that the per-event
+        // catch must detach the failing entity and record the failure rather
+        // than aborting the whole sync.
+        var (client, calendarRepository, _, _, _, _, syncFailureRepo, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-save-resilience");
+        var calendarId       = Guid.Parse("d4444444-4444-4444-4444-444444444444");
+        var googleCalendarId = "save-resilience@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = start.AddDays(7);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "S" };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+
+        var goodA = new CalendarEvent { GoogleEventId = "evt-a", Title = "A" };
+        var bad   = new CalendarEvent { GoogleEventId = "evt-bad", Title = new string('X', 600) };
+        var goodB = new CalendarEvent { GoogleEventId = "evt-b", Title = "B" };
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { goodA, bad, goodB }, "next-token"));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        // SaveChangesAsync throws when the bad event is the last one added.
+        // The per-event loop adds then immediately saves, so we tie the throw
+        // to the AddEventAsync(bad) call having been invoked.
+        var badEventStaged = false;
+        calendarRepository.Setup(r => r.AddEventAsync(bad, It.IsAny<CancellationToken>()))
+            .Callback(() => badEventStaged = true)
+            .Returns(Task.CompletedTask);
+        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(_ =>
+            {
+                if (badEventStaged)
+                {
+                    badEventStaged = false; // only the bad event's save throws
+                    throw new InvalidOperationException("value too long for type character varying(500)");
+                }
+                return Task.FromResult(1);
+            });
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert — bad event was detached so it does not poison subsequent saves
+        calendarRepository.Verify(r => r.DetachEventAsync(bad, It.IsAny<CancellationToken>()), Times.Once);
+        // The other two events were still added
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "evt-a"), It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "evt-b"), It.IsAny<CancellationToken>()), Times.Once);
+        // Exactly one failure recorded against the bad event
+        syncFailureRepo.Verify(s => s.AddAsync(
+            It.Is<SyncEventFailure>(f =>
+                f.GoogleEventId == "evt-bad" &&
+                f.UserId == "u-save-resilience" &&
+                f.FailureReason.StartsWith("value too long")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // Sync still completes — token advanced
+        calendarRepository.Verify(r => r.AddSyncStateAsync(
+            It.Is<SyncState>(s => s.SyncToken == "next-token"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
