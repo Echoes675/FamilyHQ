@@ -42,13 +42,6 @@ public class SyncResilienceSteps
         await _simulatorApi.SetSyncFailureModeAsync(userId, "RefreshTokenInvalidGrant");
     }
 
-    [Given(@"the Google Calendar API rejects requests with ""403""")]
-    public async Task GivenTheGoogleCalendarApiRejectsRequestsWith403()
-    {
-        var userId = GetUserId();
-        await _simulatorApi.SetSyncFailureModeAsync(userId, "CalendarApi403");
-    }
-
     [Given(@"a sync event failure has been recorded")]
     public async Task GivenASyncEventFailureHasBeenRecorded()
     {
@@ -100,21 +93,6 @@ public class SyncResilienceSteps
 
         var ctaText = (await _dashboardPage.ReauthBannerCta.InnerTextAsync()).Trim();
         ctaText.Should().NotBeNullOrWhiteSpace("the reauth banner CTA must expose a visible action label");
-    }
-
-    [Then(@"I see the upstream HTTP reason as the last error")]
-    public async Task ThenISeeTheUpstreamHttpReasonAsTheLastError()
-    {
-        // GoogleCalendarClient.ThrowIfFailedAsync passes response.ReasonPhrase
-        // into GoogleReauthRequiredException.ErrorDescription, which flows
-        // through to UserToken.LastAuthErrorDescription and the diagnostics
-        // page renders that as the "last error" line. For an HTTP 403 the
-        // reason phrase is "Forbidden" — a non-default, status-specific
-        // reason. The richer body fields (errors[0].message) are captured
-        // in the exception's ResponseBody and logs but not in this field.
-        var lastError = await _diagnosticsPage.GetLastErrorTextAsync();
-        lastError.Should().Contain("Forbidden",
-            "the diagnostics last-error must surface the upstream HTTP reason phrase for the 403, not the default placeholder");
     }
 
     [Then(@"I see the needs-reauth status badge")]
