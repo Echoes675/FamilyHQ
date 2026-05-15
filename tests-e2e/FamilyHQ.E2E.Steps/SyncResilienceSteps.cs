@@ -120,7 +120,11 @@ public class SyncResilienceSteps
     private async Task TriggerManualSyncAsync()
     {
         await _settingsPage.NavigateToCalendarsTabAsync();
-        await _settingsPage.ClickSyncNowAsync();
+        var status = await _settingsPage.ClickSyncNowAsync();
+        // FHQ-28: stash the WebApi's response status so failure-handling steps
+        // can dump it. 409 = reauth correctly rejected. 200 = sync silently
+        // succeeded (the failure mode never fired — points at WebApi).
+        _scenarioContext["LastSyncResponseStatus"] = status;
     }
 
     [Given(@"the user's Google refresh token has been revoked")]
@@ -171,6 +175,7 @@ public class SyncResilienceSteps
             // FHQ-28 diagnostic: when the banner doesn't appear, capture the
             // current connection-status from the backend so we can discriminate
             // "WebApi didn't mark NeedsReauth" from "UI didn't surface the mark".
+            DumpSyncStatusDiagnostic();
             await DumpConnectionStatusDiagnosticAsync(page);
             throw;
         }
@@ -189,8 +194,31 @@ public class SyncResilienceSteps
     {
         await _diagnosticsPage.GotoAsync();
         var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
+
+        if (!label.Contains(expected))
+        {
+            // FHQ-28 diagnostic: capture sync-response status and connection-status
+            // so we can distinguish a silent-200 sync (WebApi never reached the catch)
+            // from a 409 sync followed by an unpersisted mark.
+            var page = _scenarioContext.Get<IPage>();
+            DumpSyncStatusDiagnostic();
+            await DumpConnectionStatusDiagnosticAsync(page);
+        }
+
         label.Should().Contain(expected,
             $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync");
+    }
+
+    private void DumpSyncStatusDiagnostic()
+    {
+        if (_scenarioContext.TryGetValue("LastSyncResponseStatus", out int status))
+        {
+            Console.Error.WriteLine($"[FHQ-28 diagnostic] last /api/sync/trigger response status: {status}");
+        }
+        else
+        {
+            Console.Error.WriteLine("[FHQ-28 diagnostic] no LastSyncResponseStatus captured (step didn't run or scenario context cleared).");
+        }
     }
 
     [Then(@"I see a reconnect button on the diagnostics page")]

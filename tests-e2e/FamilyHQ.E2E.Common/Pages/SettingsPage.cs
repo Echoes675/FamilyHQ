@@ -166,7 +166,7 @@ public class SettingsPage : BasePage
     public ILocator ReauthBannerSettings    => Page.GetByTestId("reauth-banner-settings");
     public ILocator ReauthBannerSettingsCta => Page.GetByTestId("reauth-banner-settings-cta");
 
-    public async Task ClickSyncNowAsync()
+    public async Task<int> ClickSyncNowAsync()
     {
         // The sync call hits POST /api/sync/trigger. We wait for the response
         // before returning so callers don't race Blazor's state update.
@@ -177,7 +177,8 @@ public class SettingsPage : BasePage
             new() { Timeout = 30000 });
 
         await SyncNowBtn.ClickAsync();
-        await responseTask;
+        var response = await responseTask;
+        return response.Status;
     }
 
     public async Task ClickRegisterWebhooksAsync()
