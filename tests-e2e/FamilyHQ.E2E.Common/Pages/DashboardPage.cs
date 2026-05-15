@@ -530,7 +530,33 @@ public class DashboardPage : BasePage
     public async Task RemoveCalendarChipFromEventAsync(string calendarName)
     {
         var removeBtn = EventModal.Locator($"[aria-label='Remove {calendarName}']");
-        await removeBtn.ClickAsync();
+
+        try
+        {
+            await removeBtn.ClickAsync();
+        }
+        catch (TimeoutException ex)
+        {
+            // FHQ-29 diagnostic: the remove button never appeared. Dump the
+            // event-modal HTML so we can see which chips ARE rendered. The most
+            // likely cause is that the multi-calendar event setup did not associate
+            // the event with all expected calendars (only one chip present), in
+            // which case the bug is upstream of the click.
+            string modalHtml;
+            try
+            {
+                modalHtml = await EventModal.InnerHTMLAsync();
+                if (modalHtml.Length > 2000) modalHtml = modalHtml.Substring(0, 2000) + "…(truncated)";
+            }
+            catch (Exception innerEx)
+            {
+                modalHtml = $"(modal HTML capture failed: {innerEx.Message})";
+            }
+            throw new TimeoutException(
+                $"{ex.Message} [FHQ-29 diagnostic] looking-for-aria-label='Remove {calendarName}' " +
+                $"| event-modal-html-head={modalHtml}",
+                ex);
+        }
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),

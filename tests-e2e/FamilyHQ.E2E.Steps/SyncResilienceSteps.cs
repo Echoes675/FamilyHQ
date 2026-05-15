@@ -71,12 +71,21 @@ public class SyncResilienceSteps
             "the legitimate event seeded alongside the poisoned event must still sync to the dashboard");
     }
 
-    private async Task DumpConnectionStatusDiagnosticAsync(IPage page)
+    private async Task<string> CollectReauthDiagnosticAsync(IPage page)
     {
+        // Returns a single-line summary that callers embed in their assertion's
+        // `because` clause so it surfaces in the xUnit Error Message. Earlier
+        // versions wrote to Console.Error, which is NOT captured by xUnit's
+        // per-test Standard Output, so the diagnostic was effectively silent.
+
+        var syncStatus = _scenarioContext.TryGetValue("LastSyncResponseStatus", out int s)
+            ? s.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "(not captured)";
+
+        string apiResp;
         try
         {
-            // Use the page's own fetch so the auth cookie travels with the request.
-            var json = await page.EvaluateAsync<string>(@"
+            apiResp = await page.EvaluateAsync<string>(@"
                 async () => {
                     try {
                         const r = await fetch('/api/calendars/connection-status', { credentials: 'include' });
@@ -86,10 +95,16 @@ public class SyncResilienceSteps
                         return JSON.stringify({ error: String(e) });
                     }
                 }");
+        }
+        catch (Exception ex)
+        {
+            apiResp = $"(fetch failed: {ex.Message})";
+        }
 
-            // Also capture page state so we can tell whether the test is on the dashboard
-            // and authenticated, vs landed on the login screen.
-            var pageState = await page.EvaluateAsync<string>(@"
+        string pageState;
+        try
+        {
+            pageState = await page.EvaluateAsync<string>(@"
                 () => JSON.stringify({
                     url: window.location.href,
                     title: document.title,
@@ -97,15 +112,13 @@ public class SyncResilienceSteps
                     hasLoginButton: !!document.querySelector('button.btn-primary.btn-lg'),
                     bodyTextHead: document.body.innerText.substring(0, 500)
                 })");
-
-            // Use Console.Error so it shows up in xUnit Standard Output Messages.
-            Console.Error.WriteLine($"[FHQ-28 diagnostic] connection-status response: {json}");
-            Console.Error.WriteLine($"[FHQ-28 diagnostic] page state: {pageState}");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[FHQ-28 diagnostic] failed to collect diagnostics: {ex.Message}");
+            pageState = $"(eval failed: {ex.Message})";
         }
+
+        return $"[FHQ-28 diagnostic] sync-response-status={syncStatus} | connection-status={apiResp} | page={pageState}";
     }
 
     private string GetUserId()
@@ -170,14 +183,13 @@ public class SyncResilienceSteps
         {
             await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         }
-        catch (TimeoutException)
+        catch (TimeoutException ex)
         {
-            // FHQ-28 diagnostic: when the banner doesn't appear, capture the
-            // current connection-status from the backend so we can discriminate
-            // "WebApi didn't mark NeedsReauth" from "UI didn't surface the mark".
-            DumpSyncStatusDiagnostic();
-            await DumpConnectionStatusDiagnosticAsync(page);
-            throw;
+            // FHQ-28 diagnostic: surface the WebApi's view of the world directly
+            // in the failing test's error message so triage doesn't need WebApi
+            // container logs.
+            var diag = await CollectReauthDiagnosticAsync(page);
+            throw new TimeoutException($"{ex.Message} {diag}", ex);
         }
     }
 
@@ -195,30 +207,21 @@ public class SyncResilienceSteps
         await _diagnosticsPage.GotoAsync();
         var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
 
+        string because;
         if (!label.Contains(expected))
         {
-            // FHQ-28 diagnostic: capture sync-response status and connection-status
-            // so we can distinguish a silent-200 sync (WebApi never reached the catch)
-            // from a 409 sync followed by an unpersisted mark.
+            // FHQ-28 diagnostic: embed the captured sync-response status and the
+            // live /api/calendars/connection-status response into the FluentAssertions
+            // failure message so triage doesn't need WebApi container logs.
             var page = _scenarioContext.Get<IPage>();
-            DumpSyncStatusDiagnostic();
-            await DumpConnectionStatusDiagnosticAsync(page);
-        }
-
-        label.Should().Contain(expected,
-            $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync");
-    }
-
-    private void DumpSyncStatusDiagnostic()
-    {
-        if (_scenarioContext.TryGetValue("LastSyncResponseStatus", out int status))
-        {
-            Console.Error.WriteLine($"[FHQ-28 diagnostic] last /api/sync/trigger response status: {status}");
+            because = await CollectReauthDiagnosticAsync(page);
         }
         else
         {
-            Console.Error.WriteLine("[FHQ-28 diagnostic] no LastSyncResponseStatus captured (step didn't run or scenario context cleared).");
+            because = $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync";
         }
+
+        label.Should().Contain(expected, because);
     }
 
     [Then(@"I see a reconnect button on the diagnostics page")]
