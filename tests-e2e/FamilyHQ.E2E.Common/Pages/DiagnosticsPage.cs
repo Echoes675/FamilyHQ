@@ -34,7 +34,8 @@ public class DiagnosticsPage : BasePage
     /// </summary>
     public async Task GotoAsync()
     {
-        await NavigateAsync();
+        // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
+        await Page.GotoAsync(PageUrl, new() { WaitUntil = WaitUntilState.NetworkIdle });
         await WaitForLoadedAsync();
     }
 

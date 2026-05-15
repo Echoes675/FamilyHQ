@@ -108,7 +108,9 @@ public class SyncResilienceSteps
     public async Task ThenISeeReauthBannerWithCta()
     {
         var page = _scenarioContext.Get<IPage>();
-        await page.GotoAsync(_config.BaseUrl + "/");
+        // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
+        await page.GotoAsync(_config.BaseUrl + "/",
+            new() { WaitUntil = WaitUntilState.NetworkIdle });
 
         await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         (await _dashboardPage.ReauthBannerCta.IsVisibleAsync()).Should().BeTrue(
@@ -119,7 +121,9 @@ public class SyncResilienceSteps
     public async Task ThenISeeReauthBanner()
     {
         var page = _scenarioContext.Get<IPage>();
-        await page.GotoAsync(_config.BaseUrl + "/");
+        // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
+        await page.GotoAsync(_config.BaseUrl + "/",
+            new() { WaitUntil = WaitUntilState.NetworkIdle });
         await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
