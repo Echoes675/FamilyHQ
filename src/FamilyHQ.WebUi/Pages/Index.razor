@@ -175,6 +175,7 @@
         _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
 
         SignalR.OnEventsUpdated += RefreshDataFromSignalR;
+        SignalR.OnConnectionStatusUpdated += RefreshConnectionStatusFromSignalR;
         await SignalR.StartAsync();
 
         await LoadMonthDataAsync();
@@ -197,9 +198,19 @@
         // Must be invoked on the UI thread
         InvokeAsync(async () =>
         {
+            await LoadConnectionStatusAsync();
             _calendars = await CalendarApi.GetCalendarsAsync();
             _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
             await LoadMonthDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void RefreshConnectionStatusFromSignalR()
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadConnectionStatusAsync();
             StateHasChanged();
         });
     }
@@ -405,6 +416,7 @@
     public ValueTask DisposeAsync()
     {
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
+        SignalR.OnConnectionStatusUpdated -= RefreshConnectionStatusFromSignalR;
         return ValueTask.CompletedTask;
     }
 
