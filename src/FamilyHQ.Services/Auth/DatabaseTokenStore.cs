@@ -18,8 +18,9 @@ public class DatabaseTokenStore : ITokenStore
     private readonly ICurrentUserService _currentUserService;
     private readonly IDataProtector _dataProtector;
     private readonly ILogger<DatabaseTokenStore> _logger;
+    private readonly IConnectionStatusBroadcaster _connectionStatusBroadcaster;
     private readonly string _provider;
-    
+
     /// <summary>
     /// Default OAuth provider
     /// </summary>
@@ -35,13 +36,15 @@ public class DatabaseTokenStore : ITokenStore
         ICurrentUserService currentUserService,
         IDataProtectionProvider dataProtectionProvider,
         ILogger<DatabaseTokenStore> logger,
+        IConnectionStatusBroadcaster connectionStatusBroadcaster,
         string provider = DefaultProvider)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _logger = logger;
+        _connectionStatusBroadcaster = connectionStatusBroadcaster;
         _provider = provider;
-        
+
         // Create a purpose-specific data protector for tokens
         _dataProtector = dataProtectionProvider.CreateProtector("FamilyHQ.Tokens");
     }
@@ -167,6 +170,7 @@ public class DatabaseTokenStore : ITokenStore
             throw new InvalidOperationException("Cannot mark token as needing re-auth: no user ID provided");
         }
 
+        bool broadcast = false;
         await _lock.WaitAsync(ct);
         try
         {
@@ -190,10 +194,21 @@ public class DatabaseTokenStore : ITokenStore
             _logger.LogWarning(
                 "Marked user {UserId} token as NeedsReauth ({ErrorDescription})",
                 userId, existingToken.LastAuthErrorDescription);
+            broadcast = true;
         }
         finally
         {
             _lock.Release();
+        }
+
+        if (broadcast)
+        {
+            // Fire the SignalR notification AFTER releasing the SemaphoreSlim so a slow
+            // hub-context send cannot serialise across token-store callers. The DB
+            // commit has already succeeded; the broadcast is fire-and-forget from the
+            // store's perspective and the IHubContext implementation handles its own
+            // queueing if any connected client is slow.
+            await _connectionStatusBroadcaster.BroadcastConnectionStatusUpdatedAsync(ct);
         }
     }
 
@@ -217,6 +232,7 @@ public class DatabaseTokenStore : ITokenStore
 
     private async Task SaveRefreshTokenInternalAsync(string refreshToken, string userId, CancellationToken ct)
     {
+        bool broadcast = false;
         await _lock.WaitAsync(ct);
         try
         {
@@ -240,6 +256,7 @@ public class DatabaseTokenStore : ITokenStore
                     existingToken.AuthStatus = TokenAuthStatus.Active;
                     existingToken.LastAuthErrorDescription = null;
                     existingToken.AuthStatusChangedAt = now;
+                    broadcast = true;
                 }
             }
             else
@@ -256,6 +273,7 @@ public class DatabaseTokenStore : ITokenStore
                     AuthStatusChangedAt = now
                 };
                 _dbContext.UserTokens.Add(userToken);
+                // First-time token creation isn't a transition from NeedsReauth — no broadcast.
             }
 
             await _dbContext.SaveChangesAsync(ct);
@@ -264,6 +282,13 @@ public class DatabaseTokenStore : ITokenStore
         finally
         {
             _lock.Release();
+        }
+
+        if (broadcast)
+        {
+            // Fire the SignalR notification AFTER releasing the SemaphoreSlim so a slow
+            // hub-context send cannot serialise across token-store callers.
+            await _connectionStatusBroadcaster.BroadcastConnectionStatusUpdatedAsync(ct);
         }
     }
 
