@@ -16,6 +16,7 @@ public class DatabaseTokenStoreTests : IDisposable
     private readonly IDataProtectionProvider _dataProtectionProvider;
     private readonly Mock<ILogger<DatabaseTokenStore>> _loggerMock;
     private readonly Mock<ICurrentUserService> _currentUserServiceMock;
+    private readonly Mock<IConnectionStatusBroadcaster> _broadcasterMock;
 
     public DatabaseTokenStoreTests()
     {
@@ -27,9 +28,10 @@ public class DatabaseTokenStoreTests : IDisposable
 
         // Use EphemeralDataProtectionProvider for testing (designed for unit tests)
         _dataProtectionProvider = new EphemeralDataProtectionProvider();
-        
+
         _loggerMock = new Mock<ILogger<DatabaseTokenStore>>();
         _currentUserServiceMock = new Mock<ICurrentUserService>();
+        _broadcasterMock = new Mock<IConnectionStatusBroadcaster>();
     }
 
     private DatabaseTokenStore CreateSut(string userId)
@@ -39,7 +41,21 @@ public class DatabaseTokenStoreTests : IDisposable
             _dbContext,
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _broadcasterMock.Object);
+    }
+
+    private (DatabaseTokenStore sut, Mock<IConnectionStatusBroadcaster> broadcaster, FamilyHqDbContext db) CreateSutWithBroadcaster()
+    {
+        // The four broadcast-behaviour tests don't rely on _currentUserService (they pass
+        // the userId explicitly), so we don't need to configure it here.
+        var sut = new DatabaseTokenStore(
+            _dbContext,
+            _currentUserServiceMock.Object,
+            _dataProtectionProvider,
+            _loggerMock.Object,
+            _broadcasterMock.Object);
+        return (sut, _broadcasterMock, _dbContext);
     }
 
     [Fact]
@@ -130,13 +146,15 @@ public class DatabaseTokenStoreTests : IDisposable
             dbContext1,
             currentUserService1.Object,
             dataProtectionProvider1,
-            _loggerMock.Object);
-            
+            _loggerMock.Object,
+            _broadcasterMock.Object);
+
         var sut2 = new DatabaseTokenStore(
             dbContext2,
             currentUserService2.Object,
             dataProtectionProvider2,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _broadcasterMock.Object);
 
         // Act
         await sut1.SaveRefreshTokenAsync(token1);
@@ -193,7 +211,8 @@ public class DatabaseTokenStoreTests : IDisposable
             _dbContext,
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _broadcasterMock.Object);
 
         // Act
         var result = await sut.GetRefreshTokenAsync();
@@ -211,7 +230,8 @@ public class DatabaseTokenStoreTests : IDisposable
             _dbContext,
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
-            _loggerMock.Object);
+            _loggerMock.Object,
+            _broadcasterMock.Object);
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -251,6 +271,7 @@ public class DatabaseTokenStoreTests : IDisposable
             currentUserService.Object,
             dataProtectionProvider,
             _loggerMock.Object,
+            _broadcasterMock.Object,
             provider: "Google");
 
         // Act
@@ -355,6 +376,80 @@ public class DatabaseTokenStoreTests : IDisposable
         Assert.Equal(TokenAuthStatus.NeedsReauth, result.Status);
         Assert.Equal("invalid_grant occurred", result.LastError);
         Assert.NotNull(result.Since);
+    }
+
+    [Fact]
+    public async Task MarkNeedsReauthAsync_WhenTokenUpdates_BroadcastsConnectionStatusUpdated()
+    {
+        var (sut, broadcasterMock, dbContext) = CreateSutWithBroadcaster();
+        // Seed an existing token for the user.
+        dbContext.UserTokens.Add(new UserToken
+        {
+            UserId = "u-broadcast",
+            Provider = "Google",
+            RefreshToken = "ignored",
+            AuthStatus = TokenAuthStatus.Active
+        });
+        await dbContext.SaveChangesAsync();
+
+        await sut.MarkNeedsReauthAsync("u-broadcast", "Forbidden", CancellationToken.None);
+
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task MarkNeedsReauthAsync_WhenNoTokenRow_DoesNotBroadcast()
+    {
+        var (sut, broadcasterMock, _) = CreateSutWithBroadcaster();
+
+        await sut.MarkNeedsReauthAsync("u-no-token", "Forbidden", CancellationToken.None);
+
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_WhenAuthStatusFlipsToActive_BroadcastsConnectionStatusUpdated()
+    {
+        var (sut, broadcasterMock, dbContext) = CreateSutWithBroadcaster();
+        dbContext.UserTokens.Add(new UserToken
+        {
+            UserId = "u-flip",
+            Provider = "Google",
+            RefreshToken = "old-encrypted-value",
+            AuthStatus = TokenAuthStatus.NeedsReauth,
+            LastAuthErrorDescription = "Forbidden"
+        });
+        await dbContext.SaveChangesAsync();
+
+        await sut.SaveRefreshTokenAsync("new-refresh-token", "u-flip", CancellationToken.None);
+
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_WhenAuthStatusAlreadyActive_DoesNotBroadcast()
+    {
+        var (sut, broadcasterMock, dbContext) = CreateSutWithBroadcaster();
+        dbContext.UserTokens.Add(new UserToken
+        {
+            UserId = "u-noop",
+            Provider = "Google",
+            RefreshToken = "old-encrypted-value",
+            AuthStatus = TokenAuthStatus.Active
+        });
+        await dbContext.SaveChangesAsync();
+
+        await sut.SaveRefreshTokenAsync("new-refresh-token", "u-noop", CancellationToken.None);
+
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     public void Dispose()

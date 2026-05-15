@@ -2,9 +2,11 @@
 @using FamilyHQ.WebUi.Components.Reauth
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.ViewModels
+@implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
 @inject NavigationManager NavigationManager
 @inject IConfiguration Configuration
+@inject SignalRService SignalR
 
 <div class="settings-section-content">
     @if (ReauthBanner.ShouldShow(_connectionStatus))
@@ -209,6 +211,8 @@
     {
         await LoadConnectionStatusAsync();
         await LoadCalendarsAsync();
+
+        SignalR.OnConnectionStatusUpdated += RefreshConnectionStatusFromSignalR;
     }
 
     private async Task LoadConnectionStatusAsync()
@@ -221,6 +225,21 @@
         {
             _connectionStatus = null;
         }
+    }
+
+    private void RefreshConnectionStatusFromSignalR()
+    {
+        InvokeAsync(async () =>
+        {
+            await LoadConnectionStatusAsync();
+            StateHasChanged();
+        });
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        SignalR.OnConnectionStatusUpdated -= RefreshConnectionStatusFromSignalR;
+        return ValueTask.CompletedTask;
     }
 
     private void ReconnectToGoogle()

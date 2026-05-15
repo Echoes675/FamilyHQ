@@ -6,6 +6,7 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
 {
     private readonly HubConnection _hubConnection;
     public event Action? OnEventsUpdated;
+    public event Action? OnConnectionStatusUpdated;
     public event Action<string>? OnThemeChanged;
     public event Action? OnWeatherUpdated;
     public event Action? Reconnected;
@@ -20,6 +21,11 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
         _hubConnection.On("EventsUpdated", () =>
         {
             OnEventsUpdated?.Invoke();
+        });
+
+        _hubConnection.On("ConnectionStatusUpdated", () =>
+        {
+            OnConnectionStatusUpdated?.Invoke();
         });
 
         _hubConnection.On<string>("ThemeChanged", period => OnThemeChanged?.Invoke(period));

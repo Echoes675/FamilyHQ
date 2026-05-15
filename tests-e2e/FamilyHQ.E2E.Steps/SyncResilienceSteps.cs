@@ -71,6 +71,43 @@ public class SyncResilienceSteps
             "the legitimate event seeded alongside the poisoned event must still sync to the dashboard");
     }
 
+    private async Task DumpConnectionStatusDiagnosticAsync(IPage page)
+    {
+        try
+        {
+            // Use the page's own fetch so the auth cookie travels with the request.
+            var json = await page.EvaluateAsync<string>(@"
+                async () => {
+                    try {
+                        const r = await fetch('/api/calendars/connection-status', { credentials: 'include' });
+                        const body = await r.text();
+                        return JSON.stringify({ status: r.status, body });
+                    } catch (e) {
+                        return JSON.stringify({ error: String(e) });
+                    }
+                }");
+
+            // Also capture page state so we can tell whether the test is on the dashboard
+            // and authenticated, vs landed on the login screen.
+            var pageState = await page.EvaluateAsync<string>(@"
+                () => JSON.stringify({
+                    url: window.location.href,
+                    title: document.title,
+                    hasReauthBanner: !!document.querySelector('[data-testid=""reauth-banner-dashboard""]'),
+                    hasLoginButton: !!document.querySelector('button.btn-primary.btn-lg'),
+                    bodyTextHead: document.body.innerText.substring(0, 500)
+                })");
+
+            // Use Console.Error so it shows up in xUnit Standard Output Messages.
+            Console.Error.WriteLine($"[FHQ-28 diagnostic] connection-status response: {json}");
+            Console.Error.WriteLine($"[FHQ-28 diagnostic] page state: {pageState}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[FHQ-28 diagnostic] failed to collect diagnostics: {ex.Message}");
+        }
+    }
+
     private string GetUserId()
     {
         // The simulator keys data by config.UserName (set by UserSteps as
@@ -83,7 +120,11 @@ public class SyncResilienceSteps
     private async Task TriggerManualSyncAsync()
     {
         await _settingsPage.NavigateToCalendarsTabAsync();
-        await _settingsPage.ClickSyncNowAsync();
+        var status = await _settingsPage.ClickSyncNowAsync();
+        // FHQ-28: stash the WebApi's response status so failure-handling steps
+        // can dump it. 409 = reauth correctly rejected. 200 = sync silently
+        // succeeded (the failure mode never fired — points at WebApi).
+        _scenarioContext["LastSyncResponseStatus"] = status;
     }
 
     [Given(@"the user's Google refresh token has been revoked")]
@@ -108,7 +149,9 @@ public class SyncResilienceSteps
     public async Task ThenISeeReauthBannerWithCta()
     {
         var page = _scenarioContext.Get<IPage>();
-        await page.GotoAsync(_config.BaseUrl + "/");
+        // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
+        await page.GotoAsync(_config.BaseUrl + "/",
+            new() { WaitUntil = WaitUntilState.NetworkIdle });
 
         await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
         (await _dashboardPage.ReauthBannerCta.IsVisibleAsync()).Should().BeTrue(
@@ -119,8 +162,23 @@ public class SyncResilienceSteps
     public async Task ThenISeeReauthBanner()
     {
         var page = _scenarioContext.Get<IPage>();
-        await page.GotoAsync(_config.BaseUrl + "/");
-        await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
+        await page.GotoAsync(_config.BaseUrl + "/",
+            new() { WaitUntil = WaitUntilState.NetworkIdle });
+
+        try
+        {
+            await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        }
+        catch (TimeoutException)
+        {
+            // FHQ-28 diagnostic: when the banner doesn't appear, capture the
+            // current connection-status from the backend so we can discriminate
+            // "WebApi didn't mark NeedsReauth" from "UI didn't surface the mark".
+            DumpSyncStatusDiagnostic();
+            await DumpConnectionStatusDiagnosticAsync(page);
+            throw;
+        }
     }
 
     [Then(@"the banner shows the reason ""([^""]*)""")]
@@ -136,8 +194,31 @@ public class SyncResilienceSteps
     {
         await _diagnosticsPage.GotoAsync();
         var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
+
+        if (!label.Contains(expected))
+        {
+            // FHQ-28 diagnostic: capture sync-response status and connection-status
+            // so we can distinguish a silent-200 sync (WebApi never reached the catch)
+            // from a 409 sync followed by an unpersisted mark.
+            var page = _scenarioContext.Get<IPage>();
+            DumpSyncStatusDiagnostic();
+            await DumpConnectionStatusDiagnosticAsync(page);
+        }
+
         label.Should().Contain(expected,
             $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync");
+    }
+
+    private void DumpSyncStatusDiagnostic()
+    {
+        if (_scenarioContext.TryGetValue("LastSyncResponseStatus", out int status))
+        {
+            Console.Error.WriteLine($"[FHQ-28 diagnostic] last /api/sync/trigger response status: {status}");
+        }
+        else
+        {
+            Console.Error.WriteLine("[FHQ-28 diagnostic] no LastSyncResponseStatus captured (step didn't run or scenario context cleared).");
+        }
     }
 
     [Then(@"I see a reconnect button on the diagnostics page")]

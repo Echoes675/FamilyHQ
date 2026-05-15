@@ -79,6 +79,7 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IThemeBroadcaster, FamilyHQ.WebApi.Hubs.SignalRThemeBroadcaster>();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IWeatherBroadcaster, FamilyHQ.WebApi.Hubs.SignalRWeatherBroadcaster>();
+builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IConnectionStatusBroadcaster, FamilyHQ.WebApi.Hubs.SignalRConnectionStatusBroadcaster>();
 
 // Add background webhook renewal service
 builder.Services.AddHostedService<FamilyHQ.WebApi.Services.WebhookRenewalService>();
