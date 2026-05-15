@@ -141,6 +141,53 @@ public class SimulatorApiClient : IDisposable
         return await response.Content.ReadFromJsonAsync<List<WebhookRegistrationDto>>() ?? [];
     }
 
+    /// <summary>
+    /// Instructs the Simulator to inject a sync failure mode for the given user.
+    /// Valid mode names: "RefreshTokenInvalidGrant", "CalendarApi401", "CalendarApi403".
+    /// </summary>
+    public async Task SetSyncFailureModeAsync(string userId, string mode)
+    {
+        var body = new { UserId = userId, Mode = mode };
+        var response = await _httpClient.PostAsJsonAsync(
+            "api/simulator/backdoor/sync-failure-mode", body);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Clears any injected sync failure mode for the given user.
+    /// </summary>
+    public async Task ClearSyncFailureModeAsync(string userId)
+    {
+        var response = await _httpClient.DeleteAsync(
+            $"api/simulator/backdoor/sync-failure-mode?userId={Uri.EscapeDataString(userId)}");
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Clears all injected sync failure modes across all users.
+    /// Intended for scenario teardown.
+    /// </summary>
+    public async Task ClearAllSyncFailureModesAsync()
+    {
+        var response = await _httpClient.DeleteAsync("api/simulator/backdoor/sync-failure-mode");
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Adds a poisoned event whose Summary length exceeds the WebApi's
+    /// CalendarEvent.Title column limit. On the next sync, EF Core will throw
+    /// a DbUpdateException for this single event, exercising the per-event
+    /// resilience path. Returns the new event's ID.
+    /// </summary>
+    public async Task<string> AddPoisonEventAsync(string userId, string calendarId)
+    {
+        var body = new { UserId = userId, CalendarId = calendarId };
+        var response = await _httpClient.PostAsJsonAsync(
+            "api/simulator/backdoor/events/poison", body);
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadAsStringAsync()).Trim('"');
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();

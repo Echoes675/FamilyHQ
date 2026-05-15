@@ -41,6 +41,7 @@ public class CalendarRepository : ICalendarRepository
 
         return await _context.Calendars
             .AsNoTracking()
+            .Include(c => c.SyncState)
             .Where(c => c.UserId == userId)
             .OrderBy(c => c.DisplayOrder)
             .ThenBy(c => c.Id)
@@ -250,6 +251,14 @@ public class CalendarRepository : ICalendarRepository
         var evt = await _context.Events.FindAsync([id], ct);
         if (evt != null)
             _context.Events.Remove(evt);
+    }
+
+    public Task DetachEventAsync(CalendarEvent calendarEvent, CancellationToken ct = default)
+    {
+        var entry = _context.Entry(calendarEvent);
+        if (entry.State != EntityState.Detached)
+            entry.State = EntityState.Detached;
+        return Task.CompletedTask;
     }
 
     public Task SaveSyncStateAsync(SyncState syncState, CancellationToken ct = default)

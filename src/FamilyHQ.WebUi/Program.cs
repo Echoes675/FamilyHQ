@@ -54,6 +54,13 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddHttpClient<IDiagnosticsApiService, DiagnosticsApiService>(client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        })
+        .AddHttpMessageHandler<CorrelationIdMessageHandler>()
+        .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
+
         builder.Services.AddHttpClient("Weather", client =>
         {
             client.BaseAddress = new Uri(backendUrl);

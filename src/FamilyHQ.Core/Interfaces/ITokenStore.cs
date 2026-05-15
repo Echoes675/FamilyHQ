@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Models;
+
 namespace FamilyHQ.Core.Interfaces;
 
 public interface ITokenStore
@@ -11,4 +13,14 @@ public interface ITokenStore
 
     /// <summary>Returns the distinct user IDs of all users who have stored tokens.</summary>
     Task<IEnumerable<string>> GetAllUserIdsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Marks the user's token as needing re-consent and records the failure reason.
+    /// </summary>
+    Task MarkNeedsReauthAsync(string userId, string? errorDescription, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the current authentication status for the user's stored token.
+    /// </summary>
+    Task<AuthStatusResult> GetAuthStatusAsync(string userId, CancellationToken ct = default);
 }

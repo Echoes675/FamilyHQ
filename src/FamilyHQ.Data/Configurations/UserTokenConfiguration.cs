@@ -50,6 +50,22 @@ public class UserTokenConfiguration : IEntityTypeConfiguration<UserToken>
                 v => v.HasValue ? v.Value.ToUniversalTime() : (DateTimeOffset?)null,
                 v => v);
 
+        // AuthStatus - stored as string for readability in the database
+        builder.Property(t => t.AuthStatus)
+            .IsRequired()
+            .HasConversion<string>()
+            .HasMaxLength(32);
+
+        // LastAuthErrorDescription - nullable, capped to keep rows small
+        builder.Property(t => t.LastAuthErrorDescription)
+            .HasMaxLength(512);
+
+        // AuthStatusChangedAt - nullable, convert to UTC if present
+        builder.Property(t => t.AuthStatusChangedAt)
+            .HasConversion(
+                v => v.HasValue ? v.Value.ToUniversalTime() : (DateTimeOffset?)null,
+                v => v);
+
         // Composite unique index on UserId + Provider
         builder.HasIndex(t => new { t.UserId, t.Provider })
             .IsUnique();

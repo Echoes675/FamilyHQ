@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Services.Calendar;
@@ -8,13 +9,39 @@ public class CalendarSyncService(
     IGoogleCalendarClient googleCalendarClient,
     ICalendarRepository calendarRepository,
     IMemberTagParser memberTagParser,
-    ILogger<CalendarSyncService> logger) : ICalendarSyncService
+    ILogger<CalendarSyncService> logger,
+    ITokenStore tokenStore,
+    ICurrentUserService currentUserService,
+    ISyncFailureRepository syncFailureRepository) : ICalendarSyncService
 {
     public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
-        logger.LogInformation("Starting full sync from {Start} to {End}", startDate, endDate);
+        // Capture the current user id ONCE at sync entry. IHttpContextAccessor.HttpContext
+        // is AsyncLocal-backed and can become null after the response has been sent or
+        // when async continuations resume on a thread without the request's execution
+        // context. Resolving userId lazily inside a catch block (after multiple awaits)
+        // races against that lifetime; the user could be authoritatively known at sync
+        // start but unobservable by the time we want to mark them NeedsReauth. Capturing
+        // up front pins the value to the sync's logical scope and eliminates the race.
+        var capturedUserId = currentUserService.UserId;
+        if (string.IsNullOrEmpty(capturedUserId))
+        {
+            logger.LogWarning("SyncAllAsync invoked with no current user id; aborting sync.");
+            return;
+        }
 
-        var googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+        logger.LogInformation("Starting full sync from {Start} to {End} for user {UserId}", startDate, endDate, capturedUserId);
+
+        List<CalendarInfo> googleCalendars;
+        try
+        {
+            googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
+            throw;
+        }
         var localCalendars  = await calendarRepository.GetCalendarsAsync(ct);
 
         // Remove obsolete local calendars
@@ -68,9 +95,22 @@ public class CalendarSyncService(
         // every event with no member tags would be persisted with Members=[] and
         // then get stranded off the dashboard once the user picks a different
         // shared calendar in settings.
-        foreach (var calendarId in calendarIdsToSync)
+        // FHQ-25 (WS1): a reauth/permission failure on any calendar aborts the loop
+        // because all of this user's calendars share the same OAuth token — once Google
+        // rejects it once, every remaining calendar would reject it too. Per-event
+        // resilience (so one malformed event in one calendar doesn't abort the rest of
+        // that calendar's events) is FHQ-26 / WS2.
+        try
         {
-            await SyncAsync(calendarId, startDate, endDate, ct);
+            foreach (var calendarId in calendarIdsToSync)
+            {
+                await SyncAsync(calendarId, startDate, endDate, ct);
+            }
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
+            throw;
         }
 
         // First-login default: if the user has more than one calendar but none is
@@ -150,42 +190,93 @@ public class CalendarSyncService(
 
             foreach (var evt in events)
             {
-                if (evt.Title == "CANCELLED_TOMBSTONE")
+                // The entity actually written to the change tracker for this event.
+                // If a downstream SaveChangesAsync throws (e.g. Postgres rejects the
+                // value as too long), we need to detach this specific entity so the
+                // failure does not poison subsequent per-event saves.
+                CalendarEvent? touched = null;
+                try
                 {
-                    var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                    if (tracked != null)
-                        await calendarRepository.DeleteEventAsync(tracked.Id, ct);
-                    continue;
+                    if (evt.Title == "CANCELLED_TOMBSTONE")
+                    {
+                        var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                        if (tracked != null)
+                        {
+                            touched = tracked;
+                            await calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                            await calendarRepository.SaveChangesAsync(ct);
+                        }
+                        continue;
+                    }
+
+                    // Derive members from description
+                    var parsedNames   = memberTagParser.ParseMembers(evt.Description, knownMemberNames);
+                    var parsedMembers = parsedNames
+                        .Where(n => calendarByName.ContainsKey(n))
+                        .Select(n => calendarByName[n])
+                        .ToList();
+
+                    // If no members parsed and this is an individual calendar, default to owning calendar's member
+                    if (parsedMembers.Count == 0 && !calendar.IsShared)
+                        parsedMembers.Add(calendar);
+
+                    var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+                    if (existing != null)
+                    {
+                        touched = existing;
+                        existing.Title       = evt.Title;
+                        existing.Start       = evt.Start;
+                        existing.End         = evt.End;
+                        existing.IsAllDay    = evt.IsAllDay;
+                        existing.Location    = evt.Location;
+                        existing.Description = evt.Description;
+                        existing.Members     = parsedMembers;
+                        await calendarRepository.UpdateEventAsync(existing, ct);
+                    }
+                    else
+                    {
+                        touched = evt;
+                        evt.OwnerCalendarInfoId = calendar.Id;
+                        evt.Members             = parsedMembers;
+                        await calendarRepository.AddEventAsync(evt, ct);
+                    }
+
+                    // Commit each event individually. A constraint violation
+                    // (e.g. Title longer than the column max length) throws here
+                    // and is handled by the catch below; legitimate events that
+                    // were committed earlier in the loop are not rolled back.
+                    await calendarRepository.SaveChangesAsync(ct);
                 }
-
-                // Derive members from description
-                var parsedNames   = memberTagParser.ParseMembers(evt.Description, knownMemberNames);
-                var parsedMembers = parsedNames
-                    .Where(n => calendarByName.ContainsKey(n))
-                    .Select(n => calendarByName[n])
-                    .ToList();
-
-                // If no members parsed and this is an individual calendar, default to owning calendar's member
-                if (parsedMembers.Count == 0 && !calendar.IsShared)
-                    parsedMembers.Add(calendar);
-
-                var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                if (existing != null)
+                catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
                 {
-                    existing.Title       = evt.Title;
-                    existing.Start       = evt.Start;
-                    existing.End         = evt.End;
-                    existing.IsAllDay    = evt.IsAllDay;
-                    existing.Location    = evt.Location;
-                    existing.Description = evt.Description;
-                    existing.Members     = parsedMembers;
-                    await calendarRepository.UpdateEventAsync(existing, ct);
-                }
-                else
-                {
-                    evt.OwnerCalendarInfoId = calendar.Id;
-                    evt.Members             = parsedMembers;
-                    await calendarRepository.AddEventAsync(evt, ct);
+                    if (touched != null)
+                    {
+                        try
+                        {
+                            await calendarRepository.DetachEventAsync(touched, ct);
+                        }
+                        catch (Exception detachEx)
+                        {
+                            logger.LogWarning(
+                                detachEx,
+                                "Failed to detach {GoogleEventId} after sync failure; subsequent per-event saves may be affected.",
+                                evt.GoogleEventId);
+                        }
+                    }
+
+                    await RecordEventFailureAsync(evt, calendar.Id, ex, ct);
+
+                    try
+                    {
+                        await calendarRepository.SaveChangesAsync(ct);
+                    }
+                    catch (Exception saveEx)
+                    {
+                        logger.LogError(
+                            saveEx,
+                            "Failed to persist SyncEventFailure for {GoogleEventId}; failure will not appear in diagnostics.",
+                            evt.GoogleEventId);
+                    }
                 }
             }
 
@@ -213,4 +304,44 @@ public class CalendarSyncService(
             await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
     }
+
+    private async Task RecordEventFailureAsync(CalendarEvent evt, Guid calendarInfoId, Exception ex, CancellationToken ct)
+    {
+        var userId = currentUserService.UserId ?? string.Empty;
+        logger.LogError(
+            ex,
+            "Sync failed for event {GoogleEventId} on calendar {CalendarInfoId} (user {UserId}): {ExceptionType} — {Message}",
+            evt.GoogleEventId,
+            calendarInfoId,
+            userId,
+            ex.GetType().Name,
+            ex.Message);
+
+        // Column widths are enforced by EF/Postgres. EF Core constraint-violation
+        // messages can easily exceed 512 chars, so truncating defensively here
+        // prevents the failure-write itself from throwing inside the catch and
+        // losing the diagnostic record entirely.
+        var failure = new SyncEventFailure
+        {
+            UserId = userId,
+            CalendarInfoId = calendarInfoId,
+            GoogleEventId = evt.GoogleEventId,
+            EventTitle = Truncate(evt.Title, 256),
+            FailureReason = Truncate(ex.Message, 512) ?? string.Empty,
+            ExceptionType = Truncate(ex.GetType().FullName ?? ex.GetType().Name, 256) ?? "Exception",
+            FailedAt = DateTimeOffset.UtcNow,
+            Resolved = false
+        };
+
+        await syncFailureRepository.AddAsync(failure, ct);
+    }
+
+    private static string? Truncate(string? value, int max)
+    {
+        if (value is null) return null;
+        return value.Length <= max ? value : value[..max];
+    }
+
+    private Task MarkUserNeedsReauthAsync(string capturedUserId, GoogleReauthRequiredException ex, CancellationToken ct)
+        => tokenStore.MarkNeedsReauthAsync(capturedUserId, ex.ErrorDescription, ct);
 }

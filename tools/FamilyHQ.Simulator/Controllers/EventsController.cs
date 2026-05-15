@@ -2,6 +2,7 @@ using System.Globalization;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
+using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,11 +15,13 @@ public class EventsController : ControllerBase
 {
     private readonly SimContext _db;
     private readonly ILogger<EventsController> _logger;
+    private readonly SyncFailureModeStore _failureStore;
 
-    public EventsController(SimContext db, ILogger<EventsController> logger)
+    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore)
     {
         _db = db;
         _logger = logger;
+        _failureStore = failureStore;
     }
 
     [HttpGet]
@@ -26,6 +29,10 @@ public class EventsController : ControllerBase
     {
         _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
         var userId = ExtractUserId(Request);
+
+        var injected = SyncFailureResponse.TryBuild(_failureStore.Get(userId ?? string.Empty));
+        if (injected is not null)
+            return injected;
 
         var userEventIds = await _db.Events
             .Where(e => e.UserId == userId)
@@ -266,11 +273,19 @@ public class EventsController : ControllerBase
         return NoContent();
     }
 
+    // Sentinel prefix written by the poison-event backdoor. The simulator's own
+    // SimulatedEvent.Summary column is HasMaxLength(500) so the poison payload
+    // cannot be persisted as-is; we store a short marker and reconstitute the
+    // oversize value when the events listing is emitted. This is what makes
+    // the WebApi side fail on insert (its CalendarEvent.Title is also 500).
+    private const string PoisonEventIdPrefix = "simulated_evt_poison_";
+    private const int PoisonSummaryLength = 600;
+
     private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
     {
         id          = e.Id,
         status      = e.IsDeleted ? "cancelled" : "confirmed",
-        summary     = e.Summary,
+        summary     = e.Id.StartsWith(PoisonEventIdPrefix) ? new string('X', PoisonSummaryLength) : e.Summary,
         location    = e.Location,
         description = e.Description,
         start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },

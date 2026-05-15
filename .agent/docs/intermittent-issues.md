@@ -14,11 +14,49 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-*(none currently — see Resolved issues below.)*
+(none)
 
 ---
 
 ## Resolved issues
+
+### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
+
+**Resolved:** branch `fix/FHQ-28-staging-reauth-banner-investigation`, PR #74, merge commit `d9bb603` (2026-05-15). Tracked as FHQ-27 (initial attempt) → FHQ-28 (follow-up that actually closed the loop). The FHQ-27 retrospective was written prematurely after only 5 Deploy-Dev passes; the very next Deploy-Staging failed. **Do not write a "Resolved" entry off Deploy-Dev alone.**
+**Component:** `src/FamilyHQ.Services/Auth/DatabaseTokenStore.cs`, `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs`, `src/FamilyHQ.Services/Calendar/GoogleCalendarClient.cs`, `src/FamilyHQ.WebUi/Pages/Index.razor`, `src/FamilyHQ.WebUi/Components/Settings/SettingsCalendarsTab.razor`, `src/FamilyHQ.WebUi/Services/SignalRService.cs`, plus the new `IConnectionStatusBroadcaster` abstraction in `FamilyHQ.Core.Interfaces` / `FamilyHQ.WebApi.Hubs`.
+**First seen:** Deploy-Dev #328 (2026-05-14).
+**Occurrences:** Deploy-Dev #328, #330, #331, #332, #340, #350, #353; Deploy-Staging #101. Before FHQ-27 the three pulled scenarios flaked at observed rates ~50% (403 path), ~25% (diagnostics needs-reauth), ~10% (refresh-token banner). After FHQ-27 the symptom briefly disappeared across 5 Deploy-Dev runs (#344–#348) but reappeared on Deploy-Staging #101 and Deploy-Dev #350/#353.
+
+**Symptom:**
+After a sync attempt that hit a Google reauth-triggering condition, one of the four SyncResilience scenarios in `SyncResilience.feature` would fail intermittently — either the dashboard reauth banner never appeared within 30 s, or the diagnostics-page status badge rendered `Active` instead of `Needs Reauth`. The specific failing scenario varied between runs. The Deploy-Dev #353 occurrence carried hard evidence (the diagnostics page directly read backend connection status and got `Active`), proving at least one occurrence was server-side, not UI-side.
+
+**Root cause (cumulative across FHQ-25 / FHQ-27 / FHQ-28):**
+Three contributing mechanisms, none individually load-bearing, all closed together:
+
+1. **Late `ICurrentUserService.UserId` resolution inside the catch block (FHQ-27 fix).** `CalendarSyncService.SyncAllAsync` originally resolved `currentUserService.UserId` lazily inside the catch handler, after several `await` boundaries. `IHttpContextAccessor.HttpContext` is AsyncLocal-backed; under certain async-flow conditions it would be unobservable, returning null and silently short-circuiting the mark.
+2. **HttpClient `DefaultRequestHeaders.Authorization` shared across requests (FHQ-27 fix).** `GoogleCalendarClient.SetAuthorizationHeaderAsync` mutated `_httpClient.DefaultRequestHeaders.Authorization` — process-shared state on a typed client. Concurrent users could race on the header.
+3. **No push-based connection-status surface (FHQ-28 fix).** The dashboard and Calendars-tab read `/api/calendars/connection-status` only inside `OnInitializedAsync`. Any AuthStatus transition that happened during a SignalR-connected session was invisible until a full page reload. The test relied on `page.GotoAsync("/")` triggering a fresh `OnInitializedAsync` — usually it did, occasionally it didn't, depending on Blazor's `NavigationManager` interceptor behaviour and the surrounding network state.
+
+**Fix:**
+- Capture `userId` at the top of `SyncAllAsync` and pass it explicitly to `MarkUserNeedsReauthAsync(capturedUserId, ...)`. Removed the late-resolve path.
+- Build a fresh `HttpRequestMessage` per call site in `GoogleCalendarClient` (`BuildAuthorizedRequestAsync`) and attach the Authorization header there. `_httpClient.DefaultRequestHeaders.Authorization` is never mutated.
+- New `IConnectionStatusBroadcaster` / `SignalRConnectionStatusBroadcaster` (mirrors `IThemeBroadcaster` / `SignalRThemeBroadcaster`). `DatabaseTokenStore.MarkNeedsReauthAsync` and `SaveRefreshTokenInternalAsync` broadcast `ConnectionStatusUpdated` after every AuthStatus transition.
+- `SignalRService` exposes `OnConnectionStatusUpdated`; `Index.razor` and `SettingsCalendarsTab.razor` subscribe and re-fetch connection status on receipt.
+- `Index.razor.RefreshDataFromSignalR` also re-fetches connection status as defence-in-depth.
+- E2E reauth-flow `[Then]` steps navigate with `WaitUntilState.NetworkIdle`.
+- E2E diagnostic instrumentation retained in the codebase: on banner-timeout or wrong-badge-label, the failing step dumps the WebApi's `/api/calendars/connection-status` response, the manual-sync HTTP status code, and page state into xUnit Standard Output (prefix `[FHQ-28 diagnostic]`). This is left in place so any future recurrence is immediately diagnosable.
+
+**Verification:**
+- 5 consecutive Deploy-Dev passes on the FHQ-28 branch with all 4 SyncResilience scenarios green: #354, #355, #356, #357, #358.
+- 2 consecutive Deploy-Staging passes with all 4 SyncResilience scenarios green: #102 (clean run, all tests passed) and #103 (all 4 SyncResilience scenarios green; one unrelated test flake — `Remove calendar chip from event` — tracked as a separate issue FHQ-29).
+
+This is the 7-run streak the previous entry version of this issue required as the bar to declare resolved.
+
+**If the symptom returns:**
+1. First triage: `jk log FamilyHQ-Deploy-Dev <n> | grep "FHQ-28 diagnostic"`. The diagnostic captures the manual-sync HTTP response status (200 = silent success → check `currentUserService.UserId` resolution; 409 = correctly rejected → bug is downstream) and the `/api/calendars/connection-status` response (`active` = not persisted → bug is in the WebApi mark path; `needs_reauth` = persisted but UI didn't surface it → bug is in SignalR client wiring or the page render path).
+2. Cross-check that `GoogleCalendarClient` still uses `BuildAuthorizedRequestAsync` for every call site and `_httpClient.DefaultRequestHeaders.Authorization` is never mutated.
+3. Cross-check that `DatabaseTokenStore` still calls `_connectionStatusBroadcaster.BroadcastConnectionStatusUpdatedAsync` after both AuthStatus transitions.
+4. Cross-check that `Index.razor` and `SettingsCalendarsTab.razor` still subscribe to `SignalR.OnConnectionStatusUpdated` and unsubscribe in their DisposeAsync.
 
 ### 2. EventModalTimePicker scenario clicks wrong row when day-view auto-scrolls
 

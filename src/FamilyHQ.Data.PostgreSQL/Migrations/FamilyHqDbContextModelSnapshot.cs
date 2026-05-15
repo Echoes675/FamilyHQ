@@ -238,6 +238,58 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.ToTable("LocationSettings");
                 });
 
+            modelBuilder.Entity("FamilyHQ.Core.Models.SyncEventFailure", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CalendarInfoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EventTitle")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ExceptionType")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("FailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("GoogleEventId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("Resolved")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalendarInfoId");
+
+                    b.HasIndex("UserId", "FailedAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("IX_SyncEventFailures_UserId_FailedAt");
+
+                    b.ToTable("SyncEventFailures", (string)null);
+                });
+
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncState", b =>
                 {
                     b.Property<Guid>("Id")
@@ -281,8 +333,20 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.Property<DateTimeOffset?>("AccessTokenExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("AuthStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("AuthStatusChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastAuthErrorDescription")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
 
                     b.Property<string>("Provider")
                         .IsRequired()
@@ -473,6 +537,16 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasForeignKey("OwnerCalendarInfoId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.SyncEventFailure", b =>
+                {
+                    b.HasOne("FamilyHQ.Core.Models.CalendarInfo", "CalendarInfo")
+                        .WithMany()
+                        .HasForeignKey("CalendarInfoId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CalendarInfo");
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncState", b =>

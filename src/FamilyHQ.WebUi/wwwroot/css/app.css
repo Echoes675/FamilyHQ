@@ -297,6 +297,40 @@ html, body {
 .alert-warning { background: rgba(234, 179, 8, 0.15); color: var(--theme-text); border: 1px solid rgba(234, 179, 8, 0.3); }
 .alert-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
 
+.reauth-banner { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.reauth-banner__body { flex: 1 1 auto; min-width: 0; }
+.reauth-banner__heading { display: block; color: var(--theme-text); font-weight: 600; margin-bottom: 4px; }
+.reauth-banner__message { margin: 0; color: var(--theme-text-muted); font-size: 13px; word-break: break-word; }
+.reauth-banner__cta { flex: 0 0 auto; min-height: 48px; min-width: 48px; }
+.reauth-banner--dashboard { margin: 0 0 12px 0; font-size: 13px; padding: 10px 14px; }
+.reauth-banner--dashboard .reauth-banner__heading { font-size: 14px; }
+
+/* Diagnostics page */
+.diagnostics-page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; color: var(--theme-text); }
+.diagnostics-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.diagnostics-page__title { font-size: 24px; font-weight: 600; color: var(--theme-text); margin: 0; }
+.diagnostics-refresh-btn { min-height: 48px; min-width: 48px; }
+.diagnostics-section { margin-bottom: 32px; }
+.diagnostics-section__title { font-size: 18px; font-weight: 600; color: var(--theme-text); margin-bottom: 12px; }
+.diagnostics-empty { color: var(--theme-text-muted); font-size: 14px; margin: 0; padding: 12px 0; }
+.diagnostics-muted { color: var(--theme-text-muted); }
+.diagnostics-connection { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px; background: var(--theme-surface); border: 1px solid var(--theme-border); border-radius: 8px; margin-bottom: 12px; }
+.diagnostics-connection__summary { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.diagnostics-connection__detail { display: flex; flex-direction: column; gap: 4px; }
+.diagnostics-connection__error { margin: 0; color: var(--theme-text-muted); font-size: 13px; word-break: break-word; }
+.diagnostics-connection__since { margin: 0; color: var(--theme-text-muted); font-size: 13px; }
+.diagnostics-reconnect-btn { flex: 0 0 auto; min-height: 48px; min-width: 48px; }
+.diagnostics-status-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid var(--theme-border); color: var(--theme-text); background: var(--theme-surface); }
+.diagnostics-status-badge--ok { background: color-mix(in srgb, var(--theme-accent) 15%, transparent); border-color: color-mix(in srgb, var(--theme-accent) 35%, transparent); }
+.diagnostics-status-badge--warning { background: rgba(234, 179, 8, 0.15); border-color: rgba(234, 179, 8, 0.35); }
+.diagnostics-status-badge--unknown { background: var(--theme-surface); color: var(--theme-text-muted); }
+.diagnostics-table { width: 100%; border-collapse: collapse; background: var(--theme-surface); border: 1px solid var(--theme-border); border-radius: 8px; overflow: hidden; }
+.diagnostics-table th, .diagnostics-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--theme-glass-divider); color: var(--theme-text); font-size: 14px; }
+.diagnostics-table th { font-weight: 600; color: var(--theme-text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.diagnostics-table tr:last-child td { border-bottom: none; }
+.diagnostics-settings-link { display: inline-block; margin-top: 16px; color: var(--theme-accent); font-size: 14px; text-decoration: none; min-height: 48px; line-height: 48px; }
+.diagnostics-settings-link:hover { color: var(--theme-accent-hover); }
+
 /* =============================================
    Section 13 — Spinner
    ============================================= */

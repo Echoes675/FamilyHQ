@@ -159,17 +159,26 @@ public class SettingsPage : BasePage
     public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");
     public ILocator RegisterWebhooksBtn => Page.GetByTestId("register-webhooks-btn");
 
-    public async Task ClickSyncNowAsync()
+    // General tab — diagnostics link
+    public ILocator DiagnosticsLink => Page.GetByTestId("settings-diagnostics-link");
+
+    // Calendars tab — reauth banner (mirrors the dashboard banner)
+    public ILocator ReauthBannerSettings    => Page.GetByTestId("reauth-banner-settings");
+    public ILocator ReauthBannerSettingsCta => Page.GetByTestId("reauth-banner-settings-cta");
+
+    public async Task<int> ClickSyncNowAsync()
     {
-        // The sync call hits POST /api/sync/trigger.  We wait for the response
-        // before checking the success banner so the test doesn't race against
-        // Blazor's state update.
+        // The sync call hits POST /api/sync/trigger. We wait for the response
+        // before returning so callers don't race Blazor's state update.
+        // We do NOT filter on Status == 200 because the resilience scenarios
+        // expect a 409 (reauth required) and the click must still complete cleanly.
         var responseTask = Page.WaitForResponseAsync(
-            r => r.Url.Contains("api/sync/trigger") && r.Status == 200,
+            r => r.Url.Contains("api/sync/trigger"),
             new() { Timeout = 30000 });
 
         await SyncNowBtn.ClickAsync();
-        await responseTask;
+        var response = await responseTask;
+        return response.Status;
     }
 
     public async Task ClickRegisterWebhooksAsync()

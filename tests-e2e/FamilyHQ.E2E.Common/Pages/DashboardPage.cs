@@ -26,6 +26,18 @@ public class DashboardPage : BasePage
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
+
+    // Reauth banner (rendered on the dashboard when AuthStatus is needs_reauth)
+    public ILocator ReauthBanner    => Page.GetByTestId("reauth-banner-dashboard");
+    public ILocator ReauthBannerCta => Page.GetByTestId("reauth-banner-dashboard-cta");
+
+    public Task<bool> IsReauthBannerVisibleAsync() => ReauthBanner.IsVisibleAsync();
+
+    public async Task<string> GetReauthBannerTextAsync()
+    {
+        await ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        return (await ReauthBanner.InnerTextAsync()).Trim();
+    }
     private ILocator NextMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Next ›" });
     private ILocator PrevMonthBtn => Page.GetByRole(AriaRole.Button, new() { Name = "‹ Prev" });
     private ILocator AddEventBtn => Page.GetByTestId("add-event-btn");
@@ -518,7 +530,33 @@ public class DashboardPage : BasePage
     public async Task RemoveCalendarChipFromEventAsync(string calendarName)
     {
         var removeBtn = EventModal.Locator($"[aria-label='Remove {calendarName}']");
-        await removeBtn.ClickAsync();
+
+        try
+        {
+            await removeBtn.ClickAsync();
+        }
+        catch (TimeoutException ex)
+        {
+            // FHQ-29 diagnostic: the remove button never appeared. Dump the
+            // event-modal HTML so we can see which chips ARE rendered. The most
+            // likely cause is that the multi-calendar event setup did not associate
+            // the event with all expected calendars (only one chip present), in
+            // which case the bug is upstream of the click.
+            string modalHtml;
+            try
+            {
+                modalHtml = await EventModal.InnerHTMLAsync();
+                if (modalHtml.Length > 2000) modalHtml = modalHtml.Substring(0, 2000) + "…(truncated)";
+            }
+            catch (Exception innerEx)
+            {
+                modalHtml = $"(modal HTML capture failed: {innerEx.Message})";
+            }
+            throw new TimeoutException(
+                $"{ex.Message} [FHQ-29 diagnostic] looking-for-aria-label='Remove {calendarName}' " +
+                $"| event-modal-html-head={modalHtml}",
+                ex);
+        }
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),

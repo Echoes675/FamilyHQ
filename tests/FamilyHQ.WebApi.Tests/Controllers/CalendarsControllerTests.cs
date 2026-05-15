@@ -95,15 +95,90 @@ public class CalendarsControllerTests
         dtos.Should().Contain(d => d.Id == CalBId && d.DisplayName == "Cal B");
     }
 
+    // ── GetConnectionStatus ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetConnectionStatus_WhenTokenActive_ReturnsActiveStatus()
+    {
+        // Arrange
+        var (_, tokenStore, currentUser, systemUnderTest) = CreateSutWithAuth();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        tokenStore
+            .Setup(t => t.GetAuthStatusAsync("u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+
+        // Act
+        var result = await systemUnderTest.GetConnectionStatus(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var payload = ok.Value!.GetType().GetProperties()
+            .ToDictionary(p => p.Name, p => p.GetValue(ok.Value));
+        payload["status"].Should().Be("active");
+        payload["lastError"].Should().BeNull();
+        payload["since"].Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetConnectionStatus_WhenTokenNeedsReauth_ReturnsReauthStatusWithDetails()
+    {
+        // Arrange
+        var (_, tokenStore, currentUser, systemUnderTest) = CreateSutWithAuth();
+        var since = new DateTimeOffset(2026, 5, 13, 18, 34, 0, TimeSpan.Zero);
+        currentUser.SetupGet(c => c.UserId).Returns("u-2");
+        tokenStore
+            .Setup(t => t.GetAuthStatusAsync("u-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.NeedsReauth, "Token has been expired or revoked.", since));
+
+        // Act
+        var result = await systemUnderTest.GetConnectionStatus(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var payload = ok.Value!.GetType().GetProperties()
+            .ToDictionary(p => p.Name, p => p.GetValue(ok.Value));
+        payload["status"].Should().Be("needs_reauth");
+        payload["lastError"].Should().Be("Token has been expired or revoked.");
+        payload["since"].Should().Be(since);
+    }
+
+    [Fact]
+    public async Task GetConnectionStatus_WhenNoCurrentUser_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (_, _, currentUser, systemUnderTest) = CreateSutWithAuth();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        // Act
+        var result = await systemUnderTest.GetConnectionStatus(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<UnauthorizedResult>();
+    }
+
     private static (Mock<ICalendarRepository>, CalendarsController) CreateSut()
+    {
+        var (calRepo, _, _, sut) = CreateSutWithAuth();
+        return (calRepo, sut);
+    }
+
+    private static (
+        Mock<ICalendarRepository> CalendarRepo,
+        Mock<ITokenStore> TokenStore,
+        Mock<ICurrentUserService> CurrentUser,
+        CalendarsController SystemUnderTest) CreateSutWithAuth()
     {
         var calendarRepositoryMock = new Mock<ICalendarRepository>();
         var loggerMock = new Mock<ILogger<CalendarsController>>();
+        var tokenStoreMock = new Mock<ITokenStore>();
+        var currentUserMock = new Mock<ICurrentUserService>();
 
         var systemUnderTest = new CalendarsController(
             calendarRepositoryMock.Object,
-            loggerMock.Object);
+            loggerMock.Object,
+            tokenStoreMock.Object,
+            currentUserMock.Object);
 
-        return (calendarRepositoryMock, systemUnderTest);
+        return (calendarRepositoryMock, tokenStoreMock, currentUserMock, systemUnderTest);
     }
 }
