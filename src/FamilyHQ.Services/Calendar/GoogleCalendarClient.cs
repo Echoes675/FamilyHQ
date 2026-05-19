@@ -44,6 +44,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     }
 
     private const int MaxLoggedBodyLength = 4096;
+    private const string EventsListFields =
+        "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)";
 
     private async Task ThrowIfFailedAsync(HttpResponseMessage response, string operation, CancellationToken ct)
     {
@@ -125,8 +127,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var query = new List<string>
             {
                 "singleEvents=true",
-                "fields=" + Uri.EscapeDataString(
-                    "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)")
+                "fields=" + Uri.EscapeDataString(EventsListFields)
             };
 
             if (!string.IsNullOrEmpty(syncToken))

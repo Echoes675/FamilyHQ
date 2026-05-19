@@ -637,7 +637,7 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
-    public async Task GetEventsAsync_requests_extendedProperties_in_fields_allowlist()
+    public async Task GetEventsAsync_WhenCalled_IncludesExtendedPropertiesInFieldsAllowlist()
     {
         // Arrange — capture the outgoing request URL to verify the fields= projection is sent.
         string? capturedUrl = null;
@@ -676,9 +676,14 @@ public class GoogleCalendarClientTests
 
         // Assert
         capturedUrl.Should().NotBeNull();
-        capturedUrl.Should().Contain("fields=");
-        capturedUrl.Should().Contain("extendedProperties");
+        var unescapedUrl = Uri.UnescapeDataString(capturedUrl!);
+        unescapedUrl.Should().Contain("nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)");
         capturedUrl.Should().Contain("singleEvents=true");
+        // Verify critical fields that would silently break sync if missing:
+        capturedUrl.Should().Contain("id");
+        capturedUrl.Should().Contain("start");
+        capturedUrl.Should().Contain("end");
+        capturedUrl.Should().Contain("iCalUID");
     }
 
     private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut()
