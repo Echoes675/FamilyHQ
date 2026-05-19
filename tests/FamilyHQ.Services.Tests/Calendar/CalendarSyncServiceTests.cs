@@ -514,6 +514,7 @@ public class CalendarSyncServiceTests
         var tokenStoreMock       = new Mock<ITokenStore>();
         var currentUserMock      = new Mock<ICurrentUserService>();
         var syncFailureRepoMock  = new Mock<ISyncFailureRepository>();
+        var outboundCacheMock    = new Mock<IOutboundWriteHashCache>();
 
         // UserId is observable on reads taken before GetCalendarsAsync (the sync's
         // entry-point Google call), and null on reads taken after — modelling
@@ -531,7 +532,7 @@ public class CalendarSyncServiceTests
         var sut = new CalendarSyncService(
             clientMock.Object, repoMock.Object, tagParserMock.Object,
             loggerMock.Object, tokenStoreMock.Object, currentUserMock.Object,
-            syncFailureRepoMock.Object);
+            syncFailureRepoMock.Object, outboundCacheMock.Object);
 
         var ex = new GoogleReauthRequiredException(
             GoogleAuthFailureSource.CalendarApi, "Forbidden");
@@ -767,13 +768,14 @@ public class CalendarSyncServiceTests
         Mock<ISyncFailureRepository> syncFailureRepo,
         CalendarSyncService sut) CreateSutWithAllDeps(string userId)
     {
-        var clientMock           = new Mock<IGoogleCalendarClient>();
-        var repoMock             = new Mock<ICalendarRepository>();
-        var tagParserMock        = new Mock<IMemberTagParser>();
-        var loggerMock           = new Mock<ILogger<CalendarSyncService>>();
-        var tokenStoreMock       = new Mock<ITokenStore>();
-        var currentUserMock      = new Mock<ICurrentUserService>();
-        var syncFailureRepoMock  = new Mock<ISyncFailureRepository>();
+        var clientMock              = new Mock<IGoogleCalendarClient>();
+        var repoMock                = new Mock<ICalendarRepository>();
+        var tagParserMock           = new Mock<IMemberTagParser>();
+        var loggerMock              = new Mock<ILogger<CalendarSyncService>>();
+        var tokenStoreMock          = new Mock<ITokenStore>();
+        var currentUserMock         = new Mock<ICurrentUserService>();
+        var syncFailureRepoMock     = new Mock<ISyncFailureRepository>();
+        var outboundCacheMock       = new Mock<IOutboundWriteHashCache>();
         currentUserMock.SetupGet(c => c.UserId).Returns(userId);
 
         // Default tag parser returns empty list
@@ -787,7 +789,8 @@ public class CalendarSyncServiceTests
             loggerMock.Object,
             tokenStoreMock.Object,
             currentUserMock.Object,
-            syncFailureRepoMock.Object);
+            syncFailureRepoMock.Object,
+            outboundCacheMock.Object);
 
         return (clientMock, repoMock, tagParserMock, loggerMock, tokenStoreMock, currentUserMock, syncFailureRepoMock, sut);
     }

@@ -180,7 +180,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         End = endParam.Value,
                         IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
-                        Description = item.Description
+                        Description = item.Description,
+                        ContentHash = item.ExtendedProperties?.Private?.ContentHash
                     });
                 }
 

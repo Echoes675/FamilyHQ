@@ -40,6 +40,11 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
             .HasForeignKey(e => e.OwnerCalendarInfoId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // ContentHash is a transient property populated from Google extendedProperties.
+        // It is never persisted — the DB is the authoritative source for event data,
+        // and the hash is only used in-flight to detect webhook self-echoes (FHQ-30).
+        builder.Ignore(e => e.ContentHash);
+
         // EventMembers junction: which family members are assigned to this event.
         builder.HasMany(e => e.Members)
             .WithMany()
