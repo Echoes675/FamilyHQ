@@ -11,6 +11,7 @@ builder.Services.AddControllers();
 builder.Services.AddDbContext<SimContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<SyncFailureModeStore>();
+builder.Services.AddSingleton<OutboundWriteCountStore>();
 
 var app = builder.Build();
 

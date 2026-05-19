@@ -188,6 +188,48 @@ public class SimulatorApiClient : IDisposable
         return (await response.Content.ReadAsStringAsync()).Trim('"');
     }
 
+    /// <summary>
+    /// Returns the number of outbound writes (PUT/POST) the Simulator has received for
+    /// the given event ID since the last reset. Used by WebhookEchoGuard E2E assertions.
+    /// </summary>
+    public async Task<int> GetOutboundWriteCountAsync(string eventId)
+    {
+        var response = await _httpClient.GetAsync(
+            $"api/simulator/backdoor/write-counts/{Uri.EscapeDataString(eventId)}");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<WriteCountResponse>();
+        return result?.WriteCount ?? 0;
+    }
+
+    /// <summary>
+    /// Resets all outbound write counts in the Simulator. Call in AfterScenario hooks.
+    /// </summary>
+    public async Task ResetOutboundWriteCountsAsync()
+    {
+        var response = await _httpClient.DeleteAsync("api/simulator/backdoor/write-counts");
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Triggers a webhook notification to the WebApi with an optional test-only delay header.
+    /// The delay is injected by the DEBUG-gated branch in SyncController so the
+    /// in-process TTL can expire before the sync runs (used to prove stale echoes
+    /// are NOT skipped).
+    /// </summary>
+    public async Task TriggerDelayedWebhookAsync(int delaySeconds)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "simulate/push");
+        request.Headers.Add("x-test-webhook-delay-seconds", delaySeconds.ToString());
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private sealed class WriteCountResponse
+    {
+        public string EventId { get; set; } = string.Empty;
+        public int WriteCount { get; set; }
+    }
+
     public void Dispose()
     {
         _httpClient.Dispose();
