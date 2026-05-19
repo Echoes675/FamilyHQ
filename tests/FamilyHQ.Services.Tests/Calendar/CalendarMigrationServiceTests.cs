@@ -26,8 +26,9 @@ public class CalendarMigrationServiceTests
     {
         var google = new Mock<IGoogleCalendarClient>();
         var repo   = new Mock<ICalendarRepository>();
+        var cache  = new Mock<IOutboundWriteHashCache>();
         var logger = new Mock<ILogger<CalendarMigrationService>>();
-        var sut    = new CalendarMigrationService(google.Object, repo.Object, logger.Object);
+        var sut    = new CalendarMigrationService(google.Object, repo.Object, cache.Object, logger.Object);
         return (google, repo, sut);
     }
 
