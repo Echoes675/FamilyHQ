@@ -23,6 +23,9 @@ internal sealed class OutboundWriteHashCache : IOutboundWriteHashCache
         EvictExpired();
     }
 
+    // Eager eviction on every Record call: bounded N (handful per minute at family-app volume)
+    // avoids needing a background timer or size cap.
+
     public bool WasRecentlyWritten(string googleEventId, string contentHash)
     {
         if (string.IsNullOrEmpty(googleEventId) || string.IsNullOrEmpty(contentHash))
