@@ -59,7 +59,7 @@ public class CalendarMigrationService(
         // delete-old step later fails (the new event already exists in Google).
         outboundCache.Record(created.GoogleEventId, hash);
         logger.LogDebug(
-            "Recorded outbound write hash for migrated event {EventId} (hash {Hash}).",
+            "Recorded outbound write hash for event {EventId} (hash {Hash}).",
             created.GoogleEventId, hash);
 
         // Persist the new DB state before deleting from Google.

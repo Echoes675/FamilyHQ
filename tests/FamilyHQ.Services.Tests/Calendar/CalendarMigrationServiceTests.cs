@@ -22,20 +22,20 @@ public class CalendarMigrationServiceTests
     private static CalendarInfo MemberBCal => new()
         { Id = MemberBCalId, GoogleCalendarId = "sarah@", DisplayName = "Sarah", IsShared = false };
 
-    private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo, CalendarMigrationService sut) CreateSut()
+    private static (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo, Mock<IOutboundWriteHashCache> cache, CalendarMigrationService sut) CreateSut()
     {
         var google = new Mock<IGoogleCalendarClient>();
         var repo   = new Mock<ICalendarRepository>();
         var cache  = new Mock<IOutboundWriteHashCache>();
         var logger = new Mock<ILogger<CalendarMigrationService>>();
         var sut    = new CalendarMigrationService(google.Object, repo.Object, cache.Object, logger.Object);
-        return (google, repo, sut);
+        return (google, repo, cache, sut);
     }
 
     [Fact]
     public async Task EnsureCorrectCalendar_SingleMemberOnCorrectCalendar_NoMigration()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, _, sut) = CreateSut();
         var evt = new CalendarEvent { Id = EventId, GoogleEventId = "gid1", Title = "T",
             Start = DateTimeOffset.UtcNow, End = DateTimeOffset.UtcNow.AddHours(1),
             OwnerCalendarInfoId = IndividualCalId };
@@ -52,7 +52,7 @@ public class CalendarMigrationServiceTests
     [Fact]
     public async Task EnsureCorrectCalendar_TwoMembersOnIndividualCalendar_MigratesToShared()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, _, sut) = CreateSut();
         var evt = new CalendarEvent { Id = EventId, GoogleEventId = "gid1", Title = "T",
             Start = DateTimeOffset.UtcNow, End = DateTimeOffset.UtcNow.AddHours(1),
             Description = "note [members: Eoin, Sarah]",
@@ -79,7 +79,7 @@ public class CalendarMigrationServiceTests
     [Fact]
     public async Task EnsureCorrectCalendar_OneMemberOnSharedCalendar_MigratesToIndividual()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, _, sut) = CreateSut();
         var evt = new CalendarEvent { Id = EventId, GoogleEventId = "gid1", Title = "T",
             Start = DateTimeOffset.UtcNow, End = DateTimeOffset.UtcNow.AddHours(1),
             Description = "[members: Eoin]",
@@ -106,7 +106,7 @@ public class CalendarMigrationServiceTests
     [Fact]
     public async Task EnsureCorrectCalendar_MultiMemberOnSharedCalendar_NoMigration()
     {
-        var (google, repo, sut) = CreateSut();
+        var (google, repo, _, sut) = CreateSut();
         var evt = new CalendarEvent { Id = EventId, GoogleEventId = "gid1", Title = "T",
             Start = DateTimeOffset.UtcNow, End = DateTimeOffset.UtcNow.AddHours(1),
             OwnerCalendarInfoId = SharedCalId };
