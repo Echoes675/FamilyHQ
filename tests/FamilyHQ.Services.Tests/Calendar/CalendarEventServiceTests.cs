@@ -207,6 +207,7 @@ public class CalendarEventServiceTests
         var repo      = new Mock<ICalendarRepository>();
         var migration = new Mock<ICalendarMigrationService>();
         var tagParser = new Mock<IMemberTagParser>();
+        var cache     = new Mock<IOutboundWriteHashCache>();
         var logger    = new Mock<ILogger<CalendarEventService>>();
 
         // Default: tag parser returns normalised description unchanged
@@ -215,7 +216,7 @@ public class CalendarEventServiceTests
         tagParser.Setup(p => p.StripMemberTag(It.IsAny<string>()))
                  .Returns((string d) => d ?? string.Empty);
 
-        var sut = new CalendarEventService(google.Object, repo.Object, migration.Object, tagParser.Object, logger.Object);
+        var sut = new CalendarEventService(google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, logger.Object);
         return (google, repo, migration, tagParser, sut);
     }
 }
