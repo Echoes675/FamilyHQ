@@ -25,9 +25,10 @@ public class WebhookEchoGuardHooks
         {
             await _simulatorApi.ResetOutboundWriteCountsAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            // Do not mask scenario failures — setup is best-effort.
+            throw new InvalidOperationException(
+                $"Failed to reset write counts before scenario — Simulator may be unavailable: {ex.Message}", ex);
         }
     }
 

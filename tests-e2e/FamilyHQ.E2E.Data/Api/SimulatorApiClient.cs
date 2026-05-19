@@ -226,7 +226,6 @@ public class SimulatorApiClient : IDisposable
 
     private sealed class WriteCountResponse
     {
-        public string EventId { get; set; } = string.Empty;
         public int WriteCount { get; set; }
     }
 

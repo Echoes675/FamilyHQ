@@ -23,6 +23,7 @@ Feature: Webhook self-echo guard
     When the event title is updated directly in Google to "Friday Review (rescheduled)"
     And Google Calendar sends a webhook notification
     Then the dashboard shows the updated title "Friday Review (rescheduled)"
+    And the FamilyHQ to Google write count for the event is 0
 
   @Slow
   Scenario: A webhook delayed beyond the 60 second TTL flows through normally

@@ -23,13 +23,22 @@ public class WebhookEchoGuardSteps
     /// How long to wait after triggering a webhook before asserting write counts.
     /// The sync pipeline is async: we must allow the WebApi to receive the webhook,
     /// run SyncAsync, check the hash cache, and skip or apply the event — then return.
+    /// This is an intentional fixed wait used to prove the *absence* of a second write;
+    /// there is no positive condition to poll for.
     /// </summary>
     private const int WebhookSettleMs = 5000;
 
     /// <summary>
+    /// Maximum time to spend polling for a condition to become true (e.g. dashboard update).
+    /// Kept separate from <see cref="WebhookSettleMs"/> so CI tuning affects only polling
+    /// assertions without changing the echo-guard settle period.
+    /// </summary>
+    private const int AssertionPollDeadlineMs = 5000;
+
+    /// <summary>
     /// Polling interval when waiting for live-update conditions.
     /// </summary>
-    private const int PollIntervalMs = 250;
+    private const int AssertionPollIntervalMs = 250;
 
     private readonly ScenarioContext _scenarioContext;
     private readonly SimulatorApiClient _simulatorApi;
@@ -208,18 +217,37 @@ public class WebhookEchoGuardSteps
     [Then(@"the dashboard shows the updated title ""([^""]*)""")]
     public async Task ThenTheDashboardShowsTheUpdatedTitle(string expectedTitle)
     {
-        var deadline = DateTime.UtcNow.AddMilliseconds(WebhookSettleMs);
+        var deadline = DateTime.UtcNow.AddMilliseconds(AssertionPollDeadlineMs);
         while (DateTime.UtcNow < deadline)
         {
             var events = await _dashboardPage.GetVisibleEventsAsync();
             if (events.Any(e => e.Contains(expectedTitle)))
                 return;
-            await Task.Delay(PollIntervalMs);
+            await Task.Delay(AssertionPollIntervalMs);
         }
 
         throw new TimeoutException(
-            $"Dashboard did not show '{expectedTitle}' within {WebhookSettleMs}ms after webhook. " +
+            $"Dashboard did not show '{expectedTitle}' within {AssertionPollDeadlineMs}ms after webhook. " +
             "The Google-side edit may not have been processed (echo guard incorrectly suppressed it).");
+    }
+
+    /// <summary>
+    /// Asserts that the Simulator received zero outbound writes for the most-recently
+    /// resolved event. Used to confirm a Google-side edit does NOT cause FamilyHQ to
+    /// write back to Google (i.e. the echo guard does not incorrectly treat inbound
+    /// Google changes as echoes and should not suppress the update — but critically,
+    /// FamilyHQ must not write back to Google at all for a change it did not originate).
+    /// </summary>
+    [Then(@"the FamilyHQ to Google write count for the event is 0")]
+    public async Task ThenTheFamilyHQToGoogleWriteCountForTheEventIs0()
+    {
+        var eventId = _scenarioContext.Get<string>("EchoGuardEventId");
+
+        var writeCount = await _simulatorApi.GetOutboundWriteCountAsync(eventId);
+
+        writeCount.Should().Be(0,
+            $"a Google-side edit must not cause FamilyHQ to write back to Google for event '{eventId}'. " +
+            $"A count > 0 means FamilyHQ incorrectly echoed a Google-originated change back.");
     }
 
     /// <summary>
