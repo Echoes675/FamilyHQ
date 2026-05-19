@@ -636,6 +636,51 @@ public class GoogleCalendarClientTests
                 "FHQ-27: Authorization header must be attached per-request on HttpRequestMessage, not mutated on the shared HttpClient");
     }
 
+    [Fact]
+    public async Task GetEventsAsync_requests_extendedProperties_in_fields_allowlist()
+    {
+        // Arrange — capture the outgoing request URL to verify the fields= projection is sent.
+        string? capturedUrl = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedUrl = req.RequestUri!.ToString())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { nextSyncToken = "tok", items = Array.Empty<object>() }))
+            });
+
+        // Act
+        await systemUnderTest.GetEventsAsync(
+            googleCalendarId: "primary",
+            syncWindowStart: DateTimeOffset.UtcNow.AddDays(-1),
+            syncWindowEnd: DateTimeOffset.UtcNow.AddDays(30),
+            syncToken: null);
+
+        // Assert
+        capturedUrl.Should().NotBeNull();
+        capturedUrl.Should().Contain("fields=");
+        capturedUrl.Should().Contain("extendedProperties");
+        capturedUrl.Should().Contain("singleEvents=true");
+    }
+
     private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut()
     {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();

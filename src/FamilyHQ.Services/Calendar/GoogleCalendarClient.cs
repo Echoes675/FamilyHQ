@@ -122,7 +122,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         do
         {
-            var query = new List<string> { "singleEvents=true" };
+            var query = new List<string>
+            {
+                "singleEvents=true",
+                "fields=" + Uri.EscapeDataString(
+                    "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)")
+            };
 
             if (!string.IsNullOrEmpty(syncToken))
             {
@@ -175,7 +180,6 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
                         Description = item.Description
-                        // ContentHash is NOT stored on CalendarEvent; retrieved on-demand from Google via GetEventAsync
                     });
                 }
 
