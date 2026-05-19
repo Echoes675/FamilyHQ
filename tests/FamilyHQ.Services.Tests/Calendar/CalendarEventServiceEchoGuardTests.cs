@@ -11,7 +11,7 @@ namespace FamilyHQ.Services.Tests.Calendar;
 
 public class CalendarEventServiceEchoGuardTests
 {
-    private static readonly Guid CalAId  = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid CalAId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static readonly Guid EventId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
     // ── CreateAsync echo-guard ────────────────────────────────────────────────
@@ -19,7 +19,7 @@ public class CalendarEventServiceEchoGuardTests
     [Fact]
     public async Task CreateAsync_records_outbound_hash_after_Google_succeeds()
     {
-        var (google, repo, migration, tagParser, cache, sut) = CreateSut();
+        var (google, repo, _, _, cache, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
 
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
@@ -43,7 +43,7 @@ public class CalendarEventServiceEchoGuardTests
     [Fact]
     public async Task CreateAsync_does_not_record_if_Google_throws()
     {
-        var (google, repo, migration, tagParser, cache, sut) = CreateSut();
+        var (google, repo, _, _, cache, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
 
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
@@ -65,9 +65,9 @@ public class CalendarEventServiceEchoGuardTests
     [Fact]
     public async Task UpdateAsync_records_outbound_hash_after_Google_succeeds()
     {
-        var (google, repo, migration, tagParser, cache, sut) = CreateSut();
+        var (google, repo, _, _, cache, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
-        var evt  = Event(EventId, "google-evt-id-456", CalAId, calA);
+        var evt = Event(EventId, "google-evt-id-456", CalAId, calA);
 
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
@@ -87,9 +87,9 @@ public class CalendarEventServiceEchoGuardTests
     [Fact]
     public async Task UpdateAsync_does_not_record_if_Google_throws()
     {
-        var (google, repo, migration, tagParser, cache, sut) = CreateSut();
+        var (google, repo, _, _, cache, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
-        var evt  = Event(EventId, "google-evt-id-456", CalAId, calA);
+        var evt = Event(EventId, "google-evt-id-456", CalAId, calA);
 
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
@@ -108,9 +108,9 @@ public class CalendarEventServiceEchoGuardTests
     [Fact]
     public async Task SetMembersAsync_records_outbound_hash_after_description_rewrite()
     {
-        var (google, repo, migration, tagParser, cache, sut) = CreateSut();
+        var (google, repo, migration, _, cache, sut) = CreateSut();
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
-        var evt  = Event(EventId, "google-evt-id-789", CalAId, calA);
+        var evt = Event(EventId, "google-evt-id-789", CalAId, calA);
 
         repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
@@ -126,6 +126,26 @@ public class CalendarEventServiceEchoGuardTests
         cache.Verify(
             c => c.Record("google-evt-id-789", It.Is<string>(h => !string.IsNullOrEmpty(h))),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task SetMembersAsync_does_not_record_if_Google_throws()
+    {
+        var (google, repo, migration, _, cache, sut) = CreateSut();
+        var calA = Cal(CalAId, "cal-a@google.com", "Alice");
+        var evt = Event(EventId, "google-evt-id-789", CalAId, calA);
+
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        google.Setup(g => g.UpdateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        var act = () => sut.SetMembersAsync(EventId, new[] { CalAId }, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        cache.Verify(c => c.Record(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

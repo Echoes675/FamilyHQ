@@ -135,7 +135,11 @@ public class CalendarEventService(
         // EnsureCorrectCalendarAsync already writes to Google and saves the DB if it migrates.
         var migrated = await migrationService.EnsureCorrectCalendarAsync(calendarEvent, newMembers, ct);
 
-        if (!migrated)
+        if (migrated)
+        {
+            // On the migration path, CalendarMigrationService records the outbound hash on the new event id (see FHQ-30.3).
+        }
+        else
         {
             // No migration: write updated description/members to Google and DB.
             var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
