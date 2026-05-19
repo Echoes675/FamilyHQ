@@ -15,4 +15,8 @@
     <ProjectReference Include="..\FamilyHQ.Data\FamilyHQ.Data.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="FamilyHQ.Services.Tests" />
+  </ItemGroup>
+
 </Project>
