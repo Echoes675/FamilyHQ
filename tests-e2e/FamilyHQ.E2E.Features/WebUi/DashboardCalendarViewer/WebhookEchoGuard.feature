@@ -7,10 +7,10 @@ Feature: Webhook self-echo guard
   Background:
     Given I have a user like "TestFamilyMember"
     And the "Family Events" calendar is the active calendar
-    And I login as the user "TestFamilyMember"
 
   Scenario: A FamilyHQ-side edit produces exactly one outbound write to Google
     Given the user has an all-day event "Team Lunch" tomorrow
+    And I login as the user "TestFamilyMember"
     And I view the dashboard
     When I update the event title to "Team Lunch with Alice"
     And I wait for any follow-up webhooks to be processed
@@ -19,6 +19,7 @@ Feature: Webhook self-echo guard
 
   Scenario: A Google-side edit on an existing event is not skipped
     Given the user has an all-day event "Friday Review" tomorrow
+    And I login as the user "TestFamilyMember"
     And I view the dashboard
     When the event title is updated directly in Google to "Friday Review (rescheduled)"
     And Google Calendar sends a webhook notification
@@ -28,6 +29,7 @@ Feature: Webhook self-echo guard
   @Slow
   Scenario: A webhook delayed beyond the 60 second TTL flows through normally
     Given the user has an all-day event "Status Meeting" tomorrow
+    And I login as the user "TestFamilyMember"
     And I view the dashboard
     When I update the event title to "Status Meeting (updated)"
     And the echo webhook is delayed by 65 seconds via the test delay header
