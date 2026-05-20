@@ -12,7 +12,8 @@ public class CalendarSyncService(
     ILogger<CalendarSyncService> logger,
     ITokenStore tokenStore,
     ICurrentUserService currentUserService,
-    ISyncFailureRepository syncFailureRepository) : ICalendarSyncService
+    ISyncFailureRepository syncFailureRepository,
+    IOutboundWriteHashCache outboundWriteHashCache) : ICalendarSyncService
 {
     public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
@@ -190,6 +191,19 @@ public class CalendarSyncService(
 
             foreach (var evt in events)
             {
+                // Self-echo guard (FHQ-30): skip events that echo our own outbound writes.
+                // ContentHash is populated by GoogleCalendarClient from extendedProperties.private["content-hash"].
+                // Null hash means a manually-edited event, a delete tombstone, or a legacy event — always process.
+                var inboundHash = evt.ContentHash;
+                if (!string.IsNullOrEmpty(inboundHash) &&
+                    outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, inboundHash))
+                {
+                    logger.LogInformation(
+                        "Self-echo skipped for event {EventId} on calendar {CalendarInfoId} (hash {Hash}).",
+                        evt.GoogleEventId, calendarInfoId, inboundHash);
+                    continue;
+                }
+
                 // The entity actually written to the change tracker for this event.
                 // If a downstream SaveChangesAsync throws (e.g. Postgres rejects the
                 // value as too long), we need to detach this specific entity so the

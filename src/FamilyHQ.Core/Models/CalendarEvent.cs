@@ -20,4 +20,8 @@ public class CalendarEvent
     // For a 1-member event: contains that member's CalendarInfo.
     // For a shared event: contains all assigned members' CalendarInfo rows.
     public ICollection<CalendarInfo> Members { get; set; } = new List<CalendarInfo>();
+
+    // Transient: populated by GoogleCalendarClient.GetEventsAsync from extendedProperties.private["content-hash"].
+    // Not persisted. Used by CalendarSyncService to detect webhook self-echoes (FHQ-30).
+    public string? ContentHash { get; set; }
 }

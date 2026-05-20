@@ -15,6 +15,7 @@ internal record GoogleApiPrivateExtendedProperties(
     [property: JsonPropertyName("content-hash")] string? ContentHash);
 
 internal record GoogleApiExtendedProperties(
+    // FamilyHQ only writes to extendedProperties.private; shared namespace intentionally omitted.
     [property: JsonPropertyName("private")] GoogleApiPrivateExtendedProperties? Private);
 
 internal record GoogleApiEvent(

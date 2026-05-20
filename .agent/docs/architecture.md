@@ -50,6 +50,29 @@
 - **WebhookRenewalService** (IHostedService, lives in WebApi): Background service that re-registers all webhook watch channels on startup (1-min delay) and every 6 days. Iterates all users via ITokenStore. Disabled when `Sync:WebhookRegistrationEnabled` is false.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
+## Webhook echo guard
+
+FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigrationService`. Each write computes a SHA256 over `(title, start, end, isAllDay, description)` via `EventContentHash` and stores the hex hash as `extendedProperties.private["content-hash"]` on the Google event. Google's resulting push notification then arrives at `SyncController.GooglePushWebhook`, which dispatches to `CalendarSyncService.SyncAsync` / `SyncAllAsync`.
+
+The guard is implemented in two halves:
+
+1. **Outbound** — every successful Google write records `(GoogleEventId, hash)` in a singleton `IOutboundWriteHashCache` with a 60-second TTL. Failed writes do not record.
+2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache. On match, the event is skipped: no DB write, no further Google write, single "Self-echo skipped" Information-level log entry.
+
+### Production verification
+
+To verify the guard is active in any environment:
+
+1. Make a single edit to a calendar event through the FamilyHQ UI.
+2. Within ~5 seconds, the application log should contain:
+   - At Debug: one or more `Recorded outbound write hash for event ...` entries.
+   - At Information: at least one `Self-echo skipped for event ... (hash ...)` entry.
+3. Zero "Self-echo skipped" entries across a day of writes suggests the guard isn't being hit — investigate.
+
+### Why this matters for recurring events (FHQ-18)
+
+A single PATCH on a series master can produce webhooks for every expanded instance Google touches. The guard ensures all such echoes are skipped cleanly, eliminating the latent loop risk that single-event writes avoid only through convergent upserts.
+
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
 - `GET  /api/settings/location` → LocationSettingDto or 404

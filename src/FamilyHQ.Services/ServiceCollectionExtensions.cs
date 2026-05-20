@@ -6,6 +6,7 @@ using FamilyHQ.Services.Theme;
 using FamilyHQ.Services.Weather;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.Services;
@@ -44,6 +45,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWeatherService, WeatherService>();
         services.AddScoped<IWeatherRefreshService, WeatherRefreshService>();
         services.AddHostedService<WeatherPollerService>();
+
+        // Webhook self-echo guard (FHQ-30): singleton cache survives across scoped sync requests.
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
 
         return services;
     }
