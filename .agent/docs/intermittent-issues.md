@@ -14,15 +14,37 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-(none)
+### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth (RECURRED)
+
+**Re-opened:** 2026-05-26 after Deploy-Staging #110 reproduced the symptom on the merged FHQ-30 code path. Tracked as **FHQ-31**.
+**Component:** see fix list below (FHQ-27 + FHQ-28 territory). FHQ-30 work does not touch these paths.
+**First seen (post-resolution recurrence):** Deploy-Staging #110 (2026-05-20, ~22:23 UTC).
+**Empirical flake rate post-FHQ-28:** 3 PASS / 1 FAIL across Deploy-Staging #102, #103, #109, #110 → ~25%.
+
+**Recurrence symptom (Deploy-Staging #110):**
+The scenario *"Diagnostics page shows needs-reauth status with reconnect button"* failed with the diagnostic capture:
+```text
+sync-response-status=200
+connection-status={"status":401,"body":""}
+page.bodyTextHead="… Connection status Active …"
+```
+The connection-status endpoint returned **HTTP 401** (not the expected `"active"` / `"needs_reauth"` JSON body) — a new signature that the prior triage rubric did not anticipate. Per the rubric, `sync-response-status=200` indicates a silent success of the manual-sync POST: either Google never returned a reauth condition, or the WebApi swallowed the exception before it could be raised to the controller.
+
+**Background context (pre-FHQ-28 resolution, retained for reference):**
+The prior resolution rested on Deploy-Staging #102 + #103 being clean. **#110 is the first Staging failure since.** Deploy-Staging #109 on `dev` (post-FHQ-30 merge, commit `5842844`) PASSED — so the merged code clears the gate at least once, and the failure is timing-dependent, not a uniform regression.
+
+**Open investigation (FHQ-31):** Three working hypotheses being audited:
+- (A) `connection-status` 401 indicates the Playwright session lost auth between manual-sync and diagnostics-page read.
+- (B) A `currentUserService.UserId` resolution path that survived the FHQ-28 fix but only manifests under Staging async-flow conditions. **Audit on 2026-05-26 confirmed the captured-userId pattern at `CalendarSyncService.cs:27` is intact; both `MarkUserNeedsReauthAsync` call sites (lines 43, 113) use `capturedUserId`.** Hypothesis B is therefore *not* a regression of the FHQ-28 fix itself — but the `RecordEventFailureAsync` path at line 324 still resolves `currentUserService.UserId` lazily, which is unrelated to the reauth-mark path but worth flagging.
+- (C) The SignalR `ConnectionStatusUpdated` broadcast (FHQ-28's defence-in-depth) arrives after the diagnostics page has already rendered the cached `"Active"` badge.
 
 ---
 
 ## Resolved issues
 
-### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
+### 3-original. Calendar API 403 path does not always mark UserToken as NeedsReauth (now re-opened above)
 
-**Resolved:** branch `fix/FHQ-28-staging-reauth-banner-investigation`, PR #74, merge commit `d9bb603` (2026-05-15). Tracked as FHQ-27 (initial attempt) → FHQ-28 (follow-up that actually closed the loop). The FHQ-27 retrospective was written prematurely after only 5 Deploy-Dev passes; the very next Deploy-Staging failed. **Do not write a "Resolved" entry off Deploy-Dev alone.**
+**Resolved (then recurred):** branch `fix/FHQ-28-staging-reauth-banner-investigation`, PR #74, merge commit `d9bb603` (2026-05-15). Tracked as FHQ-27 (initial attempt) → FHQ-28 (follow-up that actually closed the loop). The FHQ-27 retrospective was written prematurely after only 5 Deploy-Dev passes; the very next Deploy-Staging failed. **Do not write a "Resolved" entry off Deploy-Dev alone.** This resolution was retired on 2026-05-26 after Deploy-Staging #110 reproduced the symptom — see Active issue #3 above for the open investigation.
 **Component:** `src/FamilyHQ.Services/Auth/DatabaseTokenStore.cs`, `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs`, `src/FamilyHQ.Services/Calendar/GoogleCalendarClient.cs`, `src/FamilyHQ.WebUi/Pages/Index.razor`, `src/FamilyHQ.WebUi/Components/Settings/SettingsCalendarsTab.razor`, `src/FamilyHQ.WebUi/Services/SignalRService.cs`, plus the new `IConnectionStatusBroadcaster` abstraction in `FamilyHQ.Core.Interfaces` / `FamilyHQ.WebApi.Hubs`.
 **First seen:** Deploy-Dev #328 (2026-05-14).
 **Occurrences:** Deploy-Dev #328, #330, #331, #332, #340, #350, #353; Deploy-Staging #101. Before FHQ-27 the three pulled scenarios flaked at observed rates ~50% (403 path), ~25% (diagnostics needs-reauth), ~10% (refresh-token banner). After FHQ-27 the symptom briefly disappeared across 5 Deploy-Dev runs (#344–#348) but reappeared on Deploy-Staging #101 and Deploy-Dev #350/#353.
