@@ -33,10 +33,23 @@ The connection-status endpoint returned **HTTP 401** (not the expected `"active"
 **Background context (pre-FHQ-28 resolution, retained for reference):**
 The prior resolution rested on Deploy-Staging #102 + #103 being clean. **#110 is the first Staging failure since.** Deploy-Staging #109 on `dev` (post-FHQ-30 merge, commit `5842844`) PASSED — so the merged code clears the gate at least once, and the failure is timing-dependent, not a uniform regression.
 
-**Open investigation (FHQ-31):** Three working hypotheses being audited:
-- (A) `connection-status` 401 indicates the Playwright session lost auth between manual-sync and diagnostics-page read.
-- (B) A `currentUserService.UserId` resolution path that survived the FHQ-28 fix but only manifests under Staging async-flow conditions. **Audit on 2026-05-26 confirmed the captured-userId pattern at `CalendarSyncService.cs:27` is intact; both `MarkUserNeedsReauthAsync` call sites (lines 43, 113) use `capturedUserId`.** Hypothesis B is therefore *not* a regression of the FHQ-28 fix itself — but the `RecordEventFailureAsync` path at line 324 still resolves `currentUserService.UserId` lazily, which is unrelated to the reauth-mark path but worth flagging.
-- (C) The SignalR `ConnectionStatusUpdated` broadcast (FHQ-28's defence-in-depth) arrives after the diagnostics page has already rendered the cached `"Active"` badge.
+**ROOT CAUSE CONFIRMED (2026-05-26):** Not a WebApi bug at all — a **test-side parallel-execution race**. `SyncResilienceHooks` `[AfterScenario]` teardown called `ClearAllSyncFailureModesAsync`, which wipes *every* user's simulator failure mode. With `xunit.runner.json` `maxParallelThreads=2`, the two `SyncResilience.feature` scenarios that share the `RefreshTokenInvalidGrant` setup run concurrently; Scenario A's teardown `ClearAll` fires mid-flight against Scenario B, erasing B's failure mode before B's manual sync triggers its token refresh. B's refresh then succeeds (no `invalid_grant`), the user is never marked NeedsReauth, the badge stays `Active`, and the assertion fails. The ~25% rate matches the race window on a 2-thread runner.
+
+**Fix (on branch `fix/FHQ-31-reauth-flake-recurrence`):** `SyncResilienceHooks` now clears only the current scenario's user via the existing per-user `ClearSyncFailureModeAsync(userId)` backdoor. (Also on the branch as independent hardening: `[Authorize]` + UserId guard on `SyncController.TriggerSync`.) Pending verification: 10 consecutive Deploy-Staging passes.
+
+Hypotheses A, B, C were all refuted — see `Tickets/FHQ-31/FHQ-31.md` for the full investigation log.
+
+### 4. WebhookEchoGuard "still shows updated title" reads dashboard mid-re-render
+
+**First seen:** Deploy-Staging #115 (2026-05-26). Tracked on branch `fix/FHQ-31-reauth-flake-recurrence` (fixed alongside FHQ-31 as same-family E2E robustness).
+**Component:** E2E test step only — `tests-e2e/FamilyHQ.E2E.Steps/WebhookEchoGuardSteps.cs`. No production code involved.
+**Scenario:** *"A FamilyHQ-side edit produces exactly one outbound write to Google"* (`WebhookEchoGuard.feature`).
+
+**Symptom:** `GetVisibleEventsAsync()` returned an empty list; assertion `Expected {empty} to have an item matching …'Team Lunch with Alice'` failed.
+
+**Root cause:** The step did `capsule.WaitForAsync(Visible)` (the FHQ-29 mitigation) followed by a *single* `GetVisibleEventsAsync()` read. The wait passed, but after the FamilyHQ edit the dashboard processes a SignalR `EventsUpdated` notification and re-fetches events; the single read landed in the re-render window and saw zero capsules — the TOCTOU race documented on `DashboardPage.GetVisibleEventsAsync`.
+
+**Fix:** Replaced the wait+single-read with a poll loop (5 s deadline / 250 ms interval) that tolerates transient empties, matching the already-stable sibling step `ThenTheDashboardShowsTheUpdatedTitle`. Pending the same 10-Staging-pass verification.
 
 ---
 

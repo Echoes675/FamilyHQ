@@ -200,14 +200,27 @@ public class WebhookEchoGuardSteps
     [Then(@"the event still shows the updated title ""([^""]*)"" on the dashboard")]
     public async Task ThenTheEventStillShowsTheUpdatedTitleOnTheDashboard(string expectedTitle)
     {
-        // FHQ-29 mitigation: wait for the capsule to be visible using Playwright's built-in retry.
-        var capsule = _dashboardPage.EventCapsules.Filter(new() { HasText = expectedTitle }).First;
-        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        // FHQ-31: poll GetVisibleEventsAsync rather than WaitForAsync(Visible) followed
+        // by a single read. After the FamilyHQ edit the dashboard receives a SignalR
+        // EventsUpdated notification and re-fetches events; a single read taken in the
+        // window between "capsule visible" and the re-render returns an empty capsule
+        // list (the TOCTOU race documented on DashboardPage.GetVisibleEventsAsync).
+        // The earlier FHQ-29 mitigation waited for the capsule then read once — the
+        // wait passed but the read still raced the re-render, producing intermittent
+        // empty-list failures (Deploy-Staging #115). The poll loop tolerates transient
+        // empties and matches the sibling step ThenTheDashboardShowsTheUpdatedTitle.
+        var deadline = DateTime.UtcNow.AddMilliseconds(AssertionPollDeadlineMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var events = await _dashboardPage.GetVisibleEventsAsync();
+            if (events.Any(e => e.Contains(expectedTitle)))
+                return;
+            await Task.Delay(AssertionPollIntervalMs);
+        }
 
-        (await _dashboardPage.GetVisibleEventsAsync())
-            .Should().Contain(t => t.Contains(expectedTitle),
-                $"the dashboard must show '{expectedTitle}' after the FamilyHQ edit, " +
-                "meaning the echo suppression did not cause a revert");
+        throw new TimeoutException(
+            $"Dashboard did not show '{expectedTitle}' within {AssertionPollDeadlineMs}ms after the FamilyHQ edit. " +
+            "Either the echo suppression reverted the title, or the event never rendered.");
     }
 
     /// <summary>
