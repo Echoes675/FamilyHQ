@@ -16,12 +16,14 @@ public class EventsController : ControllerBase
     private readonly SimContext _db;
     private readonly ILogger<EventsController> _logger;
     private readonly SyncFailureModeStore _failureStore;
+    private readonly OutboundWriteCountStore _writeCountStore;
 
-    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore)
+    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore, OutboundWriteCountStore writeCountStore)
     {
         _db = db;
         _logger = logger;
         _failureStore = failureStore;
+        _writeCountStore = writeCountStore;
     }
 
     [HttpGet]
@@ -133,6 +135,7 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Created event: {EventId} ({Summary})", newEvent.Id, newEvent.Summary);
 
+        _writeCountStore.Increment(newEvent.Id);
         return Ok(MapEventResponse(newEvent, new List<string>()));
     }
 
@@ -176,6 +179,8 @@ public class EventsController : ControllerBase
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
+
+        _writeCountStore.Increment(existing.Id);
 
         var attendeeCalendarIds = await _db.EventAttendees
             .Where(a => a.EventId == existing.Id)

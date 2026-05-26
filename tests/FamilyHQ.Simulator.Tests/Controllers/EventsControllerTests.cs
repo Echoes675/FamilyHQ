@@ -407,7 +407,7 @@ public class EventsControllerTests
     private static EventsController CreateSut(SimContext db, string? userId = null)
     {
         var logger = new Mock<ILogger<EventsController>>().Object;
-        var controller = new EventsController(db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore());
+        var controller = new EventsController(db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore(), new FamilyHQ.Simulator.State.OutboundWriteCountStore());
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";

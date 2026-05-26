@@ -7,6 +7,7 @@ namespace FamilyHQ.Services.Calendar;
 public class CalendarMigrationService(
     IGoogleCalendarClient googleCalendarClient,
     ICalendarRepository calendarRepository,
+    IOutboundWriteHashCache outboundCache,
     ILogger<CalendarMigrationService> logger) : ICalendarMigrationService
 {
     public async Task<bool> EnsureCorrectCalendarAsync(
@@ -52,6 +53,14 @@ public class CalendarMigrationService(
 
         var created = await googleCalendarClient.CreateEventAsync(
             targetCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+
+        // Record the outbound write hash for the new Google event BEFORE any subsequent
+        // steps so that the echo-guard can suppress the incoming webhook even if the
+        // delete-old step later fails (the new event already exists in Google).
+        outboundCache.Record(created.GoogleEventId, hash);
+        logger.LogDebug(
+            "Recorded outbound write hash for event {EventId} (hash {Hash}).",
+            created.GoogleEventId, hash);
 
         // Persist the new DB state before deleting from Google.
         // If SaveChanges fails, both Google events still exist (recoverable).

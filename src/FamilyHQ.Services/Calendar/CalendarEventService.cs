@@ -10,6 +10,7 @@ public class CalendarEventService(
     ICalendarRepository calendarRepository,
     ICalendarMigrationService migrationService,
     IMemberTagParser memberTagParser,
+    IOutboundWriteHashCache outboundCache,
     ILogger<CalendarEventService> logger) : ICalendarEventService
 {
     public async Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct = default)
@@ -52,6 +53,11 @@ public class CalendarEventService(
         calendarEvent = await googleCalendarClient.CreateEventAsync(
             targetCalendar.GoogleCalendarId, calendarEvent, hash, ct);
 
+        outboundCache.Record(calendarEvent.GoogleEventId, hash);
+        logger.LogDebug(
+            "Recorded outbound write hash for event {EventId} (hash {Hash}).",
+            calendarEvent.GoogleEventId, hash);
+
         await calendarRepository.AddEventAsync(calendarEvent, ct);
         await calendarRepository.SaveChangesAsync(ct);
 
@@ -86,6 +92,12 @@ public class CalendarEventService(
             calendarEvent.IsAllDay, calendarEvent.Description);
 
         await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+
+        outboundCache.Record(calendarEvent.GoogleEventId, hash);
+        logger.LogDebug(
+            "Recorded outbound write hash for event {EventId} (hash {Hash}).",
+            calendarEvent.GoogleEventId, hash);
+
         await calendarRepository.UpdateEventAsync(calendarEvent, ct);
         await calendarRepository.SaveChangesAsync(ct);
 
@@ -123,7 +135,11 @@ public class CalendarEventService(
         // EnsureCorrectCalendarAsync already writes to Google and saves the DB if it migrates.
         var migrated = await migrationService.EnsureCorrectCalendarAsync(calendarEvent, newMembers, ct);
 
-        if (!migrated)
+        if (migrated)
+        {
+            // On the migration path, CalendarMigrationService records the outbound hash on the new event id (see FHQ-30.3).
+        }
+        else
         {
             // No migration: write updated description/members to Google and DB.
             var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
@@ -133,6 +149,12 @@ public class CalendarEventService(
                 calendarEvent.IsAllDay, calendarEvent.Description);
 
             await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+
+            outboundCache.Record(calendarEvent.GoogleEventId, hash);
+            logger.LogDebug(
+                "Recorded outbound write hash for event {EventId} (hash {Hash}).",
+                calendarEvent.GoogleEventId, hash);
+
             await calendarRepository.UpdateEventAsync(calendarEvent, ct);
             await calendarRepository.SaveChangesAsync(ct);
         }

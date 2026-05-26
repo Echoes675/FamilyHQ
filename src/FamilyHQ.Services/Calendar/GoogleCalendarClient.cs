@@ -44,6 +44,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     }
 
     private const int MaxLoggedBodyLength = 4096;
+    private const string EventsListFields =
+        "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)";
 
     private async Task ThrowIfFailedAsync(HttpResponseMessage response, string operation, CancellationToken ct)
     {
@@ -122,7 +124,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         do
         {
-            var query = new List<string> { "singleEvents=true" };
+            var query = new List<string>
+            {
+                "singleEvents=true",
+                "fields=" + Uri.EscapeDataString(EventsListFields)
+            };
 
             if (!string.IsNullOrEmpty(syncToken))
             {
@@ -174,8 +180,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         End = endParam.Value,
                         IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
-                        Description = item.Description
-                        // ContentHash is NOT stored on CalendarEvent; retrieved on-demand from Google via GetEventAsync
+                        Description = item.Description,
+                        ContentHash = item.ExtendedProperties?.Private?.ContentHash
                     });
                 }
 

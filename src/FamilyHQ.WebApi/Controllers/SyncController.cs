@@ -132,6 +132,14 @@ public class SyncController : ControllerBase
             _logger.LogInformation("Received Sync trigger (e.g. from Simulator).");
         }
 
+#if DEBUG
+        if (int.TryParse(Request.Headers["x-test-webhook-delay-seconds"].ToString(), out var delaySeconds) && delaySeconds > 0)
+        {
+            _logger.LogInformation("Test-only webhook delay of {Delay}s injected.", delaySeconds);
+            await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
+        }
+#endif
+
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
 
