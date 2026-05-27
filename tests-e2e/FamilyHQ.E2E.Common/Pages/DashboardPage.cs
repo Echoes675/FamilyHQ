@@ -94,6 +94,80 @@ public class DashboardPage : BasePage
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
+    // ── FHQ-29 instrumentation ───────────────────────────────────────────────
+    // The multi-calendar chip scenarios (add/remove chip, "no capsule" assertion)
+    // have flaked with a bare 30s Playwright timeout in CI (Deploy-Staging #103),
+    // giving no clue WHICH await hung. These helpers wrap each timeout-prone await
+    // so any TimeoutException is rethrown with a snapshot of the relevant page
+    // state. The channel is the exception message — it surfaces in the xUnit/TRX
+    // test report (the only forensic channel that survives to CI; there is no
+    // artifact archiving) — matching the existing [FHQ-28] diagnostic convention.
+    // Grep CI logs for "[FHQ-29 diagnostic]" to triage a recurrence.
+
+    /// <summary>
+    /// Runs <paramref name="action"/>; if it times out, rethrows the TimeoutException
+    /// with an <c>[FHQ-29 diagnostic]</c> snapshot of the page/modal/grid state appended.
+    /// </summary>
+    private async Task RunWithChipDiagnosticAsync(string operation, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (TimeoutException ex)
+        {
+            var state = await CaptureChipScenarioStateAsync();
+            throw new TimeoutException(
+                $"{ex.Message} [FHQ-29 diagnostic] operation='{operation}' | {state}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort snapshot of the chip-scenario page state for embedding in a diagnostic
+    /// message. Never throws — each probe degrades to a "(failed: …)" token so a capture
+    /// problem can never mask the original timeout.
+    /// </summary>
+    private async Task<string> CaptureChipScenarioStateAsync()
+    {
+        var parts = new List<string>();
+
+        try { parts.Add($"url={Page.Url}"); }
+        catch (Exception ex) { parts.Add($"url=(failed: {ex.Message})"); }
+
+        try
+        {
+            var modalVisible = await EventModal.IsVisibleAsync();
+            parts.Add($"modal-visible={modalVisible}");
+            if (modalVisible)
+            {
+                var chipTexts = await EventModal.Locator(".chip").AllInnerTextsAsync();
+                parts.Add($"modal-chips=[{string.Join(" | ", chipTexts)}]");
+
+                var removeLabels = await EventModal.Locator(".chip-remove")
+                    .EvaluateAllAsync<string[]>("els => els.map(e => e.getAttribute('aria-label') ?? '(no-label)')");
+                parts.Add($"remove-buttons=[{string.Join(" | ", removeLabels)}]");
+
+                var modalHtml = await EventModal.InnerHTMLAsync();
+                if (modalHtml.Length > 1500) modalHtml = modalHtml.Substring(0, 1500) + "…(truncated)";
+                parts.Add($"modal-html-head={modalHtml}");
+            }
+        }
+        catch (Exception ex) { parts.Add($"modal-state=(failed: {ex.Message})"); }
+
+        try
+        {
+            // text + inline style (which carries the per-calendar background colour the
+            // capsule assertions key off) for every capsule currently on the grid.
+            var capsules = await EventCapsules.EvaluateAllAsync<string[]>(
+                "els => els.map(e => `${e.innerText}::${e.getAttribute('style') ?? ''}`)");
+            parts.Add($"grid-capsules=[{string.Join(" | ", capsules)}]");
+        }
+        catch (Exception ex) { parts.Add($"grid-capsules=(failed: {ex.Message})"); }
+
+        return string.Join(" ", parts);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     public async Task SwitchToDayViewAsync()
     {
         await DayTab.ClickAsync();
@@ -500,8 +574,11 @@ public class DashboardPage : BasePage
 
     public async Task OpenEventForEditingAsync(string eventName)
     {
-        await Page.GetByText(eventName).First.ClickAsync();
-        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await RunWithChipDiagnosticAsync($"open event '{eventName}' for editing", async () =>
+        {
+            await Page.GetByText(eventName).First.ClickAsync();
+            await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        });
     }
 
     /// <summary>
@@ -531,41 +608,24 @@ public class DashboardPage : BasePage
     {
         var removeBtn = EventModal.Locator($"[aria-label='Remove {calendarName}']");
 
-        try
-        {
-            await removeBtn.ClickAsync();
-        }
-        catch (TimeoutException ex)
-        {
-            // FHQ-29 diagnostic: the remove button never appeared. Dump the
-            // event-modal HTML so we can see which chips ARE rendered. The most
-            // likely cause is that the multi-calendar event setup did not associate
-            // the event with all expected calendars (only one chip present), in
-            // which case the bug is upstream of the click.
-            string modalHtml;
-            try
-            {
-                modalHtml = await EventModal.InnerHTMLAsync();
-                if (modalHtml.Length > 2000) modalHtml = modalHtml.Substring(0, 2000) + "…(truncated)";
-            }
-            catch (Exception innerEx)
-            {
-                modalHtml = $"(modal HTML capture failed: {innerEx.Message})";
-            }
-            throw new TimeoutException(
-                $"{ex.Message} [FHQ-29 diagnostic] looking-for-aria-label='Remove {calendarName}' " +
-                $"| event-modal-html-head={modalHtml}",
-                ex);
-        }
+        // The remove button never appearing is the original FHQ-29 symptom; the
+        // diagnostic snapshot shows which chips/remove-buttons ARE rendered, so we
+        // can tell whether the multi-calendar setup failed to associate the event
+        // with all expected calendars (bug upstream of the click).
+        await RunWithChipDiagnosticAsync($"click remove button for '{calendarName}' chip",
+            () => removeBtn.ClickAsync());
 
-        var eventsResponseTask = Page.WaitForResponseAsync(
-            r => r.Url.Contains("api/calendars/events"),
-            new() { Timeout = 30000 });
+        await RunWithChipDiagnosticAsync($"save after removing '{calendarName}' chip", async () =>
+        {
+            var eventsResponseTask = Page.WaitForResponseAsync(
+                r => r.Url.Contains("api/calendars/events"),
+                new() { Timeout = 30000 });
 
-        await SaveEventBtn.ClickAsync();
-        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
-        await eventsResponseTask;
-        await WaitForCalendarVisibleAsync();
+            await SaveEventBtn.ClickAsync();
+            await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+            await eventsResponseTask;
+            await WaitForCalendarVisibleAsync();
+        });
     }
 
     /// <summary>
@@ -671,18 +731,32 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task<bool> NoEventCapsuleWithCalendarColourAsync(string eventName, string calendarName, string calendarColor)
     {
-        var count = await EventCapsules.CountAsync();
-        for (int i = 0; i < count; i++)
+        // NOTE: the Count→Nth→InnerText pattern below can hit a 30s auto-wait timeout if a
+        // capsule detaches between the count and the per-index read while the grid re-renders
+        // after the chip-removal save (the same TOCTOU class documented on GetVisibleEventsAsync).
+        // Instrumented so a recurrence reports the grid state rather than a bare timeout.
+        try
         {
-            var capsule = EventCapsules.Nth(i);
-            var text = await capsule.InnerTextAsync();
-            if (!text.Contains(eventName)) continue;
+            var count = await EventCapsules.CountAsync();
+            for (int i = 0; i < count; i++)
+            {
+                var capsule = EventCapsules.Nth(i);
+                var text = await capsule.InnerTextAsync();
+                if (!text.Contains(eventName)) continue;
 
-            var style = await capsule.GetAttributeAsync("style") ?? "";
-            if (style.Contains(calendarColor, StringComparison.OrdinalIgnoreCase))
-                return false;
+                var style = await capsule.GetAttributeAsync("style") ?? "";
+                if (style.Contains(calendarColor, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            return true;
         }
-        return true;
+        catch (TimeoutException ex)
+        {
+            var state = await CaptureChipScenarioStateAsync();
+            throw new TimeoutException(
+                $"{ex.Message} [FHQ-29 diagnostic] operation='assert no {calendarName} capsule for {eventName}' " +
+                $"| expected-absent-colour={calendarColor} | {state}", ex);
+        }
     }
 
     /// <summary>
