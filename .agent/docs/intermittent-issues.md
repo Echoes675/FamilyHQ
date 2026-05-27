@@ -20,9 +20,43 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Resolved issues
 
-### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth
+### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth — recurrence was a test-side race (FHQ-31)
 
-**Resolved:** branch `fix/FHQ-28-staging-reauth-banner-investigation`, PR #74, merge commit `d9bb603` (2026-05-15). Tracked as FHQ-27 (initial attempt) → FHQ-28 (follow-up that actually closed the loop). The FHQ-27 retrospective was written prematurely after only 5 Deploy-Dev passes; the very next Deploy-Staging failed. **Do not write a "Resolved" entry off Deploy-Dev alone.**
+**Resolved:** branch `fix/FHQ-31-reauth-flake-recurrence`, commits `057962f` (per-user failure-mode clear) + `42f2661` (echo-guard poll-loop). Verified across **10 consecutive Deploy-Staging passes #116–#125** (2026-05-27). Tracked as **FHQ-31**.
+
+**Do not delete — recurrence history matters.** This is the second resolution of this symptom. The FHQ-27/28 resolution (see "3-legacy" below) addressed three real production mechanisms but the symptom recurred on Deploy-Staging #110 (2026-05-20). The #110 recurrence was a **different, test-side root cause**, not a regression of the FHQ-28 production fix.
+
+**Recurrence symptom (Deploy-Staging #110, #112):**
+```text
+sync-response-status=200
+connection-status={"status":401,"body":""}
+page.bodyTextHead="… Connection status Active …"
+```
+
+**Root cause of the recurrence (confirmed 2026-05-26):** a **test-side parallel-execution race**. `SyncResilienceHooks.[AfterScenario]` called `ClearAllSyncFailureModesAsync`, which wipes *every* user's simulator failure mode. With `xunit.runner.json` `maxParallelThreads=2`, the two `SyncResilience.feature` scenarios that share the `RefreshTokenInvalidGrant` setup run concurrently; Scenario A's teardown `ClearAll` fired mid-flight against Scenario B, erasing B's failure mode before B's manual sync triggered its token refresh. B's refresh then succeeded (no `invalid_grant`), the user was never marked NeedsReauth, the badge stayed `Active`, and the assertion failed. ~25% rate matched the race window on a 2-thread runner.
+
+**Refuted hypotheses (kept so the next investigator doesn't re-walk them):**
+- (A) Playwright session lost auth mid-scenario → refuted: with `[Authorize]` added to `TriggerSync`, the sync POST still returned 200 (it *was* authenticated).
+- (B) Lazy `currentUserService.UserId` resolution surviving FHQ-28 → refuted: captured-userId pattern at `CalendarSyncService.cs:27` is intact.
+- (C) SignalR `ConnectionStatusUpdated` delivery race → refuted: the Diagnostics page-init fetch reads connection status directly; a dropped broadcast would not produce an `Active` read if the user had actually been marked.
+
+**Fix:** `SyncResilienceHooks` clears only the current scenario's user via the existing per-user `ClearSyncFailureModeAsync(userId)` backdoor — restores the `feedback_e2e_isolation` rule. Plus independent hardening: `[Authorize]` + explicit `UserId` null guard on `SyncController.TriggerSync` (every other user-scoped endpoint already had it), with regression tests. Full investigation log: `Tickets/FHQ-31/FHQ-31.md`.
+
+### 4. WebhookEchoGuard "still shows updated title" reads dashboard mid-re-render (FHQ-31 branch)
+
+**Resolved:** branch `fix/FHQ-31-reauth-flake-recurrence`, commit `42f2661`. Verified across the same 10-run streak #116–#125.
+**Component:** E2E test step only — `tests-e2e/FamilyHQ.E2E.Steps/WebhookEchoGuardSteps.cs`. No production code involved.
+**First seen:** Deploy-Staging #115 (2026-05-26), scenario *"A FamilyHQ-side edit produces exactly one outbound write to Google"*.
+
+**Symptom:** `GetVisibleEventsAsync()` returned an empty list; assertion `Expected {empty} to have an item matching …'Team Lunch with Alice'` failed.
+
+**Root cause:** The step did `capsule.WaitForAsync(Visible)` (the FHQ-29 mitigation) then a *single* `GetVisibleEventsAsync()` read. The wait passed, but after the FamilyHQ edit the dashboard processes a SignalR `EventsUpdated` notification and re-fetches events; the single read landed in the re-render window and saw zero capsules — the TOCTOU race documented on `DashboardPage.GetVisibleEventsAsync`.
+
+**Fix:** Replaced wait+single-read with a poll loop (5 s deadline / 250 ms interval) tolerating transient empties, matching the stable sibling step `ThenTheDashboardShowsTheUpdatedTitle`.
+
+### 3-legacy. Calendar API 403 path does not always mark UserToken as NeedsReauth (FHQ-27 / FHQ-28 — superseded by recurrence above)
+
+**Resolved (then recurred):** branch `fix/FHQ-28-staging-reauth-banner-investigation`, PR #74, merge commit `d9bb603` (2026-05-15). Tracked as FHQ-27 (initial attempt) → FHQ-28 (follow-up that actually closed the loop). The FHQ-27 retrospective was written prematurely after only 5 Deploy-Dev passes; the very next Deploy-Staging failed. **Do not write a "Resolved" entry off Deploy-Dev alone.** This resolution was retired on 2026-05-26 after Deploy-Staging #110 reproduced the symptom — see Active issue #3 above for the open investigation.
 **Component:** `src/FamilyHQ.Services/Auth/DatabaseTokenStore.cs`, `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs`, `src/FamilyHQ.Services/Calendar/GoogleCalendarClient.cs`, `src/FamilyHQ.WebUi/Pages/Index.razor`, `src/FamilyHQ.WebUi/Components/Settings/SettingsCalendarsTab.razor`, `src/FamilyHQ.WebUi/Services/SignalRService.cs`, plus the new `IConnectionStatusBroadcaster` abstraction in `FamilyHQ.Core.Interfaces` / `FamilyHQ.WebApi.Hubs`.
 **First seen:** Deploy-Dev #328 (2026-05-14).
 **Occurrences:** Deploy-Dev #328, #330, #331, #332, #340, #350, #353; Deploy-Staging #101. Before FHQ-27 the three pulled scenarios flaked at observed rates ~50% (403 path), ~25% (diagnostics needs-reauth), ~10% (refresh-token banner). After FHQ-27 the symptom briefly disappeared across 5 Deploy-Dev runs (#344–#348) but reappeared on Deploy-Staging #101 and Deploy-Dev #350/#353.

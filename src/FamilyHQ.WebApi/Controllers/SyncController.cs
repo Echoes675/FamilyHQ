@@ -52,10 +52,25 @@ public class SyncController : ControllerBase
     /// </summary>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>A status response.</returns>
+    [Authorize]
     [HttpPost("trigger")]
     public async Task<IActionResult> TriggerSync(CancellationToken ct)
     {
-        _logger.LogInformation("Manual sync triggered via API.");
+        // FHQ-31: explicit UserId guard. [Authorize] above gates the request on
+        // ASP.NET's authentication middleware; this null check additionally
+        // refuses to enter SyncAllAsync if the authenticated principal lacks a
+        // 'sub' claim. Without this guard, an authenticated-but-claimless
+        // request would reach CalendarSyncService.SyncAllAsync, which would
+        // silently log-and-return on null userId — turning a real auth bug
+        // into a 200 OK with no work done. That silent-success path was the
+        // root cause of the Deploy-Staging #110 flake: the diagnostics test
+        // saw sync-response-status=200 and read the "Active" badge because
+        // the user was never marked NeedsReauth.
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        _logger.LogInformation("Manual sync triggered via API for user {UserId}.", userId);
 
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
