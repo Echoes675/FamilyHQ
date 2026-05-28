@@ -282,6 +282,7 @@ Has a `Background` that provisions a `TestFamilyMember` user and logs in before 
 | Remove calendar chip from event | Multi-Calendar |
 | Last chip is protected — cannot remove final calendar | Multi-Calendar |
 | Delete event removes it from all calendars | Multi-Calendar / CRUD |
+| Create modal requires an explicit calendar and never silently assigns the shared calendar | Multi-Calendar / CRUD (FHQ-32) |
 
 ### Authentication.feature (5 scenarios)
 
@@ -385,3 +386,4 @@ Update E2E tests in these scenarios:
 - **Keep scenarios focused** - One scenario per behavior being tested
 - **Update templates carefully** - User templates affect multiple scenarios
 - **Never use hardcoded dates** - Use relative expressions (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month. The `DateExpressionResolver` class in `FamilyHQ.E2E.Steps` converts these expressions to `yyyy-MM-dd` at runtime. All step definitions that accept date parameters already support both formats.
+- **Create modal has no default calendar (FHQ-32)** - The "Add new event" modal no longer pre-selects a calendar; the user must pick one and Save is blocked until they do. `DashboardPage.FillAndSaveEventAsync` therefore selects the first available calendar chip when none is active, and `CreateEventInCalendarAsync` selects a named chip. Day/agenda slot taps that pass an explicit `calendarId` keep their chip pre-selected, so those flows are unaffected.

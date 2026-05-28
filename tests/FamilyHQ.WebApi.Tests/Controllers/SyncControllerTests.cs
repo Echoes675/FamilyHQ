@@ -1,10 +1,12 @@
 using System.Net;
+using System.Reflection;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -31,6 +33,37 @@ public class SyncControllerTests
 
         constructorSync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void TriggerSync_HasAuthorizeAttribute()
+    {
+        // FHQ-31 regression guard: without [Authorize], an unauthenticated POST
+        // to /api/sync/trigger reaches SyncAllAsync, which silently no-ops on a
+        // null UserId — returning 200 OK with no work done. That silent-success
+        // path was the root cause of the Deploy-Staging #110 reauth flake.
+        var method = typeof(SyncController).GetMethod(nameof(SyncController.TriggerSync))!;
+        method.GetCustomAttribute<AuthorizeAttribute>(inherit: false)
+            .Should().NotBeNull(
+                "TriggerSync must be [Authorize]-gated so unauthenticated requests return 401, " +
+                "not a silent 200 that masks reauth-marking failures (FHQ-31).");
+    }
+
+    [Fact]
+    public async Task TriggerSync_WhenCurrentUserIdIsNull_ReturnsUnauthorized()
+    {
+        // FHQ-31: belt-and-braces guard. Even if the principal is authenticated,
+        // a missing 'sub' claim would let an unidentifiable request enter
+        // SyncAllAsync, which would log-and-return silently. Refuse explicitly.
+        var (constructorSync, _, _, systemUnderTest) = CreateSut(currentUserId: null);
+
+        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
+
+        result.Should().BeOfType<UnauthorizedResult>();
+        constructorSync.Verify(
+            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "SyncAllAsync must not be invoked when the caller has no resolvable user id.");
     }
 
     [Fact]
@@ -229,6 +262,11 @@ public class SyncControllerTests
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // Sentinel that distinguishes "default: a valid test user" from "explicitly null".
+    // Reference equality lets the helper detect whether the caller passed `null` or
+    // accepted the default — Optional<T?> would be tidier but C# doesn't ship one.
+    private static readonly string DefaultTestUserId = "test-user-id";
+
     private static (
         Mock<ICalendarSyncService> ConstructorSync,
         Mock<ICalendarSyncService> ScopedSync,
@@ -236,9 +274,11 @@ public class SyncControllerTests
         SyncController SystemUnderTest) CreateSut(
         IEnumerable<string>? userIds = null,
         WebhookRegistration? webhookRegistration = null,
-        CalendarInfo? calendarInfo = null)
+        CalendarInfo? calendarInfo = null,
+        string? currentUserId = "__default__")
     {
-        var (constructorSync, scopedSync, proxy, sut, _) = CreateSutInternal(userIds, webhookRegistration, calendarInfo);
+        var (constructorSync, scopedSync, proxy, sut, _) =
+            CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
         return (constructorSync, scopedSync, proxy, sut);
     }
 
@@ -250,9 +290,10 @@ public class SyncControllerTests
         Mock<ITokenStore> TokenStore) CreateSutExposingTokenStore(
         IEnumerable<string>? userIds = null,
         WebhookRegistration? webhookRegistration = null,
-        CalendarInfo? calendarInfo = null)
+        CalendarInfo? calendarInfo = null,
+        string? currentUserId = "__default__")
     {
-        return CreateSutInternal(userIds, webhookRegistration, calendarInfo);
+        return CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
     }
 
     private static (
@@ -263,7 +304,8 @@ public class SyncControllerTests
         Mock<ITokenStore> TokenStore) CreateSutInternal(
         IEnumerable<string>? userIds,
         WebhookRegistration? webhookRegistration,
-        CalendarInfo? calendarInfo)
+        CalendarInfo? calendarInfo,
+        string? currentUserId)
     {
         var syncServiceMock = new Mock<ICalendarSyncService>();
         var scopedSyncServiceMock = new Mock<ICalendarSyncService>();
@@ -306,6 +348,10 @@ public class SyncControllerTests
         scopeMock.Setup(s => s.ServiceProvider).Returns(serviceProviderMock.Object);
         scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
+        var currentUserMock = new Mock<ICurrentUserService>();
+        var resolvedUserId = ReferenceEquals(currentUserId, "__default__") ? DefaultTestUserId : currentUserId;
+        currentUserMock.Setup(c => c.UserId).Returns(resolvedUserId);
+
         var systemUnderTest = new SyncController(
             syncServiceMock.Object,
             hubContextMock.Object,
@@ -314,7 +360,7 @@ public class SyncControllerTests
             loggerMock.Object,
             webhookRepoMock.Object,
             calendarRepoMock.Object,
-            new Mock<ICurrentUserService>().Object,
+            currentUserMock.Object,
             new Mock<IWebhookRegistrationService>().Object)
         {
             ControllerContext = new ControllerContext
