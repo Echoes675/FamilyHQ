@@ -220,6 +220,40 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return calendarEvent;
     }
 
+    public async Task<CalendarEvent> CreateRecurringEventAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        string rrule,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
+        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule);
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "CreateRecurringEvent", ct);
+
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+        calendarEvent.GoogleEventId = result!.Id;
+        return calendarEvent;
+    }
+
+    public async Task PatchSeriesRecurrenceAsync(
+        string googleCalendarId,
+        string seriesId,
+        string rrule,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        // events.patch with only the recurrence array — every other master field is left untouched.
+        var body = new { recurrence = new[] { rrule } };
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "PatchSeriesRecurrence", ct);
+    }
+
     public async Task<CalendarEvent> UpdateEventAsync(
         string googleCalendarId,
         CalendarEvent calendarEvent,
@@ -329,12 +363,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
-    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash)
+    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash, string? rrule = null)
     {
         var extendedProperties = new
         {
             @private = new Dictionary<string, string> { ["content-hash"] = contentHash }
         };
+
+        // Google expects the recurrence array only when the event is a series master.
+        var recurrence = rrule is null ? null : new[] { rrule };
 
         if (evt.IsAllDay)
         {
@@ -356,6 +393,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 location = evt.Location,
                 start = new { date = evt.Start.ToString("yyyy-MM-dd") },
                 end = new { date = exclusiveEndDate.ToString("yyyy-MM-dd") },
+                recurrence,
                 extendedProperties
             };
         }
@@ -367,6 +405,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             location = evt.Location,
             start = new { dateTime = evt.Start.ToString("yyyy-MM-ddTHH:mm:ssK") },
             end = new { dateTime = evt.End.ToString("yyyy-MM-ddTHH:mm:ssK") },
+            recurrence,
             extendedProperties
         };
     }

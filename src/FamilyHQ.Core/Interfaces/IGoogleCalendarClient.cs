@@ -17,8 +17,23 @@ public interface IGoogleCalendarClient
         CancellationToken ct = default);
 
     Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
+
+    /// <summary>
+    /// Creates a recurring series master: the supplied RRULE line is sent in the <c>recurrence</c>
+    /// array alongside the event's content (and content-hash extended property). Returns the event
+    /// with its Google-assigned series id. Reused by FHQ-18.5 native series creation.
+    /// </summary>
+    Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default);
+
     Task<CalendarEvent> UpdateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
     Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Patches only the <c>recurrence</c> array of a series master via events.patch, replacing it
+    /// with the single supplied RRULE line. Used to truncate a series (apply <c>UNTIL</c>) for the
+    /// "this and following" edit/delete split without disturbing any other master field.
+    /// </summary>
+    Task PatchSeriesRecurrenceAsync(string googleCalendarId, string seriesId, string rrule, CancellationToken ct = default);
     Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default);
 
     /// <summary>Returns null if the event is not found (404). Includes the content-hash extended property.</summary>

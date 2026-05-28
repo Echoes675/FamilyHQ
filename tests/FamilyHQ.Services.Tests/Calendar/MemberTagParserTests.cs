@@ -69,6 +69,37 @@ public class MemberTagParserTests
         result.Should().BeEquivalentTo(["Eoin"]);
     }
 
+    // ── ExtractTaggedMembers (explicit tag only, no fallback) ─────────────────
+
+    [Fact]
+    public void ExtractTaggedMembers_StructuredTag_ReturnsTaggedMembers()
+    {
+        var result = _sut.ExtractTaggedMembers("Dentist [members: Eoin, Sarah]", KnownNames);
+        result.Should().BeEquivalentTo(["Eoin", "Sarah"]);
+    }
+
+    [Fact]
+    public void ExtractTaggedMembers_PlainTextMentioningNames_ReturnsEmpty()
+    {
+        // Unlike ParseMembers, there is NO whole-word fallback: plain text naming members is not a tag.
+        var result = _sut.ExtractTaggedMembers("Eoin and Sarah collecting the kids", KnownNames);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ExtractTaggedMembers_NullDescription_ReturnsEmpty()
+    {
+        var result = _sut.ExtractTaggedMembers(null, KnownNames);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ExtractTaggedMembers_StructuredTagIgnoresCaseAndUnknowns()
+    {
+        var result = _sut.ExtractTaggedMembers("[members: eoin, Unknown]", KnownNames);
+        result.Should().BeEquivalentTo(["Eoin"]);
+    }
+
     // ── StripMemberTag ────────────────────────────────────────────────────────
 
     [Fact]

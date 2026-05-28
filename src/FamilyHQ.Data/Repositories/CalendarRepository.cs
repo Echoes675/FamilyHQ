@@ -106,6 +106,15 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(e => e.GoogleEventId == googleEventId, ct);
     }
 
+    public async Task<IReadOnlyList<CalendarEvent>> GetEventsBySeriesIdAsync(string seriesId, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .Include(e => e.Members)
+            .Where(e => e.GoogleRecurringEventId == seriesId)
+            .OrderBy(e => e.Start)
+            .ToListAsync(ct);
+    }
+
     public async Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default)
     {
         return await _context.SyncStates

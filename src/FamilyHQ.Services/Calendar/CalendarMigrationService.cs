@@ -7,6 +7,7 @@ namespace FamilyHQ.Services.Calendar;
 public class CalendarMigrationService(
     IGoogleCalendarClient googleCalendarClient,
     ICalendarRepository calendarRepository,
+    IMemberTagParser memberTagParser,
     IOutboundWriteHashCache outboundCache,
     ILogger<CalendarMigrationService> logger) : ICalendarMigrationService
 {
@@ -75,5 +76,125 @@ public class CalendarMigrationService(
         await googleCalendarClient.DeleteEventAsync(currentOwner.GoogleCalendarId, oldGoogleEventId, ct);
 
         return true;
+    }
+
+    public async Task<bool> EnsureCorrectCalendarForSeriesAsync(
+        string seriesId,
+        IReadOnlyList<CalendarInfo> assignedMembers,
+        CancellationToken ct = default)
+    {
+        var localInstances = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
+        if (localInstances.Count == 0)
+            throw new InvalidOperationException($"No local instances found for series {seriesId}.");
+
+        // A representative instance carries the series' current owner calendar, RRULE and content.
+        var representative = localInstances[0];
+        var currentOwner = await calendarRepository.GetCalendarByIdAsync(representative.OwnerCalendarInfoId, ct)
+            ?? throw new InvalidOperationException($"Owner calendar {representative.OwnerCalendarInfoId} not found for series {seriesId}.");
+
+        var shouldBeShared = assignedMembers.Count > 1;
+        if (shouldBeShared == currentOwner.IsShared)
+            return false; // series already on the correct calendar
+
+        CalendarInfo targetCalendar;
+        if (shouldBeShared)
+        {
+            targetCalendar = await calendarRepository.GetSharedCalendarAsync(ct)
+                ?? throw new InvalidOperationException("No shared calendar is configured. Set IsShared = true on one calendar.");
+        }
+        else
+        {
+            targetCalendar = assignedMembers.SingleOrDefault(m => !m.IsShared)
+                ?? throw new InvalidOperationException(
+                    "Cannot migrate series to individual calendar: no non-shared member found in assignedMembers.");
+        }
+
+        var rrule = representative.RecurrenceRule
+            ?? throw new InvalidOperationException($"Series {seriesId} has no stored RecurrenceRule to migrate.");
+
+        logger.LogInformation(
+            "Migrating series {SeriesId} from {Source} to {Target}.",
+            seriesId, currentOwner.DisplayName, targetCalendar.DisplayName);
+
+        // Insert the series on the target calendar with the new RRULE and a normalised members tag.
+        var memberNames = assignedMembers.Where(m => !m.IsShared).Select(m => m.DisplayName).ToList();
+        var description = memberTagParser.NormaliseDescription(
+            memberTagParser.StripMemberTag(representative.Description), memberNames);
+
+        var newMaster = new CalendarEvent
+        {
+            Title = representative.Title,
+            Start = representative.Start,
+            End = representative.End,
+            IsAllDay = representative.IsAllDay,
+            Location = representative.Location,
+            Description = description
+        };
+
+        var masterHash = EventContentHash.Compute(
+            newMaster.Title, newMaster.Start, newMaster.End, newMaster.IsAllDay, newMaster.Description);
+
+        var created = await googleCalendarClient.CreateRecurringEventAsync(
+            targetCalendar.GoogleCalendarId, newMaster, masterHash, rrule, ct);
+        var newSeriesId = created.GoogleEventId;
+
+        outboundCache.Record(newSeriesId, masterHash);
+        logger.LogDebug("Recorded outbound write hash for new series master {SeriesId} (hash {Hash}).", newSeriesId, masterHash);
+
+        // Remove the old series' local rows; the reconcile below materialises the new series' instances.
+        foreach (var instance in localInstances)
+            await calendarRepository.DeleteEventAsync(instance.Id, ct);
+        await calendarRepository.SaveChangesAsync(ct);
+
+        await ReconcileSeriesWindowAsync(targetCalendar, newSeriesId, rrule, ct);
+
+        // Delete the old series from Google last; if it fails the DB is already consistent and the
+        // next sync cleans up the orphaned old series.
+        await googleCalendarClient.DeleteEventAsync(currentOwner.GoogleCalendarId, seriesId, ct);
+
+        return true;
+    }
+
+    // Re-fetch the target calendar's sync window and persist the migrated series' expanded instances,
+    // recording an outbound hash for each so the resulting webhooks are recognised as self-echoes.
+    private async Task ReconcileSeriesWindowAsync(CalendarInfo target, string newSeriesId, string rrule, CancellationToken ct)
+    {
+        var syncState = await calendarRepository.GetSyncStateAsync(target.Id, ct);
+        if (syncState?.SyncWindowStart is not { } windowStart || syncState.SyncWindowEnd is not { } windowEnd)
+            throw new InvalidOperationException(
+                $"Cannot reconcile migrated series: calendar {target.Id} has no stored sync window.");
+
+        var (fetched, _) = await googleCalendarClient.GetEventsAsync(
+            target.GoogleCalendarId, windowStart, windowEnd, null, ct);
+
+        var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
+        var knownMemberNames = allCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
+
+        foreach (var fetchedEvent in fetched.Where(e => e.GoogleRecurringEventId == newSeriesId))
+        {
+            var parsedNames = memberTagParser.ParseMembers(fetchedEvent.Description, knownMemberNames);
+            var members = allCalendars
+                .Where(c => parsedNames.Contains(c.DisplayName, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            fetchedEvent.OwnerCalendarInfoId = target.Id;
+            fetchedEvent.RecurrenceRule = fetchedEvent.RecurrenceRule ?? rrule;
+            fetchedEvent.Members = members;
+            await calendarRepository.AddEventAsync(fetchedEvent, ct);
+
+            // Record the hash Google will echo for this instance. Google copies the new master's
+            // content-hash extended property onto every expanded instance, so we record that echoed
+            // value (surfaced on ContentHash by GetEventsAsync) — a per-instance recompute would
+            // never match IsSelfEcho and would let the N follow-on webhooks through as a loop.
+            if (!string.IsNullOrEmpty(fetchedEvent.ContentHash))
+            {
+                outboundCache.Record(fetchedEvent.GoogleEventId, fetchedEvent.ContentHash);
+                logger.LogDebug(
+                    "Recorded outbound write hash for migrated series instance {EventId} (hash {Hash}).",
+                    fetchedEvent.GoogleEventId, fetchedEvent.ContentHash);
+            }
+        }
+
+        await calendarRepository.SaveChangesAsync(ct);
     }
 }

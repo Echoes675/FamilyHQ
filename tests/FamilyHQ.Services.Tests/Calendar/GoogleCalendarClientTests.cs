@@ -462,6 +462,101 @@ public class GoogleCalendarClientTests
         result.Title.Should().Be("Test Event");
     }
 
+    [Fact]
+    public async Task CreateRecurringEventAsync_SendsRecurrenceArrayToGoogle()
+    {
+        // Arrange — a recurring series master must carry the RRULE in a recurrence array.
+        string? capturedBody = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "new-series-id" }))
+            });
+
+        var newEvent = new CalendarEvent
+        {
+            Title = "Weekly",
+            Start = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        // Act
+        var result = await systemUnderTest.CreateRecurringEventAsync("cal1", newEvent, "testhash", "RRULE:FREQ=WEEKLY;BYDAY=MO");
+
+        // Assert
+        result.GoogleEventId.Should().Be("new-series-id");
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var recurrence = doc.RootElement.GetProperty("recurrence");
+        recurrence.GetArrayLength().Should().Be(1);
+        recurrence[0].GetString().Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    }
+
+    [Fact]
+    public async Task PatchSeriesRecurrenceAsync_SendsPatchWithOnlyRecurrenceArray()
+    {
+        // Arrange — truncating a series sends events.patch with ONLY the recurrence array.
+        string? capturedBody = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Patch && req.RequestUri!.ToString().Contains("events/series-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new StringContent("{}") });
+
+        // Act
+        await systemUnderTest.PatchSeriesRecurrenceAsync("cal1", "series-id", "RRULE:FREQ=WEEKLY;UNTIL=20260315T080000Z");
+
+        // Assert — body carries the recurrence array and no event content fields.
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var root = doc.RootElement;
+        root.GetProperty("recurrence")[0].GetString().Should().Be("RRULE:FREQ=WEEKLY;UNTIL=20260315T080000Z");
+        root.TryGetProperty("summary", out _).Should().BeFalse("a recurrence-only patch must not overwrite the master's other fields");
+    }
+
     [Theory]
     // Inclusive end-of-day (legacy EventModal representation): 23:59:59.9999999 → next day exclusive
     [InlineData("2026-04-28T00:00:00Z", "2026-04-28T23:59:59.9999999Z", "2026-04-28", "2026-04-29")]

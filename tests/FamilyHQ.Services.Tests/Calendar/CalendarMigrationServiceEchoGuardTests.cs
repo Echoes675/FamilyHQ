@@ -46,7 +46,7 @@ public class CalendarMigrationServiceEchoGuardTests
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
 
-        var sut = new CalendarMigrationService(google.Object, repo.Object, cache.Object, logger.Object);
+        var sut = new CalendarMigrationService(google.Object, repo.Object, new MemberTagParser(), cache.Object, logger.Object);
         return (google, repo, cache, sut);
     }
 

@@ -17,22 +17,33 @@ public class MemberTagParser : IMemberTagParser
 
         var tagMatch = TagRegex.Match(description);
         if (tagMatch.Success)
-        {
-            var tagContent = tagMatch.Groups[1].Value;
-            return tagContent
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(name => knownMemberNames.FirstOrDefault(
-                    k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)))
-                .Where(n => n is not null)
-                .Select(n => n!)
-                .ToList();
-        }
+            return ResolveTagContent(tagMatch.Groups[1].Value, knownMemberNames);
 
         // Fallback: whole-word name matching
         return knownMemberNames
             .Where(name => Regex.IsMatch(description, $@"\b{Regex.Escape(name)}\b", RegexOptions.IgnoreCase))
             .ToList();
     }
+
+    public IReadOnlyList<string> ExtractTaggedMembers(string? description, IReadOnlyList<string> knownMemberNames)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return [];
+
+        var tagMatch = TagRegex.Match(description);
+        return tagMatch.Success
+            ? ResolveTagContent(tagMatch.Groups[1].Value, knownMemberNames)
+            : [];
+    }
+
+    private static List<string> ResolveTagContent(string tagContent, IReadOnlyList<string> knownMemberNames) =>
+        tagContent
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(name => knownMemberNames.FirstOrDefault(
+                k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)))
+            .Where(n => n is not null)
+            .Select(n => n!)
+            .ToList();
 
     public string StripMemberTag(string? description)
     {
