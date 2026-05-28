@@ -467,12 +467,29 @@ public class RecurrenceRuleBuilderTests
     [Fact]
     public void Describe_UnderGermanCulture_RemainsEnglish()
     {
+        // Guards B3 (culture-dependent date formatting). Where a non-invariant culture exists we
+        // switch to de-DE to actively exercise the leak; in globalization-invariant mode (e.g. the
+        // CI container) de-DE can't be constructed, but Describe is invariant by construction there,
+        // so we still assert the same English output without switching.
+        CultureInfo? german = null;
+        try
+        {
+            german = new CultureInfo("de-DE");
+        }
+        catch (CultureNotFoundException)
+        {
+            // Invariant-globalization mode: leave culture as-is.
+        }
+
         var originalCulture = CultureInfo.CurrentCulture;
         var originalUiCulture = CultureInfo.CurrentUICulture;
         try
         {
-            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-            CultureInfo.CurrentUICulture = new CultureInfo("de-DE");
+            if (german is not null)
+            {
+                CultureInfo.CurrentCulture = german;
+                CultureInfo.CurrentUICulture = german;
+            }
 
             RecurrenceRuleBuilder.Describe("RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20260612T235959Z")
                 .Should().Be("Repeats weekly on Monday, until 12 June 2026");
