@@ -112,6 +112,28 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(s => s.CalendarInfoId == calendarInfoId, ct);
     }
 
+    public async Task<IReadOnlyDictionary<string, string>> GetStoredRecurrenceRulesAsync(
+        IEnumerable<string> seriesIds, CancellationToken ct = default)
+    {
+        var ids = seriesIds.Distinct().ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, string>();
+
+        // One representative RRULE per series is enough — every instance of a series shares
+        // the same stored rule. GroupBy + First collapses the per-instance rows to a per-series map.
+        var rows = await _context.Events
+            .AsNoTracking()
+            .Where(e => e.GoogleRecurringEventId != null
+                     && e.RecurrenceRule != null
+                     && ids.Contains(e.GoogleRecurringEventId))
+            .Select(e => new { SeriesId = e.GoogleRecurringEventId!, e.RecurrenceRule })
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(r => r.SeriesId)
+            .ToDictionary(g => g.Key, g => g.First().RecurrenceRule!);
+    }
+
     public async Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default)
     {
         var calendar = await _context.Calendars

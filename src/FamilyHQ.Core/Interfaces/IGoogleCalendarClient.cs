@@ -25,6 +25,13 @@ public interface IGoogleCalendarClient
     Task<GoogleEventDetail?> GetEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
 
     /// <summary>
+    /// Fetches a recurring series master via events.get and returns its RRULE line
+    /// (the <c>RRULE:</c> entry from the master's <c>recurrence</c> array), or null
+    /// when the master is missing (404) or carries no RRULE.
+    /// </summary>
+    Task<string?> GetSeriesMasterAsync(string googleCalendarId, string seriesId, CancellationToken ct = default);
+
+    /// <summary>
     /// Creates a push-notification channel for calendar events via the Google Calendar watch API.
     /// </summary>
     Task<WatchChannelResponse> WatchEventsAsync(string googleCalendarId, string channelId, string webhookUrl, CancellationToken ct = default);

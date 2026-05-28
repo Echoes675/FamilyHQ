@@ -172,6 +172,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
                     if (startParam == null || endParam == null) continue;
 
+                    var originalStart = item.OriginalStartTime?.DateTime
+                        ?? (item.OriginalStartTime?.Date != null
+                            ? DateTimeOffset.Parse(item.OriginalStartTime.Date, CultureInfo.InvariantCulture)
+                            : (DateTimeOffset?)null);
+
                     events.Add(new CalendarEvent
                     {
                         GoogleEventId = item.Id,
@@ -181,7 +186,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
                         Description = item.Description,
-                        ContentHash = item.ExtendedProperties?.Private?.ContentHash
+                        ContentHash = item.ExtendedProperties?.Private?.ContentHash,
+                        // Series link from pass 1. RecurrenceRule is filled in pass 2 by the
+                        // two-pass master fetch in CalendarSyncService.
+                        GoogleRecurringEventId = item.RecurringEventId,
+                        OriginalStartTime = originalStart
                     });
                 }
 
@@ -273,6 +282,24 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var contentHash = apiEvent.ExtendedProperties?.Private?.ContentHash;
         return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
+    }
+
+    public async Task<string?> GetSeriesMasterAsync(
+        string googleCalendarId,
+        string seriesId,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Get, endpoint, ct);
+        var response = await _httpClient.SendAsync(request, ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await ThrowIfFailedAsync(response, "GetSeriesMaster", ct);
+
+        var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+
+        // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
+        return apiEvent?.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
     }
 
     public async Task<WatchChannelResponse> WatchEventsAsync(

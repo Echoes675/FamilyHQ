@@ -208,6 +208,216 @@ public class GoogleCalendarClientTests
     }
     
     [Fact]
+    public async Task GetEventsAsync_RecurringInstance_MapsRecurringEventIdAndOriginalStartTime()
+    {
+        // Arrange — a recurring-series instance carries recurringEventId and (when it is a
+        // moved/modified exception) originalStartTime. Both must flow onto CalendarEvent so the
+        // sync service can link the instance to its series and detect exceptions. RecurrenceRule
+        // is filled later by the two-pass master fetch, so it is null here.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "tok",
+                    items = new object[]
+                    {
+                        new
+                        {
+                            id = "series_inst_20260302T100000Z",
+                            status = "confirmed",
+                            summary = "Weekly Standup",
+                            start = new { dateTime = "2026-03-02T11:00:00Z" },
+                            end = new { dateTime = "2026-03-02T11:30:00Z" },
+                            recurringEventId = "series-master-id",
+                            originalStartTime = new { dateTime = "2026-03-02T10:00:00Z" }
+                        }
+                    }
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(7));
+
+        // Assert
+        var instance = result.Events.Single();
+        instance.GoogleRecurringEventId.Should().Be("series-master-id");
+        instance.OriginalStartTime.Should().Be(new DateTimeOffset(2026, 3, 2, 10, 0, 0, TimeSpan.Zero));
+        instance.RecurrenceRule.Should().BeNull("the RRULE is resolved later via the two-pass master fetch");
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenMasterHasRecurrence_ReturnsRRuleLine()
+    {
+        // Arrange — the series master event carries a recurrence array; GetSeriesMasterAsync
+        // returns the RRULE: line so the sync service can stamp it on every instance.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Get && req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    id = "series-master-id",
+                    recurrence = new[] { "RRULE:FREQ=WEEKLY;BYDAY=MO" }
+                }))
+            });
+
+        // Act
+        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
+        // Assert
+        rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenMasterHasMultipleRecurrenceLines_ReturnsRRuleLineOnly()
+    {
+        // Arrange — Google may return EXDATE/RDATE lines alongside RRULE; only the RRULE line is wanted.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    id = "series-master-id",
+                    recurrence = new[] { "EXDATE;TZID=UTC:20260309T100000", "RRULE:FREQ=WEEKLY;BYDAY=MO" }
+                }))
+            });
+
+        // Act
+        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
+        // Assert
+        rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenNoRecurrenceArray_ReturnsNull()
+    {
+        // Arrange — a master with no recurrence array (e.g. a single event mistakenly queried)
+        // yields null rather than throwing, so the sync service degrades gracefully.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-master-id" }))
+            });
+
+        // Act
+        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
+        // Assert
+        rrule.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenMasterNotFound_ReturnsNull()
+    {
+        // Arrange — a 404 (series deleted between pass 1 and pass 2) must not throw.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.NotFound });
+
+        // Act
+        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
+        // Assert
+        rrule.Should().BeNull();
+    }
+
+    [Fact]
     public async Task CreateEventAsync_ReturnsEventWithNewId()
     {
         // Arrange

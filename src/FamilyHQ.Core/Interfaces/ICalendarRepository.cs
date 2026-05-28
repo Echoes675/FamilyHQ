@@ -19,6 +19,14 @@ public interface ICalendarRepository
     Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default);
     Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default);
 
+    /// <summary>
+    /// For the given recurring-series ids, returns a map of series id → stored RRULE for
+    /// every series that already has at least one persisted instance carrying a non-null
+    /// <see cref="CalendarEvent.RecurrenceRule"/>. Series with no stored RRULE are omitted,
+    /// letting the sync service decide which masters still need a (second-pass) fetch.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>> GetStoredRecurrenceRulesAsync(IEnumerable<string> seriesIds, CancellationToken ct = default);
+
     Task AddCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
     Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default);
     Task UpdateCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
