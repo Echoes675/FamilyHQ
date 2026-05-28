@@ -222,8 +222,10 @@
             End = new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)),
             IsAllDay = false
         };
-        var targetCalendarId = calendarId ?? Calendars.FirstOrDefault()?.Id ?? Guid.Empty;
-        _selectedCalendarIds = targetCalendarId != Guid.Empty ? [targetCalendarId] : [];
+        // FHQ-32: no silent default. Only an explicitly-passed calendarId seeds the
+        // selection; otherwise the modal opens with nothing selected and Save is blocked
+        // by the empty-selection validation until the user picks a calendar.
+        _selectedCalendarIds = EventModalLogic.InitialCreateSelection(calendarId);
         _modalError = null;
         _showEventModal = true;
         StateHasChanged();
