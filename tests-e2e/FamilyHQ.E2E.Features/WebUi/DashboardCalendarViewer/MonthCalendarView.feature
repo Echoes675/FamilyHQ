@@ -175,3 +175,20 @@ Feature: Month Calendar View
     And I login as the user "TimedEventsUser"
     When I view the dashboard
     Then I see the event "Conference" displayed on the calendar
+
+  # FHQ-32: the create modal must not pre-select any calendar (it used to default to the
+  # first calendar in the list — the shared calendar when first — silently routing new
+  # events there). Saving with nothing selected must be blocked, not silently assigned.
+  Scenario: Create modal requires an explicit calendar and never silently assigns the shared calendar
+    Given I have a user like "MultiCalUser"
+    And I login as the user "MultiCalUser"
+    And I view the dashboard
+    When I open the create-event modal
+    Then the create-event modal does not offer the shared "Family Calendar" chip
+    When I attempt to save the event "Ghost Event" with no calendar selected
+    Then the create-event modal stays open with a calendar validation error
+    When I cancel the create-event modal
+    Then I do not see the event "Ghost Event" displayed on the calendar
+    When I create an event "Team Lunch" in calendar "Work Calendar"
+    Then I see the event "Team Lunch" displayed on the calendar in "Work Calendar" colour
+    And I do not see a "Family Calendar" capsule for "Team Lunch" on the calendar

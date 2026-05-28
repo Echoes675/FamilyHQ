@@ -452,6 +452,19 @@ public class DashboardPage : BasePage
     {
         await EventTitleInput.FillAsync(title);
 
+        // FHQ-32: the create modal no longer pre-selects a default calendar, so a plain
+        // create must explicitly pick one or the empty-selection guard blocks Save. If a
+        // caller already seeded a selection (e.g. a day/agenda slot tap passes an explicit
+        // calendarId, leaving its chip active) this is a no-op; otherwise select the first
+        // available calendar chip.
+        var activeChips = EventModal.Locator(".chip-active");
+        if (await activeChips.CountAsync() == 0)
+        {
+            var firstChip = EventModal.Locator(".chip").First;
+            await firstChip.ClickAsync();
+            await Assertions.Expect(firstChip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
+
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
             new() { Timeout = 30000 });
@@ -701,6 +714,79 @@ public class DashboardPage : BasePage
 
         await SaveEventBtn.ClickAsync();
         await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    // --- FHQ-32: create modal must not silently default the calendar selection ---
+
+    /// <summary>Opens the create-event modal via the Add Event button.</summary>
+    public async Task OpenCreateEventModalAsync()
+    {
+        await AddEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Number of calendar chips offered in the open modal that match
+    /// <paramref name="calendarName"/>. Used to assert the shared calendar is never offered.
+    /// </summary>
+    public async Task<int> CalendarChipCountInModalAsync(string calendarName)
+        => await EventModal.Locator(".chip").Filter(new() { HasText = calendarName }).CountAsync();
+
+    /// <summary>
+    /// Fills the title and clicks Save without selecting any calendar. Does NOT wait for the
+    /// modal to close — the empty-selection guard is expected to keep it open.
+    /// </summary>
+    public async Task AttemptSaveWithoutCalendarAsync(string title)
+    {
+        await EventTitleInput.FillAsync(title);
+        await SaveEventBtn.ClickAsync();
+    }
+
+    /// <summary>
+    /// True when the modal is still open and showing the save-time calendar validation error.
+    /// The <c>.alert-danger</c> banner is only populated when Save is attempted with an empty
+    /// selection, so this proves the Save path was reached and blocked.
+    /// </summary>
+    public async Task<bool> ModalShowsCalendarValidationErrorAsync()
+    {
+        var alert = EventModal.Locator(".alert-danger");
+        await alert.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        var text = await alert.InnerTextAsync();
+        return await EventModal.IsVisibleAsync()
+            && text.Contains("calendar", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Cancels the open event modal and waits for it to close.</summary>
+    public async Task CancelEventModalAsync()
+    {
+        await Page.GetByRole(AriaRole.Button, new() { Name = "Cancel" }).ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+    }
+
+    /// <summary>Creates an event with the title assigned to exactly one named calendar.</summary>
+    public async Task CreateEventInCalendarAsync(string title, string calendarName)
+    {
+        await AddEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EventTitleInput.FillAsync(title);
+
+        var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
+        var classes = await chip.GetAttributeAsync("class") ?? "";
+        if (!classes.Contains("chip-active"))
+        {
+            await chip.ClickAsync();
+            await Assertions.Expect(chip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
     }
