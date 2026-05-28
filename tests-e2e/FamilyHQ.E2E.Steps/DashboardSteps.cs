@@ -130,6 +130,48 @@ public class DashboardSteps
         await _dashboardPage.CreateEventWithDescriptionInCalendarAsync(eventName, description, calendarName);
     }
 
+    [When(@"I create an event ""([^""]*)"" in calendar ""([^""]*)""")]
+    public async Task WhenICreateAnEventInCalendar(string eventName, string calendarName)
+    {
+        await _dashboardPage.CreateEventInCalendarAsync(eventName, calendarName);
+    }
+
+    // --- FHQ-32: create modal must not silently default the calendar selection ---
+
+    [When(@"I open the create-event modal")]
+    public async Task WhenIOpenTheCreateEventModal()
+    {
+        await _dashboardPage.OpenCreateEventModalAsync();
+    }
+
+    [Then(@"the create-event modal does not offer the shared ""([^""]*)"" chip")]
+    public async Task ThenTheCreateEventModalDoesNotOfferTheSharedChip(string calendarName)
+    {
+        var count = await _dashboardPage.CalendarChipCountInModalAsync(calendarName);
+        count.Should().Be(0,
+            $"the shared calendar '{calendarName}' must never be offered as a chip in the create modal.");
+    }
+
+    [When(@"I attempt to save the event ""([^""]*)"" with no calendar selected")]
+    public async Task WhenIAttemptToSaveTheEventWithNoCalendarSelected(string eventName)
+    {
+        await _dashboardPage.AttemptSaveWithoutCalendarAsync(eventName);
+    }
+
+    [Then(@"the create-event modal stays open with a calendar validation error")]
+    public async Task ThenTheCreateEventModalStaysOpenWithACalendarValidationError()
+    {
+        var blocked = await _dashboardPage.ModalShowsCalendarValidationErrorAsync();
+        blocked.Should().BeTrue(
+            "saving with no calendar selected must be blocked, leaving the modal open with a calendar validation error.");
+    }
+
+    [When(@"I cancel the create-event modal")]
+    public async Task WhenICancelTheCreateEventModal()
+    {
+        await _dashboardPage.CancelEventModalAsync();
+    }
+
     [When(@"I open the event ""([^""]*)"" for editing")]
     public async Task WhenIOpenTheEventForEditing(string eventName)
     {
