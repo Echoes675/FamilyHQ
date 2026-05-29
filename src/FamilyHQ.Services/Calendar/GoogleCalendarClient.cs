@@ -254,6 +254,20 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "PatchSeriesRecurrence", ct);
     }
 
+    public async Task ClearSeriesRecurrenceAsync(
+        string googleCalendarId,
+        string seriesId,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        // events.patch with an empty recurrence array — Google collapses the series to a single event.
+        var body = new { recurrence = Array.Empty<string>() };
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "ClearSeriesRecurrence", ct);
+    }
+
     public async Task<CalendarEvent> UpdateEventAsync(
         string googleCalendarId,
         CalendarEvent calendarEvent,
@@ -318,7 +332,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
     }
 
-    public async Task<string?> GetSeriesMasterAsync(
+    public async Task<SeriesMaster?> GetSeriesMasterAsync(
         string googleCalendarId,
         string seriesId,
         CancellationToken ct = default)
@@ -333,8 +347,19 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
 
         // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
-        return apiEvent?.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
+        var rrule = apiEvent?.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
+        if (rrule is null) return null;
+
+        var start = ParseEventStart(apiEvent!.Start);
+        if (start is null) return null;
+
+        return new SeriesMaster(rrule, start.Value);
     }
+
+    // Resolves an event's start instant from either a timed (dateTime) or all-day (date) field.
+    private static DateTimeOffset? ParseEventStart(GoogleApiEventDateTime? start) =>
+        start?.DateTime
+        ?? (start?.Date != null ? DateTimeOffset.Parse(start.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
 
     public async Task<WatchChannelResponse> WatchEventsAsync(
         string googleCalendarId,

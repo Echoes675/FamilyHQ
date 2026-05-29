@@ -382,9 +382,9 @@ public class CalendarSyncService(
         {
             try
             {
-                var rrule = await googleCalendarClient.GetSeriesMasterAsync(googleCalendarId, seriesId, ct);
-                if (rrule is not null)
-                    cache[seriesId] = rrule;
+                var master = await googleCalendarClient.GetSeriesMasterAsync(googleCalendarId, seriesId, ct);
+                if (master is not null)
+                    cache[seriesId] = master.Rrule;
                 else
                     logger.LogWarning(
                         "Series master {SeriesId} on calendar {GoogleCalendarId} returned no RRULE; instances persisted without one and will retry next sync.",

@@ -123,29 +123,89 @@ public class CalendarEventServiceRecurringTests
     }
 
     [Fact]
-    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeries_ThrowsDocumentedLimitation()
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeries_ForwardSeriesCarriesRemainingCount()
     {
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
         instance.RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=10";
         f.ArrangeEvent(instance);
 
-        await f.Sut.Invoking(s => s.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing))
-            .Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*COUNT*FHQ-18.5*");
+        // Original series rows: one Sunday before the split (inst-1), the split itself (inst-2),
+        // and one after (inst-3). Occurrences strictly before the split = 1 (inst-1), so the
+        // forward series must carry COUNT = 10 - 1 = 9.
+        var before = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart.AddDays(-7));
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        var after = f.RecurringInstance(Guid.NewGuid(), "inst-3", InstanceStart.AddDays(7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([before, atSplit, after]);
+
+        string? capturedNewRule = null;
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+        f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", InstanceStart, recurringId: "new-series-id")]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        capturedNewRule.Should().Contain("COUNT=9");
     }
 
     [Fact]
-    public async Task DeleteRecurringAsync_ThisAndFollowing_CountSeries_ThrowsDocumentedLimitation()
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeries_AnchorsRemainingAtTrueMasterStart()
+    {
+        // The master series began FIVE Sundays BEFORE the earliest locally-synced row: the sync window
+        // does not reach back to the master's DTSTART. Anchoring the remaining-COUNT enumeration at the
+        // earliest LOCAL row would under-count the occurrences before the split and leave the forward
+        // series too long. The true master start (fetched via GetSeriesMasterAsync) must anchor it.
+        var f = new Fixture();
+        var masterStart = new DateTimeOffset(2026, 2, 8, 9, 0, 0, TimeSpan.Zero); // Sunday, 5 weeks before InstanceStart (Mar 15... actually Mar 8)
+        var splitStart = new DateTimeOffset(2026, 3, 15, 9, 0, 0, TimeSpan.Zero);  // Sunday
+
+        var instance = f.RecurringInstance(EventId, "inst-split", splitStart);
+        instance.RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=10";
+        f.ArrangeEvent(instance);
+
+        // Only two locally-synced rows, both within the window and AFTER the master start.
+        var localBefore = f.RecurringInstance(Guid.NewGuid(), "inst-prev", splitStart.AddDays(-7)); // Mar 8
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-split", splitStart);                // Mar 15
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([localBefore, atSplit]);
+
+        // Master fetch yields the true DTSTART (Feb 8): occurrences strictly before Mar 15 are
+        // Feb 8, 15, 22, Mar 1, Mar 8 = 5, so the forward series must carry COUNT = 10 - 5 = 5.
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=10", masterStart));
+
+        string? capturedNewRule = null;
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+        f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", splitStart, recurringId: "new-series-id")]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Google.Verify(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
+        capturedNewRule.Should().Contain("COUNT=5");
+    }
+
+    [Fact]
+    public async Task DeleteRecurringAsync_ThisAndFollowing_CountSeries_TruncatesWithUntil()
     {
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
         instance.RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=10";
         f.ArrangeEvent(instance);
 
-        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.ThisAndFollowing))
-            .Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*COUNT*FHQ-18.5*");
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([atSplit]);
+
+        // Deleting "this and following" only truncates the original master to UNTIL = split - 1s.
+        // No forward series is created, so a COUNT-bounded series no longer needs to be rejected.
+        await f.Sut.DeleteRecurringAsync(EventId, RecurrenceScope.ThisAndFollowing);
+
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(GoogleCalId, SeriesId,
+            It.Is<string>(s => s.Contains("UNTIL=")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── AllInSeries edit ──────────────────────────────────────────────────────
@@ -422,10 +482,215 @@ public class CalendarEventServiceRecurringTests
             .Should().ThrowAsync<InvalidOperationException>();
     }
 
+    // ── Native recurring creation (FHQ-18.5 Part A) ───────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_WithRecurrenceRule_CreatesSeriesMasterAndReconcilesWindow()
+    {
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("new-master", InstanceStart, recurringId: "new-master"),
+            f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master")
+        ]);
+
+        var request = CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU");
+        await f.Sut.CreateAsync(request);
+
+        // The series master is created with the RRULE in the recurrence array, not a single event.
+        f.Google.Verify(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(),
+            It.Is<string>(r => r.Contains("FREQ=WEEKLY")), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.CreateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithRecurrenceRule_PersistsInstancesWithSeriesIdAndRule()
+    {
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+        // GetEventsAsync is pass-1 only → instances carry a null RecurrenceRule; the reconcile must
+        // stamp the new series' RRULE so they are not persisted RRULE-less.
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master"),
+            f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master")
+        ]);
+
+        await f.Sut.CreateAsync(CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1" && e.GoogleRecurringEventId == "new-master"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("FREQ=WEEKLY")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithRecurrenceRule_RecordsEchoedHashForEveryInstance()
+    {
+        const string MasterHash = "create-master-hash";
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+        var i1 = f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master"); i1.ContentHash = MasterHash;
+        var i2 = f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master"); i2.ContentHash = MasterHash;
+        f.ArrangeReconcileWindow([i1, i2]);
+
+        await f.Sut.CreateAsync(CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+        f.Cache.Verify(c => c.Record("inst-1", MasterHash), Times.Once);
+        f.Cache.Verify(c => c.Record("inst-2", MasterHash), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutRecurrenceRule_CreatesSingleEvent()
+    {
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => { e.GoogleEventId = "single"; return e; });
+
+        await f.Sut.CreateAsync(CreateReq([AliceCalId], "Once", InstanceStart, "Body", recurrenceRule: null));
+
+        f.Google.Verify(g => g.CreateEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.CreateRecurringEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Recurrence toggle ON / OFF (FHQ-18.5 Part A) ──────────────────────────
+
+    [Fact]
+    public async Task UpdateAsync_RecurrenceOnForNonRecurringEvent_PromotesToSeriesAndReconciles()
+    {
+        var f = new Fixture();
+        var single = new CalendarEvent
+        {
+            Id = EventId, GoogleEventId = "single", Title = "Lunch",
+            Start = InstanceStart, End = InstanceStart.AddHours(1),
+            Description = "Body\n[members: Alice]",
+            OwnerCalendarInfoId = AliceCalId, Members = [f.Alice]
+        };
+        f.ArrangeEvent(single);
+        // After promotion Google expands the now-series into COMPOUND-id instances whose
+        // GoogleRecurringEventId is the master (== the original single id). The original single id is
+        // NOT among them — Google replaces the single event with the expanded series.
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("single_20260315T090000Z", InstanceStart, recurringId: "single"),
+            f.GoogleInstanceNoRule("single_20260322T090000Z", InstanceStart.AddDays(7), recurringId: "single")
+        ]);
+
+        var request = ReqRecurrence("Lunch", InstanceStart, "Body", recurrenceRule: "RRULE:FREQ=WEEKLY;BYDAY=SU", clear: false);
+        var result = await f.Sut.UpdateAsync(EventId, request);
+
+        // Promote in place: patch the recurrence array onto the event's own id, then reconcile.
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(GoogleCalId, "single",
+            It.Is<string>(r => r.Contains("FREQ=WEEKLY")), It.IsAny<CancellationToken>()), Times.Once);
+        // The expanded instances are persisted with the RRULE and the series link.
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "single_20260322T090000Z" && e.GoogleRecurringEventId == "single"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("FREQ=WEEKLY")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // The return value is a recurring row from the reconciled set, not the stale single.
+        result.IsRecurring.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RecurrenceOn_RemovesStaleOriginalSingleRow()
+    {
+        var f = new Fixture();
+        var single = new CalendarEvent
+        {
+            Id = EventId, GoogleEventId = "single", Title = "Lunch",
+            Start = InstanceStart, End = InstanceStart.AddHours(1),
+            Description = "Body\n[members: Alice]",
+            OwnerCalendarInfoId = AliceCalId, Members = [f.Alice]
+        };
+        f.ArrangeEvent(single);
+        // Google's expansion uses compound ids; the original "single" row is left behind as a
+        // non-recurring duplicate unless the toggle deletes it after the reconcile.
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("single_20260315T090000Z", InstanceStart, recurringId: "single"),
+            f.GoogleInstanceNoRule("single_20260322T090000Z", InstanceStart.AddDays(7), recurringId: "single")
+        ]);
+
+        var request = ReqRecurrence("Lunch", InstanceStart, "Body", recurrenceRule: "RRULE:FREQ=WEEKLY;BYDAY=SU", clear: false);
+        await f.Sut.UpdateAsync(EventId, request);
+
+        // The original non-recurring row is deleted so it is not orphaned as a stale duplicate.
+        f.Repo.Verify(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RecurrenceOffForRecurringEvent_CollapsesViaReconcileAndDeletesInstanceRows()
+    {
+        var f = new Fixture();
+        // The toggled event is a COMPOUND-id instance row — its GoogleEventId is NEVER equal to the
+        // series/master id. This is the real production shape (singleEvents=true expansion).
+        var instance = f.RecurringInstance(EventId, $"{SeriesId}_20260315T090000Z", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        // No local row's GoogleEventId equals the master id (the real case). All three rows are
+        // expanded instances of the series.
+        var inst1 = f.RecurringInstance(Guid.NewGuid(), $"{SeriesId}_20260308T090000Z", InstanceStart.AddDays(-7));
+        var inst3 = f.RecurringInstance(Guid.NewGuid(), $"{SeriesId}_20260322T090000Z", InstanceStart.AddDays(7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([instance, inst1, inst3]);
+
+        // After clearing recurrence, Google returns ONE single event whose id == the master/series id,
+        // with no recurringEventId and no RRULE. The reconcile upserts it as a clean single row.
+        var collapsed = f.GoogleInstanceNoRule(SeriesId, InstanceStart, recurringId: null);
+        collapsed.GoogleRecurringEventId = null;
+        collapsed.ContentHash = "collapsed-hash";
+        f.ArrangeReconcileWindow([collapsed]);
+
+        var request = ReqRecurrence("Weekly", InstanceStart, "Body", recurrenceRule: null, clear: true);
+        var result = await f.Sut.UpdateAsync(EventId, request);
+
+        // The series recurrence is cleared on Google (empty recurrence array collapses the series).
+        f.Google.Verify(g => g.ClearSeriesRecurrenceAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
+        // The collapsed single event is upserted as a clean non-recurring row by the reconcile.
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.GoogleRecurringEventId == null && e.RecurrenceRule == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+        // Every expanded instance row is deleted (none survived the reconcile — collapsed id differs).
+        f.Repo.Verify(r => r.DeleteEventAsync(instance.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(inst1.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(inst3.Id, It.IsAny<CancellationToken>()), Times.Once);
+        // The echoed collapsed-event hash is recorded via the reconcile (no bypass of the guard).
+        f.Cache.Verify(c => c.Record(SeriesId, "collapsed-hash"), Times.Once);
+        // The returned row is the clean single (not recurring).
+        result.IsRecurring.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_NoRecurrenceChange_KeepsLegacySingleEventBehaviour()
+    {
+        var f = new Fixture();
+        var single = new CalendarEvent
+        {
+            Id = EventId, GoogleEventId = "single", Title = "Lunch",
+            Start = InstanceStart, End = InstanceStart.AddHours(1),
+            Description = "Body\n[members: Alice]",
+            OwnerCalendarInfoId = AliceCalId, Members = [f.Alice]
+        };
+        f.ArrangeEvent(single);
+
+        await f.Sut.UpdateAsync(EventId, Req("Lunch", InstanceStart, "Body"));
+
+        // Plain field update via UpdateEventAsync; no recurrence calls.
+        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Google.Verify(g => g.ClearSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description) =>
         new(title, start, start.AddHours(1), false, "Loc", description);
+
+    private static UpdateEventRequest ReqRecurrence(string title, DateTimeOffset start, string? description, string? recurrenceRule, bool clear) =>
+        new(title, start, start.AddHours(1), false, "Loc", description, recurrenceRule, clear);
+
+    private static CreateEventRequest CreateReq(IReadOnlyList<Guid> members, string title, DateTimeOffset start, string? description, string? recurrenceRule) =>
+        new(members, title, start, start.AddHours(1), false, "Loc", description, recurrenceRule);
 
     private sealed class Fixture
     {

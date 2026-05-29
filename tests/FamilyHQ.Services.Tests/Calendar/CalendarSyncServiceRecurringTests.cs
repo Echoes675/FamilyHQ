@@ -48,7 +48,7 @@ public class CalendarSyncServiceRecurringTests
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
         client.Setup(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync("RRULE:FREQ=WEEKLY;BYDAY=MO");
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=MO", new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero)));
 
         // Act
         await sut.SyncAsync(calendarId, start, end);
@@ -113,7 +113,7 @@ public class CalendarSyncServiceRecurringTests
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
         client.Setup(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
+            .ReturnsAsync((SeriesMaster?)null);
 
         // Act
         await sut.SyncAsync(calendarId, start, end);
@@ -291,7 +291,7 @@ public class CalendarSyncServiceRecurringTests
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
         client.Setup(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string?)null);
+            .ReturnsAsync((SeriesMaster?)null);
 
         // Act
         await sut.SyncAsync(calendarId, start, end);

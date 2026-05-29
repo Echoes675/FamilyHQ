@@ -297,15 +297,18 @@ public class GoogleCalendarClientTests
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
                     id = "series-master-id",
+                    start = new { dateTime = "2026-03-02T09:00:00Z" },
                     recurrence = new[] { "RRULE:FREQ=WEEKLY;BYDAY=MO" }
                 }))
             });
 
         // Act
-        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
 
-        // Assert
-        rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+        // Assert — the RRULE line and the master DTSTART are both surfaced (DTSTART anchors splits).
+        master.Should().NotBeNull();
+        master!.Rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+        master.Start.Should().Be(new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero));
     }
 
     [Fact]
@@ -337,15 +340,17 @@ public class GoogleCalendarClientTests
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
                     id = "series-master-id",
+                    start = new { dateTime = "2026-03-02T09:00:00Z" },
                     recurrence = new[] { "EXDATE;TZID=UTC:20260309T100000", "RRULE:FREQ=WEEKLY;BYDAY=MO" }
                 }))
             });
 
         // Act
-        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
 
-        // Assert
-        rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+        // Assert — only the RRULE line is extracted from the recurrence array (EXDATE ignored).
+        master.Should().NotBeNull();
+        master!.Rrule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
     }
 
     [Fact]
@@ -375,14 +380,14 @@ public class GoogleCalendarClientTests
             .ReturnsAsync(new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-master-id" }))
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-master-id", start = new { dateTime = "2026-03-02T09:00:00Z" } }))
             });
 
         // Act
-        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
 
-        // Assert
-        rrule.Should().BeNull();
+        // Assert — no recurrence array → no RRULE → null (sync degrades gracefully).
+        master.Should().BeNull();
     }
 
     [Fact]
@@ -411,10 +416,10 @@ public class GoogleCalendarClientTests
             .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.NotFound });
 
         // Act
-        var rrule = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
 
-        // Assert
-        rrule.Should().BeNull();
+        // Assert — a 404 (series deleted between pass 1 and pass 2) yields null, never throws.
+        master.Should().BeNull();
     }
 
     [Fact]

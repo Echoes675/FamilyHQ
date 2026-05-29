@@ -125,6 +125,235 @@ public static class RecurrenceRuleBuilder
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Defensive cap on occurrence enumeration so that an unbounded (Never) rule can never loop
+    /// forever. A bounded COUNT rule stops at its COUNT; an UNTIL or Never rule stops here.
+    /// </summary>
+    public const int MaxEnumeratedOccurrences = 10_000;
+
+    /// <summary>
+    /// Counts how many occurrences of <paramref name="rrule"/>, generated forward from
+    /// <paramref name="dtStart"/>, start STRICTLY before <paramref name="boundary"/>.
+    /// </summary>
+    /// <remarks>
+    /// Boundary semantics: an occurrence whose start instant equals <paramref name="boundary"/> is
+    /// NOT counted (the boundary is exclusive). This matches the "this and following" split where the
+    /// split instance becomes occurrence #1 of the forward series, so only the occurrences before it
+    /// remain in the truncated original.
+    ///
+    /// Enumeration is capped at the rule's COUNT (when bounded) or
+    /// <see cref="MaxEnumeratedOccurrences"/> (for UNTIL/Never rules) so a Never rule cannot loop
+    /// forever. For an UNTIL rule, enumeration also stops once occurrences pass the UNTIL instant.
+    /// Pure: no I/O, no async.
+    /// </remarks>
+    /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
+    public static int CountOccurrencesBefore(string rrule, DateTimeOffset dtStart, DateTimeOffset boundary) =>
+        CountOccurrencesBefore(ParseRRuleString(rrule), dtStart, boundary);
+
+    /// <summary>
+    /// Spec-based overload of <see cref="CountOccurrencesBefore(string, DateTimeOffset, DateTimeOffset)"/>
+    /// for callers that have already parsed the rule, avoiding a redundant re-parse.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
+    public static int CountOccurrencesBefore(RecurrenceSpec spec, DateTimeOffset dtStart, DateTimeOffset boundary)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+
+        var hardCap = spec.End.Kind == RecurrenceEndKind.Count
+            ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
+            : MaxEnumeratedOccurrences;
+
+        var untilUtc = spec.End.Kind == RecurrenceEndKind.Until
+            ? spec.End.UntilUtc!.Value
+            : (DateTimeOffset?)null;
+
+        var boundaryUtc = boundary.ToUniversalTime();
+        var before = 0;
+
+        foreach (var occurrence in EnumerateOccurrences(spec, dtStart.ToUniversalTime(), hardCap))
+        {
+            if (untilUtc is { } until && occurrence > until)
+            {
+                break;
+            }
+
+            if (occurrence < boundaryUtc)
+            {
+                before++;
+            }
+            else
+            {
+                // Occurrences are monotonically increasing, so once we reach/pass the boundary
+                // nothing further can fall before it.
+                break;
+            }
+        }
+
+        return before;
+    }
+
+    // Lazily yields up to maxOccurrences occurrence start instants (UTC, monotonically increasing)
+    // for the supported frequency shapes. Anchored at dtStart; weekly BYDAY expands each week to its
+    // selected weekdays. Pure and side-effect-free.
+    private static IEnumerable<DateTimeOffset> EnumerateOccurrences(
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    {
+        return spec.Frequency switch
+        {
+            RecurrenceFrequency.Daily => EnumerateDaily(spec, dtStart, maxOccurrences),
+            RecurrenceFrequency.Weekly => EnumerateWeekly(spec, dtStart, maxOccurrences),
+            RecurrenceFrequency.Monthly => EnumerateMonthly(spec, dtStart, maxOccurrences),
+            RecurrenceFrequency.Yearly => EnumerateYearly(spec, dtStart, maxOccurrences),
+            _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Frequency, "Unknown frequency.")
+        };
+    }
+
+    private static IEnumerable<DateTimeOffset> EnumerateDaily(
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    {
+        var current = dtStart;
+        for (var emitted = 0; emitted < maxOccurrences; emitted++)
+        {
+            yield return current;
+            current = current.AddDays(spec.Interval);
+        }
+    }
+
+    private static IEnumerable<DateTimeOffset> EnumerateWeekly(
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    {
+        // Weekdays this rule fires on within each week. No BYDAY → anchored to the start's weekday.
+        var weekdays = spec.ByDay is { Count: > 0 }
+            ? spec.ByDay.Distinct().OrderBy(d => (int)d).ToList()
+            : [dtStart.DayOfWeek];
+
+        // Anchor to the Sunday of dtStart's week, then step INTERVAL weeks at a time.
+        var weekStart = dtStart.AddDays(-(int)dtStart.DayOfWeek);
+        var emitted = 0;
+
+        // Independent week bound so the outer loop cannot spin even if a future caller consumes this
+        // without the boundary break and the rule were to stop emitting (Major 4 defensive cap).
+        for (var week = 0; week < MaxEnumeratedOccurrences && emitted < maxOccurrences; week++)
+        {
+            foreach (var day in weekdays)
+            {
+                var occurrence = weekStart.AddDays((int)day);
+                if (occurrence < dtStart)
+                {
+                    continue; // skip selected weekdays earlier in the first week than the start
+                }
+
+                yield return occurrence;
+                if (++emitted >= maxOccurrences)
+                {
+                    yield break;
+                }
+            }
+
+            weekStart = weekStart.AddDays(7 * spec.Interval);
+        }
+    }
+
+    private static IEnumerable<DateTimeOffset> EnumerateMonthly(
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    {
+        var anchorMonth = new DateTimeOffset(dtStart.Year, dtStart.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var timeOfDay = dtStart.TimeOfDay;
+
+        // Independent iteration bound: a rule that never produces an occurrence (e.g.
+        // BYMONTHDAY=31;INTERVAL=12 anchored on a 30-day month) never increments emitted, so the loop
+        // must be capped on PERIODS ADVANCED — not just on emitted — to guarantee termination (Major 4).
+        var emitted = 0;
+        for (var period = 0; period < MaxEnumeratedOccurrences && emitted < maxOccurrences; period++)
+        {
+            var occurrence = spec.MonthlyMode == Recurrence.MonthlyMode.ByOrdinalWeekday && spec.OrdinalWeekday is { } ow
+                ? OrdinalWeekdayInMonth(anchorMonth.Year, anchorMonth.Month, ow, timeOfDay)
+                : DayOfMonthOrNull(anchorMonth.Year, anchorMonth.Month, spec.ByMonthDay ?? dtStart.Day, timeOfDay);
+
+            if (occurrence is { } occ && occ >= dtStart)
+            {
+                yield return occ;
+                emitted++;
+            }
+
+            // Stop before advancing would exceed the representable date range (a never-emitting rule
+            // would otherwise overflow AddMonths long before the period cap is reached).
+            if (DateTime.MaxValue.AddMonths(-spec.Interval) < anchorMonth.UtcDateTime)
+            {
+                yield break;
+            }
+
+            anchorMonth = anchorMonth.AddMonths(spec.Interval);
+        }
+    }
+
+    private static IEnumerable<DateTimeOffset> EnumerateYearly(
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    {
+        var month = spec.ByMonth ?? dtStart.Month;
+        var day = spec.ByMonthDay ?? dtStart.Day;
+        var timeOfDay = dtStart.TimeOfDay;
+        var year = dtStart.Year;
+
+        // Independent iteration bound: a never-emitting rule (e.g. BYMONTH=2;BYMONTHDAY=30 — February
+        // 30 never exists) never increments emitted, so cap on YEARS ADVANCED to guarantee
+        // termination rather than spinning until DateTime overflow (Major 4).
+        var emitted = 0;
+        for (var period = 0; period < MaxEnumeratedOccurrences && emitted < maxOccurrences; period++)
+        {
+            var occurrence = DayOfMonthOrNull(year, month, day, timeOfDay);
+            if (occurrence is { } occ && occ >= dtStart)
+            {
+                yield return occ;
+                emitted++;
+            }
+
+            // Stop before the year leaves the representable range (a never-emitting yearly rule would
+            // otherwise spin until DateTime construction overflows).
+            if (year > DateTime.MaxValue.Year - spec.Interval)
+            {
+                yield break;
+            }
+
+            year += spec.Interval;
+        }
+    }
+
+    // Returns the given day-of-month in the given month, or null when the month is too short
+    // (e.g. day 31 in February) so the occurrence is skipped rather than rolling into the next month.
+    private static DateTimeOffset? DayOfMonthOrNull(int year, int month, int day, TimeSpan timeOfDay)
+    {
+        if (day > DateTime.DaysInMonth(year, month))
+        {
+            return null;
+        }
+
+        return new DateTimeOffset(year, month, day, 0, 0, 0, TimeSpan.Zero) + timeOfDay;
+    }
+
+    // Resolves an ordinal weekday (e.g. 2nd Tuesday, last Friday) within a month, or null when the
+    // ordinal does not exist (e.g. a 5th Monday in a month with only four).
+    private static DateTimeOffset? OrdinalWeekdayInMonth(int year, int month, OrdinalWeekday ow, TimeSpan timeOfDay)
+    {
+        var daysInMonth = DateTime.DaysInMonth(year, month);
+        var matching = new List<int>();
+        for (var d = 1; d <= daysInMonth; d++)
+        {
+            if (new DateTime(year, month, d).DayOfWeek == ow.Day)
+            {
+                matching.Add(d);
+            }
+        }
+
+        var index = ow.Ordinal > 0 ? ow.Ordinal - 1 : matching.Count + ow.Ordinal;
+        if (index < 0 || index >= matching.Count)
+        {
+            return null;
+        }
+
+        return new DateTimeOffset(year, month, matching[index], 0, 0, 0, TimeSpan.Zero) + timeOfDay;
+    }
+
     private static void AppendByParts(RecurrenceSpec spec, List<string> parts)
     {
         switch (spec.Frequency)
