@@ -21,4 +21,4 @@ Feature: Recurring Event Echo Guard
   Scenario: Native creation of a recurring series produces exactly one outbound write
     When I create a weekly recurring event "Trash day" in "Appointments" tracking outbound writes
     And I wait for the recurring fan-out webhooks to be processed
-    Then exactly one outbound write to Google is recorded in total
+    Then exactly one outbound write to Google is recorded for this user

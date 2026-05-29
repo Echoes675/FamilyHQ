@@ -31,14 +31,15 @@ public class BackdoorWriteCountController : ControllerBase
     }
 
     /// <summary>
-    /// Returns the total number of outbound writes recorded across all events since the last reset.
-    /// Used by the recurring-events echo-guard scenarios that create a series natively: the master's
-    /// event ID is generated server-side, so the test asserts on the total instead of a per-ID count.
+    /// Returns the total outbound writes recorded for a single (isolated test) user since the last
+    /// reset. Used by the recurring-events echo-guard scenarios that create a series natively: the
+    /// master's event ID is generated server-side, so the test asserts on its own user's total. A
+    /// GLOBAL total would be contaminated by concurrent scenarios under the parallel E2E runner.
     /// </summary>
-    [HttpGet("total")]
-    public IActionResult GetTotal()
+    [HttpGet("user/{userId}/total")]
+    public IActionResult GetUserTotal(string userId)
     {
-        var total = _store.Total();
+        var total = _store.TotalForUser(userId);
         return Ok(new { WriteCount = total });
     }
 

@@ -189,7 +189,7 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Created event: {EventId} ({Summary})", newEvent.Id, newEvent.Summary);
 
-        _writeCountStore.Increment(newEvent.Id);
+        _writeCountStore.Increment(userId, newEvent.Id);
         return Ok(MapEventResponse(newEvent, new List<string>()));
     }
 
@@ -254,7 +254,7 @@ public class EventsController : ControllerBase
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
 
-        _writeCountStore.Increment(existing.Id);
+        _writeCountStore.Increment(userId, existing.Id);
 
         var attendeeCalendarIds = await _db.EventAttendees
             .Where(a => a.EventId == existing.Id)
@@ -345,7 +345,7 @@ public class EventsController : ControllerBase
             "[SIM] Patched recurrence for event: {EventId} → {Rule}",
             existing.Id, existing.RecurrenceRule ?? "(cleared)");
 
-        _writeCountStore.Increment(existing.Id);
+        _writeCountStore.Increment(userId, existing.Id);
 
         var attendeeCalendarIds = await _db.EventAttendees
             .Where(a => a.EventId == existing.Id)
@@ -680,7 +680,7 @@ public class EventsController : ControllerBase
             "[SIM] Stored exception override {InstanceId} for series {MasterId} at slot {Slot:O}.",
             instanceId, master.Id, originalStartUtc);
 
-        _writeCountStore.Increment(instanceId);
+        _writeCountStore.Increment(userId, instanceId);
 
         return Ok(MapInstanceResponse(
             id: instanceId,

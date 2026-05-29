@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
+using FamilyHQ.E2E.Data.Models;
 using FluentAssertions;
 using Microsoft.Playwright;
 using Reqnroll;
@@ -87,13 +88,15 @@ public class RecurringEchoGuardSteps
             "was not suppressed and triggered a second write.");
     }
 
-    // Asserts the Simulator recorded exactly one outbound write across all events. Used for native
-    // series creation, where the master's Google ID is generated server-side and unknown to the test:
-    // a single insert means total == 1; a suppressed-echo failure would push the total to 2+.
-    [Then(@"exactly one outbound write to Google is recorded in total")]
-    public async Task ThenExactlyOneOutboundWriteToGoogleIsRecordedInTotal()
+    // Asserts the Simulator recorded exactly one outbound write FOR THIS SCENARIO'S USER. Used for
+    // native series creation, where the master's Google ID is generated server-side and unknown to
+    // the test: a single insert means the user's total == 1; a suppressed-echo failure would push it
+    // to 2+. Scoped to the isolated user so a concurrent scenario's writes can't contaminate it.
+    [Then(@"exactly one outbound write to Google is recorded for this user")]
+    public async Task ThenExactlyOneOutboundWriteToGoogleIsRecordedForThisUser()
     {
-        var total = await _simulatorApi.GetTotalOutboundWriteCountAsync();
+        var userId = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate").UserName;
+        var total = await _simulatorApi.GetUserOutboundWriteCountAsync(userId);
 
         total.Should().Be(1,
             "creating a recurring series natively performs exactly one outbound insert; the " +
