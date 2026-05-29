@@ -8,6 +8,7 @@
         <button type="button"
                 class="@($"pill-toggle {(isSelected ? "pill-toggle--on" : "pill-toggle--off")}")"
                 aria-pressed="@(isSelected ? "true" : "false")"
+                data-testid="@option.TestId"
                 disabled="@Disabled"
                 @onclick="() => SelectAsync(option.Value)">
             @option.Label

@@ -1401,6 +1401,12 @@ body:not([data-theme]) .brand-logo__img--morning {
     flex: 1 1 auto;
 }
 
+/* RecurrenceScopePrompt: inline "member changes apply to the whole series" notice,
+   shown beneath the scope pills when a member change is pending at a non-All scope. */
+.recurrence-scope-warning {
+    margin-top: 16px;
+}
+
 .weather-override__toggle-row,
 .weather-override__modifier-row {
     display: flex;
