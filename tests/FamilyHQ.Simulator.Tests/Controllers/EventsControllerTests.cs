@@ -486,6 +486,42 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task ListEvents_SingleEvents_UnboundedSeriesWithoutTimeBounds_StaysBounded()
+    {
+        // Regression guard: the app's incremental sync sends NO timeMin/timeMax. An unbounded
+        // "weekly forever" series must NOT expand to the engine's hard cap (~10k) — which would
+        // make the listing pathologically slow and the app upsert thousands of rows. The Simulator
+        // bounds the default horizon (~14 months), so a weekly series yields well under ~100.
+        using var db = CreateDb();
+        var seriesStart = DateTime.UtcNow.Date.AddDays(1).AddHours(9);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-forever",
+            CalendarId = "cal-alice",
+            Summary = "Standup",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddMinutes(30),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY" // no COUNT/UNTIL → unbounded
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // No timeMin/timeMax — the incremental-sync shape that previously expanded to the hard cap.
+        var result = await sut.ListEvents("cal-alice", singleEvents: true);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        using var doc = JsonDocument.Parse(json);
+        var items = doc.RootElement.GetProperty("items");
+
+        // ~14-month horizon of weekly occurrences ≈ 60; assert it is bounded, never near the cap.
+        items.GetArrayLength().Should().BeLessThan(100);
+        items.GetArrayLength().Should().BeGreaterThan(0);
+    }
+
+    [Fact]
     public async Task ListEvents_WithoutSingleEvents_ReturnsMasterRowUnexpanded()
     {
         // Arrange — default (non-single-events) listing leaves the master untouched.

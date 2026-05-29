@@ -72,8 +72,15 @@ public class EventsController : ControllerBase
         // mirrors Google: the bare master row is NOT emitted; each instance carries recurringEventId
         // and the master's content-hash. Without singleEvents the master is returned unchanged so the
         // existing non-recurring contract is untouched.
-        var windowStart = ParseGoogleTimeBound(timeMin) ?? DateTimeOffset.MinValue;
-        var windowEnd = ParseGoogleTimeBound(timeMax) ?? DateTimeOffset.MaxValue;
+        // Bound the expansion horizon when the caller omits time bounds. The app's INCREMENTAL sync
+        // (syncToken-based, webhook-triggered) sends no timeMin/timeMax; expanding an unbounded series
+        // (e.g. a "weekly forever" rule with no COUNT/UNTIL) over MinValue..MaxValue would generate
+        // instances up to the engine's hard cap (~10k) on every such sync — pathologically slow and
+        // the app then upserts them all. Real Google never returns infinite instances; mirror that with
+        // a sane default horizon around now (generously covering the dashboard's navigable range).
+        var now = DateTimeOffset.UtcNow;
+        var windowStart = ParseGoogleTimeBound(timeMin) ?? now.AddMonths(-2);
+        var windowEnd = ParseGoogleTimeBound(timeMax) ?? now.AddMonths(12);
 
         var items = new List<object>();
         foreach (var e in events)
