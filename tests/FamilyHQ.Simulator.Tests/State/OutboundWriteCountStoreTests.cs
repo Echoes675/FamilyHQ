@@ -48,12 +48,25 @@ public class OutboundWriteCountStoreTests
     }
 
     [Fact]
-    public void Reset_ClearsPerEventAndPerUserCounts()
+    public void ResetForUser_ClearsOnlyThatUsersTotal_LeavingOthers()
+    {
+        var sut = new OutboundWriteCountStore();
+        sut.Increment("alice", "evt-a");
+        sut.Increment("bob", "evt-b");
+
+        sut.Reset("alice");
+
+        sut.TotalForUser("alice").Should().Be(0, "alice's total was reset");
+        sut.TotalForUser("bob").Should().Be(1, "a per-user reset must not touch a concurrent user");
+    }
+
+    [Fact]
+    public void ResetAll_ClearsEverything()
     {
         var sut = new OutboundWriteCountStore();
         sut.Increment("alice", "evt-a");
 
-        sut.Reset();
+        sut.ResetAll();
 
         sut.Get("evt-a").Should().Be(0);
         sut.TotalForUser("alice").Should().Be(0);

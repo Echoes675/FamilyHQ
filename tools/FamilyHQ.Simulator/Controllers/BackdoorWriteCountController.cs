@@ -44,12 +44,23 @@ public class BackdoorWriteCountController : ControllerBase
     }
 
     /// <summary>
-    /// Resets all write counts — call in AfterScenario hooks to avoid cross-scenario leakage.
+    /// Resets the per-user total for one (isolated test) user. Scenario AfterScenario hooks call this
+    /// instead of a global reset: under the parallel E2E runner a global clear would wipe a concurrent
+    /// scenario's counts mid-flight (the FHQ-31 ClearAll race). Per-event counts are unique-id keyed
+    /// and need no reset.
     /// </summary>
+    [HttpDelete("user/{userId}")]
+    public IActionResult ResetUser(string userId)
+    {
+        _store.Reset(userId);
+        return NoContent();
+    }
+
+    /// <summary>Resets ALL write counts. Not used by parallel scenario hooks; available for manual/dev use.</summary>
     [HttpDelete]
     public IActionResult ResetAll()
     {
-        _store.Reset();
+        _store.ResetAll();
         return NoContent();
     }
 }

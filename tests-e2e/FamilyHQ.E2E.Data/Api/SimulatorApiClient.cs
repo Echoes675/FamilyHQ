@@ -217,11 +217,13 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
-    /// Resets all outbound write counts in the Simulator. Call in AfterScenario hooks.
+    /// Resets the outbound write count for a single (isolated test) user. Call in AfterScenario hooks;
+    /// scoping to the scenario's own user avoids the parallel-runner ClearAll race (FHQ-31).
     /// </summary>
-    public async Task ResetOutboundWriteCountsAsync()
+    public async Task ResetUserOutboundWriteCountsAsync(string userId)
     {
-        var response = await _httpClient.DeleteAsync("api/simulator/backdoor/write-counts");
+        var response = await _httpClient.DeleteAsync(
+            $"api/simulator/backdoor/write-counts/user/{Uri.EscapeDataString(userId)}");
         response.EnsureSuccessStatusCode();
     }
 

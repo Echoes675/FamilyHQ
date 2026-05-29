@@ -34,8 +34,16 @@ public sealed class OutboundWriteCountStore
     /// </summary>
     public int TotalForUser(string userId) => _userTotals.TryGetValue(userId, out var count) ? count : 0;
 
-    /// <summary>Resets all counters — call between scenarios.</summary>
-    public void Reset()
+    /// <summary>
+    /// Resets the per-user total for a single user. Per-event counts are keyed by unique
+    /// (Guid-based) event IDs and never collide across scenarios, so they need no reset; a GLOBAL
+    /// reset under the parallel E2E runner would wipe a concurrent scenario's counts mid-flight
+    /// (the FHQ-31 ClearAll race), so reset is scoped to the scenario's own isolated user.
+    /// </summary>
+    public void Reset(string userId) => _userTotals.TryRemove(userId, out _);
+
+    /// <summary>Resets all counters. Not used by the parallel scenario hooks — see <see cref="Reset(string)"/>.</summary>
+    public void ResetAll()
     {
         _counts.Clear();
         _userTotals.Clear();
