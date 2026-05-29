@@ -47,8 +47,21 @@ public class RecurringEventSteps
     [Then(@"the recurring event shows a recurrence indicator")]
     public async Task ThenTheRecurringEventShowsARecurrenceIndicator()
     {
-        await _dashboardPage.WaitForRecurrenceIndicatorVisibleAsync();
-        var count = await _dashboardPage.CountRecurrenceIndicatorsAsync();
+        // The webhook-driven sync is now asynchronous: SyncController enqueues a durable job and
+        // acks immediately, CalendarSyncWorker drains it, then an EventsUpdated SignalR broadcast
+        // re-renders the dashboard. A single wait-then-read can therefore land before the sync
+        // has applied, or inside the re-render window (same TOCTOU class as intermittent-issues #4).
+        // Poll the indicator count over a deadline, tolerating transient zeros.
+        var deadline = System.DateTime.UtcNow.AddSeconds(20);
+        var count = 0;
+        while (System.DateTime.UtcNow < deadline)
+        {
+            count = await _dashboardPage.CountRecurrenceIndicatorsAsync();
+            if (count > 0)
+                break;
+            await Task.Delay(250);
+        }
+
         count.Should().BeGreaterThan(0,
             "recurring event tiles must display the recurrence indicator glyph.");
     }

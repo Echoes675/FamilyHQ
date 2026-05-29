@@ -73,28 +73,25 @@ public class SyncResilienceSteps
     [When(@"I wait for the failed sync run to be recorded")]
     public async Task WhenIWaitForTheFailedSyncRunToBeRecorded()
     {
-        var page = _scenarioContext.Get<IPage>();
-
-        // Land on an app page so the authenticated fetch carries the auth cookie and
-        // resolves the API origin correctly.
-        await page.GotoAsync(_config.BaseUrl + "/", new() { WaitUntil = WaitUntilState.NetworkIdle });
-
+        // Poll the diagnostics PAGE rather than a raw fetch: FamilyHQ auth is Bearer-JWT
+        // (from localStorage, attached by CustomAuthorizationMessageHandler), not cookie-based,
+        // so a `fetch(..., { credentials: 'include' })` would be unauthenticated and 401. The
+        // Blazor diagnostics page loads the runs list through its authenticated HttpClient, so
+        // we reload it each iteration until the terminally-failed run surfaces. The webhook now
+        // ENQUEUES a durable CalendarSyncJob and acks immediately; CalendarSyncWorker drains the
+        // queue and, on the injected GoogleReauthRequiredException, marks the run terminally
+        // Failed on the first attempt — so the row appears once the worker has processed it.
         var deadline = DateTime.UtcNow.AddSeconds(WaitForFailedRunSeconds);
         while (DateTime.UtcNow < deadline)
         {
-            var count = await page.EvaluateAsync<int>(@"
-                async () => {
-                    try {
-                        const r = await fetch('/api/diagnostics/failed-sync-runs?limit=10', { credentials: 'include' });
-                        if (!r.ok) return -1;
-                        const body = await r.json();
-                        return Array.isArray(body) ? body.length : 0;
-                    } catch (e) {
-                        return -1;
-                    }
-                }");
+            await _diagnosticsPage.GotoAsync();
 
-            if (count >= 1)
+            // Non-throwing point-in-time read: if the runs table is present it has at least one
+            // row; if the empty-state is showing instead, IsVisibleAsync returns false and we
+            // reload after a short wait (do NOT call GetFailedRunRowCountAsync here — it waits
+            // up to 30s for the table and would throw while the run is still absent).
+            if (await _diagnosticsPage.RunsTable.IsVisibleAsync()
+                && await _diagnosticsPage.RunsTable.Locator("tbody tr").CountAsync() >= 1)
                 return;
 
             await Task.Delay(WaitForFailedRunPollIntervalMs);
