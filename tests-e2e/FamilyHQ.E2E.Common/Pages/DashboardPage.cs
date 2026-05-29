@@ -983,6 +983,36 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
+    /// Asserts a weekly recurring series renders one instance on each of its occurrence dates by
+    /// driving the Day view to each date in turn and confirming the named tile is shown there.
+    /// Caller must already be on the Day view.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-18.11: this replaces a raw capsule count taken in the Month view. The month grid is a
+    /// fixed 6-week window, so a series that starts late in the month pushes its later occurrences
+    /// past the visible edge and a "count == N" assertion under-counts purely because of where in
+    /// the month the run happens to fall. Visiting each occurrence date individually removes that
+    /// windowing dependency entirely: occurrence dates are derived from the seeded first-occurrence
+    /// date (<paramref name="firstOccurrenceDate"/> + 7-day steps), each navigation reloads the
+    /// owning month's data, and the Day view keys its lookup on the selected date — so the result
+    /// is identical regardless of the run date. Dates are formatted with the invariant culture so
+    /// the day-picker round-trip is locale-independent.
+    /// </remarks>
+    public async Task AssertWeeklyOccurrencesEachVisibleInDayViewAsync(
+        string eventName, DateTime firstOccurrenceDate, int occurrences)
+    {
+        for (int i = 0; i < occurrences; i++)
+        {
+            var occurrenceDate = firstOccurrenceDate.Date.AddDays(7 * i);
+            await OpenDayPickerAndGoAsync(
+                occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+            var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
+            await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        }
+    }
+
+    /// <summary>
     /// Waits for the recurrence indicator glyph to be visible on at least one event tile in the
     /// current view. The glyph is shared across Day / Month / Agenda, so this works in any view.
     /// </summary>

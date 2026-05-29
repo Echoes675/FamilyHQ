@@ -29,6 +29,19 @@ public class RecurringEventSteps
             $"the recurring series '{eventName}' should expand into {expected} instances on the calendar.");
     }
 
+    // FHQ-18.11: window-independent expansion check. Rather than counting capsules in the fixed
+    // 6-week month grid (which under-counts when the series starts late in the month and later
+    // occurrences fall past the visible edge), this drives the Day view to each weekly occurrence
+    // date in turn and asserts the tile is present there. Occurrence dates are derived from the
+    // seeded first-occurrence date, so the assertion holds for any run date.
+    [Then(@"the event ""([^""]*)"" appears on each of its (\d+) weekly occurrence dates")]
+    public async Task ThenTheEventAppearsOnEachOfItsWeeklyOccurrenceDates(string eventName, int occurrences)
+    {
+        var firstOccurrence = _scenarioContext.Get<System.DateTime>("RecurringSeriesFirstOccurrenceDate");
+        await _dashboardPage.AssertWeeklyOccurrencesEachVisibleInDayViewAsync(
+            eventName, firstOccurrence, occurrences);
+    }
+
     [Then(@"the recurring event shows a recurrence indicator")]
     public async Task ThenTheRecurringEventShowsARecurrenceIndicator()
     {
