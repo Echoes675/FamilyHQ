@@ -115,6 +115,10 @@
                                     : $"{evt.StartLocal():HH:mm} {evt.Title}";
                                 <div data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
                                      class="agenda-event-line">
+                                    @if (evt.IsRecurring)
+                                    {
+                                        <RecurrenceIndicator />
+                                    }
                                     @displayText
                                 </div>
                             }
