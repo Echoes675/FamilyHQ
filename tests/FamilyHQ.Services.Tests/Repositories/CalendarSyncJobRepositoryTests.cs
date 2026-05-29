@@ -126,4 +126,51 @@ public class CalendarSyncJobRepositoryTests : IDisposable
 
         (await sut.ClaimNextAsync()).Should().BeNull();
     }
+
+    [Fact]
+    public async Task CompleteAsync_MarksCompletedWithTimestamp()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.CompleteAsync(job.Id);
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Completed);
+        reloaded.CompletedAt.Should().Be(_time.GetUtcNow());
+    }
+
+    [Fact]
+    public async Task FailAsync_Retryable_ReturnsToPendingWithBackoff()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: TimeSpan.FromSeconds(4));
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
+        reloaded.NextAttemptAt.Should().Be(_time.GetUtcNow().AddSeconds(4));
+        reloaded.LastError.Should().Be("boom");
+    }
+
+    [Fact]
+    public async Task FailAsync_Terminal_MarksFailed()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Failed);
+        reloaded.CompletedAt.Should().Be(_time.GetUtcNow());
+        reloaded.LastError.Should().Be("fatal");
+    }
 }

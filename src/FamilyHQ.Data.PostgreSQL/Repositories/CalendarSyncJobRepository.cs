@@ -58,8 +58,37 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
         await context.SaveChangesAsync(ct);
         return job;
     }
-    public Task CompleteAsync(Guid id, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task FailAsync(Guid id, string error, bool retryable, TimeSpan? retryAfter, CancellationToken ct = default) => throw new NotImplementedException();
+    public async Task CompleteAsync(Guid id, CancellationToken ct = default)
+    {
+        var job = await context.CalendarSyncJobs.FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null) return;
+
+        job.Status = SyncJobStatus.Completed;
+        job.CompletedAt = timeProvider.GetUtcNow();
+        await context.SaveChangesAsync(ct);
+    }
+
+    public async Task FailAsync(Guid id, string error, bool retryable, TimeSpan? retryAfter, CancellationToken ct = default)
+    {
+        var job = await context.CalendarSyncJobs.FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null) return;
+
+        var now = timeProvider.GetUtcNow();
+        job.LastError = Truncate(error, MaxErrorLength);
+
+        if (retryable)
+        {
+            job.Status = SyncJobStatus.Pending;
+            job.NextAttemptAt = now + (retryAfter ?? TimeSpan.Zero);
+        }
+        else
+        {
+            job.Status = SyncJobStatus.Failed;
+            job.CompletedAt = now;
+        }
+
+        await context.SaveChangesAsync(ct);
+    }
     public Task<int> RecoverOrphansAsync(TimeSpan olderThan, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> PruneTerminalAsync(TimeSpan olderThan, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, CancellationToken ct = default) => throw new NotImplementedException();
