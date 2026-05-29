@@ -84,6 +84,9 @@ builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IConnectionStatusBroadcas
 // Add background webhook renewal service
 builder.Services.AddHostedService<FamilyHQ.WebApi.Services.WebhookRenewalService>();
 
+// Add background worker that drains the durable calendar sync queue
+builder.Services.AddHostedService<FamilyHQ.WebApi.Services.CalendarSyncWorker>();
+
 // Add Authentication for the Simulator
 var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("JWT signing key is not configured.");

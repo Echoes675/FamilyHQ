@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="FamilyHQ.WebApi.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FamilyHQ.Services\FamilyHQ.Services.csproj" />
     <ProjectReference Include="..\FamilyHQ.Data.PostgreSQL\FamilyHQ.Data.PostgreSQL.csproj" />
   </ItemGroup>
