@@ -1,5 +1,5 @@
 using System.Globalization;
-using FamilyHQ.Services.Calendar.Recurrence;
+using FamilyHQ.Core.Calendar.Recurrence;
 using FluentAssertions;
 using Xunit;
 

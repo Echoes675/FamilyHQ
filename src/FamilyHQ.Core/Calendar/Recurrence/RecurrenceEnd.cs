@@ -1,4 +1,4 @@
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// Describes when a recurrence stops. A closed set of three variants:

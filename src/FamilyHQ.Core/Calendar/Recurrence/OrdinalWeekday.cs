@@ -1,4 +1,4 @@
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// An ordinal-prefixed weekday within a month, e.g. the second Tuesday (<c>2TU</c>)

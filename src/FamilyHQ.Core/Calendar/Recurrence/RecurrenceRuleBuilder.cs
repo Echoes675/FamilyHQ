@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// A pure, side-effect-free RFC 5545 RRULE engine. Generates RRULE strings from a

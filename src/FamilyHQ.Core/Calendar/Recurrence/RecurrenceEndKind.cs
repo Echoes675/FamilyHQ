@@ -1,4 +1,4 @@
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// Discriminates the variant of a <see cref="RecurrenceEnd"/>.

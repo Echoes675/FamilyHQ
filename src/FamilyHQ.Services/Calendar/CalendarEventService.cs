@@ -1,7 +1,7 @@
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
-using FamilyHQ.Services.Calendar.Recurrence;
+using FamilyHQ.Core.Calendar.Recurrence;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Services.Calendar;

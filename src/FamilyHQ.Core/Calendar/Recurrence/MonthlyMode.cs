@@ -1,4 +1,4 @@
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// How a monthly recurrence anchors within each month.

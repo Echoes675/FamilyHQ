@@ -1,4 +1,4 @@
-namespace FamilyHQ.Services.Calendar.Recurrence;
+namespace FamilyHQ.Core.Calendar.Recurrence;
 
 /// <summary>
 /// The base unit at which a recurrence repeats (RFC 5545 FREQ).
