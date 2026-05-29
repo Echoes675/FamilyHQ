@@ -316,14 +316,13 @@ public class EventsControllerTests
         result.Should().BeOfType<NotFoundObjectResult>();
     }
 
-    // ── PatchEvent (no-op) ───────────────────────────────────────────────────
+    // ── PatchEvent (no-op without a recurrence array) ─────────────────────────
 
     [Fact]
-    public async Task PatchEvent_IsNoOp_Returns200()
+    public async Task PatchEvent_WithoutRecurrenceArray_IsNoOp_Returns200()
     {
-        // PatchEvent was made a no-op in the member-tag refactor — the API receives
-        // attendee patches from Google but the new model derives members from the
-        // description tag, so patching attendees has no effect.
+        // A patch carrying no recurrence field is the legacy attendee-patch case — the member-tag
+        // model derives members from the description, so there is nothing to update.
         using var db = CreateDb();
         db.Events.Add(new SimulatedEvent
             { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
@@ -331,10 +330,10 @@ public class EventsControllerTests
 
         var sut = CreateSut(db, userId: "alice");
 
-        // Act — PatchEvent is synchronous (no-op)
-        var result = sut.PatchEvent("cal-org", "evt-1");
+        // Act — body with no recurrence field.
+        var result = await sut.PatchEvent("cal-org", "evt-1", new GoogleEventRequest());
 
-        // Assert — no-op returns 200 without modifying attendees
+        // Assert — no-op returns 200 without modifying attendees.
         result.Should().BeOfType<OkResult>();
         var attendees = await db.EventAttendees.Where(a => a.EventId == "evt-1").ToListAsync();
         attendees.Should().BeEmpty();
@@ -546,6 +545,175 @@ public class EventsControllerTests
         var recurrence = doc.RootElement.GetProperty("recurrence");
         recurrence.GetArrayLength().Should().Be(1);
         recurrence[0].GetString().Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+    }
+
+    // ── WRITE-side recurrence primitives (FHQ-18.11 Pass 2) ───────────────────
+
+    [Fact]
+    public async Task CreateEvent_WithRecurrenceArray_StoresMasterAndListExpandsIntoInstances()
+    {
+        // Arrange — events.insert with a recurrence array creates a series master (the native
+        // "create recurring event" path). The reconcile list (singleEvents=true) must then expand
+        // it into one instance per occurrence.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var body = new GoogleEventRequest
+        {
+            Summary = "Soccer practice",
+            Start = new GoogleDateTime { DateTime = seriesStart },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) },
+            Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3" },
+            ExtendedProperties = new GoogleEventRequest.GoogleEventExtendedPropertiesRequest
+            {
+                Private = new Dictionary<string, string> { ["content-hash"] = "hash-abc" }
+            }
+        };
+
+        // Act — create, then reconcile-list the window.
+        await sut.CreateEvent("cal-alice", body);
+        var stored = await db.Events.FirstAsync(e => e.Summary == "Soccer practice");
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the stored master carries the RRULE and content-hash; the list expands to 3.
+        stored.RecurrenceRule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+        stored.ContentHash.Should().Be("hash-abc");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        doc.RootElement.GetProperty("items").GetArrayLength().Should().Be(3);
+    }
+
+    [Fact]
+    public async Task CreateEvent_WithoutRecurrenceArray_StoresNonRecurringEvent()
+    {
+        // Arrange — a plain (non-recurring) insert must leave RecurrenceRule null.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest
+        {
+            Summary = "One-off",
+            Start = new GoogleDateTime { DateTime = DateTime.UtcNow },
+            End = new GoogleDateTime { DateTime = DateTime.UtcNow.AddHours(1) }
+        };
+
+        // Act
+        await sut.CreateEvent("cal-alice", body);
+
+        // Assert
+        var stored = await db.Events.FirstAsync(e => e.Summary == "One-off");
+        stored.RecurrenceRule.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PatchEvent_WithRecurrenceArray_AddsRuleAndListExpandsIntoInstances()
+    {
+        // Arrange — toggle ON: an existing non-recurring event gains an RRULE via events.patch.
+        using var db = CreateDb();
+        var start = new DateTime(2026, 6, 2, 9, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-toggle",
+            CalendarId = "cal-alice",
+            Summary = "Standup",
+            StartTime = start,
+            EndTime = start.AddMinutes(30),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var patch = new GoogleEventRequest
+        {
+            Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3" }
+        };
+
+        // Act — patch-add, then reconcile-list.
+        var patchResult = await sut.PatchEvent("cal-alice", "evt-toggle", patch);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the master now has the rule and the list expands to 3 instances.
+        patchResult.Should().BeOfType<OkObjectResult>();
+        (await db.Events.FindAsync("evt-toggle"))!.RecurrenceRule
+            .Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        doc.RootElement.GetProperty("items").GetArrayLength().Should().Be(3);
+    }
+
+    [Fact]
+    public async Task PatchEvent_WithEmptyRecurrenceArray_ClearsRuleAndListReturnsSingleEvent()
+    {
+        // Arrange — toggle OFF/collapse: a series master is patched with an empty recurrence array.
+        using var db = CreateDb();
+        var start = new DateTime(2026, 6, 2, 9, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Standup",
+            StartTime = start,
+            EndTime = start.AddMinutes(30),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var patch = new GoogleEventRequest { Recurrence = new List<string>() };
+
+        // Act — patch-clear, then reconcile-list.
+        await sut.PatchEvent("cal-alice", "evt-series", patch);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the rule is cleared and the list returns exactly one (collapsed) event.
+        (await db.Events.FindAsync("evt-series"))!.RecurrenceRule.Should().BeNull();
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+        items.GetArrayLength().Should().Be(1);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series");
+    }
+
+    [Fact]
+    public async Task PatchEvent_WithRecurrenceArray_WhenEventBelongsToDifferentUser_ReturnsNotFound()
+    {
+        // Arrange — recurrence patches are user-scoped like every other write.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-bob",
+            CalendarId = "cal-bob",
+            Summary = "Bob Event",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "bob"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var patch = new GoogleEventRequest
+        {
+            Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3" }
+        };
+
+        // Act
+        var result = await sut.PatchEvent("cal-bob", "evt-bob", patch);
+
+        // Assert
+        result.Should().BeOfType<NotFoundObjectResult>();
+        (await db.Events.FindAsync("evt-bob"))!.RecurrenceRule.Should().BeNull();
     }
 
     private static SimContext CreateDb()

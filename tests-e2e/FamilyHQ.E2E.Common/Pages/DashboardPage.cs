@@ -1035,4 +1035,157 @@ public class DashboardPage : BasePage
             new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
         return (await RecurrenceSubtitle.InnerTextAsync()).Trim();
     }
+
+    // FHQ-18.11 Pass 2 — native recurring-event create & toggle-off ────────────
+    // The recurrence picker lives inside the open event modal under
+    // [data-testid="recurrence-section"]. These helpers drive it via the per-option
+    // data-testids added to the mode / frequency / end-mode pills and the weekday
+    // toggle row, then compose the full native-create and toggle-off flows.
+
+    private ILocator RecurrenceSection => EventModal.GetByTestId("recurrence-section");
+    private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
+    private ILocator ScopePromptOkBtn => Page.GetByTestId("recurrence-scope-ok");
+
+    /// <summary>Selects a recurrence mode pill (e.g. "weekly", "custom", "none").</summary>
+    private async Task SelectRecurrenceModeAsync(string mode)
+    {
+        var pill = RecurrenceSection.GetByTestId($"recurrence-mode-{mode}");
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Selects a custom-drawer frequency pill (e.g. "weekly"). Requires Custom mode.</summary>
+    private async Task SelectRecurrenceFrequencyAsync(string frequency)
+    {
+        var pill = RecurrenceSection.GetByTestId($"recurrence-frequency-{frequency}");
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Toggles a weekday button on in the custom weekly drawer (DayOfWeek name, e.g. "Tuesday").</summary>
+    private async Task ToggleRecurrenceWeekdayAsync(string dayOfWeekName)
+    {
+        var toggle = RecurrenceSection.GetByTestId($"recurrence-weekday-{dayOfWeekName}");
+        await toggle.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        await toggle.ClickAsync();
+        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Activates the named calendar chip in the open modal if it is not already active.</summary>
+    private async Task EnsureCalendarChipActiveAsync(string calendarName)
+    {
+        var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
+        var classes = await chip.GetAttributeAsync("class") ?? "";
+        if (!classes.Contains("chip-active"))
+        {
+            await chip.ClickAsync();
+            await Assertions.Expect(chip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>
+    /// Creates a weekly recurring event natively: opens the create modal, picks the named calendar,
+    /// sets the recurrence mode to Weekly (which repeats on the start date's weekday), and saves.
+    /// Waits for the reconcile events response and the calendar to repaint.
+    /// </summary>
+    public async Task CreateWeeklyRecurringEventAsync(string title, string calendarName)
+    {
+        await OpenCreateEventModalAsync();
+        await EventTitleInput.FillAsync(title);
+        await EnsureCalendarChipActiveAsync(calendarName);
+        await SelectRecurrenceModeAsync("weekly");
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Creates a recurring event repeating weekly on a specific weekday: opens the create modal,
+    /// picks the named calendar, switches to the Custom drawer, selects Weekly frequency and the
+    /// given weekday(s) (DayOfWeek names), and saves.
+    /// </summary>
+    public async Task CreateCustomWeeklyRecurringEventAsync(
+        string title, string calendarName, IReadOnlyList<string> weekdayNames)
+    {
+        await OpenCreateEventModalAsync();
+        await EventTitleInput.FillAsync(title);
+        await EnsureCalendarChipActiveAsync(calendarName);
+        await SelectRecurrenceModeAsync("custom");
+        await SelectRecurrenceFrequencyAsync("weekly");
+        foreach (var weekday in weekdayNames)
+        {
+            await ToggleRecurrenceWeekdayAsync(weekday);
+        }
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Opens an existing recurring event for editing, sets recurrence to "Does not repeat", saves,
+    /// and confirms the recurrence-scope prompt (defaulting to "All events") so the series collapses
+    /// to a single non-recurring event. Waits for the reconcile response and repaint.
+    /// </summary>
+    public async Task TurnOffRecurrenceForEventAsync(string eventName)
+    {
+        await OpenEventForEditingAsync(eventName);
+        await SelectRecurrenceModeAsync("none");
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+
+        // Collapsing a series prompts for scope; the prompt defaults to "All events" (the only
+        // valid scope for a clear), so confirming with OK drives the toggle-OFF patch.
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await ScopePromptOkBtn.ClickAsync();
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts the named event appears there
+    /// as a single, non-recurring occurrence: exactly one tile and no recurrence indicator. Used to
+    /// prove a toggled-OFF series has collapsed to one event. Caller must already be on the Day view.
+    /// </summary>
+    public async Task AssertSingleNonRecurringOccurrenceInDayViewAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Assertions.Expect(tiles).ToHaveCountAsync(1, new() { Timeout = 10000 });
+        await Assertions.Expect(RecurrenceIndicators).ToHaveCountAsync(0, new() { Timeout = 10000 });
+    }
+
+    /// <summary>
+    /// Counts the day-view tiles bearing <paramref name="eventName"/> on <paramref name="date"/>.
+    /// Navigates the Day view to that date first. Caller must already be on the Day view.
+    /// </summary>
+    public async Task<int> CountDayViewOccurrencesOnDateAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await WaitForCalendarVisibleAsync();
+        return await tiles.CountAsync();
+    }
 }

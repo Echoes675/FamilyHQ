@@ -62,4 +62,57 @@ public class RecurringEventSteps
         subtitle.Should().Contain(expected,
             "the opened recurring instance must describe its weekly repeat pattern.");
     }
+
+    // ── FHQ-18.11 Pass 2: native create + toggle-off ──────────────────────────
+
+    // Creates a weekly recurring event through the FamilyHQ create modal (Weekly preset → repeats
+    // on today's weekday, the Add Event modal's default start). The app writes an events.insert with
+    // a recurrence array to the Simulator and reconciles, so the instances appear after the reload.
+    // First occurrence is today (relative-date safe), recorded so the reused per-date Day-view
+    // assertion ("appears on each of its N weekly occurrence dates") can derive the occurrence dates.
+    [When(@"I create a weekly recurring event ""([^""]*)"" in ""([^""]*)""")]
+    public async Task WhenICreateAWeeklyRecurringEvent(string eventName, string calendarName)
+    {
+        await _dashboardPage.CreateWeeklyRecurringEventAsync(eventName, calendarName);
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = System.DateTime.Today;
+    }
+
+    // Creates a recurring event repeating weekly on a specific weekday: the weekday that falls
+    // <days> days from today. Using the Custom drawer's weekday toggle proves the BYDAY selection
+    // reaches the series. The first occurrence is that weekday's date (>= today, so window-safe).
+    [When(@"I create a recurring event ""([^""]*)"" in ""([^""]*)"" repeating weekly on the day in (\d+) days")]
+    public async Task WhenICreateARecurringEventOnAChosenWeekday(string eventName, string calendarName, int days)
+    {
+        var targetDate = System.DateTime.Today.AddDays(days);
+        await _dashboardPage.CreateCustomWeeklyRecurringEventAsync(
+            eventName, calendarName, new[] { targetDate.DayOfWeek.ToString() });
+        _scenarioContext["ChosenWeekdayFirstOccurrenceDate"] = targetDate;
+    }
+
+    // Asserts the chosen-weekday series renders one instance on the target weekday's date and the
+    // week after, via the Day view (window-independent, mirrors Pass 1's per-date approach).
+    [Then(@"the event ""([^""]*)"" appears weekly starting in (\d+) days for (\d+) occurrences")]
+    public async Task ThenTheEventAppearsWeeklyStartingInDays(string eventName, int days, int occurrences)
+    {
+        var firstOccurrence = System.DateTime.Today.AddDays(days);
+        await _dashboardPage.AssertWeeklyOccurrencesEachVisibleInDayViewAsync(
+            eventName, firstOccurrence, occurrences);
+    }
+
+    // Opens an existing recurring event, sets it to "Does not repeat", saves and confirms the
+    // recurrence-scope prompt — the app sends an empty recurrence array (events.patch clear) so the
+    // Simulator collapses the series. The clear reconciles to a single non-recurring event on the
+    // series' first occurrence date (today, the native-create default).
+    [When(@"I turn off recurrence for the event ""([^""]*)""")]
+    public async Task WhenITurnOffRecurrenceForTheEvent(string eventName)
+    {
+        await _dashboardPage.TurnOffRecurrenceForEventAsync(eventName);
+    }
+
+    [Then(@"only a single non-recurring ""([^""]*)"" event remains")]
+    public async Task ThenOnlyASingleNonRecurringEventRemains(string eventName)
+    {
+        await _dashboardPage.AssertSingleNonRecurringOccurrenceInDayViewAsync(
+            eventName, System.DateTime.Today);
+    }
 }

@@ -157,7 +157,11 @@ public class EventsController : ControllerBase
             EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
             UserId = userId,
-            ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash")
+            ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash"),
+            // FHQ-18.11: events.insert with a recurrence array creates a series MASTER. The first
+            // RRULE line is stored so the subsequent reconcile list (singleEvents=true) expands it
+            // into per-occurrence instances. A non-recurring insert leaves this null.
+            RecurrenceRule = ExtractRrule(body.Recurrence)
         };
 
         _db.Events.Add(newEvent);
@@ -205,6 +209,12 @@ public class EventsController : ControllerBase
         existing.IsAllDay = body.Start.Date != null;
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
+
+        // FHQ-18.11: events.update (PUT) carries a recurrence array only when the event is (or is
+        // becoming) a series master — this is the toggle-ON path where a previously non-recurring
+        // event gains an RRULE. A non-recurring update omits the field entirely (the client drops
+        // nulls), so a null Recurrence leaves the existing rule untouched.
+        ApplyRecurrence(existing, body.Recurrence);
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("[SIM] Updated event: {EventId} ({Summary}) on calendar: {CalendarId}", existing.Id, existing.Summary, existing.CalendarId);
@@ -257,12 +267,57 @@ public class EventsController : ControllerBase
     }
 
     [HttpPatch("{eventId}")]
-    public IActionResult PatchEvent(string calendarId, string eventId)
+    public async Task<IActionResult> PatchEvent(string calendarId, string eventId, [FromBody] GoogleEventRequest? body)
     {
-        // No-op: attendee patching is not used in the member-tag model.
-        // Kept to avoid 404s from any E2E tests not yet updated (removed in Task 16).
-        _logger.LogInformation("[SIM] PATCH attendees (no-op) for event: {EventId}", eventId);
-        return Ok();
+        // FHQ-18.11: events.patch is the series-recurrence toggle channel. The app sends ONLY a
+        // recurrence array here (PatchSeriesRecurrenceAsync / ClearSeriesRecurrenceAsync):
+        //   • ["RRULE:…"] → toggle ON / change the RRULE: set the master's RecurrenceRule so the
+        //     event becomes (or stays) a series and the next list expands it.
+        //   • []          → toggle OFF / collapse: clear RecurrenceRule so the master collapses to
+        //     a single non-recurring event in subsequent lists.
+        // A patch with no recurrence field at all is a no-op (the historical attendee-patch case).
+        _logger.LogInformation("[SIM] PATCH event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
+
+        if (body?.Recurrence is null)
+        {
+            // No recurrence field: legacy attendee patch (member-tag model derives members from the
+            // description, so there is nothing to update). Return 200 to avoid 404s.
+            return Ok();
+        }
+
+        var userId = ExtractUserId(Request);
+        var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
+        if (existing == null)
+        {
+            _logger.LogWarning("[SIM] Event {EventId} not found for recurrence patch.", eventId);
+            return NotFound(new
+            {
+                error = new
+                {
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
+                    {
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                    }
+                }
+            });
+        }
+
+        ApplyRecurrence(existing, body.Recurrence);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation(
+            "[SIM] Patched recurrence for event: {EventId} → {Rule}",
+            existing.Id, existing.RecurrenceRule ?? "(cleared)");
+
+        _writeCountStore.Increment(existing.Id);
+
+        var attendeeCalendarIds = await _db.EventAttendees
+            .Where(a => a.EventId == existing.Id)
+            .Select(a => a.AttendeeCalendarId)
+            .ToListAsync();
+
+        return Ok(MapEventResponse(existing, attendeeCalendarIds, includeRecurrence: true));
     }
 
     [HttpDelete("{eventId}")]
@@ -399,6 +454,27 @@ public class EventsController : ControllerBase
                 recurringEventId = master.Id
             };
         }
+    }
+
+    // FHQ-18.11 WRITE side: pulls the first "RRULE:" line out of a Google recurrence array.
+    // Google packs RRULE/EXDATE/RDATE lines together; FamilyHQ only persists the RRULE. Returns
+    // null when the array is null, empty, or carries no RRULE line.
+    private static string? ExtractRrule(IReadOnlyList<string>? recurrence) =>
+        recurrence is null
+            ? null
+            : recurrence.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
+
+    // FHQ-18.11 WRITE side: applies a request's recurrence array to a stored event, mirroring how
+    // Google interprets the field on insert/update/patch:
+    //   • null array  → field absent: leave the existing rule untouched (a plain non-recurring write).
+    //   • empty array → explicit collapse: clear the rule so the event becomes a single occurrence.
+    //   • with RRULE  → set/replace the rule so the event is (or stays) a series master.
+    private static void ApplyRecurrence(SimulatedEvent target, IReadOnlyList<string>? recurrence)
+    {
+        if (recurrence is null)
+            return;
+
+        target.RecurrenceRule = ExtractRrule(recurrence);
     }
 
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.
