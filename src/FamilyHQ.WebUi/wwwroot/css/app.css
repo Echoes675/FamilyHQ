@@ -1389,6 +1389,18 @@ body:not([data-theme]) .brand-logo__img--morning {
     flex: 1;
 }
 
+/* Single-select segmented pill row (PillSegmentGroup). Reuses .pill-toggle
+   segment styling for selected (--on) / unselected (--off) states. */
+.pill-segment-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pill-segment-group .pill-toggle {
+    flex: 1 1 auto;
+}
+
 .weather-override__toggle-row,
 .weather-override__modifier-row {
     display: flex;
