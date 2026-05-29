@@ -385,6 +385,115 @@ public class EventSteps
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
 
+    // FHQ-18.11 Pass 5 (§10.1): seeds a Google recurring SERIES that is shared between two members.
+    // Mirrors the single-event "also in" model: the master lives on the shared calendar and carries a
+    // canonical "[members: Cal1, Cal2]" tag in its description. The Simulator copies the master's
+    // description onto every expanded instance (as Google does), so after a sync the app parses the
+    // tag on each instance and fans it out to both members' columns. Starts TOMORROW (relative-date
+    // safe) and is bounded by COUNT so expansion stays bounded (FHQ-18.11 learning #4).
+    [Given(@"the user has a weekly recurring event ""([^""]*)"" for (\d+) occurrences shared between ""([^""]*)"" and ""([^""]*)""")]
+    public async Task GivenTheUserHasAWeeklyRecurringEventSharedBetween(
+        string eventName, int occurrences, string memberCalendar1, string memberCalendar2)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+
+        var sharedCalendar = isolatedTemplate.Calendars.Find(c => c.IsShared)
+            ?? throw new InvalidOperationException(
+                "No shared calendar in the user template. Add a calendar with IsShared: true.");
+        if (isolatedTemplate.Calendars.Find(c => c.Summary == memberCalendar1) == null)
+            throw new InvalidOperationException($"Calendar '{memberCalendar1}' not found in template.");
+        if (isolatedTemplate.Calendars.Find(c => c.Summary == memberCalendar2) == null)
+            throw new InvalidOperationException($"Calendar '{memberCalendar2}' not found in template.");
+
+        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var weekday = firstOccurrence.DayOfWeek;
+        var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = sharedCalendar.Id,
+            Summary = eventName,
+            StartTime = firstOccurrence,
+            EndTime = firstOccurrence.AddHours(1),
+            IsAllDay = false,
+            RecurrenceRule = rrule,
+            Description = $"[members: {memberCalendar1}, {memberCalendar2}]"
+        });
+
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    // FHQ-18.11 Pass 5 (§10.1): seeds a single-member recurring SERIES on a named member's personal
+    // calendar (not the shared calendar, no member tag). Used as the starting point for the
+    // "All events" add-member migration scenario — editing the series at All scope to add a second
+    // member migrates it to the shared calendar. Bounded by COUNT; starts tomorrow (relative-safe).
+    [Given(@"the user has a weekly recurring event ""([^""]*)"" for (\d+) occurrences on ""([^""]*)""'s personal calendar")]
+    public async Task GivenTheUserHasAWeeklyRecurringEventOnPersonalCalendar(
+        string eventName, int occurrences, string memberCalendar)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == memberCalendar)
+            ?? throw new InvalidOperationException($"Calendar '{memberCalendar}' not found in template.");
+        if (calendar.IsShared)
+            throw new InvalidOperationException(
+                $"'{memberCalendar}' is the shared calendar; seed the single-member series on a personal calendar.");
+
+        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var weekday = firstOccurrence.DayOfWeek;
+        var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = firstOccurrence,
+            EndTime = firstOccurrence.AddHours(1),
+            IsAllDay = false,
+            RecurrenceRule = rrule
+        });
+
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    // FHQ-18.11 Pass 5 (§10.2): seeds a weekly recurring series whose master Google ID is stashed in
+    // ScenarioContext so the echo-guard "All events" edit can assert the per-master outbound write
+    // count. Identical to the standard recurring seed but records the seeded master id.
+    [Given(@"the user has a weekly recurring event ""([^""]*)"" for (\d+) occurrences with a tracked write count in ""([^""]*)""")]
+    public async Task GivenTheUserHasAWeeklyRecurringEventWithTrackedWriteCount(
+        string eventName, int occurrences, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+            ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18);
+        var weekday = firstOccurrence.DayOfWeek;
+        var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
+        var masterId = "evt_" + Guid.NewGuid().ToString("N");
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = masterId,
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = firstOccurrence,
+            EndTime = firstOccurrence.AddHours(1),
+            IsAllDay = false,
+            RecurrenceRule = rrule
+        });
+
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;
+        _scenarioContext["RecurringSeriesMasterId"] = masterId;
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
     // Navigates the Day view's day picker to the recurring series' first occurrence date (tomorrow),
     // the day guaranteed to carry the first instance.
     [When(@"I select the recurring event's first occurrence in the day picker")]

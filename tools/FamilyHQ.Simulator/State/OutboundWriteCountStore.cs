@@ -21,6 +21,13 @@ public sealed class OutboundWriteCountStore
     /// <summary>Returns the current write count for the given event ID (0 if never written).</summary>
     public int Get(string eventId) => _counts.TryGetValue(eventId, out var count) ? count : 0;
 
+    /// <summary>
+    /// Returns the total number of outbound writes recorded across every event ID since the last
+    /// reset. Used by recurring-events echo-guard assertions where the written event's ID is
+    /// generated server-side (native series creation) and so is not known to the test up front.
+    /// </summary>
+    public int Total() => _counts.Values.Sum();
+
     /// <summary>Resets all counters — call between scenarios.</summary>
     public void Reset() => _counts.Clear();
 }

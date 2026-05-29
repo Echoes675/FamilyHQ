@@ -202,6 +202,19 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
+    /// Returns the total number of outbound writes (PUT/POST) the Simulator has received across
+    /// all events since the last reset. Used by recurring-events echo-guard assertions where the
+    /// written event's ID is server-generated (native series creation) and not known to the test.
+    /// </summary>
+    public async Task<int> GetTotalOutboundWriteCountAsync()
+    {
+        var response = await _httpClient.GetAsync("api/simulator/backdoor/write-counts/total");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<WriteCountResponse>();
+        return result?.WriteCount ?? 0;
+    }
+
+    /// <summary>
     /// Resets all outbound write counts in the Simulator. Call in AfterScenario hooks.
     /// </summary>
     public async Task ResetOutboundWriteCountsAsync()

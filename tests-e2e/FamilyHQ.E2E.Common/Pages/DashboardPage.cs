@@ -1046,6 +1046,10 @@ public class DashboardPage : BasePage
     private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
     private ILocator ScopePromptOkBtn => Page.GetByTestId("recurrence-scope-ok");
 
+    // FHQ-18.11 Pass 5 (§10.1): the inline warning shown in the scope prompt when a member change is
+    // pending and a non-All scope is selected. Member changes are only valid for the whole series.
+    private ILocator ScopePromptMemberWarning => Page.GetByTestId("recurrence-scope-member-warning");
+
     // FHQ-18.11 Pass 3: the three scope pills inside the prompt. Scope names map to the testids
     // declared on RecurrenceScopePrompt's PillSegmentGroup options.
     private ILocator ScopePromptPill(string scope) => Page.GetByTestId($"recurrence-scope-{scope}");
@@ -1335,5 +1339,98 @@ public class DashboardPage : BasePage
             date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
         var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
         await Assertions.Expect(tiles).ToHaveCountAsync(0, new() { Timeout = 30000 });
+    }
+
+    // FHQ-18.11 Pass 5 — preservation: members tag (§10.1) and echo guard (§10.2) ──────────────────
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts a timed tile bearing
+    /// <paramref name="eventName"/> is present there in <paramref name="calendarColour"/> (the
+    /// background-colour of one of the event's member calendars). A multi-member event fans out to
+    /// one tile per member column, each painted in that member's calendar colour, so calling this for
+    /// each member colour proves the synced/edited occurrence is linked to every member. Day-view
+    /// per-date navigation is used deliberately so the assertion never depends on the windowed month
+    /// grid (FHQ-18.11 learning: never count occurrences in the 6-week month grid).
+    /// </summary>
+    public async Task AssertEventInColourOnDateInDayViewAsync(string eventName, DateTime date, string calendarColour)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        // A timed multi-member instance renders as .day-event-block tiles, one per member column,
+        // each carrying its calendar colour in the inline background-color style.
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var count = await tiles.CountAsync();
+        for (var i = 0; i < count; i++)
+        {
+            var style = await tiles.Nth(i).GetAttributeAsync("style") ?? string.Empty;
+            if (style.Contains(calendarColour, StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        throw new InvalidOperationException(
+            $"No '{eventName}' day-view tile painted in colour '{calendarColour}' was found on " +
+            $"{date:yyyy-MM-dd}. The occurrence is not linked to that member calendar.");
+    }
+
+    /// <summary>
+    /// Opens the recurring occurrence named <paramref name="occurrenceName"/> on the Day view for
+    /// <paramref name="occurrenceDate"/>, activates the <paramref name="memberCalendarName"/> chip
+    /// (adding that calendar as a member), saves, and confirms the recurrence-scope prompt at the
+    /// "all" scope — the only scope where a member change is permitted (§10.1). Drives the same
+    /// FHQ-29-safe Save→pill→OK flow as <see cref="SubmitEditWithScopeAsync"/>.
+    /// </summary>
+    public async Task AddMemberToRecurringOccurrenceAllScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string memberCalendarName)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EnsureCalendarChipActiveAsync(memberCalendarName);
+        await SubmitEditWithScopeAsync("all");
+    }
+
+    /// <summary>
+    /// Opens the recurring occurrence named <paramref name="occurrenceName"/> on the Day view for
+    /// <paramref name="occurrenceDate"/>, activates the <paramref name="memberCalendarName"/> chip
+    /// (a pending member change), clicks Save to surface the scope prompt, selects the "This event"
+    /// scope, and reports whether the change is blocked: returns true when the member-change warning
+    /// is shown AND the OK button is disabled. Proves a member change is refused at non-All scope
+    /// (§10.1). Does NOT confirm — the prompt is left open and is dismissed by the caller / teardown.
+    /// </summary>
+    public async Task<bool> IsMemberChangeBlockedAtThisEventScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string memberCalendarName)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EnsureCalendarChipActiveAsync(memberCalendarName);
+
+        await SaveEventBtn.ClickAsync();
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // Select "This event" — a non-All scope where the pending member change must be refused.
+        var pill = ScopePromptPill("this");
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+
+        // Observable block: the member warning is shown and OK is disabled.
+        await ScopePromptMemberWarning.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        var warningVisible = await ScopePromptMemberWarning.IsVisibleAsync();
+        var okDisabled = await ScopePromptOkBtn.IsDisabledAsync();
+        return warningVisible && okDisabled;
     }
 }

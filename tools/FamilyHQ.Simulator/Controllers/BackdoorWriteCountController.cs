@@ -31,6 +31,18 @@ public class BackdoorWriteCountController : ControllerBase
     }
 
     /// <summary>
+    /// Returns the total number of outbound writes recorded across all events since the last reset.
+    /// Used by the recurring-events echo-guard scenarios that create a series natively: the master's
+    /// event ID is generated server-side, so the test asserts on the total instead of a per-ID count.
+    /// </summary>
+    [HttpGet("total")]
+    public IActionResult GetTotal()
+    {
+        var total = _store.Total();
+        return Ok(new { WriteCount = total });
+    }
+
+    /// <summary>
     /// Resets all write counts — call in AfterScenario hooks to avoid cross-scenario leakage.
     /// </summary>
     [HttpDelete]

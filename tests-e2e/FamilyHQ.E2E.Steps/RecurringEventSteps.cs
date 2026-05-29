@@ -1,5 +1,7 @@
+using System;
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Common.Pages;
+using FamilyHQ.E2E.Data.Models;
 using FluentAssertions;
 using Microsoft.Playwright;
 using Reqnroll;
@@ -169,6 +171,57 @@ public class RecurringEventSteps
     {
         var date = OccurrenceDate(occurrence);
         await _dashboardPage.AssertEventAbsentInDayViewOnDateAsync(eventName, date);
+    }
+
+    // ── FHQ-18.11 Pass 5: members (§10.1) ──────────────────────────────────────────────────────
+
+    // Asserts the Nth occurrence of the series shows a tile painted in the given member calendar's
+    // colour, proving the synced/edited instance is linked to that member. A multi-member event fans
+    // out to one tile per member column; calling this for each member proves full member linkage.
+    // Day-view per-date navigation is used so the check never depends on the windowed month grid.
+    [Then(@"occurrence (\d+) of ""([^""]*)"" is linked to member ""([^""]*)""")]
+    public async Task ThenOccurrenceIsLinkedToMember(int occurrence, string seriesName, string memberCalendar)
+    {
+        var date = OccurrenceDate(occurrence);
+        var colour = CalendarColour(memberCalendar);
+        await _dashboardPage.AssertEventInColourOnDateInDayViewAsync(seriesName, date, colour);
+    }
+
+    // Adds a member to the series at "All events" scope by activating the member's chip on the Nth
+    // occurrence and confirming the scope prompt at All — the only scope where a member change is
+    // permitted (§10.1). Triggers the 1↔N calendar migration to the shared calendar.
+    [When(@"I add member ""([^""]*)"" to occurrence (\d+) of ""([^""]*)"" applying to all events")]
+    public async Task WhenIAddMemberToOccurrenceApplyingToAllEvents(
+        string memberCalendar, int occurrence, string seriesName)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.AddMemberToRecurringOccurrenceAllScopeAsync(seriesName, date, memberCalendar);
+    }
+
+    // Attempts to add a member to a single occurrence at "This event" scope and asserts the change is
+    // refused: the recurrence-scope member warning is shown and OK is disabled (§10.1). The prompt is
+    // left open (no confirm); the scenario asserts the observable block, not an applied change.
+    [Then(@"adding member ""([^""]*)"" to occurrence (\d+) of ""([^""]*)"" is refused at this-event scope")]
+    public async Task ThenAddingMemberToOccurrenceIsRefusedAtThisEventScope(
+        string memberCalendar, int occurrence, string seriesName)
+    {
+        var date = OccurrenceDate(occurrence);
+        var blocked = await _dashboardPage.IsMemberChangeBlockedAtThisEventScopeAsync(
+            seriesName, date, memberCalendar);
+        blocked.Should().BeTrue(
+            "a member change at 'This event' scope must be refused — the recurrence-scope prompt " +
+            "shows the member-change warning and disables OK so the change cannot be applied.");
+    }
+
+    // Resolves a calendar's seeded background colour from the isolated user template (mirrors the
+    // colour-resolution used by the multi-calendar Dashboard steps).
+    private string CalendarColour(string calendarName)
+    {
+        var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = template.Calendars.Find(c => c.Summary == calendarName)
+            ?? throw new InvalidOperationException(
+                $"Calendar '{calendarName}' not found in the current user template.");
+        return calendar.BackgroundColor ?? "#9e9e9e";
     }
 
     // Occurrence N (1-based) of the weekly series falls N-1 weeks after the seeded first occurrence.
