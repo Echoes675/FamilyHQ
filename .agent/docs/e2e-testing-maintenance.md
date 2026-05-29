@@ -307,6 +307,19 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 | Event updated in Google Calendar shows live on open dashboard | Live Update (SignalR) |
 | Event deleted in Google Calendar disappears live from open dashboard | Live Update (SignalR) |
 
+### Recurring events (FHQ-18.11) — 6 feature files under `WebUi/DashboardCalendarViewer/`
+
+`RecurringEventsDisplay`, `RecurringEventsCreate`, `RecurringEventsEdit`, `RecurringEventsDelete`, `RecurringEventsMembers`, `RecurringEventsEchoGuard` — cover ingest + ↻ indicator/subtitle, native create + custom weekday + toggle-off, the three edit scopes (incl. exception preservation), the three delete scopes, multi-member series + 1↔N migration + non-All member refusal, and the self-echo guard (one outbound write per recurring write).
+
+**Simulator recurrence emulation** (`tools/FamilyHQ.Simulator`): the Simulator emulates Google's recurring model — a seeded master with an RRULE expands into instances for `events.list?singleEvents=true` (compound ids `{master}_{stamp}`, `recurringEventId`, content-hash), `events.get(master)` returns the `recurrence` array, and `events.insert/patch/delete` honour recurrence (toggle on/off, instance exception overrides, instance cancellations). Expansion is bounded to a `now-2mo..now+12mo` horizon when the caller omits `timeMin/timeMax` (the app's incremental sync does) — an unbounded series would otherwise expand to the engine cap and hang the sync.
+
+**Gotchas learned the hard way (heed for any recurring/E2E work):**
+- **Reqnroll keyword matching is type-sensitive** — a `[When]` binding does NOT match a `Given` step; use the binding's keyword or `[StepDefinition]`.
+- **Never assert event counts in the Month grid** — it only renders a 6-week window; navigate the Day view to specific occurrence dates and assert per-date.
+- **`RecurrenceRuleBuilder.Describe` appends end clauses** (", N times" / ", until …") — assert the subtitle CONTAINS the pattern.
+- **Any new `SimulatedEvent` column needs a Simulator EF migration** (the Simulator `Migrate()`s on startup).
+- **Scope every between-scenario backdoor reset to the scenario's isolated user** — a global reset races concurrent scenarios (see Intermittent Issues #3 and #5).
+
 ### Test Categories
 
 1. **Display** - Events render correctly on the calendar grid
