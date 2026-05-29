@@ -56,7 +56,10 @@ public class RecurringEventSteps
     {
         var expected = _scenarioContext.Get<string>("RecurringSeriesExpectedSubtitle");
         var subtitle = await _dashboardPage.GetRecurrenceSubtitleTextAsync();
-        subtitle.Should().Be(expected,
+        // Assert the human-readable weekly pattern is present rather than exact-matching: the
+        // describer also appends the end condition (e.g. ", 3 times") for a COUNT-bounded series,
+        // which is not what this scenario is asserting.
+        subtitle.Should().Contain(expected,
             "the opened recurring instance must describe its weekly repeat pattern.");
     }
 }
