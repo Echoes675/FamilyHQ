@@ -64,6 +64,10 @@
                             </div>
                         </div>
                     }
+                    <div class="mb-3" data-testid="recurrence-section">
+                        <label class="form-label">Repeat</label>
+                        <RecurrencePicker Start="_eventModel.Start" @bind-Value="_recurrenceRule" />
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">Location (Optional)</label>
                         <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
@@ -105,6 +109,12 @@
     </div>
 }
 
+<RecurrenceScopePrompt IsVisible="_showScopePrompt"
+                       IsDelete="_scopePromptIsDelete"
+                       MemberChangePending="_memberChangePending"
+                       OnConfirm="OnScopeConfirmed"
+                       OnCancel="OnScopeCancelled" />
+
 @code {
     [Parameter] public IReadOnlyList<CalendarSummaryViewModel> Calendars { get; set; } = Array.Empty<CalendarSummaryViewModel>();
     [Parameter] public EventCallback OnSaved { get; set; }
@@ -124,6 +134,21 @@
     private HashSet<Guid> _selectedCalendarIds = new();
     private string? _modalError;
     private bool _isSaving;
+
+    // FHQ-18 recurrence state.
+    // _recurrenceRule: the picker's current RRULE (null = does not repeat). Two-way bound.
+    // _wasRecurring: whether the loaded event was already part of a series (drives the scope prompt).
+    // _originalMemberIds: the member set the edit modal opened with — compared against the
+    //   effective member set to decide MemberChangePending for the scope prompt.
+    private string? _recurrenceRule;
+    private bool _wasRecurring;
+    private IReadOnlyList<Guid> _originalMemberIds = Array.Empty<Guid>();
+    private bool _showScopePrompt;
+    private bool _scopePromptIsDelete;
+    private bool _memberChangePending;
+    // The effective member ids resolved during Save, captured so the scope-confirm callback
+    // (which fires after the prompt) can reuse them without re-deriving from the description.
+    private List<Guid> _pendingMemberIds = new();
 
     private DateTime _startDate
     {
@@ -226,6 +251,10 @@
         // selection; otherwise the modal opens with nothing selected and Save is blocked
         // by the empty-selection validation until the user picks a calendar.
         _selectedCalendarIds = EventModalLogic.InitialCreateSelection(calendarId);
+        // A new event is never recurring and has no pre-existing members to compare against.
+        _recurrenceRule = null;
+        _wasRecurring = false;
+        _originalMemberIds = Array.Empty<Guid>();
         _modalError = null;
         _showEventModal = true;
         StateHasChanged();
@@ -246,6 +275,11 @@
             AllCalendars = evt.AllCalendars.ToList()
         };
         _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
+        // Seed the picker from the loaded event's rule and remember the recurring state + members
+        // so Save/Delete can decide whether to prompt for scope and whether a member change is pending.
+        _recurrenceRule = evt.RecurrenceRule;
+        _wasRecurring = evt.IsRecurring;
+        _originalMemberIds = evt.AllCalendars.Select(c => c.Id).ToList();
         _modalError = null;
         _showEventModal = true;
         StateHasChanged();
@@ -254,8 +288,14 @@
     private void Close()
     {
         _showEventModal = false;
+        _showScopePrompt = false;
         _eventModel = new();
         _modalError = null;
+        _recurrenceRule = null;
+        _wasRecurring = false;
+        _originalMemberIds = Array.Empty<Guid>();
+        _pendingMemberIds = new();
+        _memberChangePending = false;
     }
 
     private async Task SaveEvent()
@@ -288,32 +328,61 @@
             return;
         }
 
+        // Remember the members actually being saved so a deferred scope-confirm can reuse them.
+        _pendingMemberIds = effectiveMemberIds.ToList();
+
+        var action = EventModalLogic.DecideSave(
+            isNewEvent: !_isEditingEvent,
+            wasRecurring: _wasRecurring,
+            hasRuleNow: _recurrenceRule != null);
+
+        // Editing an existing series defers to the scope prompt; the actual service call runs
+        // in OnScopeConfirmed once the user picks This / This-and-following / All.
+        if (action == EventSaveAction.PromptScope)
+        {
+            _memberChangePending = EventModalLogic.MembersChanged(_originalMemberIds, _pendingMemberIds);
+            _scopePromptIsDelete = false;
+            _showScopePrompt = true;
+            return;
+        }
+
         _isSaving = true;
         try
         {
-            if (_isEditingEvent)
+            switch (action)
             {
-                var updateReq = new UpdateEventRequest(
-                    _eventModel.Title,
-                    _eventModel.Start,
-                    _eventModel.End,
-                    _eventModel.IsAllDay,
-                    _eventModel.Location,
-                    _eventModel.Description);
-                await CalendarApi.UpdateEventAsync(_eventModel.Id, updateReq);
+                case EventSaveAction.Create:
+                case EventSaveAction.CreateSeries:
+                    // RecurrenceRule is null for Create and the chosen RRULE for CreateSeries — the
+                    // service treats a null rule as a single event, so one branch covers both.
+                    await CalendarApi.CreateEventAsync(new CreateEventRequest(
+                        _pendingMemberIds,
+                        _eventModel.Title,
+                        _eventModel.Start,
+                        _eventModel.End,
+                        _eventModel.IsAllDay,
+                        _eventModel.Location,
+                        _eventModel.Description,
+                        _recurrenceRule));
+                    break;
+
+                case EventSaveAction.Update:
+                case EventSaveAction.UpdateRecurrenceOn:
+                    // RecurrenceRule null → plain update; non-null on a non-recurring event → toggle ON.
+                    await CalendarApi.UpdateEventAsync(_eventModel.Id, new UpdateEventRequest(
+                        _eventModel.Title,
+                        _eventModel.Start,
+                        _eventModel.End,
+                        _eventModel.IsAllDay,
+                        _eventModel.Location,
+                        _eventModel.Description,
+                        _recurrenceRule));
+                    break;
+
+                default:
+                    throw new InvalidOperationException($"Unhandled immediate save action: {action}.");
             }
-            else
-            {
-                var createReq = new CreateEventRequest(
-                    effectiveMemberIds.ToList(),
-                    _eventModel.Title,
-                    _eventModel.Start,
-                    _eventModel.End,
-                    _eventModel.IsAllDay,
-                    _eventModel.Location,
-                    _eventModel.Description);
-                await CalendarApi.CreateEventAsync(createReq);
-            }
+
             Close();
             await OnSaved.InvokeAsync();
         }
@@ -331,6 +400,16 @@
     private async Task DeleteEvent()
     {
         if (_eventModel.Id == Guid.Empty) return;
+
+        if (EventModalLogic.DecideDelete(_wasRecurring) == EventDeleteAction.PromptScope)
+        {
+            // A delete never changes members, so the prompt is never member-gated.
+            _memberChangePending = false;
+            _scopePromptIsDelete = true;
+            _showScopePrompt = true;
+            return;
+        }
+
         _isSaving = true;
         try
         {
@@ -347,6 +426,67 @@
         {
             _isSaving = false;
         }
+    }
+
+    // Invoked when the user confirms the recurrence-scope prompt (edit or delete of a series).
+    private async Task OnScopeConfirmed(RecurrenceScope scope)
+    {
+        _showScopePrompt = false;
+        _isSaving = true;
+        try
+        {
+            if (_scopePromptIsDelete)
+            {
+                await CalendarApi.DeleteRecurringEventAsync(_eventModel.Id, scope);
+                Close();
+                await OnDeleted.InvokeAsync();
+                return;
+            }
+
+            var isClearing = _recurrenceRule == null;
+            var recurringAction = EventModalLogic.DecideRecurringSave(isClearing);
+            var updateReq = new UpdateEventRequest(
+                _eventModel.Title,
+                _eventModel.Start,
+                _eventModel.End,
+                _eventModel.IsAllDay,
+                _eventModel.Location,
+                _eventModel.Description,
+                // Carry the rule when editing the series; when clearing, leave it null and set the flag.
+                RecurrenceRule: isClearing ? null : _recurrenceRule,
+                ClearRecurrence: recurringAction == RecurringSaveAction.ClearRecurrence);
+
+            if (recurringAction == RecurringSaveAction.ClearRecurrence)
+            {
+                // Collapsing a series is a whole-series single-event update (EffectiveScope forces
+                // AllInSeries); the chosen pill does not apply.
+                await CalendarApi.UpdateEventAsync(_eventModel.Id, updateReq);
+            }
+            else
+            {
+                await CalendarApi.UpdateRecurringEventAsync(
+                    _eventModel.Id, updateReq, EventModalLogic.EffectiveScope(scope, isClearing));
+            }
+
+            Close();
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _modalError = "An error occurred while saving.";
+            Console.WriteLine(ex.ToString());
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    // Dismissing the scope prompt returns to the open modal with no service call.
+    private void OnScopeCancelled()
+    {
+        _showScopePrompt = false;
+        _memberChangePending = false;
     }
 
     private class EventFormModel

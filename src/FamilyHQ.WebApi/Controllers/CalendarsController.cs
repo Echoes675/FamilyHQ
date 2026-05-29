@@ -110,7 +110,11 @@ public class CalendarsController : ControllerBase
                 evt.IsAllDay,
                 evt.Location,
                 StripMemberTag(evt.Description),
-                memberDtos);
+                memberDtos,
+                // FHQ-18: carry recurrence so the grid can mark the event and the edit modal can
+                // pre-populate the picker and route Save/Delete through the scope prompt.
+                evt.IsRecurring,
+                evt.RecurrenceRule);
 
             var current = evt.Start.Date;
             var last    = evt.End.AddTicks(-1).Date;

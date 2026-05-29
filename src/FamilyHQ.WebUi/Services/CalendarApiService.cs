@@ -68,7 +68,9 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                         cal.Id,
                         cal.DisplayName,
                         cal.Color,
-                        allCalendars));
+                        allCalendars,
+                        evtDto.IsRecurring,
+                        evtDto.RecurrenceRule));
                 }
             }
 
@@ -106,6 +108,24 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<CalendarEventViewModel> UpdateRecurringEventAsync(
+        Guid eventId, UpdateEventRequest request, RecurrenceScope scope, CancellationToken ct = default)
+    {
+        var response = await httpClient.PutAsJsonAsync($"api/events/{eventId}/recurring?scope={scope}", request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for UpdateRecurringEventAsync.");
+
+        return MapToViewModel(dto);
+    }
+
+    public async Task DeleteRecurringEventAsync(Guid eventId, RecurrenceScope scope, CancellationToken ct = default)
+    {
+        var response = await httpClient.DeleteAsync($"api/events/{eventId}/recurring?scope={scope}", ct);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task<CalendarEventViewModel> SetEventMembersAsync(
         Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default)
     {
@@ -138,7 +158,9 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             primary?.Id ?? Guid.Empty,
             primary?.DisplayName ?? string.Empty,
             primary?.Color,
-            allCalendars);
+            allCalendars,
+            dto.IsRecurring,
+            dto.RecurrenceRule);
     }
 
     public async Task TriggerSyncAsync(CancellationToken ct = default)

@@ -58,6 +58,41 @@ public class CalendarsControllerTests
     }
 
     [Fact]
+    public async Task GetEventsForMonth_RecurringEvent_ProjectsRecurrenceOntoDto()
+    {
+        // FHQ-18: the grid feed must carry recurrence so the edit modal can pre-populate the
+        // picker and route Save/Delete through the scope prompt.
+        var (calendarRepository, systemUnderTest) = CreateSut();
+
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var evt = new CalendarEvent
+        {
+            Id = EventId,
+            GoogleEventId = "google-id",
+            Title = "Standup",
+            Start = new DateTimeOffset(2026, 6, 15, 9, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 15, 10, 0, 0, TimeSpan.Zero),
+            IsAllDay = false,
+            GoogleRecurringEventId = "series-1",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY",
+            Members = new List<CalendarInfo> { calA }
+        };
+
+        calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA });
+
+        var result = await systemUnderTest.GetEventsForMonth(2026, 6, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var monthView = ok.Value.Should().BeOfType<MonthViewDto>().Subject;
+        var dto = monthView.Days["2026-06-15"][0];
+        dto.IsRecurring.Should().BeTrue();
+        dto.RecurrenceRule.Should().Be("RRULE:FREQ=WEEKLY");
+    }
+
+    [Fact]
     public async Task GetEventsForMonth_InvalidMonth_Returns400()
     {
         // Arrange
