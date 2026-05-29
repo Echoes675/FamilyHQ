@@ -173,4 +173,53 @@ public class CalendarSyncJobRepositoryTests : IDisposable
         reloaded.CompletedAt.Should().Be(_time.GetUtcNow());
         reloaded.LastError.Should().Be("fatal");
     }
+
+    [Fact]
+    public async Task RecoverOrphansAsync_ResetsStaleInProgressToPending()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() });
+        await _db.SaveChangesAsync();
+
+        var recovered = await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
+
+        recovered.Should().Be(1);
+        (await _db.CalendarSyncJobs.CountAsync(j => j.Status == SyncJobStatus.Pending)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task PruneTerminalAsync_DeletesOldCompletedAndFailed_KeepsRecentAndActive()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed,    EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-1),  CompletedAt = _time.GetUtcNow().AddDays(-1) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending,   EnqueuedAt = _time.GetUtcNow() });
+        await _db.SaveChangesAsync();
+
+        var pruned = await sut.PruneTerminalAsync(TimeSpan.FromDays(7));
+
+        pruned.Should().Be(2);
+        (await _db.CalendarSyncJobs.CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_ReturnsOnlyFailedForUser_NewestFirst()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-2) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-1) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() });
+        await _db.SaveChangesAsync();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 10);
+
+        result.Should().HaveCount(2);
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddMinutes(-1)); // newest first
+    }
 }

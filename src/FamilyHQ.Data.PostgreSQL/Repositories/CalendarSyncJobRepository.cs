@@ -89,9 +89,51 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
 
         await context.SaveChangesAsync(ct);
     }
-    public Task<int> RecoverOrphansAsync(TimeSpan olderThan, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<int> PruneTerminalAsync(TimeSpan olderThan, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, CancellationToken ct = default) => throw new NotImplementedException();
+    public async Task<int> RecoverOrphansAsync(TimeSpan olderThan, CancellationToken ct = default)
+    {
+        var cutoff = timeProvider.GetUtcNow() - olderThan;
+        var stuck = await context.CalendarSyncJobs
+            .Where(j => j.Status == SyncJobStatus.InProgress && j.StartedAt != null && j.StartedAt < cutoff)
+            .ToListAsync(ct);
+
+        foreach (var job in stuck)
+            job.Status = SyncJobStatus.Pending;
+
+        if (stuck.Count > 0)
+            await context.SaveChangesAsync(ct);
+
+        return stuck.Count;
+    }
+
+    public async Task<int> PruneTerminalAsync(TimeSpan olderThan, CancellationToken ct = default)
+    {
+        var cutoff = timeProvider.GetUtcNow() - olderThan;
+        var old = await context.CalendarSyncJobs
+            .Where(j => (j.Status == SyncJobStatus.Completed || j.Status == SyncJobStatus.Failed)
+                        && j.CompletedAt != null && j.CompletedAt < cutoff)
+            .ToListAsync(ct);
+
+        if (old.Count > 0)
+        {
+            context.CalendarSyncJobs.RemoveRange(old);
+            await context.SaveChangesAsync(ct);
+        }
+
+        return old.Count;
+    }
+
+    public async Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(userId))
+            return Array.Empty<CalendarSyncJob>();
+
+        return await context.CalendarSyncJobs
+            .AsNoTracking()
+            .Where(j => j.UserId == userId && j.Status == SyncJobStatus.Failed)
+            .OrderByDescending(j => j.CompletedAt)
+            .Take(limit)
+            .ToListAsync(ct);
+    }
 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 }
