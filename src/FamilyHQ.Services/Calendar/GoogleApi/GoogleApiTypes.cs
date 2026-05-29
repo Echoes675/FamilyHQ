@@ -28,7 +28,13 @@ internal record GoogleApiEvent(
     [property: JsonPropertyName("start")]                GoogleApiEventDateTime?  Start,
     [property: JsonPropertyName("end")]                  GoogleApiEventDateTime?  End,
     [property: JsonPropertyName("organizer")]            GoogleApiOrganizer?      Organizer,
-    [property: JsonPropertyName("extendedProperties")]   GoogleApiExtendedProperties? ExtendedProperties);
+    [property: JsonPropertyName("extendedProperties")]   GoogleApiExtendedProperties? ExtendedProperties,
+    // Recurring-series metadata. recurringEventId links an instance to its series master;
+    // originalStartTime is set only on exception instances (moved/modified occurrences);
+    // recurrence carries the RRULE/EXDATE/RDATE lines and is present only on the master.
+    [property: JsonPropertyName("recurringEventId")]     string?                  RecurringEventId = null,
+    [property: JsonPropertyName("originalStartTime")]    GoogleApiEventDateTime?  OriginalStartTime = null,
+    [property: JsonPropertyName("recurrence")]           List<string>?            Recurrence = null);
 
 internal record GoogleApiEventList(
     [property: JsonPropertyName("items")]         IReadOnlyList<GoogleApiEvent> Items,

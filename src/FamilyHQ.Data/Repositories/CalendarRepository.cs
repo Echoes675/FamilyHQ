@@ -106,10 +106,41 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(e => e.GoogleEventId == googleEventId, ct);
     }
 
+    public async Task<IReadOnlyList<CalendarEvent>> GetEventsBySeriesIdAsync(string seriesId, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .Include(e => e.Members)
+            .Where(e => e.GoogleRecurringEventId == seriesId)
+            .OrderBy(e => e.Start)
+            .ToListAsync(ct);
+    }
+
     public async Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default)
     {
         return await _context.SyncStates
             .FirstOrDefaultAsync(s => s.CalendarInfoId == calendarInfoId, ct);
+    }
+
+    public async Task<IReadOnlyDictionary<string, string>> GetStoredRecurrenceRulesAsync(
+        IEnumerable<string> seriesIds, CancellationToken ct = default)
+    {
+        var ids = seriesIds.Distinct().ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, string>();
+
+        // One representative RRULE per series is enough — every instance of a series shares
+        // the same stored rule. GroupBy + First collapses the per-instance rows to a per-series map.
+        var rows = await _context.Events
+            .AsNoTracking()
+            .Where(e => e.GoogleRecurringEventId != null
+                     && e.RecurrenceRule != null
+                     && ids.Contains(e.GoogleRecurringEventId))
+            .Select(e => new { SeriesId = e.GoogleRecurringEventId!, e.RecurrenceRule })
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(r => r.SeriesId)
+            .ToDictionary(g => g.Key, g => g.First().RecurrenceRule!);
     }
 
     public async Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default)

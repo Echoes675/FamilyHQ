@@ -23,6 +23,11 @@ public class DashboardPage : BasePage
     public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
+
+    // FHQ-18.11: recurrence affordances. The indicator glyph renders on every recurring tile
+    // across Day / Month / Agenda; the subtitle renders inside the open event modal.
+    public ILocator RecurrenceIndicators => Page.GetByTestId("recurrence-indicator");
+    public ILocator RecurrenceSubtitle => Page.GetByTestId("recurrence-subtitle");
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
@@ -944,5 +949,488 @@ public class DashboardPage : BasePage
     public async Task<bool> IsCurrentTimeLineVisibleAsync()
     {
         return await CurrentTimeLine.IsVisibleAsync();
+    }
+
+    // FHQ-18.11 recurrence helpers ────────────────────────────────────────────
+
+    /// <summary>
+    /// Counts the event capsules currently on the grid whose text contains
+    /// <paramref name="eventName"/>. Used to assert that a recurring series expanded into
+    /// the expected number of instances after sync.
+    /// </summary>
+    public async Task<int> CountVisibleEventInstancesAsync(string eventName)
+    {
+        var texts = await EventCapsules.AllInnerTextsAsync();
+        return texts.Count(t => t.Contains(eventName));
+    }
+
+    /// <summary>
+    /// Waits until at least <paramref name="expected"/> capsules for <paramref name="eventName"/>
+    /// are rendered, then returns the count. Polls to absorb the render cycle between the sync
+    /// HTTP response landing and Blazor painting the instances.
+    /// </summary>
+    public async Task<int> WaitForEventInstanceCountAsync(string eventName, int expected, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var count = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            count = await CountVisibleEventInstancesAsync(eventName);
+            if (count >= expected) return count;
+            await Page.WaitForTimeoutAsync(250);
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Asserts a weekly recurring series renders one instance on each of its occurrence dates by
+    /// driving the Day view to each date in turn and confirming the named tile is shown there.
+    /// Caller must already be on the Day view.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-18.11: this replaces a raw capsule count taken in the Month view. The month grid is a
+    /// fixed 6-week window, so a series that starts late in the month pushes its later occurrences
+    /// past the visible edge and a "count == N" assertion under-counts purely because of where in
+    /// the month the run happens to fall. Visiting each occurrence date individually removes that
+    /// windowing dependency entirely: occurrence dates are derived from the seeded first-occurrence
+    /// date (<paramref name="firstOccurrenceDate"/> + 7-day steps), each navigation reloads the
+    /// owning month's data, and the Day view keys its lookup on the selected date — so the result
+    /// is identical regardless of the run date. Dates are formatted with the invariant culture so
+    /// the day-picker round-trip is locale-independent.
+    /// </remarks>
+    public async Task AssertWeeklyOccurrencesEachVisibleInDayViewAsync(
+        string eventName, DateTime firstOccurrenceDate, int occurrences)
+    {
+        for (int i = 0; i < occurrences; i++)
+        {
+            var occurrenceDate = firstOccurrenceDate.Date.AddDays(7 * i);
+            await OpenDayPickerAndGoAsync(
+                occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+            var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
+            await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        }
+    }
+
+    /// <summary>
+    /// Waits for the recurrence indicator glyph to be visible on at least one event tile in the
+    /// current view. The glyph is shared across Day / Month / Agenda, so this works in any view.
+    /// </summary>
+    public async Task WaitForRecurrenceIndicatorVisibleAsync(int timeoutMs = 30000)
+    {
+        await RecurrenceIndicators.First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+    }
+
+    /// <summary>Number of recurrence indicator glyphs currently rendered in the view.</summary>
+    public async Task<int> CountRecurrenceIndicatorsAsync() => await RecurrenceIndicators.CountAsync();
+
+    /// <summary>
+    /// Reads the recurrence subtitle text from the open event modal (e.g.
+    /// "Repeats weekly on Tuesday"). Waits for the subtitle to be visible first.
+    /// </summary>
+    public async Task<string> GetRecurrenceSubtitleTextAsync(int timeoutMs = 30000)
+    {
+        await RecurrenceSubtitle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+        return (await RecurrenceSubtitle.InnerTextAsync()).Trim();
+    }
+
+    // FHQ-18.11 Pass 2 — native recurring-event create & toggle-off ────────────
+    // The recurrence picker lives inside the open event modal under
+    // [data-testid="recurrence-section"]. These helpers drive it via the per-option
+    // data-testids added to the mode / frequency / end-mode pills and the weekday
+    // toggle row, then compose the full native-create and toggle-off flows.
+
+    private ILocator RecurrenceSection => EventModal.GetByTestId("recurrence-section");
+    private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
+    private ILocator ScopePromptOkBtn => Page.GetByTestId("recurrence-scope-ok");
+
+    // FHQ-18.11 Pass 5 (§10.1): the inline warning shown in the scope prompt when a member change is
+    // pending and a non-All scope is selected. Member changes are only valid for the whole series.
+    private ILocator ScopePromptMemberWarning => Page.GetByTestId("recurrence-scope-member-warning");
+
+    // FHQ-18.11 Pass 3: the three scope pills inside the prompt. Scope names map to the testids
+    // declared on RecurrenceScopePrompt's PillSegmentGroup options.
+    private ILocator ScopePromptPill(string scope) => Page.GetByTestId($"recurrence-scope-{scope}");
+
+    /// <summary>Selects a recurrence mode pill (e.g. "weekly", "custom", "none").</summary>
+    private async Task SelectRecurrenceModeAsync(string mode)
+    {
+        var pill = RecurrenceSection.GetByTestId($"recurrence-mode-{mode}");
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Selects a custom-drawer frequency pill (e.g. "weekly"). Requires Custom mode.</summary>
+    private async Task SelectRecurrenceFrequencyAsync(string frequency)
+    {
+        var pill = RecurrenceSection.GetByTestId($"recurrence-frequency-{frequency}");
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Toggles a weekday button on in the custom weekly drawer (DayOfWeek name, e.g. "Tuesday").</summary>
+    private async Task ToggleRecurrenceWeekdayAsync(string dayOfWeekName)
+    {
+        var toggle = RecurrenceSection.GetByTestId($"recurrence-weekday-{dayOfWeekName}");
+        await toggle.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        await toggle.ClickAsync();
+        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>Activates the named calendar chip in the open modal if it is not already active.</summary>
+    private async Task EnsureCalendarChipActiveAsync(string calendarName)
+    {
+        var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
+        var classes = await chip.GetAttributeAsync("class") ?? "";
+        if (!classes.Contains("chip-active"))
+        {
+            await chip.ClickAsync();
+            await Assertions.Expect(chip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>
+    /// Creates a weekly recurring event natively: opens the create modal, picks the named calendar,
+    /// sets the recurrence mode to Weekly (which repeats on the start date's weekday), and saves.
+    /// Waits for the reconcile events response and the calendar to repaint.
+    /// </summary>
+    public async Task CreateWeeklyRecurringEventAsync(string title, string calendarName)
+    {
+        await OpenCreateEventModalAsync();
+        await EventTitleInput.FillAsync(title);
+        await EnsureCalendarChipActiveAsync(calendarName);
+        await SelectRecurrenceModeAsync("weekly");
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Creates a recurring event repeating weekly on a specific weekday: opens the create modal,
+    /// picks the named calendar, switches to the Custom drawer, selects Weekly frequency and the
+    /// given weekday(s) (DayOfWeek names), and saves.
+    /// </summary>
+    public async Task CreateCustomWeeklyRecurringEventAsync(
+        string title, string calendarName, IReadOnlyList<string> weekdayNames)
+    {
+        await OpenCreateEventModalAsync();
+        await EventTitleInput.FillAsync(title);
+        await EnsureCalendarChipActiveAsync(calendarName);
+        await SelectRecurrenceModeAsync("custom");
+        await SelectRecurrenceFrequencyAsync("weekly");
+        foreach (var weekday in weekdayNames)
+        {
+            await ToggleRecurrenceWeekdayAsync(weekday);
+        }
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Opens an existing recurring event for editing, sets recurrence to "Does not repeat", saves,
+    /// and confirms the recurrence-scope prompt (defaulting to "All events") so the series collapses
+    /// to a single non-recurring event. Waits for the reconcile response and repaint.
+    /// </summary>
+    public async Task TurnOffRecurrenceForEventAsync(string eventName)
+    {
+        await OpenEventForEditingAsync(eventName);
+        await SelectRecurrenceModeAsync("none");
+
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+
+        // Collapsing a series prompts for scope; the prompt defaults to "All events" (the only
+        // valid scope for a clear), so confirming with OK drives the toggle-OFF patch.
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await ScopePromptOkBtn.ClickAsync();
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts the named event appears there
+    /// as a single, non-recurring occurrence: exactly one tile and no recurrence indicator. Used to
+    /// prove a toggled-OFF series has collapsed to one event. Caller must already be on the Day view.
+    /// </summary>
+    public async Task AssertSingleNonRecurringOccurrenceInDayViewAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Assertions.Expect(tiles).ToHaveCountAsync(1, new() { Timeout = 10000 });
+        await Assertions.Expect(RecurrenceIndicators).ToHaveCountAsync(0, new() { Timeout = 10000 });
+    }
+
+    /// <summary>
+    /// Counts the day-view tiles bearing <paramref name="eventName"/> on <paramref name="date"/>.
+    /// Navigates the Day view to that date first. Caller must already be on the Day view.
+    /// </summary>
+    public async Task<int> CountDayViewOccurrencesOnDateAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await WaitForCalendarVisibleAsync();
+        return await tiles.CountAsync();
+    }
+
+    // FHQ-18.11 Pass 3 — edit-scope flow (This event / This and following / All events) ──────────
+
+    /// <summary>
+    /// Drives the recurrence-scope prompt that appears after Save when editing a recurring series:
+    /// waits for the prompt to be visible, selects the named scope pill (waiting on its
+    /// <c>aria-pressed=true</c>), waits for OK to be visible, confirms, and waits for the modal to
+    /// close and the calendar to reconcile + repaint.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-29 click-race: the prompt is a Save→pill→OK flow, so each interactive element is
+    /// explicitly awaited Visible (and the pill's pressed state confirmed) before the next click —
+    /// never click an element that has not been observed ready. <paramref name="scope"/> is one of
+    /// "this", "following", "all" (the recurrence-scope-* testid suffixes).
+    /// </remarks>
+    public async Task SubmitEditWithScopeAsync(string scope)
+    {
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+
+        // Wait for the prompt itself before touching any pill (FHQ-29 visibility wait).
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var pill = ScopePromptPill(scope);
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+
+        // Confirm only once OK is observed visible (FHQ-29 visibility wait on the pill→OK leg).
+        await ScopePromptOkBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await ScopePromptOkBtn.ClickAsync();
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Opens the named recurring event on the Day view for <paramref name="occurrenceDate"/>, sets a
+    /// new title, and submits with the given scope ("this" / "following" / "all"). Navigates the Day
+    /// view to the occurrence date first so the clicked tile is the intended occurrence.
+    /// </summary>
+    public async Task EditRecurringOccurrenceTitleWithScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string newTitle, string scope)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EventTitleInput.FillAsync(newTitle);
+        await SubmitEditWithScopeAsync(scope);
+    }
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts a tile bearing
+    /// <paramref name="eventName"/> is visible there. Used to prove an edited occurrence shows the
+    /// change (or that an untouched occurrence still shows the original title).
+    /// </summary>
+    public async Task AssertEventVisibleInDayViewOnDateAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    // FHQ-18.11 Pass 4 — delete-scope flow (This event / This and following / All events) ──────────
+
+    /// <summary>
+    /// Drives the recurrence-scope prompt that appears after the trash-can delete when removing a
+    /// recurring series: waits for the prompt to be visible, selects the named scope pill (waiting on
+    /// its <c>aria-pressed=true</c>), waits for OK to be visible, confirms, and waits for the modal to
+    /// close and the calendar to reconcile + repaint.
+    /// </summary>
+    /// <remarks>
+    /// The delete prompt is the same <c>recurrence-scope-prompt</c> component as the edit prompt (the
+    /// delete variant carries the "Delete recurring event" header). FHQ-29 click-race: each interactive
+    /// element is explicitly awaited Visible — and the pill's pressed state confirmed — before the next
+    /// click; never click an element that has not been observed ready. <paramref name="scope"/> is one
+    /// of "this" / "following" / "all" (the recurrence-scope-* testid suffixes).
+    /// </remarks>
+    public async Task SubmitDeleteWithScopeAsync(string scope)
+    {
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await DeleteEventBtn.ClickAsync();
+
+        // Wait for the prompt itself before touching any pill (FHQ-29 visibility wait).
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var pill = ScopePromptPill(scope);
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+
+        // Confirm only once OK is observed visible (FHQ-29 visibility wait on the pill→OK leg).
+        await ScopePromptOkBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await ScopePromptOkBtn.ClickAsync();
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Opens the named recurring event on the Day view for <paramref name="occurrenceDate"/> and
+    /// deletes it with the given scope ("this" / "following" / "all"). Navigates the Day view to the
+    /// occurrence date first so the clicked tile is the intended occurrence.
+    /// </summary>
+    public async Task DeleteRecurringOccurrenceWithScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string scope)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await SubmitDeleteWithScopeAsync(scope);
+    }
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts NO tile bearing
+    /// <paramref name="eventName"/> is present there. Used to prove a deleted occurrence (or the
+    /// post-split tail) no longer appears.
+    /// </summary>
+    public async Task AssertEventAbsentInDayViewOnDateAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await Assertions.Expect(tiles).ToHaveCountAsync(0, new() { Timeout = 30000 });
+    }
+
+    // FHQ-18.11 Pass 5 — preservation: members tag (§10.1) and echo guard (§10.2) ──────────────────
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts a timed tile bearing
+    /// <paramref name="eventName"/> is present there in <paramref name="calendarColour"/> (the
+    /// background-colour of one of the event's member calendars). A multi-member event fans out to
+    /// one tile per member column, each painted in that member's calendar colour, so calling this for
+    /// each member colour proves the synced/edited occurrence is linked to every member. Day-view
+    /// per-date navigation is used deliberately so the assertion never depends on the windowed month
+    /// grid (FHQ-18.11 learning: never count occurrences in the 6-week month grid).
+    /// </summary>
+    public async Task AssertEventInColourOnDateInDayViewAsync(string eventName, DateTime date, string calendarColour)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        // A timed multi-member instance renders as .day-event-block tiles, one per member column,
+        // each carrying its calendar colour in the inline background-color style.
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var count = await tiles.CountAsync();
+        for (var i = 0; i < count; i++)
+        {
+            var style = await tiles.Nth(i).GetAttributeAsync("style") ?? string.Empty;
+            if (style.Contains(calendarColour, StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        throw new InvalidOperationException(
+            $"No '{eventName}' day-view tile painted in colour '{calendarColour}' was found on " +
+            $"{date:yyyy-MM-dd}. The occurrence is not linked to that member calendar.");
+    }
+
+    /// <summary>
+    /// Opens the recurring occurrence named <paramref name="occurrenceName"/> on the Day view for
+    /// <paramref name="occurrenceDate"/>, activates the <paramref name="memberCalendarName"/> chip
+    /// (adding that calendar as a member), saves, and confirms the recurrence-scope prompt at the
+    /// "all" scope — the only scope where a member change is permitted (§10.1). Drives the same
+    /// FHQ-29-safe Save→pill→OK flow as <see cref="SubmitEditWithScopeAsync"/>.
+    /// </summary>
+    public async Task AddMemberToRecurringOccurrenceAllScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string memberCalendarName)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EnsureCalendarChipActiveAsync(memberCalendarName);
+        await SubmitEditWithScopeAsync("all");
+    }
+
+    /// <summary>
+    /// Opens the recurring occurrence named <paramref name="occurrenceName"/> on the Day view for
+    /// <paramref name="occurrenceDate"/>, activates the <paramref name="memberCalendarName"/> chip
+    /// (a pending member change), clicks Save to surface the scope prompt, selects the "This event"
+    /// scope, and reports whether the change is blocked: returns true when the member-change warning
+    /// is shown AND the OK button is disabled. Proves a member change is refused at non-All scope
+    /// (§10.1). Does NOT confirm — the prompt is left open and is dismissed by the caller / teardown.
+    /// </summary>
+    public async Task<bool> IsMemberChangeBlockedAtThisEventScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string memberCalendarName)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await EnsureCalendarChipActiveAsync(memberCalendarName);
+
+        await SaveEventBtn.ClickAsync();
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // Select "This event" — a non-All scope where the pending member change must be refused.
+        var pill = ScopePromptPill("this");
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+
+        // Observable block: the member warning is shown and OK is disabled.
+        await ScopePromptMemberWarning.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        var warningVisible = await ScopePromptMemberWarning.IsVisibleAsync();
+        var okDisabled = await ScopePromptOkBtn.IsDisabledAsync();
+        return warningVisible && okDisabled;
     }
 }

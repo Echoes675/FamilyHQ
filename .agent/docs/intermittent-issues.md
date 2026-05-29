@@ -20,6 +20,18 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Resolved issues
 
+### 5. Outbound-write-count ClearAll race recurs in recurring echo-guard scenarios (FHQ-18.11)
+
+**Resolved:** branch `feat/FHQ-18-recurring-events`, commit `03011b6` (2026-05-29). Tracked under FHQ-18.11.
+**Component:** E2E test infra only — `tests-e2e/.../Hooks/WebhookEchoGuardHooks.cs`, the Simulator `OutboundWriteCountStore` + its backdoor.
+**First seen:** Deploy-Dev #389 (2026-05-29), recurring echo-guard scenarios *"Native creation … exactly one outbound write"* and *"An All events edit … exactly one outbound write"*.
+
+**This is the SAME class of bug as issue #3 (FHQ-31), under a different guise.** A `[Before/AfterScenario("WebhookEchoGuard")]` hook called a **global** `ResetAll` on the Simulator's write-count store. With `maxParallelThreads=2` and three `@WebhookEchoGuard` scenarios, one scenario's reset wiped a concurrently-running scenario's counts mid-flight → the assertion read `0` (non-deterministic: #388 had one of the two pass, #389 had both fail). A precursor bug in the same area: the native-create scenario first asserted a **global** outbound-write *total*, which the same parallelism inflated to 4 (concurrent scenarios' writes) — fixed in `9eb10fd` by keying the total per isolated user.
+
+**Fix (FHQ-31 pattern):** counts are isolated by unique (Guid) event id and per isolated user, so no global reset is needed. Dropped the before-scenario global reset; scoped the after-scenario reset to the scenario's own user (`DELETE /api/simulator/backdoor/write-counts/user/{userId}` → `OutboundWriteCountStore.Reset(userId)`). `ResetAll` retained for manual/dev use only.
+
+**If the symptom returns:** check no E2E hook calls a global `ResetAll`/`ClearAll` against a store shared by parallel scenarios — scope every between-scenario reset to the scenario's isolated user (the `feedback_e2e_isolation` rule).
+
 ### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth — recurrence was a test-side race (FHQ-31)
 
 **Resolved:** branch `fix/FHQ-31-reauth-flake-recurrence`, commits `057962f` (per-user failure-mode clear) + `42f2661` (echo-guard poll-loop). Verified across **10 consecutive Deploy-Staging passes #116–#125** (2026-05-27). Tracked as **FHQ-31**.

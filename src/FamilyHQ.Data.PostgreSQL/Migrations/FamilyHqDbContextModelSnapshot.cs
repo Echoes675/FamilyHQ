@@ -54,6 +54,10 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("GoogleRecurringEventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
 
@@ -61,8 +65,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<DateTimeOffset?>("OriginalStartTime")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("OwnerCalendarInfoId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RecurrenceRule")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTimeOffset>("Start")
                         .HasColumnType("timestamp with time zone");
@@ -79,9 +90,13 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.HasIndex("GoogleEventId")
                         .IsUnique();
 
+                    b.HasIndex("GoogleRecurringEventId");
+
                     b.HasIndex("OwnerCalendarInfoId");
 
                     b.HasIndex("Start");
+
+                    b.HasIndex("GoogleRecurringEventId", "OriginalStartTime");
 
                     b.ToTable("Events", (string)null);
                 });

@@ -202,11 +202,28 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
-    /// Resets all outbound write counts in the Simulator. Call in AfterScenario hooks.
+    /// Returns the total outbound writes (PUT/POST) the Simulator has received for a single user
+    /// since the last reset. Used by recurring-events echo-guard assertions where the written
+    /// event's ID is server-generated (native series creation); scoping to the scenario's isolated
+    /// user keeps the count safe under the parallel E2E runner (a global total would be contaminated).
     /// </summary>
-    public async Task ResetOutboundWriteCountsAsync()
+    public async Task<int> GetUserOutboundWriteCountAsync(string userId)
     {
-        var response = await _httpClient.DeleteAsync("api/simulator/backdoor/write-counts");
+        var response = await _httpClient.GetAsync(
+            $"api/simulator/backdoor/write-counts/user/{Uri.EscapeDataString(userId)}/total");
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<WriteCountResponse>();
+        return result?.WriteCount ?? 0;
+    }
+
+    /// <summary>
+    /// Resets the outbound write count for a single (isolated test) user. Call in AfterScenario hooks;
+    /// scoping to the scenario's own user avoids the parallel-runner ClearAll race (FHQ-31).
+    /// </summary>
+    public async Task ResetUserOutboundWriteCountsAsync(string userId)
+    {
+        var response = await _httpClient.DeleteAsync(
+            $"api/simulator/backdoor/write-counts/user/{Uri.EscapeDataString(userId)}");
         response.EnsureSuccessStatusCode();
     }
 

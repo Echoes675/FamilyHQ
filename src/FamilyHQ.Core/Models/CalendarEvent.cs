@@ -13,6 +13,23 @@ public class CalendarEvent
     public string? Location { get; set; }
     public string? Description { get; set; }
 
+    // Google ID of the parent recurring series. Null for non-recurring events.
+    public string? GoogleRecurringEventId { get; set; }
+
+    // The original start time of an instance within a series. Set only on exception
+    // instances (instances moved or modified from the series default); null otherwise.
+    public DateTimeOffset? OriginalStartTime { get; set; }
+
+    // The RRULE text describing the recurrence pattern. Non-null whenever this row
+    // represents part of a recurring series (i.e. whenever GoogleRecurringEventId is set).
+    public string? RecurrenceRule { get; set; }
+
+    // True when this event belongs to a recurring series.
+    public bool IsRecurring => GoogleRecurringEventId is not null;
+
+    // True when this event is an exception instance (moved/modified from its series default).
+    public bool IsException => OriginalStartTime is not null;
+
     // FK to the CalendarInfo that owns this event in Google (individual or shared calendar).
     public Guid OwnerCalendarInfoId { get; set; }
 

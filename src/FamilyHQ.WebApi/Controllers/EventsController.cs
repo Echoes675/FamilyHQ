@@ -64,6 +64,48 @@ public class EventsController : ControllerBase
         catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
     }
 
+    /// <summary>
+    /// Updates a recurring series at the given <see cref="RecurrenceScope"/> (FHQ-18). The scope
+    /// travels as a query parameter so the body stays the same <see cref="UpdateEventRequest"/> the
+    /// single-event channel uses. Member changes are only honoured at AllInSeries by the service.
+    /// </summary>
+    [HttpPut("{eventId:guid}/recurring")]
+    public async Task<IActionResult> UpdateRecurringEvent(
+        Guid eventId, [FromQuery] RecurrenceScope scope, [FromBody] UpdateEventRequest request, CancellationToken ct)
+    {
+        var validator  = new Core.Validators.UpdateEventRequestValidator();
+        var validation = await validator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
+            return BadRequest(validation.Errors);
+
+        try
+        {
+            var updated = await _service.UpdateRecurringAsync(eventId, request, scope, ct);
+            return Ok(MapToDto(updated));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
+        // Invalid scope (ArgumentOutOfRangeException) and the service's fail-fast business-rule
+        // violations (event not part of a series; member change outside AllInSeries) are client
+        // errors, not 500s.
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
+    }
+
+    /// <summary>Deletes a recurring series at the given <see cref="RecurrenceScope"/> (FHQ-18).</summary>
+    [HttpDelete("{eventId:guid}/recurring")]
+    public async Task<IActionResult> DeleteRecurringEvent(Guid eventId, [FromQuery] RecurrenceScope scope, CancellationToken ct)
+    {
+        try
+        {
+            await _service.DeleteRecurringAsync(eventId, scope, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
+        // Invalid scope and the service's fail-fast business-rule violations are client errors.
+        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
+    }
+
     /// <summary>Replaces the full member list for an event.</summary>
     [HttpPut("{eventId:guid}/members")]
     public async Task<IActionResult> SetMembers(Guid eventId, [FromBody] SetEventMembersRequest request, CancellationToken ct)
@@ -89,5 +131,7 @@ public class EventsController : ControllerBase
         e.IsAllDay,
         e.Location,
         e.Description,
-        e.Members.Select(m => new EventCalendarDto(m.Id, m.DisplayName, m.Color, m.IsShared)).ToList());
+        e.Members.Select(m => new EventCalendarDto(m.Id, m.DisplayName, m.Color, m.IsShared)).ToList(),
+        e.IsRecurring,
+        e.RecurrenceRule);
 }

@@ -14,4 +14,18 @@ public interface ICalendarMigrationService
         CalendarEvent calendarEvent,
         IReadOnlyList<CalendarInfo> assignedMembers,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Series equivalent of <see cref="EnsureCorrectCalendarAsync"/> for an "All events" edit that
+    /// crosses the 1↔N membership boundary. Inserts the series on the correct target calendar (with
+    /// the supplied RRULE and a normalised members tag on the master), receives the new Google series
+    /// id, repoints every local instance in the sync window to the new id and owner calendar, and
+    /// deletes the old series from Google. An outbound-write hash is recorded for every touched
+    /// instance so the resulting webhooks are recognised as self-echoes.
+    /// Returns true if a migration was performed; false if the series is already on the correct calendar.
+    /// </summary>
+    Task<bool> EnsureCorrectCalendarForSeriesAsync(
+        string seriesId,
+        IReadOnlyList<CalendarInfo> assignedMembers,
+        CancellationToken ct = default);
 }
