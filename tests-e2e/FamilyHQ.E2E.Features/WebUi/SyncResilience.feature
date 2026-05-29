@@ -32,3 +32,10 @@ Feature: Sync resilience and diagnostics
     When I view the diagnostics page
     Then I see the failure in the recent sync failures table
     And my other events still appear on the dashboard
+
+  Scenario: Diagnostics page lists a failed sync run when a webhook-driven sync fails terminally
+    Given the user's Google refresh token has been revoked
+    When Google Calendar sends a webhook notification
+    And I wait for the failed sync run to be recorded
+    And I view the diagnostics page
+    Then I see the failed run in the recent failed sync runs table

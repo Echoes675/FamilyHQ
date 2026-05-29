@@ -28,6 +28,8 @@ public class DiagnosticsPage : BasePage
     public ILocator CalendarsTable      => Page.GetByTestId("diagnostics-calendars-table");
     public ILocator FailuresEmptyState  => Page.GetByTestId("diagnostics-failures-empty");
     public ILocator FailuresTable       => Page.GetByTestId("diagnostics-failures-table");
+    public ILocator RunsEmptyState      => Page.GetByTestId("diagnostics-runs-empty");
+    public ILocator RunsTable           => Page.GetByTestId("diagnostics-runs-table");
 
     /// <summary>
     /// Navigates to /diagnostics and waits for the connection status section to render.
@@ -74,6 +76,15 @@ public class DiagnosticsPage : BasePage
     }
 
     public Task<bool> IsEmptyStateVisibleAsync() => FailuresEmptyState.IsVisibleAsync();
+
+    public async Task<int> GetFailedRunRowCountAsync()
+    {
+        if (await RunsEmptyState.IsVisibleAsync())
+            return 0;
+
+        await RunsTable.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        return await RunsTable.Locator("tbody tr").CountAsync();
+    }
 
     public async Task ClickReconnectAsync()
     {

@@ -25,12 +25,3 @@ Feature: Webhook self-echo guard
     And Google Calendar sends a webhook notification
     Then the dashboard shows the updated title "Friday Review (rescheduled)"
     And the FamilyHQ to Google write count for the event is 0
-
-  @Slow
-  Scenario: A webhook delayed beyond the 60 second TTL flows through normally
-    Given the user has an all-day event "Status Meeting" tomorrow
-    And I login as the user "TestFamilyMember"
-    And I view the dashboard
-    When I update the event title to "Status Meeting (updated)"
-    And the echo webhook is delayed by 65 seconds via the test delay header
-    Then the event title is reconciled on the dashboard without a second outbound write

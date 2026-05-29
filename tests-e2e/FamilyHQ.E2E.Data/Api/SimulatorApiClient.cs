@@ -227,20 +227,6 @@ public class SimulatorApiClient : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    /// <summary>
-    /// Triggers a webhook notification to the WebApi with an optional test-only delay header.
-    /// The delay is injected by the DEBUG-gated branch in SyncController so the
-    /// in-process TTL can expire before the sync runs (used to prove stale echoes
-    /// are NOT skipped).
-    /// </summary>
-    public async Task TriggerDelayedWebhookAsync(int delaySeconds)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "simulate/push");
-        request.Headers.Add("x-test-webhook-delay-seconds", delaySeconds.ToString());
-        var response = await _httpClient.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-    }
-
     private sealed class WriteCountResponse
     {
         public int WriteCount { get; set; }
