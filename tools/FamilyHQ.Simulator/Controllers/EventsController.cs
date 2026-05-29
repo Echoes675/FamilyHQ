@@ -82,14 +82,28 @@ public class EventsController : ControllerBase
         var windowStart = ParseGoogleTimeBound(timeMin) ?? now.AddMonths(-2);
         var windowEnd = ParseGoogleTimeBound(timeMax) ?? now.AddMonths(12);
 
+        // FHQ-18.11 (Pass 3): exception overrides are stored as rows carrying RecurringEventId (the
+        // master they belong to) and OriginalStartTime (the occurrence slot they replace). They are
+        // NEVER emitted on their own — when singleEvents=true they are surfaced by their master's
+        // expansion in place of the computed occurrence at the matching slot (mirrors Google).
+        var overridesByMaster = events
+            .Where(e => e.RecurringEventId is not null && e.OriginalStartTime is not null)
+            .GroupBy(e => e.RecurringEventId!)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<SimulatedEvent>)g.ToList());
+
         var items = new List<object>();
         foreach (var e in events)
         {
+            // Stored exception-override rows are surfaced only through their master's expansion.
+            if (singleEvents && e.RecurringEventId is not null && e.OriginalStartTime is not null)
+                continue;
+
             var eventAttendees = attendeesByEvent.TryGetValue(e.Id, out var list) ? list : new List<string>();
 
             if (singleEvents && !e.IsDeleted && !string.IsNullOrWhiteSpace(e.RecurrenceRule))
             {
-                items.AddRange(ExpandSeriesInstances(e, eventAttendees, windowStart, windowEnd));
+                var overrides = overridesByMaster.TryGetValue(e.Id, out var o) ? o : Array.Empty<SimulatedEvent>();
+                items.AddRange(ExpandSeriesInstances(e, eventAttendees, windowStart, windowEnd, overrides));
             }
             else
             {
@@ -192,6 +206,20 @@ public class EventsController : ControllerBase
         {
             string altId = eventId.Contains("seed") ? eventId.Replace("seed_", "") : (eventId.StartsWith("evt_") ? eventId.Replace("evt_", "evt_seed_") : eventId);
             existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == altId && e.UserId == userId);
+        }
+
+        // FHQ-18.11 (Pass 3): a PUT to a compound INSTANCE id "{masterId}_{stamp}" with no stored row
+        // is the "This event" (ThisOnly) edit — the app writes the single occurrence by its own id.
+        // Google turns this into an EXCEPTION override; the simulator stores an override row so the
+        // next singleEvents=true list emits it in place of the computed occurrence at that slot.
+        if (existing == null
+            && body != null
+            && TryParseCompoundInstanceId(eventId, out var masterId, out var originalStartUtc))
+        {
+            var master = await _db.Events.FirstOrDefaultAsync(
+                e => e.Id == masterId && e.UserId == userId && e.RecurrenceRule != null);
+            if (master != null)
+                return await UpsertExceptionOverrideAsync(master, eventId, originalStartUtc, body, userId);
         }
 
         if (existing == null)
@@ -412,10 +440,19 @@ public class EventsController : ControllerBase
         SimulatedEvent master,
         IReadOnlyList<string> attendeeCalendarIds,
         DateTimeOffset windowStart,
-        DateTimeOffset windowEnd)
+        DateTimeOffset windowEnd,
+        IReadOnlyList<SimulatedEvent> exceptionOverrides)
     {
         var masterStart = new DateTimeOffset(DateTime.SpecifyKind(master.StartTime, DateTimeKind.Utc));
         var duration = master.EndTime - master.StartTime;
+
+        // FHQ-18.11 (Pass 3): index the master's exception overrides by their original-start slot so a
+        // computed occurrence at that slot is replaced by the override (mirrors Google's singleEvents
+        // expansion). Keyed on the UTC stamp string so the lookup is offset/kind-insensitive.
+        var overridesBySlot = exceptionOverrides.ToDictionary(
+            o => DateTime.SpecifyKind(o.OriginalStartTime!.Value, DateTimeKind.Utc)
+                .ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture),
+            o => o);
 
         IReadOnlyList<DateTimeOffset> occurrences;
         try
@@ -437,9 +474,31 @@ public class EventsController : ControllerBase
         foreach (var occurrence in occurrences)
         {
             var occurrenceUtc = occurrence.ToUniversalTime();
+            var slotStamp = occurrenceUtc.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
+
+            // An exception override at this slot replaces the computed occurrence: emit the override's
+            // own fields, carrying recurringEventId + originalStartTime (the slot it overrides).
+            if (overridesBySlot.TryGetValue(slotStamp, out var ovr))
+            {
+                yield return MapInstanceResponse(
+                    id: ovr.Id,
+                    summary: ovr.Summary,
+                    location: ovr.Location,
+                    description: ovr.Description,
+                    start: ovr.StartTime,
+                    end: ovr.EndTime,
+                    isAllDay: ovr.IsAllDay,
+                    calendarId: master.CalendarId,
+                    attendeeCalendarIds: attendeeCalendarIds,
+                    contentHash: ovr.ContentHash ?? master.ContentHash,
+                    recurringEventId: master.Id,
+                    originalStartTimeUtc: occurrenceUtc.UtcDateTime);
+                continue;
+            }
+
             var instanceStart = occurrenceUtc.UtcDateTime;
             var instanceEnd = instanceStart + duration;
-            var instanceId = $"{master.Id}_{occurrenceUtc.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture)}";
+            var instanceId = $"{master.Id}_{slotStamp}";
 
             yield return new
             {
@@ -463,6 +522,44 @@ public class EventsController : ControllerBase
         }
     }
 
+    // FHQ-18.11 (Pass 3): emits a single expanded/override instance. An override additionally carries
+    // originalStartTime (the slot it replaces) so the app's GetEventsAsync maps OriginalStartTime, and
+    // recurringEventId so the instance is linked to its series master.
+    private static object MapInstanceResponse(
+        string id,
+        string summary,
+        string? location,
+        string? description,
+        DateTime start,
+        DateTime end,
+        bool isAllDay,
+        string calendarId,
+        IReadOnlyList<string> attendeeCalendarIds,
+        string? contentHash,
+        string recurringEventId,
+        DateTime originalStartTimeUtc) => new
+    {
+        id,
+        status      = "confirmed",
+        summary,
+        location,
+        description,
+        start = isAllDay ? (object)new { date = start.ToString("yyyy-MM-dd") } : new { dateTime = start.ToString("O") },
+        end   = isAllDay ? (object)new { date = end.ToString("yyyy-MM-dd") }   : new { dateTime = end.ToString("O") },
+        organizer = new { email = calendarId, self = true },
+        attendees = attendeeCalendarIds.Count > 0
+            ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+            : null,
+        extendedProperties = contentHash != null
+            ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = contentHash } }
+            : null,
+        recurringEventId,
+        // The slot this override replaces. Timed overrides carry dateTime; all-day carry date.
+        originalStartTime = isAllDay
+            ? (object)new { date = originalStartTimeUtc.ToString("yyyy-MM-dd") }
+            : new { dateTime = originalStartTimeUtc.ToString("O") }
+    };
+
     // FHQ-18.11 WRITE side: pulls the first "RRULE:" line out of a Google recurrence array.
     // Google packs RRULE/EXDATE/RDATE lines together; FamilyHQ only persists the RRULE. Returns
     // null when the array is null, empty, or carries no RRULE line.
@@ -482,6 +579,92 @@ public class EventsController : ControllerBase
             return;
 
         target.RecurrenceRule = ExtractRrule(recurrence);
+    }
+
+    // FHQ-18.11 (Pass 3): splits a compound INSTANCE id "{masterId}_{yyyyMMddTHHmmssZ}" into its master
+    // id and the occurrence's original-start instant. The master id itself may contain underscores
+    // (e.g. "simulated_evt_<guid>"), so the stamp is taken as the suffix after the LAST underscore and
+    // must parse as the fixed UTC stamp; anything else is not a compound instance id (false).
+    private static bool TryParseCompoundInstanceId(string id, out string masterId, out DateTime originalStartUtc)
+    {
+        masterId = string.Empty;
+        originalStartUtc = default;
+
+        var lastUnderscore = id.LastIndexOf('_');
+        if (lastUnderscore <= 0 || lastUnderscore == id.Length - 1)
+            return false;
+
+        var stamp = id[(lastUnderscore + 1)..];
+        if (!DateTime.TryParseExact(
+                stamp, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+            return false;
+
+        masterId = id[..lastUnderscore];
+        originalStartUtc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+        return true;
+    }
+
+    // FHQ-18.11 (Pass 3): stores (or updates) an exception override for a single occurrence of a series.
+    // The override row carries the compound instance id, links to its master via RecurringEventId, and
+    // records the slot it replaces via OriginalStartTime. Its overridden fields come from the PUT body.
+    // The master's RecurrenceRule is intentionally NOT copied onto the override — only the master is a
+    // series row, so the override is never itself expanded and is surfaced only through the master.
+    private async Task<IActionResult> UpsertExceptionOverrideAsync(
+        SimulatedEvent master, string instanceId, DateTime originalStartUtc, GoogleEventRequest body, string? userId)
+    {
+        var existingOverride = await _db.Events.FirstOrDefaultAsync(e => e.Id == instanceId && e.UserId == userId);
+
+        var isAllDay = body.Start.Date != null;
+        var start = body.Start.DateTime?.ToUniversalTime()
+                    ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : originalStartUtc);
+        var end = body.End.DateTime?.ToUniversalTime()
+                  ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : start.AddHours(1));
+
+        var contentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash");
+
+        if (existingOverride is null)
+        {
+            existingOverride = new SimulatedEvent
+            {
+                Id = instanceId,
+                UserId = userId,
+                RecurringEventId = master.Id,
+                OriginalStartTime = originalStartUtc
+            };
+            _db.Events.Add(existingOverride);
+        }
+
+        existingOverride.CalendarId = master.CalendarId;
+        existingOverride.Summary = body.Summary ?? master.Summary;
+        existingOverride.Location = body.Location;
+        existingOverride.Description = body.Description;
+        existingOverride.StartTime = start;
+        existingOverride.EndTime = end;
+        existingOverride.IsAllDay = isAllDay;
+        if (contentHash != null)
+            existingOverride.ContentHash = contentHash;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation(
+            "[SIM] Stored exception override {InstanceId} for series {MasterId} at slot {Slot:O}.",
+            instanceId, master.Id, originalStartUtc);
+
+        _writeCountStore.Increment(instanceId);
+
+        return Ok(MapInstanceResponse(
+            id: instanceId,
+            summary: existingOverride.Summary,
+            location: existingOverride.Location,
+            description: existingOverride.Description,
+            start: existingOverride.StartTime,
+            end: existingOverride.EndTime,
+            isAllDay: existingOverride.IsAllDay,
+            calendarId: master.CalendarId,
+            attendeeCalendarIds: Array.Empty<string>(),
+            contentHash: existingOverride.ContentHash ?? master.ContentHash,
+            recurringEventId: master.Id,
+            originalStartTimeUtc: originalStartUtc));
     }
 
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.

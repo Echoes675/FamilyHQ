@@ -115,4 +115,44 @@ public class RecurringEventSteps
         await _dashboardPage.AssertSingleNonRecurringOccurrenceInDayViewAsync(
             eventName, System.DateTime.Today);
     }
+
+    // ── FHQ-18.11 Pass 3: edit-scope (This event / This and following / All events) ───────────
+
+    // Opens the Nth weekly occurrence of the series on the Day view, renames it, saves and confirms
+    // the recurrence-scope prompt with the chosen scope. Occurrence dates are derived from the seeded
+    // first-occurrence date (+7-day steps), so the step is run-date independent. Scope word is one of
+    // "this" / "following" / "all" — the recurrence-scope-* testid suffixes.
+    [When(@"I change occurrence (\d+) of ""([^""]*)"" to ""([^""]*)"" applying to ""([^""]*)"" scope")]
+    public async Task WhenIChangeOccurrenceToApplyingScope(
+        int occurrence, string seriesName, string newTitle, string scope)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.EditRecurringOccurrenceTitleWithScopeAsync(seriesName, date, newTitle, scope);
+    }
+
+    // Establishes a pre-existing per-instance exception override before an all-events edit, so the
+    // all-events scenario can prove the override is preserved. This is a "This event" edit applied to
+    // the Nth occurrence.
+    [Given(@"occurrence (\d+) of ""([^""]*)"" has already been changed to ""([^""]*)""")]
+    public async Task GivenOccurrenceHasAlreadyBeenChangedTo(int occurrence, string seriesName, string newTitle)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.EditRecurringOccurrenceTitleWithScopeAsync(seriesName, date, newTitle, "this");
+    }
+
+    // Asserts the named event is shown on the Nth occurrence's date in the Day view. Used for both the
+    // changed occurrence and (with "still appears") an untouched occurrence retaining its title.
+    [Then(@"the event ""([^""]*)"" (?:appears|still appears) on occurrence (\d+)")]
+    public async Task ThenTheEventAppearsOnOccurrence(string eventName, int occurrence)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.AssertEventVisibleInDayViewOnDateAsync(eventName, date);
+    }
+
+    // Occurrence N (1-based) of the weekly series falls N-1 weeks after the seeded first occurrence.
+    private System.DateTime OccurrenceDate(int occurrence)
+    {
+        var first = _scenarioContext.Get<System.DateTime>("RecurringSeriesFirstOccurrenceDate");
+        return first.Date.AddDays(7 * (occurrence - 1));
+    }
 }

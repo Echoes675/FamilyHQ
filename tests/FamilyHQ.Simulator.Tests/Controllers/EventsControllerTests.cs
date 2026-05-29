@@ -752,6 +752,178 @@ public class EventsControllerTests
         (await db.Events.FindAsync("evt-bob"))!.RecurrenceRule.Should().BeNull();
     }
 
+    // ── Exception overrides (FHQ-18.11 Pass 3) ────────────────────────────────
+
+    [Fact]
+    public async Task UpdateEvent_OnCompoundInstanceId_StoresExceptionThatExpansionSurfaces_SiblingsUnchanged()
+    {
+        // Arrange — a weekly COUNT=3 series. The app edits "This event" by PUTting the SECOND
+        // occurrence's compound instance id; Google turns that into an exception override.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        var instanceId = "evt-series_20260609T180000Z";
+        var editBody = new GoogleEventRequest
+        {
+            Summary = "Soccer practice (moved)",
+            Start = new GoogleDateTime { DateTime = secondSlot.AddHours(1) }, // shifted one hour later
+            End = new GoogleDateTime { DateTime = secondSlot.AddHours(2) }
+        };
+
+        // Act — PUT the single instance, then reconcile-list the window.
+        var putResult = await sut.UpdateEvent("cal-alice", instanceId, editBody);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the PUT stored an override row linked to the master at the right slot.
+        putResult.Should().BeOfType<OkObjectResult>();
+        var stored = await db.Events.FindAsync(instanceId);
+        stored!.RecurringEventId.Should().Be("evt-series");
+        stored.OriginalStartTime.Should().Be(secondSlot);
+        stored.RecurrenceRule.Should().BeNull("an override is not itself a series master");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        // Still three instances (the override replaces the computed slot, not adds to it).
+        items.GetArrayLength().Should().Be(3);
+
+        // Occurrence 1 and 3 are untouched; occurrence 2 carries the override fields +
+        // recurringEventId + originalStartTime.
+        items[0].GetProperty("summary").GetString().Should().Be("Soccer practice");
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+
+        var overridden = items[1];
+        overridden.GetProperty("id").GetString().Should().Be(instanceId);
+        overridden.GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+        overridden.GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        overridden.GetProperty("originalStartTime").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T18:00:00");
+
+        items[2].GetProperty("summary").GetString().Should().Be("Soccer practice");
+        items[2].GetProperty("id").GetString().Should().Be("evt-series_20260616T180000Z");
+    }
+
+    [Fact]
+    public async Task ListEvents_SingleEvents_HonoursUntilTruncation_DropsPostSplitOccurrences()
+    {
+        // Arrange — the "This and following" split truncates the original master's RRULE with an
+        // UNTIL one second before the split instant. Expansion must drop occurrences at/after UNTIL.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        // Truncate just before the THIRD occurrence (2026-06-16T18:00:00Z): UNTIL = split − 1s.
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260616T175959Z"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — only the first two occurrences survive; the third (>= UNTIL) is dropped.
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(2);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
+    }
+
+    [Fact]
+    public async Task UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields_AndPreservesPriorExceptionOverride()
+    {
+        // Arrange — a series with an EXISTING exception override on its second occurrence (created by
+        // a prior "This event" edit). An "All events" edit then PUTs the master's fields (title).
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        // All-events edit: app PUTs the master's id with new field values and NO recurrence array.
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Football training",
+            Start = new GoogleDateTime { DateTime = seriesStart },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) }
+        };
+
+        // Act
+        await sut.UpdateEvent("cal-alice", "evt-series", masterEdit);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the master kept its RRULE (field-only patch) and its summary changed.
+        var master = await db.Events.FindAsync("evt-series");
+        master!.Summary.Should().Be("Football training");
+        master.RecurrenceRule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3);
+        // Occurrences 1 and 3 reflect the new master title.
+        items[0].GetProperty("summary").GetString().Should().Be("Football training");
+        items[2].GetProperty("summary").GetString().Should().Be("Football training");
+        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
+        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+        items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()
