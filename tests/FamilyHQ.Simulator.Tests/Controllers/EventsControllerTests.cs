@@ -396,6 +396,158 @@ public class EventsControllerTests
         unchanged!.CalendarId.Should().Be("cal-bob");
     }
 
+    // ── ListEvents — recurrence expansion (FHQ-18.11) ─────────────────────────
+
+    [Fact]
+    public async Task ListEvents_SingleEvents_ExpandsSeriesMasterIntoOneInstancePerOccurrence()
+    {
+        // Arrange — a weekly series master with COUNT=3, anchored on a Tuesday.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            ContentHash = "hash-abc",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act — a wide window so all three occurrences fall inside it.
+        var result = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+
+        using var doc = JsonDocument.Parse(json);
+        var items = doc.RootElement.GetProperty("items");
+
+        // Three instances, NO bare master row.
+        items.GetArrayLength().Should().Be(3);
+        json.Should().NotContain("\"id\":\"evt-series\"");
+
+        // Each instance: synthetic id, recurringEventId back to the master, master content-hash.
+        var first = items[0];
+        first.GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+        first.GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        first.GetProperty("extendedProperties").GetProperty("private")
+            .GetProperty("content-hash").GetString().Should().Be("hash-abc");
+        first.GetProperty("status").GetString().Should().Be("confirmed");
+
+        // Instances are spaced one week apart, carrying the master's summary.
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
+        items[2].GetProperty("id").GetString().Should().Be("evt-series_20260616T180000Z");
+        items[2].GetProperty("summary").GetString().Should().Be("Soccer practice");
+    }
+
+    [Fact]
+    public async Task ListEvents_SingleEvents_ClipsOccurrencesToTheSyncWindow()
+    {
+        // Arrange — unbounded weekly series; only the occurrences inside the window are emitted.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 9, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Standup",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddMinutes(30),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Window covers only the second and third Tuesdays (Jun 9 and Jun 16).
+        var result = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-08T00:00:00Z",
+            timeMax: "2026-06-17T00:00:00Z");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        using var doc = JsonDocument.Parse(json);
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(2);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260609T090000Z");
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260616T090000Z");
+    }
+
+    [Fact]
+    public async Task ListEvents_WithoutSingleEvents_ReturnsMasterRowUnexpanded()
+    {
+        // Arrange — default (non-single-events) listing leaves the master untouched.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act — default params (singleEvents=false).
+        var result = await sut.ListEvents("cal-alice");
+
+        // Assert — the master row is returned as-is, not expanded.
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        using var doc = JsonDocument.Parse(json);
+        var items = doc.RootElement.GetProperty("items");
+        items.GetArrayLength().Should().Be(1);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series");
+    }
+
+    [Fact]
+    public async Task GetEvent_WhenMasterHasRecurrenceRule_ReturnsRecurrenceArray()
+    {
+        // Arrange — the two-pass master fetch must surface the RRULE in a recurrence array.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var result = await sut.GetEvent("cal-alice", "evt-series");
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        using var doc = JsonDocument.Parse(json);
+        var recurrence = doc.RootElement.GetProperty("recurrence");
+        recurrence.GetArrayLength().Should().Be(1);
+        recurrence[0].GetString().Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()

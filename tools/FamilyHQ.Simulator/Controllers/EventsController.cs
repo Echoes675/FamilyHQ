@@ -1,4 +1,5 @@
 using System.Globalization;
+using FamilyHQ.Core.Calendar.Recurrence;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
@@ -27,9 +28,15 @@ public class EventsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> ListEvents(string calendarId)
+    public async Task<IActionResult> ListEvents(
+        string calendarId,
+        [FromQuery] bool singleEvents = false,
+        [FromQuery] string? timeMin = null,
+        [FromQuery] string? timeMax = null)
     {
-        _logger.LogInformation("[SIM] GET events for calendar: {CalendarId}", calendarId);
+        _logger.LogInformation(
+            "[SIM] GET events for calendar: {CalendarId} (singleEvents={SingleEvents}, timeMin={TimeMin}, timeMax={TimeMax})",
+            calendarId, singleEvents, timeMin, timeMax);
         var userId = ExtractUserId(Request);
 
         var injected = SyncFailureResponse.TryBuild(_failureStore.Get(userId ?? string.Empty));
@@ -60,13 +67,32 @@ public class EventsController : ControllerBase
             .GroupBy(a => a.EventId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.AttendeeCalendarId).ToList());
 
+        // FHQ-18.11: with singleEvents=true (how the app's sync always calls this), a series MASTER
+        // is replaced by its expanded per-occurrence INSTANCES bounded by the sync window. This
+        // mirrors Google: the bare master row is NOT emitted; each instance carries recurringEventId
+        // and the master's content-hash. Without singleEvents the master is returned unchanged so the
+        // existing non-recurring contract is untouched.
+        var windowStart = ParseGoogleTimeBound(timeMin) ?? DateTimeOffset.MinValue;
+        var windowEnd = ParseGoogleTimeBound(timeMax) ?? DateTimeOffset.MaxValue;
+
+        var items = new List<object>();
+        foreach (var e in events)
+        {
+            var eventAttendees = attendeesByEvent.TryGetValue(e.Id, out var list) ? list : new List<string>();
+
+            if (singleEvents && !e.IsDeleted && !string.IsNullOrWhiteSpace(e.RecurrenceRule))
+            {
+                items.AddRange(ExpandSeriesInstances(e, eventAttendees, windowStart, windowEnd));
+            }
+            else
+            {
+                items.Add(MapEventResponse(e, eventAttendees));
+            }
+        }
+
         var response = new
         {
-            items = events.Select(e =>
-            {
-                var eventAttendees = attendeesByEvent.TryGetValue(e.Id, out var list) ? list : new List<string>();
-                return MapEventResponse(e, eventAttendees);
-            }),
+            items,
             nextSyncToken = "simulated_sync_token_" + Guid.NewGuid().ToString("N")
         };
 
@@ -103,7 +129,10 @@ public class EventsController : ControllerBase
             .Select(a => a.AttendeeCalendarId)
             .ToListAsync();
 
-        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+        // FHQ-18.11: this is the two-pass master fetch — when the requested id is a series
+        // master, return it WITH a recurrence array so the sync can read the RRULE. The app
+        // calls events.get(recurringEventId) for each unknown series discovered in the listing.
+        return Ok(MapEventResponse(existing, attendeeCalendarIds, includeRecurrence: true));
     }
 
     [HttpPost]
@@ -286,7 +315,10 @@ public class EventsController : ControllerBase
     private const string PoisonEventIdPrefix = "simulated_evt_poison_";
     private const int PoisonSummaryLength = 600;
 
-    private static object MapEventResponse(SimulatedEvent e, IReadOnlyList<string> attendeeCalendarIds) => new
+    private static object MapEventResponse(
+        SimulatedEvent e,
+        IReadOnlyList<string> attendeeCalendarIds,
+        bool includeRecurrence = false) => new
     {
         id          = e.Id,
         status      = e.IsDeleted ? "cancelled" : "confirmed",
@@ -301,8 +333,81 @@ public class EventsController : ControllerBase
             : null,
         extendedProperties = e.ContentHash != null
             ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = e.ContentHash } }
+            : null,
+        // FHQ-18.11: only the master fetch (events.get) carries the recurrence array. Listing
+        // instances never do — they reference the master via recurringEventId instead.
+        recurrence = includeRecurrence && !string.IsNullOrWhiteSpace(e.RecurrenceRule)
+            ? (object)new[] { e.RecurrenceRule }
             : null
     };
+
+    // FHQ-18.11: expands a series master into the per-occurrence INSTANCES that fall inside the
+    // sync window [windowStart, windowEnd). Each instance mirrors what Google emits with
+    // singleEvents=true: a synthetic id "{masterId}_{yyyyMMddTHHmmssZ}", recurringEventId pointing
+    // at the master, start/end shifted by the occurrence's offset from the master start, the
+    // master's content-hash, and status confirmed. The bare master row is intentionally omitted.
+    private IEnumerable<object> ExpandSeriesInstances(
+        SimulatedEvent master,
+        IReadOnlyList<string> attendeeCalendarIds,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd)
+    {
+        var masterStart = new DateTimeOffset(DateTime.SpecifyKind(master.StartTime, DateTimeKind.Utc));
+        var duration = master.EndTime - master.StartTime;
+
+        IReadOnlyList<DateTimeOffset> occurrences;
+        try
+        {
+            occurrences = RecurrenceRuleBuilder
+                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd)
+                .ToList();
+        }
+        catch (ArgumentException ex)
+        {
+            // A malformed seeded RRULE is a test-data error; log and emit no instances rather than
+            // failing the whole listing for the calendar.
+            _logger.LogWarning(ex,
+                "[SIM] Could not expand recurrence rule for master {EventId}: {Rule}",
+                master.Id, master.RecurrenceRule);
+            yield break;
+        }
+
+        foreach (var occurrence in occurrences)
+        {
+            var occurrenceUtc = occurrence.ToUniversalTime();
+            var instanceStart = occurrenceUtc.UtcDateTime;
+            var instanceEnd = instanceStart + duration;
+            var instanceId = $"{master.Id}_{occurrenceUtc.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture)}";
+
+            yield return new
+            {
+                id          = instanceId,
+                status      = "confirmed",
+                summary     = master.Summary,
+                location    = master.Location,
+                description = master.Description,
+                start = master.IsAllDay ? (object)new { date = instanceStart.ToString("yyyy-MM-dd") } : new { dateTime = instanceStart.ToString("O") },
+                end   = master.IsAllDay ? (object)new { date = instanceEnd.ToString("yyyy-MM-dd") }   : new { dateTime = instanceEnd.ToString("O") },
+                organizer = new { email = master.CalendarId, self = true },
+                attendees = attendeeCalendarIds.Count > 0
+                    ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+                    : null,
+                extendedProperties = master.ContentHash != null
+                    ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = master.ContentHash } }
+                    : null,
+                // Links the instance back to its series master so the sync can two-pass-fetch the RRULE.
+                recurringEventId = master.Id
+            };
+        }
+    }
+
+    // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.
+    private static DateTimeOffset? ParseGoogleTimeBound(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? null
+            : DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var parsed)
+                ? parsed
+                : null;
 
     // Token format: "simulated_{userId}_{nonce}"
     private static string? ExtractUserId(HttpRequest request)

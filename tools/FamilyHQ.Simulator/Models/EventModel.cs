@@ -18,4 +18,11 @@ public class EventModel
     /// Seeds EventAttendee rows so the event surfaces on each attendee calendar's feed.
     /// </summary>
     public List<string> AttendeeCalendarIds { get; set; } = new();
+
+    /// <summary>
+    /// FHQ-18.11: when set, an RFC 5545 RRULE line marking this seeded event as a
+    /// recurring-series master (e.g. "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=6"). Null for
+    /// ordinary events.
+    /// </summary>
+    public string? RecurrenceRule { get; set; }
 }

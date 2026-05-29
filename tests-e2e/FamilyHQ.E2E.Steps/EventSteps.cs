@@ -348,6 +348,66 @@ public class EventSteps
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
 
+    // FHQ-18.11: seeds a Google recurring SERIES — a single master event carrying a weekly RRULE.
+    // The series starts TOMORROW so its first occurrence is always inside the visible window
+    // (Rule 9, relative dates), and repeats on tomorrow's weekday. The Simulator expands the
+    // master into one INSTANCE per occurrence on events.list, so after a sync the dashboard shows
+    // N occurrences. The weekday-derived subtitle text (e.g. "Repeats weekly on Tuesday") is
+    // stashed for the details assertion so the scenario never hardcodes a weekday.
+    [Given(@"the user has a weekly recurring event ""([^""]*)"" for (\d+) occurrences in ""([^""]*)""")]
+    public async Task GivenTheUserHasAWeeklyRecurringEventForOccurrences(
+        string eventName, int occurrences, string calendarName)
+    {
+        var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var weekday = firstOccurrence.DayOfWeek;
+        var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
+
+        isolatedTemplate.Events.Add(new SimulatorEventModel
+        {
+            Id = "evt_" + Guid.NewGuid().ToString("N"),
+            CalendarId = calendar.Id,
+            Summary = eventName,
+            StartTime = firstOccurrence,
+            EndTime = firstOccurrence.AddHours(1),
+            IsAllDay = false,
+            RecurrenceRule = rrule
+        });
+
+        // Surface derived expectations so view-specific Then steps stay weekday-agnostic.
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;
+        _scenarioContext["RecurringSeriesExpectedSubtitle"] =
+            $"Repeats weekly on {weekday}"; // DayOfWeek.ToString() is the English weekday name
+
+        await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    // Navigates the Day view's day picker to the recurring series' first occurrence date (tomorrow),
+    // the day guaranteed to carry the first instance.
+    [When(@"I select the recurring event's first occurrence in the day picker")]
+    public async Task WhenISelectTheRecurringEventsFirstOccurrenceInTheDayPicker()
+    {
+        var date = _scenarioContext.Get<DateTime>("RecurringSeriesFirstOccurrenceDate");
+        var page = _scenarioContext.Get<Microsoft.Playwright.IPage>();
+        var dashboardPage = new FamilyHQ.E2E.Common.Pages.DashboardPage(page);
+        await dashboardPage.OpenDayPickerAndGoAsync(date.ToString("yyyy-MM-dd"));
+    }
+
+    private static string WeekdayCode(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Sunday => "SU",
+        DayOfWeek.Monday => "MO",
+        DayOfWeek.Tuesday => "TU",
+        DayOfWeek.Wednesday => "WE",
+        DayOfWeek.Thursday => "TH",
+        DayOfWeek.Friday => "FR",
+        DayOfWeek.Saturday => "SA",
+        _ => throw new ArgumentOutOfRangeException(nameof(day), day, "Unknown weekday.")
+    };
+
     [Given(@"the user has (\d+) events on ""([^""]*)"" in ""([^""]*)""")]
     public async Task GivenTheUserHasNEventsOnInCalendar(int count, string dateExpr, string calendarName)
     {

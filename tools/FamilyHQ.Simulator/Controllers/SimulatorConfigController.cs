@@ -59,7 +59,8 @@ public class SimulatorConfigController : ControllerBase
                 StartTime = e.StartTime,
                 EndTime = e.EndTime,
                 IsAllDay = e.IsAllDay,
-                UserId = config.UserName
+                UserId = config.UserName,
+                RecurrenceRule = e.RecurrenceRule
             });
 
             foreach (var attendeeCalendarId in e.AttendeeCalendarIds)

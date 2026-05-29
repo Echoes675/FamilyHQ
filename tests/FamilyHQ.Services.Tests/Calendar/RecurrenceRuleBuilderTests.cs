@@ -670,4 +670,87 @@ public class RecurrenceRuleBuilderTests
         finished.Should().BeSameAs(work, "a never-emitting monthly rule must terminate within the cap");
         (await work).Should().Be(0);
     }
+
+    // --- Expand: window-bounded occurrence enumeration (FHQ-18.11) ---
+
+    [Fact]
+    public void Expand_WeeklyOnTuesdayCount4_YieldsFourWeeklyOccurrences()
+    {
+        // 2026-06-02 is a Tuesday.
+        var seriesStart = new DateTimeOffset(2026, 6, 2, 18, 0, 0, TimeSpan.Zero);
+        var windowEnd = seriesStart.AddMonths(2);
+
+        var occurrences = RecurrenceRuleBuilder
+            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, seriesStart, windowEnd)
+            .ToList();
+
+        occurrences.Should().HaveCount(4);
+        occurrences.Should().BeInAscendingOrder();
+        occurrences[0].Should().Be(seriesStart);
+        occurrences[1].Should().Be(seriesStart.AddDays(7));
+        occurrences[2].Should().Be(seriesStart.AddDays(14));
+        occurrences[3].Should().Be(seriesStart.AddDays(21));
+        occurrences.Should().OnlyContain(o => o.DayOfWeek == DayOfWeek.Tuesday);
+    }
+
+    [Fact]
+    public void Expand_WeeklyOnTuesdayCount4_WindowClipsToOnlyInWindowOccurrences()
+    {
+        var seriesStart = new DateTimeOffset(2026, 6, 2, 18, 0, 0, TimeSpan.Zero);
+        // Window opens after the first two occurrences and closes after the third.
+        var windowStart = seriesStart.AddDays(10);
+        var windowEnd = seriesStart.AddDays(18);
+
+        var occurrences = RecurrenceRuleBuilder
+            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, windowStart, windowEnd)
+            .ToList();
+
+        occurrences.Should().ContainSingle()
+            .Which.Should().Be(seriesStart.AddDays(14));
+    }
+
+    [Fact]
+    public void Expand_DailyUnbounded_StopsAtWindowEndExclusive()
+    {
+        var seriesStart = new DateTimeOffset(2026, 6, 1, 9, 0, 0, TimeSpan.Zero);
+        var windowEnd = seriesStart.AddDays(5);
+
+        var occurrences = RecurrenceRuleBuilder
+            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd)
+            .ToList();
+
+        // Days 0..4 are inside [start, start+5); day 5 equals windowEnd and is excluded.
+        occurrences.Should().HaveCount(5);
+        occurrences.Last().Should().Be(seriesStart.AddDays(4));
+    }
+
+    [Fact]
+    public void Expand_DailyUntil_StopsAtUntilInstant()
+    {
+        var seriesStart = new DateTimeOffset(2026, 6, 1, 9, 0, 0, TimeSpan.Zero);
+        var windowEnd = seriesStart.AddMonths(1);
+
+        var occurrences = RecurrenceRuleBuilder
+            .Expand("RRULE:FREQ=DAILY;UNTIL=20260603T090000Z", seriesStart, seriesStart, windowEnd)
+            .ToList();
+
+        // Jun 1, 2, 3 (UNTIL is inclusive of the matching instant).
+        occurrences.Should().HaveCount(3);
+        occurrences.Last().Should().Be(new DateTimeOffset(2026, 6, 3, 9, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task Expand_UnboundedRule_TerminatesWithinCap()
+    {
+        var seriesStart = new DateTimeOffset(2026, 6, 1, 9, 0, 0, TimeSpan.Zero);
+        // Window far wider than the hard cap would cover if enumeration ran away.
+        var windowEnd = seriesStart.AddYears(500);
+
+        var work = Task.Run(() => RecurrenceRuleBuilder
+            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd).Count());
+
+        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
+        finished.Should().BeSameAs(work, "an unbounded daily rule must terminate within the hard cap");
+        (await work).Should().BeLessThanOrEqualTo(RecurrenceRuleBuilder.MaxEnumeratedOccurrences);
+    }
 }

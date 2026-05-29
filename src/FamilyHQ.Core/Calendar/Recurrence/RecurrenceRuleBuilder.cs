@@ -192,6 +192,66 @@ public static class RecurrenceRuleBuilder
         return before;
     }
 
+    /// <summary>
+    /// Enumerates the start instants of <paramref name="rrule"/>, generated forward from
+    /// <paramref name="seriesStart"/>, that fall within the half-open window
+    /// [<paramref name="windowStart"/>, <paramref name="windowEnd"/>).
+    /// </summary>
+    /// <remarks>
+    /// Window semantics: an occurrence is included when <c>windowStart &lt;= occurrence &lt; windowEnd</c>.
+    /// Occurrences are bounded by the rule's COUNT/UNTIL and a hard cap
+    /// (<see cref="MaxEnumeratedOccurrences"/>) so a Never rule cannot loop forever. Occurrences
+    /// before <paramref name="windowStart"/> are skipped without being yielded but still count
+    /// against COUNT (so a COUNT-bounded series whose early occurrences precede the window yields
+    /// only the in-window remainder). Pure: no I/O, no async, invariant-culture.
+    /// </remarks>
+    /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
+    public static IEnumerable<DateTimeOffset> Expand(
+        string rrule, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd) =>
+        Expand(ParseRRuleString(rrule), seriesStart, windowStart, windowEnd);
+
+    /// <summary>
+    /// Spec-based overload of <see cref="Expand(string, DateTimeOffset, DateTimeOffset, DateTimeOffset)"/>
+    /// for callers that have already parsed the rule, avoiding a redundant re-parse.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
+    public static IEnumerable<DateTimeOffset> Expand(
+        RecurrenceSpec spec, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+
+        var hardCap = spec.End.Kind == RecurrenceEndKind.Count
+            ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
+            : MaxEnumeratedOccurrences;
+
+        var untilUtc = spec.End.Kind == RecurrenceEndKind.Until
+            ? spec.End.UntilUtc!.Value
+            : (DateTimeOffset?)null;
+
+        var windowStartUtc = windowStart.ToUniversalTime();
+        var windowEndUtc = windowEnd.ToUniversalTime();
+
+        foreach (var occurrence in EnumerateOccurrences(spec, seriesStart.ToUniversalTime(), hardCap))
+        {
+            if (untilUtc is { } until && occurrence > until)
+            {
+                break;
+            }
+
+            // Occurrences are monotonically increasing; once we reach windowEnd nothing else
+            // can fall inside the window.
+            if (occurrence >= windowEndUtc)
+            {
+                break;
+            }
+
+            if (occurrence >= windowStartUtc)
+            {
+                yield return occurrence;
+            }
+        }
+    }
+
     // Lazily yields up to maxOccurrences occurrence start instants (UTC, monotonically increasing)
     // for the supported frequency shapes. Anchored at dtStart; weekly BYDAY expands each week to its
     // selected weekdays. Pure and side-effect-free.

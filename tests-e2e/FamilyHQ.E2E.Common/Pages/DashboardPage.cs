@@ -23,6 +23,11 @@ public class DashboardPage : BasePage
     public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
+
+    // FHQ-18.11: recurrence affordances. The indicator glyph renders on every recurring tile
+    // across Day / Month / Agenda; the subtitle renders inside the open event modal.
+    public ILocator RecurrenceIndicators => Page.GetByTestId("recurrence-indicator");
+    public ILocator RecurrenceSubtitle => Page.GetByTestId("recurrence-subtitle");
     public ILocator LoginBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Login to Google" });
     public ILocator SignOutBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Sign Out" });
     public ILocator UserInfo => Page.GetByText("Signed in as:");
@@ -944,5 +949,60 @@ public class DashboardPage : BasePage
     public async Task<bool> IsCurrentTimeLineVisibleAsync()
     {
         return await CurrentTimeLine.IsVisibleAsync();
+    }
+
+    // FHQ-18.11 recurrence helpers ────────────────────────────────────────────
+
+    /// <summary>
+    /// Counts the event capsules currently on the grid whose text contains
+    /// <paramref name="eventName"/>. Used to assert that a recurring series expanded into
+    /// the expected number of instances after sync.
+    /// </summary>
+    public async Task<int> CountVisibleEventInstancesAsync(string eventName)
+    {
+        var texts = await EventCapsules.AllInnerTextsAsync();
+        return texts.Count(t => t.Contains(eventName));
+    }
+
+    /// <summary>
+    /// Waits until at least <paramref name="expected"/> capsules for <paramref name="eventName"/>
+    /// are rendered, then returns the count. Polls to absorb the render cycle between the sync
+    /// HTTP response landing and Blazor painting the instances.
+    /// </summary>
+    public async Task<int> WaitForEventInstanceCountAsync(string eventName, int expected, int timeoutMs = 30000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        var count = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            count = await CountVisibleEventInstancesAsync(eventName);
+            if (count >= expected) return count;
+            await Page.WaitForTimeoutAsync(250);
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Waits for the recurrence indicator glyph to be visible on at least one event tile in the
+    /// current view. The glyph is shared across Day / Month / Agenda, so this works in any view.
+    /// </summary>
+    public async Task WaitForRecurrenceIndicatorVisibleAsync(int timeoutMs = 30000)
+    {
+        await RecurrenceIndicators.First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+    }
+
+    /// <summary>Number of recurrence indicator glyphs currently rendered in the view.</summary>
+    public async Task<int> CountRecurrenceIndicatorsAsync() => await RecurrenceIndicators.CountAsync();
+
+    /// <summary>
+    /// Reads the recurrence subtitle text from the open event modal (e.g.
+    /// "Repeats weekly on Tuesday"). Waits for the subtitle to be visible first.
+    /// </summary>
+    public async Task<string> GetRecurrenceSubtitleTextAsync(int timeoutMs = 30000)
+    {
+        await RecurrenceSubtitle.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
+        return (await RecurrenceSubtitle.InnerTextAsync()).Trim();
     }
 }
