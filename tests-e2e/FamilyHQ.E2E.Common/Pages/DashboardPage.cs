@@ -229,6 +229,16 @@ public class DashboardPage : BasePage
 
     public async Task<bool> HasTodayRowHighlightAsync()
     {
+        // Wait for the agenda to paint today's row before the instant count (TOCTOU, intermittent-issues #6).
+        try
+        {
+            await Page.Locator(".agenda-today-row").First
+                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
         return await Page.Locator(".agenda-today-row").CountAsync() == 1;
     }
 
@@ -242,6 +252,10 @@ public class DashboardPage : BasePage
 
     public async Task<int> GetWeekdayRowsWithoutWeekendClassAsync()
     {
+        // Wait for the agenda to paint at least one day row before counting; an unrendered
+        // agenda yields 0 and a false-negative subtraction (TOCTOU, intermittent-issues #6).
+        await Page.Locator(".agenda-day-row").First
+            .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         // All .agenda-day-row rows that do NOT have .agenda-weekend-row
         var all = await Page.Locator(".agenda-day-row").CountAsync();
         var weekends = await Page.Locator(".agenda-weekend-row").CountAsync();
@@ -948,6 +962,17 @@ public class DashboardPage : BasePage
 
     public async Task<bool> IsCurrentTimeLineVisibleAsync()
     {
+        // Wait for the time line to paint before the instant visibility read; it renders only
+        // when viewing today and can lag the Day-view switch (TOCTOU, intermittent-issues #6).
+        try
+        {
+            await CurrentTimeLine.First
+                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
         return await CurrentTimeLine.IsVisibleAsync();
     }
 
