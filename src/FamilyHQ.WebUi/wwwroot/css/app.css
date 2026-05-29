@@ -313,6 +313,7 @@ html, body {
 .diagnostics-refresh-btn { min-height: 48px; min-width: 48px; }
 .diagnostics-section { margin-bottom: 32px; }
 .diagnostics-section__title { font-size: 18px; font-weight: 600; color: var(--theme-text); margin-bottom: 12px; }
+.diagnostics-section__caption { color: var(--theme-text-muted); font-size: 0.85rem; margin: 0 0 0.5rem; }
 .diagnostics-empty { color: var(--theme-text-muted); font-size: 14px; margin: 0; padding: 12px 0; }
 .diagnostics-muted { color: var(--theme-text-muted); }
 .diagnostics-connection { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px; background: var(--theme-surface); border: 1px solid var(--theme-border); border-radius: 8px; margin-bottom: 12px; }
