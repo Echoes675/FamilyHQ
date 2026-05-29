@@ -87,4 +87,43 @@ public class CalendarSyncJobRepositoryTests : IDisposable
 
         (await _db.CalendarSyncJobs.CountAsync(j => j.Status == SyncJobStatus.Pending)).Should().Be(1);
     }
+
+    [Fact]
+    public async Task ClaimNextAsync_ReturnsOldestPending_AndMarksInProgress()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow().AddMinutes(-2) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow().AddMinutes(-1) });
+        await _db.SaveChangesAsync();
+
+        var claimed = await sut.ClaimNextAsync();
+
+        claimed.Should().NotBeNull();
+        claimed!.Status.Should().Be(SyncJobStatus.InProgress);
+        claimed.StartedAt.Should().Be(_time.GetUtcNow());
+        claimed.AttemptCount.Should().Be(1);
+        claimed.EnqueuedAt.Should().Be(_time.GetUtcNow().AddMinutes(-2)); // oldest first
+    }
+
+    [Fact]
+    public async Task ClaimNextAsync_ReturnsNull_WhenNoEligibleJobs()
+    {
+        var sut = CreateSut();
+        (await sut.ClaimNextAsync()).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ClaimNextAsync_SkipsJobsWithFutureNextAttemptAt()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.Add(new CalendarSyncJob
+        {
+            UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow(),
+            NextAttemptAt = _time.GetUtcNow().AddMinutes(10) // not yet due
+        });
+        await _db.SaveChangesAsync();
+
+        (await sut.ClaimNextAsync()).Should().BeNull();
+    }
 }

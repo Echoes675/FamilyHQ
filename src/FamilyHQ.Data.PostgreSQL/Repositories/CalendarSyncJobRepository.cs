@@ -40,7 +40,24 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
         }
     }
 
-    public Task<CalendarSyncJob?> ClaimNextAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    public async Task<CalendarSyncJob?> ClaimNextAsync(CancellationToken ct = default)
+    {
+        var now = timeProvider.GetUtcNow();
+
+        var job = await context.CalendarSyncJobs
+            .Where(j => j.Status == SyncJobStatus.Pending
+                        && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
+            .OrderBy(j => j.EnqueuedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (job is null) return null;
+
+        job.Status = SyncJobStatus.InProgress;
+        job.StartedAt = now;
+        job.AttemptCount += 1;
+        await context.SaveChangesAsync(ct);
+        return job;
+    }
     public Task CompleteAsync(Guid id, CancellationToken ct = default) => throw new NotImplementedException();
     public Task FailAsync(Guid id, string error, bool retryable, TimeSpan? retryAfter, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> RecoverOrphansAsync(TimeSpan olderThan, CancellationToken ct = default) => throw new NotImplementedException();
