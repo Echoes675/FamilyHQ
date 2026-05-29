@@ -10,6 +10,9 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
 
     public async Task EnqueueAsync(string userId, Guid? calendarInfoId, SyncJobSource source, string? channelId, CancellationToken ct = default)
     {
+        if (string.IsNullOrEmpty(userId))
+            throw new ArgumentException("userId must not be empty.", nameof(userId));
+
         var alreadyPending = await context.CalendarSyncJobs.AnyAsync(
             j => j.UserId == userId
                  && j.CalendarInfoId == calendarInfoId
@@ -85,6 +88,7 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
         {
             job.Status = SyncJobStatus.Failed;
             job.CompletedAt = now;
+            job.NextAttemptAt = null;
         }
 
         await context.SaveChangesAsync(ct);
@@ -97,7 +101,10 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
             .ToListAsync(ct);
 
         foreach (var job in stuck)
+        {
             job.Status = SyncJobStatus.Pending;
+            job.NextAttemptAt = null;
+        }
 
         if (stuck.Count > 0)
             await context.SaveChangesAsync(ct);

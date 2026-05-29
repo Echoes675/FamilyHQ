@@ -222,4 +222,67 @@ public class CalendarSyncJobRepositoryTests : IDisposable
         result.Should().HaveCount(2);
         result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddMinutes(-1)); // newest first
     }
+
+    [Fact]
+    public async Task FailAsync_Terminal_ClearsNextAttemptAt()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob
+        {
+            UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5,
+            EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow(),
+            NextAttemptAt = _time.GetUtcNow().AddSeconds(30) // stale backoff from a prior retry
+        };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Failed);
+        reloaded.NextAttemptAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FailAsync_Retryable_WithNullRetryAfter_IsImmediatelyEligible()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: null);
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
+        reloaded.NextAttemptAt.Should().Be(_time.GetUtcNow()); // now + Zero
+    }
+
+    [Fact]
+    public async Task RecoverOrphansAsync_ClearsStartedBackoffOnRecoveredJob()
+    {
+        var sut = CreateSut();
+        var job = new CalendarSyncJob
+        {
+            UserId = "u", Status = SyncJobStatus.InProgress,
+            EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20),
+            NextAttemptAt = _time.GetUtcNow().AddMinutes(-15)
+        };
+        _db.CalendarSyncJobs.Add(job);
+        await _db.SaveChangesAsync();
+
+        await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
+
+        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
+        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
+        reloaded.NextAttemptAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_Throws_WhenUserIdEmpty()
+    {
+        var sut = CreateSut();
+        var act = async () => await sut.EnqueueAsync("", Guid.NewGuid(), SyncJobSource.Webhook, null);
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
 }
