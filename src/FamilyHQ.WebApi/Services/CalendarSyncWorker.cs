@@ -96,8 +96,10 @@ public class CalendarSyncWorker(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var retryable = job.AttemptCount < opts.MaxSyncAttempts;
+            // Cap the exponent so a misconfigured MaxSyncAttempts cannot overflow TimeSpan.FromSeconds.
+            var cappedAttempt = Math.Min(job.AttemptCount, 20);
             TimeSpan? backoff = retryable
-                ? TimeSpan.FromSeconds(Math.Pow(2, job.AttemptCount) * opts.RetryBackoffBaseSeconds)
+                ? TimeSpan.FromSeconds(Math.Pow(2, cappedAttempt) * opts.RetryBackoffBaseSeconds)
                 : null;
             await queue.FailAsync(job.Id, ex.Message, retryable, backoff, stoppingToken);
             logger.LogWarning(ex, "Sync job {JobId} failed (attempt {Attempt}, retryable={Retryable}).", job.Id, job.AttemptCount, retryable);

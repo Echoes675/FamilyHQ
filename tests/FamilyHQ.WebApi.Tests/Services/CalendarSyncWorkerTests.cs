@@ -100,4 +100,19 @@ public class CalendarSyncWorkerTests
 
         queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), true, It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task DrainAsync_TransientException_AtMaxAttempts_FailsTerminally()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 5 };
+        var (worker, queue, sync, proxy, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("fatal"));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        // AttemptCount (5) == MaxSyncAttempts default (5) → not retryable → terminal fail, no backoff, no broadcast.
+        queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), false, null, It.IsAny<CancellationToken>()), Times.Once);
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
