@@ -369,6 +369,19 @@ public class EventsController : ControllerBase
             existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == altId && e.UserId == userId);
         }
 
+        // FHQ-18.11 (Pass 4): a DELETE to a compound INSTANCE id "{masterId}_{stamp}" with no stored
+        // row is the "This event" (ThisOnly) delete — the app deletes the single occurrence by its own
+        // id. Google records the slot with status "cancelled"; the simulator stores (or flags) a
+        // cancellation tombstone so the next singleEvents=true list OMITS that occurrence.
+        if (existing == null
+            && TryParseCompoundInstanceId(eventId, out var masterId, out var originalStartUtc))
+        {
+            var master = await _db.Events.FirstOrDefaultAsync(
+                e => e.Id == masterId && e.UserId == userId && e.RecurrenceRule != null);
+            if (master != null)
+                return await CancelInstanceOccurrenceAsync(master, eventId, originalStartUtc, userId);
+        }
+
         if (existing == null)
         {
             _logger.LogWarning("[SIM] Event {EventId} not found for delete (tried alt too).", eventId);
@@ -384,6 +397,18 @@ public class EventsController : ControllerBase
                     }
                 }
             });
+        }
+
+        // FHQ-18.11 (Pass 4): the found row is itself a stored instance OVERRIDE (a prior "This event"
+        // edit). Deleting it is still a single-occurrence cancellation — flag the slot cancelled rather
+        // than hard-removing the row, so expansion continues to OMIT the slot (mirrors Google: deleting
+        // an exception removes the occurrence, it does not resurrect the computed one).
+        if (existing.RecurringEventId is not null && existing.OriginalStartTime is not null)
+        {
+            existing.IsCancelled = true;
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("[SIM] Cancelled stored override occurrence: {EventId}", eventId);
+            return NoContent();
         }
 
         // Remove attendees before deleting the event
@@ -480,6 +505,11 @@ public class EventsController : ControllerBase
             // own fields, carrying recurringEventId + originalStartTime (the slot it overrides).
             if (overridesBySlot.TryGetValue(slotStamp, out var ovr))
             {
+                // FHQ-18.11 (Pass 4): a cancelled override is a deleted occurrence ("This event"):
+                // mirror Google's status="cancelled" by OMITTING the slot from singleEvents output.
+                if (ovr.IsCancelled)
+                    continue;
+
                 yield return MapInstanceResponse(
                     id: ovr.Id,
                     summary: ovr.Summary,
@@ -665,6 +695,45 @@ public class EventsController : ControllerBase
             contentHash: existingOverride.ContentHash ?? master.ContentHash,
             recurringEventId: master.Id,
             originalStartTimeUtc: originalStartUtc));
+    }
+
+    // FHQ-18.11 (Pass 4): cancels a single occurrence of a series ("This event" delete). Stores (or
+    // flags) a tombstone override row linked to the master via RecurringEventId and carrying the
+    // cancelled slot in OriginalStartTime with IsCancelled=true. A prior CONTENT override on the same
+    // slot is converted to a cancellation (the occurrence disappears, mirroring Google: deleting an
+    // exception removes the slot). The master's RecurrenceRule is never copied — the tombstone is not
+    // itself a series row. Expansion omits the slot, so siblings remain and the count drops by one.
+    private async Task<IActionResult> CancelInstanceOccurrenceAsync(
+        SimulatedEvent master, string instanceId, DateTime originalStartUtc, string? userId)
+    {
+        var existingOverride = await _db.Events.FirstOrDefaultAsync(e => e.Id == instanceId && e.UserId == userId);
+
+        if (existingOverride is null)
+        {
+            existingOverride = new SimulatedEvent
+            {
+                Id = instanceId,
+                UserId = userId,
+                CalendarId = master.CalendarId,
+                Summary = master.Summary,
+                StartTime = originalStartUtc,
+                EndTime = originalStartUtc,
+                IsAllDay = master.IsAllDay,
+                RecurringEventId = master.Id,
+                OriginalStartTime = originalStartUtc
+            };
+            _db.Events.Add(existingOverride);
+        }
+
+        existingOverride.IsCancelled = true;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation(
+            "[SIM] Cancelled occurrence {InstanceId} of series {MasterId} at slot {Slot:O}.",
+            instanceId, master.Id, originalStartUtc);
+
+        // Google returns 204 No Content for a successful delete (including a cancelled instance).
+        return NoContent();
     }
 
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.

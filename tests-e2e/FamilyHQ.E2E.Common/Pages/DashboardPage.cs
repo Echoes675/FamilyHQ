@@ -1264,4 +1264,76 @@ public class DashboardPage : BasePage
         var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
         await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
+
+    // FHQ-18.11 Pass 4 — delete-scope flow (This event / This and following / All events) ──────────
+
+    /// <summary>
+    /// Drives the recurrence-scope prompt that appears after the trash-can delete when removing a
+    /// recurring series: waits for the prompt to be visible, selects the named scope pill (waiting on
+    /// its <c>aria-pressed=true</c>), waits for OK to be visible, confirms, and waits for the modal to
+    /// close and the calendar to reconcile + repaint.
+    /// </summary>
+    /// <remarks>
+    /// The delete prompt is the same <c>recurrence-scope-prompt</c> component as the edit prompt (the
+    /// delete variant carries the "Delete recurring event" header). FHQ-29 click-race: each interactive
+    /// element is explicitly awaited Visible — and the pill's pressed state confirmed — before the next
+    /// click; never click an element that has not been observed ready. <paramref name="scope"/> is one
+    /// of "this" / "following" / "all" (the recurrence-scope-* testid suffixes).
+    /// </remarks>
+    public async Task SubmitDeleteWithScopeAsync(string scope)
+    {
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await DeleteEventBtn.ClickAsync();
+
+        // Wait for the prompt itself before touching any pill (FHQ-29 visibility wait).
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var pill = ScopePromptPill(scope);
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+
+        // Confirm only once OK is observed visible (FHQ-29 visibility wait on the pill→OK leg).
+        await ScopePromptOkBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        await ScopePromptOkBtn.ClickAsync();
+
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Opens the named recurring event on the Day view for <paramref name="occurrenceDate"/> and
+    /// deletes it with the given scope ("this" / "following" / "all"). Navigates the Day view to the
+    /// occurrence date first so the clicked tile is the intended occurrence.
+    /// </summary>
+    public async Task DeleteRecurringOccurrenceWithScopeAsync(
+        string occurrenceName, DateTime occurrenceDate, string scope)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{occurrenceName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+
+        await SubmitDeleteWithScopeAsync(scope);
+    }
+
+    /// <summary>
+    /// Navigates the Day view to <paramref name="date"/> and asserts NO tile bearing
+    /// <paramref name="eventName"/> is present there. Used to prove a deleted occurrence (or the
+    /// post-split tail) no longer appears.
+    /// </summary>
+    public async Task AssertEventAbsentInDayViewOnDateAsync(string eventName, DateTime date)
+    {
+        await OpenDayPickerAndGoAsync(
+            date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+        var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+        await Assertions.Expect(tiles).ToHaveCountAsync(0, new() { Timeout = 30000 });
+    }
 }

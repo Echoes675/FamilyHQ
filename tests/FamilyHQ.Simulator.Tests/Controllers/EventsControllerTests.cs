@@ -924,6 +924,184 @@ public class EventsControllerTests
         items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
     }
 
+    // ── Instance cancellation / delete-scope (FHQ-18.11 Pass 4) ───────────────
+
+    [Fact]
+    public async Task DeleteEvent_OnCompoundInstanceId_CancelsThatOccurrence_SiblingsRemain()
+    {
+        // Arrange — a weekly COUNT=3 series. The app deletes "This event" by DELETEing the SECOND
+        // occurrence's compound instance id; Google cancels that slot (status "cancelled").
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var instanceId = "evt-series_20260609T180000Z"; // second occurrence
+
+        // Act — delete the single instance, then reconcile-list the window.
+        var deleteResult = await sut.DeleteEvent("cal-alice", instanceId);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — delete is a success (204) and stored a cancellation tombstone for the slot.
+        deleteResult.Should().BeOfType<NoContentResult>();
+        var stored = await db.Events.FindAsync(instanceId);
+        stored!.IsCancelled.Should().BeTrue();
+        stored.RecurringEventId.Should().Be("evt-series");
+        stored.OriginalStartTime.Should().Be(seriesStart.AddDays(7));
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        // Count drops by one; only occurrences 1 and 3 remain, the cancelled slot is omitted.
+        items.GetArrayLength().Should().Be(2);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260616T180000Z");
+    }
+
+    [Fact]
+    public async Task DeleteEvent_OnCompoundInstanceId_WhenSlotHadContentOverride_CancelsIt()
+    {
+        // Arrange — a series whose SECOND occurrence already carries a content exception (a prior
+        // "This event" edit). Deleting that occurrence converts the override to a cancellation, so
+        // the slot disappears entirely.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var deleteResult = await sut.DeleteEvent("cal-alice", "evt-series_20260609T180000Z");
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the override row is flagged cancelled and the slot drops out of the listing.
+        deleteResult.Should().BeOfType<NoContentResult>();
+        (await db.Events.FindAsync("evt-series_20260609T180000Z"))!.IsCancelled.Should().BeTrue();
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+        items.GetArrayLength().Should().Be(2);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260616T180000Z");
+    }
+
+    [Fact]
+    public async Task DeleteEvent_OnMasterId_AllEvents_RemovesTheWholeSeries()
+    {
+        // Arrange — "All events" delete: the app DELETEs the MASTER id. The whole series disappears.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act
+        var deleteResult = await sut.DeleteEvent("cal-alice", "evt-series");
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the master is gone and no occurrences remain.
+        deleteResult.Should().BeOfType<NoContentResult>();
+        db.Events.Should().NotContain(e => e.Id == "evt-series");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        doc.RootElement.GetProperty("items").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DeleteEvent_OnMasterUntilTruncation_ThisAndFollowing_DropsPostSplitOccurrences()
+    {
+        // Arrange — "This and following" delete truncates the master's RRULE with UNTIL = split − 1s.
+        // Mirrors how the app patches the master before reconciling; expansion drops the tail.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Patch the master to truncate just before the SECOND occurrence (2026-06-09T18:00:00Z).
+        await sut.PatchEvent("cal-alice", "evt-series", new GoogleEventRequest
+        {
+            Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260609T175959Z" }
+        });
+
+        // Act
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — only the first occurrence (before the split) survives.
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+        items.GetArrayLength().Should().Be(1);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()

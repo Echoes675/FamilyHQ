@@ -26,4 +26,12 @@ public class SimulatedEvent
     // Pass 2 so the store schema is forward-compatible.
     public string? RecurringEventId { get; set; }
     public DateTime? OriginalStartTime { get; set; }
+
+    // FHQ-18.11 (Pass 4): a CANCELLED occurrence override. When the app deletes a single
+    // occurrence ("This event"), Google records the slot with status "cancelled" rather than
+    // returning an instance. The simulator mirrors this by storing a tombstone override row
+    // (RecurringEventId + OriginalStartTime identify the cancelled slot) with this flag set;
+    // expansion under singleEvents=true then OMITS that slot entirely. A cancellation overrides
+    // any prior content exception on the same slot — the occurrence simply disappears.
+    public bool IsCancelled { get; set; }
 }

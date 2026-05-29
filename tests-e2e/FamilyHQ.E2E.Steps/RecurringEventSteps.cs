@@ -149,6 +149,28 @@ public class RecurringEventSteps
         await _dashboardPage.AssertEventVisibleInDayViewOnDateAsync(eventName, date);
     }
 
+    // ── FHQ-18.11 Pass 4: delete-scope (This event / This and following / All events) ─────────
+
+    // Opens the Nth weekly occurrence of the series on the Day view, presses Delete, and confirms the
+    // recurrence-scope prompt (delete variant) with the chosen scope. Occurrence dates are derived
+    // from the seeded first-occurrence date (+7-day steps), so the step is run-date independent. Scope
+    // word is one of "this" / "following" / "all" — the recurrence-scope-* testid suffixes.
+    [When(@"I delete occurrence (\d+) of ""([^""]*)"" applying to ""([^""]*)"" scope")]
+    public async Task WhenIDeleteOccurrenceApplyingScope(int occurrence, string seriesName, string scope)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.DeleteRecurringOccurrenceWithScopeAsync(seriesName, date, scope);
+    }
+
+    // Asserts the named event is NOT shown on the Nth occurrence's date in the Day view. Used to prove
+    // a deleted occurrence (or the post-split tail / whole series) no longer appears.
+    [Then(@"the event ""([^""]*)"" no longer appears on occurrence (\d+)")]
+    public async Task ThenTheEventNoLongerAppearsOnOccurrence(string eventName, int occurrence)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.AssertEventAbsentInDayViewOnDateAsync(eventName, date);
+    }
+
     // Occurrence N (1-based) of the weekly series falls N-1 weeks after the seeded first occurrence.
     private System.DateTime OccurrenceDate(int occurrence)
     {
