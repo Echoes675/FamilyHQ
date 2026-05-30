@@ -107,7 +107,9 @@ public class SyncController : ControllerBase
             });
         }
 
-        // Notify all connected UI clients that events changed
+        // Manual sync is user-initiated: always notify connected clients to refresh,
+        // even on a no-op. Background/periodic syncs suppress no-op broadcasts in
+        // CalendarSyncWorker (gated on SyncResult.HadChanges) — FHQ-44.
         await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
 
         return Ok(new { Message = "Sync completed successfully." });

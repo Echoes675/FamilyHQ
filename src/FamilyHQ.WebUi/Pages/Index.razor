@@ -126,8 +126,8 @@
 
 <EventModal @ref="_eventModal"
             Calendars="_calendars"
-            OnSaved="LoadMonthDataAsync"
-            OnDeleted="LoadMonthDataAsync" />
+            OnSaved="() => LoadMonthDataAsync()"
+            OnDeleted="() => LoadMonthDataAsync()" />
 
 @code {
     private DashboardView _currentView = DashboardView.Month;
@@ -201,7 +201,7 @@
             await LoadConnectionStatusAsync();
             _calendars = await CalendarApi.GetCalendarsAsync();
             _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
-            await LoadMonthDataAsync();
+            await LoadMonthDataAsync(showSpinner: _monthView is null);
             StateHasChanged();
         });
     }
@@ -215,16 +215,21 @@
         });
     }
 
-    private async Task LoadMonthDataAsync()
+    private async Task LoadMonthDataAsync(bool showSpinner = true)
     {
-        IsLoading = true;
-        StateHasChanged();
+        if (showSpinner)
+        {
+            IsLoading = true;
+            StateHasChanged();
+        }
 
         _monthView = await CalendarApi.GetEventsForMonthAsync(CurrentMonth.Year, CurrentMonth.Month);
-        
+
         BuildCalendarGrid();
-        
-        IsLoading = false;
+
+        if (showSpinner)
+            IsLoading = false;
+
         StateHasChanged();
     }
 
