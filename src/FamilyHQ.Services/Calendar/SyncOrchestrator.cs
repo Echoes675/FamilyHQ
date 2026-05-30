@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,31 +23,50 @@ public class SyncOrchestrator : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("SyncOrchestrator background service is starting. Sync will be triggered by login or webhook.");
+        _logger.LogInformation("SyncOrchestrator started; periodic sync enqueues jobs for the CalendarSyncWorker.");
 
-        // No startup sync - we have no user context at startup.
-        // Sync is triggered by the AuthController after login or by the SyncController on webhook.
         while (!stoppingToken.IsCancellationRequested)
         {
-            // In a real app we might await a channel/queue for on-demand sync triggers,
-            // or poll every X hours. We'll just sleep for 1 hour.
             await Task.Delay(_periodicSyncInterval, stoppingToken);
-            
-            // Periodically sync again (incremental)
+
+            // Safety net: enqueue a sync-all job per registered user (mirrors the webhook fallback).
+            // The CalendarSyncWorker drains each job with BackgroundUserContext set, CancellationToken.None,
+            // and broadcast-after-persist — so the periodic path no longer runs with no user context (FHQ-38).
             try
             {
                 using var scope = _serviceProvider.CreateScope();
-                var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-                
-                // TODO: These should be configurable via a settings page in the UI
-                var startDate = DateTimeOffset.UtcNow.AddDays(-30);
-                var endDate = DateTimeOffset.UtcNow.AddDays(365);
-                
-                await syncService.SyncAllAsync(startDate, endDate, stoppingToken);
+                var tokenStore = scope.ServiceProvider.GetRequiredService<ITokenStore>();
+                var queue = scope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
+                var signal = scope.ServiceProvider.GetRequiredService<ISyncJobSignal>();
+
+                var userIds = await tokenStore.GetAllUserIdsAsync(stoppingToken);
+                var enqueued = 0;
+                foreach (var userId in userIds)
+                {
+                    if (string.IsNullOrEmpty(userId))
+                        continue;
+                    // null calendar = sync-all; Periodic source. Coalesces against an existing Pending job.
+                    await queue.EnqueueAsync(userId, null, SyncJobSource.Periodic, null, stoppingToken);
+                    enqueued++;
+                }
+
+                if (enqueued > 0)
+                {
+                    signal.Release();
+                    _logger.LogInformation("Periodic sync: enqueued sync-all for {Count} user(s).", enqueued);
+                }
+                else
+                {
+                    _logger.LogInformation("Periodic sync: no registered users with tokens; nothing to enqueue.");
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Periodic sync failed.");
+                _logger.LogWarning(ex, "Periodic sync enqueue failed.");
             }
         }
     }
