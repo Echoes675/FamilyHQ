@@ -586,6 +586,29 @@ public class EventsControllerTests
     // ── WRITE-side recurrence primitives (FHQ-18.11 Pass 2) ───────────────────
 
     [Fact]
+    public async Task CreateEvent_RecurringTimedWithoutTimeZone_Returns400_LikeGoogle()
+    {
+        // FHQ-42: real Google rejects a recurring timed event with no start timeZone
+        // (400 "Missing time zone definition for start time."). The simulator must mirror this so the
+        // recurring-create E2E scenarios catch a regression of the WebApi timeZone fix.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc);
+        var body = new GoogleEventRequest
+        {
+            Summary = "No TZ",
+            Start = new GoogleDateTime { DateTime = seriesStart }, // timed start, no timeZone
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) },
+            Recurrence = new List<string> { "RRULE:FREQ=DAILY;COUNT=7" }
+        };
+
+        var result = await sut.CreateEvent("cal-alice", body);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+        (await db.Events.CountAsync(e => e.Summary == "No TZ")).Should().Be(0);
+    }
+
+    [Fact]
     public async Task CreateEvent_WithRecurrenceArray_StoresMasterAndListExpandsIntoInstances()
     {
         // Arrange — events.insert with a recurrence array creates a series master (the native
@@ -597,8 +620,8 @@ public class EventsControllerTests
         var body = new GoogleEventRequest
         {
             Summary = "Soccer practice",
-            Start = new GoogleDateTime { DateTime = seriesStart },
-            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) },
+            Start = new GoogleDateTime { DateTime = seriesStart, TimeZone = "UTC" },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1), TimeZone = "UTC" },
             Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3" },
             ExtendedProperties = new GoogleEventRequest.GoogleEventExtendedPropertiesRequest
             {
