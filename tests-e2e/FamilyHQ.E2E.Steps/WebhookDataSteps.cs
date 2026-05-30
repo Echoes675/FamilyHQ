@@ -11,9 +11,6 @@ using FamilyHQ.E2E.Common.Helpers;
 [Binding]
 public class WebhookDataSteps
 {
-    private const int LiveUpdateTimeoutMs = 5000;
-    private const int LiveUpdatePollIntervalMs = 250;
-
     private readonly ScenarioContext _scenarioContext;
     private readonly SimulatorApiClient _simulatorApi;
     private readonly DashboardPage _dashboardPage;
@@ -73,24 +70,16 @@ public class WebhookDataSteps
     [Then(@"the dashboard live-updates to show ""([^""]*)""")]
     public async Task ThenTheDashboardLiveUpdatesToShow(string eventName)
     {
-        await WaitForConditionAsync(
-            condition: async () =>
-            {
-                var events = await _dashboardPage.GetVisibleEventsAsync();
-                return events.Any(e => e.Contains(eventName));
-            },
+        await Polling.UntilAsync(
+            condition: async () => (await _dashboardPage.GetVisibleEventsAsync()).Any(e => e.Contains(eventName)),
             failMessage: $"Dashboard did not live-update within 5s after webhook notification (expected to show '{eventName}')");
     }
 
     [Then(@"the dashboard live-updates to remove ""([^""]*)""")]
     public async Task ThenTheDashboardLiveUpdatesToRemove(string eventName)
     {
-        await WaitForConditionAsync(
-            condition: async () =>
-            {
-                var events = await _dashboardPage.GetVisibleEventsAsync();
-                return !events.Any(e => e.Contains(eventName));
-            },
+        await Polling.UntilAsync(
+            condition: async () => !(await _dashboardPage.GetVisibleEventsAsync()).Any(e => e.Contains(eventName)),
             failMessage: $"Dashboard did not live-update within 5s after webhook notification (expected to remove '{eventName}')");
     }
 
@@ -133,15 +122,4 @@ public class WebhookDataSteps
         _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
     }
 
-    private static async Task WaitForConditionAsync(Func<Task<bool>> condition, string failMessage)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(LiveUpdateTimeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            if (await condition())
-                return;
-            await Task.Delay(LiveUpdatePollIntervalMs);
-        }
-        throw new TimeoutException(failMessage);
-    }
 }
