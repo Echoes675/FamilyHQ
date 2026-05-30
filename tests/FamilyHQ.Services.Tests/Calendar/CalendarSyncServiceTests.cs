@@ -746,6 +746,51 @@ public class CalendarSyncServiceTests
             It.Is<SyncState>(s => s.SyncToken == "next-token"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task SyncAsync_NoOpIncrementalSync_ReturnsZeroChanges()
+    {
+        var (client, calendarRepository, _, sut) = CreateSut();
+        var calendarId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var googleCalendarId = "test@group.calendar.google.com";
+        var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
+        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendarInfo);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendarInfo });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
+              .ReturnsAsync((new List<CalendarEvent>(), "next_token"));
+        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var result = await sut.SyncAsync(calendarId, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365));
+
+        result.ChangedCount.Should().Be(0);
+        result.HadChanges.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SyncAsync_AddsEvent_ReturnsPositiveChangeCount()
+    {
+        var (client, calendarRepository, _, sut) = CreateSut();
+        var calendarId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var googleCalendarId = "test@group.calendar.google.com";
+        var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
+        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendarInfo);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendarInfo });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
+              .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "evt-new", Title = "New" } }, "next_token"));
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var result = await sut.SyncAsync(calendarId, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365));
+
+        result.HadChanges.Should().BeTrue();
+        result.ChangedCount.Should().BeGreaterThan(0);
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {

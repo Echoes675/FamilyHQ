@@ -4,6 +4,6 @@ namespace FamilyHQ.Core.Interfaces;
 
 public interface ICalendarSyncService
 {
-    Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default);
-    Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default);
+    Task<SyncResult> SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default);
+    Task<SyncResult> SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default);
 }

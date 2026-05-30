@@ -15,7 +15,7 @@ public class CalendarSyncService(
     ISyncFailureRepository syncFailureRepository,
     IOutboundWriteHashCache outboundWriteHashCache) : ICalendarSyncService
 {
-    public async Task SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
+    public async Task<SyncResult> SyncAllAsync(DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
     {
         // Capture the current user id ONCE at sync entry. IHttpContextAccessor.HttpContext
         // is AsyncLocal-backed and can become null after the response has been sent or
@@ -28,10 +28,12 @@ public class CalendarSyncService(
         if (string.IsNullOrEmpty(capturedUserId))
         {
             logger.LogWarning("SyncAllAsync invoked with no current user id; aborting sync.");
-            return;
+            return new SyncResult(0);
         }
 
         logger.LogInformation("Starting full sync from {Start} to {End} for user {UserId}", startDate, endDate, capturedUserId);
+
+        int changeCount = 0;
 
         List<CalendarInfo> googleCalendars;
         try
@@ -57,7 +59,7 @@ public class CalendarSyncService(
         }
 
         if (obsolete.Count > 0)
-            await calendarRepository.SaveChangesAsync(ct);
+            changeCount += await calendarRepository.SaveChangesAsync(ct);
 
         // Pass 1: ensure every Google calendar exists in the local DB before syncing
         // any events.  Multi-member events on the shared calendar reference member
@@ -79,7 +81,7 @@ public class CalendarSyncService(
             {
                 googleCal.DisplayOrder = nextOrder++;
                 await calendarRepository.AddCalendarAsync(googleCal, ct);
-                await calendarRepository.SaveChangesAsync(ct);
+                changeCount += await calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
             }
             calendarIdsToSync.Add(localCal.Id);
@@ -105,7 +107,7 @@ public class CalendarSyncService(
         {
             foreach (var calendarId in calendarIdsToSync)
             {
-                await SyncAsync(calendarId, startDate, endDate, ct);
+                changeCount += (await SyncAsync(calendarId, startDate, endDate, ct)).ChangedCount;
             }
         }
         catch (GoogleReauthRequiredException ex)
@@ -131,25 +133,26 @@ public class CalendarSyncService(
             var firstCalendarId = calendarIdsToSync.First();
             var firstCalendarName = calendarsAfterSync.First(c => c.Id == firstCalendarId).DisplayName;
             await calendarRepository.MarkCalendarAsSharedAsync(firstCalendarId, ct);
-            await calendarRepository.SaveChangesAsync(ct);
+            changeCount += await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation(
                 "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
                 firstCalendarName);
         }
 
         logger.LogInformation("Finished syncing all calendars.");
+        return new SyncResult(changeCount);
     }
 
-    public Task SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
-        => SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: false, ct);
+    public async Task<SyncResult> SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
+        => new SyncResult(await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: false, ct));
 
-    private async Task SyncCoreAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, bool isRetry, CancellationToken ct)
+    private async Task<int> SyncCoreAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, bool isRetry, CancellationToken ct)
     {
         var calendar = await calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
         {
             logger.LogWarning("Calendar {CalendarId} not found. Skipping sync.", calendarInfoId);
-            return;
+            return 0;
         }
 
         bool isNewSyncState = false;
@@ -163,6 +166,8 @@ public class CalendarSyncService(
         bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken);
 
         logger.LogInformation("Syncing {CalendarName}. FullSync={IsFullSync}", calendar.DisplayName, isFullSync);
+
+        int changeCount = 0;
 
         try
         {
@@ -193,10 +198,13 @@ public class CalendarSyncService(
                 // Tombstone events no longer present in Google
                 var existingEvents   = await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct);
                 var fetchedGoogleIds = events.Select(e => e.GoogleEventId).ToHashSet();
-                var obsoleteEvents   = existingEvents.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId));
+                var obsoleteList     = existingEvents.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId)).ToList();
 
-                foreach (var obsoleteEvt in obsoleteEvents)
+                foreach (var obsoleteEvt in obsoleteList)
                     await calendarRepository.DeleteEventAsync(obsoleteEvt.Id, ct);
+
+                if (obsoleteList.Count > 0)
+                    changeCount += await calendarRepository.SaveChangesAsync(ct);
             }
 
             foreach (var evt in events)
@@ -235,7 +243,7 @@ public class CalendarSyncService(
                         {
                             touched = tracked;
                             await calendarRepository.DeleteEventAsync(tracked.Id, ct);
-                            await calendarRepository.SaveChangesAsync(ct);
+                            changeCount += await calendarRepository.SaveChangesAsync(ct);
                         }
                         continue;
                     }
@@ -281,7 +289,7 @@ public class CalendarSyncService(
                     // (e.g. Title longer than the column max length) throws here
                     // and is handled by the catch below; legitimate events that
                     // were committed earlier in the loop are not rolled back.
-                    await calendarRepository.SaveChangesAsync(ct);
+                    changeCount += await calendarRepository.SaveChangesAsync(ct);
                 }
                 catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
                 {
@@ -329,6 +337,7 @@ public class CalendarSyncService(
 
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
+            return changeCount;
         }
         catch (InvalidOperationException ex) when (!isRetry && ex.Message.Contains("no longer valid"))
         {
@@ -337,7 +346,7 @@ public class CalendarSyncService(
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
             await calendarRepository.SaveChangesAsync(ct);
-            await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
+            return await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
     }
 
