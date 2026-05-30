@@ -335,6 +335,7 @@ public class CalendarSyncService(
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
 
+            // Bookkeeping only — excluded from the material change count (FHQ-44).
             await calendarRepository.SaveChangesAsync(ct);
             logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
             return changeCount;
@@ -345,6 +346,7 @@ public class CalendarSyncService(
             syncState.SyncToken = null;
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
+            // Bookkeeping only — excluded from the material change count (FHQ-44).
             await calendarRepository.SaveChangesAsync(ct);
             return await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }

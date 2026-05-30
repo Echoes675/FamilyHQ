@@ -760,7 +760,8 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendarInfo });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
               .ReturnsAsync((new List<CalendarEvent>(), "next_token"));
-        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(99); // syncState bookkeeping save returns rows, but must NOT be counted
 
         var result = await sut.SyncAsync(calendarId, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365));
 
@@ -788,7 +789,64 @@ public class CalendarSyncServiceTests
         var result = await sut.SyncAsync(calendarId, DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365));
 
         result.HadChanges.Should().BeTrue();
-        result.ChangedCount.Should().BeGreaterThan(0);
+        result.ChangedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SyncAllAsync_WithTwoCalendarsEachAddingOneEvent_AggregatesChangedCount()
+    {
+        // Arrange — two pre-existing calendars, each has one new event to add.
+        // Proves that SyncAllAsync sums ChangedCount across calendars rather than
+        // returning only the last calendar's count or a hard-coded value.
+        var (client, calendarRepository, _, sut) = CreateSut();
+        var startDate = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate   = startDate.AddDays(30);
+
+        var calAId = Guid.Parse("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1");
+        var calBId = Guid.Parse("b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2");
+        var googleCalAId = "cala@google.com";
+        var googleCalBId = "calb@google.com";
+
+        // Cal A is designated shared so the post-loop auto-designation is skipped
+        var calA = new CalendarInfo { Id = calAId, GoogleCalendarId = googleCalAId, DisplayName = "Cal A", IsShared = true };
+        var calB = new CalendarInfo { Id = calBId, GoogleCalendarId = googleCalBId, DisplayName = "Cal B", IsShared = false };
+
+        // Both calendars exist in Google and locally (no add/remove from Pass 1)
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA, calB });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA, calB });
+
+        // Both calendars are found by id
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) => id == calAId ? calA : calB);
+
+        // Incremental sync (token exists) — no tombstone pass, no full-sync window
+        calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid id, CancellationToken _) =>
+                new SyncState { CalendarInfoId = id, SyncToken = "old_token" });
+
+        // Each calendar returns one new event
+        client.Setup(c => c.GetEventsAsync(googleCalAId, null, null, "old_token", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "a-evt-1", Title = "A Event" } }, "a-next"));
+        client.Setup(c => c.GetEventsAsync(googleCalBId, null, null, "old_token", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "b-evt-1", Title = "B Event" } }, "b-next"));
+
+        // No existing local events for either calendar
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        // Each per-event SaveChangesAsync returns 1 (one row added);
+        // the syncState bookkeeping save also returns 1 but must NOT be counted.
+        calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        // Act
+        var result = await sut.SyncAllAsync(startDate, endDate);
+
+        // Assert — two calendars × one event each → aggregate ChangedCount == 2
+        result.ChangedCount.Should().Be(2, "SyncAllAsync must sum ChangedCount from every calendar's SyncAsync result");
+        result.HadChanges.Should().BeTrue();
     }
 
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
