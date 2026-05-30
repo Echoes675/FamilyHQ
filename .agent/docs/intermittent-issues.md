@@ -14,27 +14,28 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-### 6. Async webhook sync re-surfaces TOCTOU re-render / not-yet-synced races in webhook-driven scenarios (FHQ-37)
-
-**Status:** mitigated on branch `fix/FHQ-37-durable-sync-queue` (test-side polling); awaiting the 3-run Deploy-Dev streak to confirm before moving to *Resolved*.
-**Component:** E2E steps only — `tests-e2e/.../RecurringEventSteps.cs` (`the recurring event shows a recurrence indicator`), `tests-e2e/.../SyncResilienceSteps.cs` (`I wait for the failed sync run to be recorded`), and `tests-e2e/.../DashboardSteps.cs` (`I see the event … displayed on the calendar in … colour` — an app-create scenario whose echo webhook now re-renders the grid asynchronously). No production code involved.
-**First seen:** Deploy-Dev #395 (2026-05-29), scenarios *"A synced recurring instance is marked with a recurrence indicator"* and the new *"Diagnostics page lists a failed sync run when a webhook-driven sync fails terminally"*.
-
-**Why FHQ-37 surfaced this:** before FHQ-37 the Google push webhook ran the sync **inline** on the request thread, so by the time `TriggerWebhookAsync()` returned the data was already synced and the dashboard was stable. FHQ-37 makes the webhook enqueue a durable job and ack immediately; `CalendarSyncWorker` drains it a beat later and then broadcasts `EventsUpdated`, which re-renders the dashboard. Any step that delivered a webhook and then did a single read of the dashboard now races (a) the sync landing and (b) the EventsUpdated re-render window — the same TOCTOU class as issue #4. Sibling recurring scenarios that navigate to Day/Agenda first happened to pass because the navigation bought enough time.
-
-**Two distinct symptoms / fixes:**
-1. *Recurrence indicator "found 0"* — `ThenTheRecurringEventShowsARecurrenceIndicator` now polls `CountRecurrenceIndicatorsAsync()` over a 20s deadline tolerating transient zeros, instead of a single wait-then-read.
-2. *Failed-run poll 401 → 40s timeout* — the new wait step polled `/api/diagnostics/failed-sync-runs` with a raw `fetch(..., { credentials:'include' })`. FamilyHQ auth is **Bearer-JWT from localStorage** (attached by `CustomAuthorizationMessageHandler`), not cookies, so the raw fetch was unauthenticated → 401 → the run was never observed even though it was recorded. Now polls the **diagnostics page** (authenticated Blazor HttpClient), reloading until the runs table shows a row.
-
-**Systemic barrier (the real fix):** the shared step `WhenGoogleCalendarSendsAWebhookNotification` now waits for the sync queue to drain before returning, restoring the synchronous-sync timing contract the scenarios were written against. It polls `GET /api/diagnostics/sync-queue-depth` (new authorized endpoint backed by `ICalendarSyncJobQueue.GetActiveJobCountAsync`, **per-user** so a parallel scenario's queue activity never blocks this one) until the current user's Pending+InProgress count is 0, then proceeds. The poll reads the Bearer token from `localStorage['familyhq_auth_token']` and attaches it explicitly (a raw `fetch` would be unauthenticated). It degrades gracefully (brief settle if not yet authenticated; proceeds at the 40s deadline).
-
-**If the symptom returns / generalises:** any other webhook-driven scenario that reads synced data with a single shot may flake the same way. Prefer routing webhook delivery through the shared step above (so the drain barrier applies); otherwise convert the assertion to a poll (deadline + tolerate transient empties), matching this entry and issue #4. Never read a WebApi endpoint from a raw page `fetch` expecting auth — go through the Blazor app (page object) or attach the Bearer token explicitly.
-
----
+_None currently. The async-sync E2E fragility (FHQ-37) was resolved in FHQ-41 — see below._
 
 ---
 
 ## Resolved issues
+
+### 6. Async webhook sync re-surfaced TOCTOU re-render / not-yet-synced E2E races (FHQ-37 → fixed in FHQ-41)
+
+**Resolved:** branch `fix/FHQ-41-e2e-sync-determinism`, commits `31978e7` (extract shared `SyncSettle` drain barrier) + `208d24b` (extract shared `Polling.UntilAsync`) + `a228d93` (barrier on app-edit mutation tails) + `4cc6b95` (TOCTOU read methods → web-first/poll) + `854b215` + `c54a5e8` (exhaustive single-read → auto-retry assertion sweep). Tracked as **FHQ-41**. Verified across **5 consecutive Deploy-Dev passes #416–#420** (2026-05-30) with zero E2E failures (branch build #1 green first).
+**Component:** E2E test infra only — `tests-e2e/FamilyHQ.E2E.Common/Helpers/{SyncSettle,Polling}.cs` (new shared primitives), `DashboardPage.cs`, and assertion steps across the suite. No production code (the production broadcast/refresh mechanism was the separate FHQ-44).
+**First seen:** Deploy-Dev #395 (2026-05-29); recurred most stubbornly as *"Today's row is highlighted"* on Deploy-Staging #134.
+
+**Why FHQ-37 surfaced this:** before FHQ-37 the Google push webhook ran the sync **inline**, so by the time `TriggerWebhookAsync()` returned the data was synced and the dashboard stable. FHQ-37 makes the webhook (and FHQ-38's periodic timer) enqueue a durable job and ack immediately; `CalendarSyncWorker` drains it a beat later and broadcasts `EventsUpdated`, re-rendering the dashboard. Any step that acted then did a single read raced (a) the sync landing and (b) the re-render window — the TOCTOU class of issue #4.
+
+**The fix (FHQ-41):** two reusable primitives + an exhaustive assertion sweep.
+1. **`SyncSettle.WaitForUserQueueDrainAsync(IPage)`** — the per-user `sync-queue-depth` drain barrier (formerly private to the webhook step) extracted into `FamilyHQ.E2E.Common.Helpers`, and applied at every `DashboardPage` mutation tail (create/update/delete/chip/recurring). It **self-noops when the queue is already idle**, so it is safe to call after any act-step without per-step classification.
+2. **`Polling.UntilAsync`** — shared compound-condition poll (extracted from the webhook step).
+3. **Assertion sweep** — every act-then-assert single point-in-time read (`CountAsync`/`GetAttributeAsync`/`InnerTextAsync`/`IsVisibleAsync`/`TextContentAsync`) converted to a Playwright web-first `Assertions.Expect(...)` (auto-retries the live DOM — the element vanishing between two awaits can no longer fail it) or `Polling.UntilAsync`, pushed to the page-object method where reused. The known offenders — `HasTodayRowHighlightAsync` (wait-then-single-count), the weekday-row subtraction race, and the hourly-temps / capsule-colour bespoke `Task.Delay` poll loops — were all converted. **No timeout was inflated as a fix.**
+
+**Note on the FHQ-37-era tactical mitigations:** the bespoke poll-loops described in the original version of this entry (recurrence indicator, failed-run diagnostics poll) were superseded by the shared primitives/web-first assertions during the sweep; the drain barrier was generalised from the webhook step to all act-steps.
+
+**If the symptom returns:** a new act-then-assert read outside the swept set may flake the same way. Convert it to a web-first `Expect()` (single locator) or `Polling.UntilAsync` (compound) — never a single read or an inflated timeout — and call `dashboardPage.WaitForSyncSettledAsync()` after any new calendar-mutating act-step. The 5-green Deploy streak (revised from 10 for CI cost) is the recurrence gate.
 
 ### 5. Outbound-write-count ClearAll race recurs in recurring echo-guard scenarios (FHQ-18.11)
 
