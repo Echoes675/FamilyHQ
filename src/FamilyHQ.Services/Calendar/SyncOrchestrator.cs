@@ -10,13 +10,15 @@ namespace FamilyHQ.Services.Calendar;
 
 public class SyncOrchestrator : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ISyncJobSignal _signal;
     private readonly ILogger<SyncOrchestrator> _logger;
     private readonly TimeSpan _periodicSyncInterval;
 
-    public SyncOrchestrator(IServiceProvider serviceProvider, ILogger<SyncOrchestrator> logger, IOptions<SyncOptions> options)
+    public SyncOrchestrator(IServiceScopeFactory scopeFactory, ISyncJobSignal signal, ILogger<SyncOrchestrator> logger, IOptions<SyncOptions> options)
     {
-        _serviceProvider = serviceProvider;
+        _scopeFactory = scopeFactory;
+        _signal = signal;
         _logger = logger;
         _periodicSyncInterval = options.Value.PeriodicSyncInterval;
     }
@@ -34,10 +36,9 @@ public class SyncOrchestrator : BackgroundService
             // and broadcast-after-persist — so the periodic path no longer runs with no user context (FHQ-38).
             try
             {
-                using var scope = _serviceProvider.CreateScope();
+                using var scope = _scopeFactory.CreateScope();
                 var tokenStore = scope.ServiceProvider.GetRequiredService<ITokenStore>();
                 var queue = scope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
-                var signal = scope.ServiceProvider.GetRequiredService<ISyncJobSignal>();
 
                 var userIds = await tokenStore.GetAllUserIdsAsync(stoppingToken);
                 var enqueued = 0;
@@ -52,7 +53,7 @@ public class SyncOrchestrator : BackgroundService
 
                 if (enqueued > 0)
                 {
-                    signal.Release();
+                    _signal.Release();
                     _logger.LogInformation("Periodic sync: enqueued sync-all for {Count} user(s).", enqueued);
                 }
                 else

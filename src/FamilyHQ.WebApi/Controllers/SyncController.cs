@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Controllers;
@@ -19,7 +18,6 @@ public class SyncController : ControllerBase
     private readonly ICalendarSyncService _syncService;
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ITokenStore _tokenStore;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SyncController> _logger;
     private readonly IWebhookRegistrationRepository _webhookRegistrationRepo;
     private readonly ICalendarRepository _calendarRepo;
@@ -32,7 +30,6 @@ public class SyncController : ControllerBase
         ICalendarSyncService syncService,
         IHubContext<CalendarHub> hubContext,
         ITokenStore tokenStore,
-        IServiceScopeFactory scopeFactory,
         ILogger<SyncController> logger,
         IWebhookRegistrationRepository webhookRegistrationRepo,
         ICalendarRepository calendarRepo,
@@ -44,7 +41,6 @@ public class SyncController : ControllerBase
         _syncService = syncService;
         _hubContext = hubContext;
         _tokenStore = tokenStore;
-        _scopeFactory = scopeFactory;
         _logger = logger;
         _webhookRegistrationRepo = webhookRegistrationRepo;
         _calendarRepo = calendarRepo;

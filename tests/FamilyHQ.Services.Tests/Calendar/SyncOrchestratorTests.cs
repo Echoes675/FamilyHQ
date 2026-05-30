@@ -62,7 +62,6 @@ public class SyncOrchestratorTests
 
     private static (Mock<ITokenStore> TokenStore, Mock<ICalendarSyncJobQueue> Queue, Mock<ISyncJobSignal> Signal, Mock<ICalendarSyncService> Sync, TestableSyncOrchestrator SystemUnderTest) CreateSut()
     {
-        var serviceProviderMock = new Mock<IServiceProvider>();
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         var scopeMock = new Mock<IServiceScope>();
         var tokenStoreMock = new Mock<ITokenStore>();
@@ -71,14 +70,8 @@ public class SyncOrchestratorTests
         var syncServiceMock = new Mock<ICalendarSyncService>();
         var loggerMock = new Mock<ILogger<SyncOrchestrator>>();
 
-        serviceProviderMock
-            .Setup(x => x.GetService(typeof(IServiceScopeFactory)))
-            .Returns(scopeFactoryMock.Object);
-
-        scopeFactoryMock
-            .Setup(x => x.CreateScope())
-            .Returns(scopeMock.Object);
-
+        // The orchestrator resolves the SCOPED collaborators (token store, queue) from a per-iteration
+        // scope; the singleton signal is constructor-injected (signalMock below).
         var scopeServiceProviderMock = new Mock<IServiceProvider>();
         scopeServiceProviderMock
             .Setup(x => x.GetService(typeof(ITokenStore)))
@@ -86,17 +79,12 @@ public class SyncOrchestratorTests
         scopeServiceProviderMock
             .Setup(x => x.GetService(typeof(ICalendarSyncJobQueue)))
             .Returns(queueMock.Object);
-        scopeServiceProviderMock
-            .Setup(x => x.GetService(typeof(ISyncJobSignal)))
-            .Returns(signalMock.Object);
-        scopeServiceProviderMock
-            .Setup(x => x.GetService(typeof(ICalendarSyncService)))
-            .Returns(syncServiceMock.Object);
 
         scopeMock.Setup(x => x.ServiceProvider).Returns(scopeServiceProviderMock.Object);
+        scopeFactoryMock.Setup(x => x.CreateScope()).Returns(scopeMock.Object);
 
         var options = Microsoft.Extensions.Options.Options.Create(new SyncOptions { PeriodicSyncInterval = TimeSpan.FromSeconds(1) });
-        var systemUnderTest = new TestableSyncOrchestrator(serviceProviderMock.Object, loggerMock.Object, options);
+        var systemUnderTest = new TestableSyncOrchestrator(scopeFactoryMock.Object, signalMock.Object, loggerMock.Object, options);
 
         return (tokenStoreMock, queueMock, signalMock, syncServiceMock, systemUnderTest);
     }
