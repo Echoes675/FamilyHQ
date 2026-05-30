@@ -147,9 +147,10 @@ public class DashboardSteps
     [Then(@"the create-event modal does not offer the shared ""([^""]*)"" chip")]
     public async Task ThenTheCreateEventModalDoesNotOfferTheSharedChip(string calendarName)
     {
-        var count = await _dashboardPage.CalendarChipCountInModalAsync(calendarName);
-        count.Should().Be(0,
-            $"the shared calendar '{calendarName}' must never be offered as a chip in the create modal.");
+        // Web-first: the chip set can still be settling as the modal renders. ToHaveCountAsync
+        // auto-retries against the live DOM rather than reading the count once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.ModalChipsFor(calendarName))
+            .ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [When(@"I attempt to save the event ""([^""]*)"" with no calendar selected")]
@@ -217,17 +218,25 @@ public class DashboardSteps
     public async Task ThenIDoNotSeeACalendarCapsuleForEventOnTheCalendar(string calendarName, string eventName)
     {
         var colour = GetCalendarColour(calendarName);
-        var absent = await _dashboardPage.NoEventCapsuleWithCalendarColourAsync(eventName, calendarName, colour);
-        absent.Should().BeTrue(
-            $"the event '{eventName}' should NOT appear as a capsule coloured '{colour}' ({calendarName}).");
+        // Poll: removing a calendar chip triggers an app re-fetch whose echo webhook is drained
+        // asynchronously by CalendarSyncWorker (FHQ-37), re-rendering the grid a beat later. A
+        // single read can land before the coloured capsule has been removed (TOCTOU). Poll the
+        // compound "no capsule in this colour" condition until the deadline (FHQ-41).
+        await Polling.UntilAsync(
+            () => _dashboardPage.NoEventCapsuleWithCalendarColourAsync(eventName, calendarName, colour),
+            $"the event '{eventName}' should NOT appear as a capsule coloured '{colour}' ({calendarName}).",
+            timeoutMs: 15000);
     }
 
     [Then(@"the last active calendar chip has no remove button")]
     public async Task ThenTheLastActiveCalendarChipHasNoRemoveButton()
     {
-        var protected_ = await _dashboardPage.LastActiveChipHasNoRemoveButtonAsync();
-        protected_.Should().BeTrue(
-            "the sole remaining active calendar chip must not expose a remove button.");
+        // Poll the compound "exactly one active chip AND it has no remove button" invariant: the
+        // chip set re-renders as chips are removed, so a single read can race the re-render (FHQ-41).
+        await Polling.UntilAsync(
+            () => _dashboardPage.LastActiveChipHasNoRemoveButtonAsync(),
+            "the sole remaining active calendar chip must not expose a remove button.",
+            timeoutMs: 10000);
     }
 
     [StepDefinition(@"I switch to the Day View tab")]
@@ -283,8 +292,10 @@ public class DashboardSteps
     [Then(@"there are (\d+) calendar columns in the day view")]
     public async Task ThenThereAreCalendarColumnsInTheDayView(int count)
     {
-        var actualCount = await _dashboardPage.GetCalendarHeaderCountAsync();
-        actualCount.Should().Be(count);
+        // Web-first: the day-view header columns render as the view paints; ToHaveCountAsync
+        // auto-retries against the live DOM rather than counting once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.CalendarHeaderColumns)
+            .ToHaveCountAsync(count, new() { Timeout = 30000 });
     }
 
     [Then(@"I see the all-day event ""([^""]*)"" displayed at the top of the Day View")]
@@ -322,17 +333,24 @@ public class DashboardSteps
         // ("Wednesday 8 April 2026").  Rather than reproduce the browser's exact format,
         // assert on the semantic content: weekday name, day number, month name and year.
         var today   = DateTime.Today;
-        var actual  = (await _dashboardPage.GetDayPickerButtonTextAsync()).Trim();
         var culture = new System.Globalization.CultureInfo("en-GB");
+        var weekday = today.ToString("dddd", culture);
+        var month   = today.ToString("MMMM", culture);
+        var day     = today.Day.ToString();
+        var year    = today.Year.ToString();
 
-        actual.Should().Contain(today.ToString("dddd", culture),
-            "the day picker should include today's weekday name.");
-        actual.Should().Contain(today.Day.ToString(),
-            "the day picker should include today's day-of-month.");
-        actual.Should().Contain(today.ToString("MMMM", culture),
-            "the day picker should include the current month name.");
-        actual.Should().Contain(today.Year.ToString(),
-            "the day picker should include the current year.");
+        // Poll the compound "label contains weekday AND day AND month AND year" condition: the
+        // picker button text re-renders after the day-picker navigation, so a single read can
+        // race the re-render (FHQ-41). Re-read the live text each poll iteration.
+        await Polling.UntilAsync(
+            async () =>
+            {
+                var actual = (await _dashboardPage.GetDayPickerButtonTextAsync()).Trim();
+                return actual.Contains(weekday) && actual.Contains(day)
+                    && actual.Contains(month) && actual.Contains(year);
+            },
+            $"the day picker should show today's date (weekday '{weekday}', day '{day}', month '{month}', year '{year}').",
+            timeoutMs: 10000);
     }
 
     [When(@"I enter day view reorder mode")]
@@ -354,8 +372,7 @@ public class DashboardSteps
                      ?? throw new InvalidOperationException($"No day header found for '{calendarName}'.");
         var guid = testId.Replace("day-calendar-header-", "");
         var leftArrow = page.GetByTestId($"day-reorder-left-{guid}");
-        (await leftArrow.CountAsync()).Should().Be(0,
-            $"'{calendarName}' is the leftmost column and should not render a left reorder arrow in day view.");
+        await Assertions.Expect(leftArrow).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"the ""([^""]*)"" column has no right arrow in day view reorder mode")]
@@ -368,7 +385,6 @@ public class DashboardSteps
                      ?? throw new InvalidOperationException($"No day header found for '{calendarName}'.");
         var guid = testId.Replace("day-calendar-header-", "");
         var rightArrow = page.GetByTestId($"day-reorder-right-{guid}");
-        (await rightArrow.CountAsync()).Should().Be(0,
-            $"'{calendarName}' is the rightmost column and should not render a right reorder arrow in day view.");
+        await Assertions.Expect(rightArrow).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 }

@@ -51,19 +51,11 @@ public class RecurringEventSteps
         // acks immediately, CalendarSyncWorker drains it, then an EventsUpdated SignalR broadcast
         // re-renders the dashboard. A single wait-then-read can therefore land before the sync
         // has applied, or inside the re-render window (same TOCTOU class as intermittent-issues #4).
-        // Poll the indicator count over a deadline, tolerating transient zeros.
-        var deadline = System.DateTime.UtcNow.AddSeconds(20);
-        var count = 0;
-        while (System.DateTime.UtcNow < deadline)
-        {
-            count = await _dashboardPage.CountRecurrenceIndicatorsAsync();
-            if (count > 0)
-                break;
-            await Task.Delay(250);
-        }
-
-        count.Should().BeGreaterThan(0,
-            "recurring event tiles must display the recurrence indicator glyph.");
+        // Web-first: assert the first recurrence indicator becomes visible. ToBeVisibleAsync
+        // auto-retries against the live DOM (the ">= 1 indicator" semantics) rather than reading
+        // the count once and racing the sync/re-render (FHQ-41).
+        await Assertions.Expect(_dashboardPage.RecurrenceIndicators.First)
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"the recurring event details describe the weekly repeat pattern")]

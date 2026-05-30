@@ -1,4 +1,5 @@
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
 using FamilyHQ.E2E.Data.Models;
@@ -105,8 +106,10 @@ public class SyncResilienceSteps
     [Then(@"I see the failed run in the recent failed sync runs table")]
     public async Task ThenISeeTheFailedRunInTheRecentFailedSyncRunsTable()
     {
-        (await _diagnosticsPage.RunsEmptyState.IsVisibleAsync()).Should().BeFalse(
-            "the runs empty-state placeholder must give way to the runs table once a terminally-failed sync run is recorded");
+        // Web-first: the empty-state placeholder is replaced by the runs table once a failed run is
+        // recorded; ToBeHiddenAsync auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(_diagnosticsPage.RunsEmptyState)
+            .ToBeHiddenAsync(new() { Timeout = 30000 });
 
         var rows = await _diagnosticsPage.GetFailedRunRowCountAsync();
         rows.Should().BeGreaterThanOrEqualTo(1,
@@ -116,8 +119,10 @@ public class SyncResilienceSteps
     [Then(@"I see the failure in the recent sync failures table")]
     public async Task ThenISeeTheFailureInTheRecentSyncFailuresTable()
     {
-        (await _diagnosticsPage.IsEmptyStateVisibleAsync()).Should().BeFalse(
-            "the empty-state placeholder must give way to the failures table once a per-event failure is recorded");
+        // Web-first: the empty-state placeholder is replaced by the failures table once a per-event
+        // failure is recorded; ToBeHiddenAsync auto-retries against the live DOM (FHQ-41).
+        await Assertions.Expect(_diagnosticsPage.FailuresEmptyState)
+            .ToBeHiddenAsync(new() { Timeout = 30000 });
 
         var rows = await _diagnosticsPage.GetFailureRowCountAsync();
         rows.Should().BeGreaterThanOrEqualTo(1,
@@ -232,8 +237,10 @@ public class SyncResilienceSteps
             new() { WaitUntil = WaitUntilState.NetworkIdle });
 
         await _dashboardPage.ReauthBanner.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        (await _dashboardPage.ReauthBannerCta.IsVisibleAsync()).Should().BeTrue(
-            "the reauth banner must render a reconnect CTA when AuthStatus is NeedsReauth");
+        // Web-first: the reconnect CTA renders within the banner; ToBeVisibleAsync auto-retries
+        // against the live DOM rather than reading visibility once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.ReauthBannerCta)
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I see the reauth banner on the dashboard")]
@@ -261,38 +268,41 @@ public class SyncResilienceSteps
     [Then(@"the banner shows the reason ""([^""]*)""")]
     public async Task ThenBannerShowsReason(string expected)
     {
-        var bannerText = await _dashboardPage.ReauthBanner.InnerTextAsync();
-        bannerText.Should().Contain(expected,
-            $"the reauth banner must surface the Google-supplied reason '{expected}'");
+        // Web-first: the banner reason text populates from the connection-status fetch; ToContainTextAsync
+        // auto-retries against the live DOM rather than reading the text once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.ReauthBanner)
+            .ToContainTextAsync(expected, new() { Timeout = 30000 });
     }
 
     [Then(@"the connection status badge reads ""([^""]*)""")]
     public async Task ThenConnectionStatusBadgeReads(string expected)
     {
         await _diagnosticsPage.GotoAsync();
-        var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
 
-        string because;
-        if (!label.Contains(expected))
+        // Web-first: the status badge text settles after the connection-status fetch resolves and the
+        // page re-renders, so ToContainTextAsync auto-retries against the live DOM rather than reading
+        // the badge once and racing the re-render (FHQ-41). Only on a genuine timeout do we capture the
+        // FHQ-28 diagnostic (live connection-status + captured sync-response) and surface it on failure.
+        try
         {
-            // FHQ-28 diagnostic: embed the captured sync-response status and the
-            // live /api/calendars/connection-status response into the FluentAssertions
-            // failure message so triage doesn't need WebApi container logs.
+            await Assertions.Expect(_diagnosticsPage.StatusBadge)
+                .ToContainTextAsync(expected, new() { Timeout = 30000 });
+        }
+        catch (PlaywrightException)
+        {
             var page = _scenarioContext.Get<IPage>();
-            because = await CollectReauthDiagnosticAsync(page);
+            var because = await CollectReauthDiagnosticAsync(page);
+            var label = await _diagnosticsPage.StatusBadge.InnerTextAsync();
+            label.Should().Contain(expected, because);
         }
-        else
-        {
-            because = $"the diagnostics status badge must read '{expected}' after a reauth-triggering sync";
-        }
-
-        label.Should().Contain(expected, because);
     }
 
     [Then(@"I see a reconnect button on the diagnostics page")]
     public async Task ThenISeeReconnectButton()
     {
-        (await _diagnosticsPage.ReconnectBtn.IsVisibleAsync()).Should().BeTrue(
-            "the reconnect button must be visible when AuthStatus is NeedsReauth");
+        // Web-first: the reconnect button renders when AuthStatus is NeedsReauth; ToBeVisibleAsync
+        // auto-retries against the live DOM rather than reading visibility once (FHQ-41).
+        await Assertions.Expect(_diagnosticsPage.ReconnectBtn)
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 }

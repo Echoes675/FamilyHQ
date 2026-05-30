@@ -1,3 +1,4 @@
+using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FluentAssertions;
 using Microsoft.Playwright;
@@ -53,15 +54,23 @@ public class CalendarSettingsSteps
     [Then(@"""([^""]*)"" is designated as the shared calendar")]
     public async Task ThenIsDesignatedAsTheSharedCalendar(string calendarName)
     {
-        var isShared = await _settingsPage.IsCalendarDesignatedSharedAsync(calendarName);
-        isShared.Should().BeTrue($"'{calendarName}' should be designated as the shared calendar.");
+        // Poll: the shared designation is applied after an async Blazor save, so a single class read
+        // can race the re-render. Re-read the live state each iteration until set (FHQ-41).
+        await Polling.UntilAsync(
+            () => _settingsPage.IsCalendarDesignatedSharedAsync(calendarName),
+            $"'{calendarName}' should be designated as the shared calendar.",
+            timeoutMs: 10000);
     }
 
     [Then(@"""([^""]*)"" is no longer designated as the shared calendar")]
     public async Task ThenIsNoLongerDesignatedAsTheSharedCalendar(string calendarName)
     {
-        var isShared = await _settingsPage.IsCalendarDesignatedSharedAsync(calendarName);
-        isShared.Should().BeFalse($"'{calendarName}' should not be designated as the shared calendar.");
+        // Poll: the shared designation is cleared after an async Blazor save, so a single class read
+        // can race the re-render. Re-read the live state each iteration until cleared (FHQ-41).
+        await Polling.UntilAsync(
+            async () => !await _settingsPage.IsCalendarDesignatedSharedAsync(calendarName),
+            $"'{calendarName}' should not be designated as the shared calendar.",
+            timeoutMs: 10000);
     }
 
     [Then(@"the ""([^""]*)"" chip is available in the modal")]
@@ -75,8 +84,8 @@ public class CalendarSettingsSteps
     public async Task ThenTheChipIsNotAvailableInTheModal(string calendarName)
     {
         var chip = _page.Locator(".modal-content .chip").Filter(new() { HasText = calendarName });
-        (await chip.CountAsync()).Should().Be(0,
-            $"The '{calendarName}' chip should not be selectable in the event modal.");
+        // Web-first: ToHaveCountAsync auto-retries against the live DOM rather than counting once (FHQ-41).
+        await Assertions.Expect(chip).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [When(@"I click the Sync Now button")]
@@ -123,9 +132,9 @@ public class CalendarSettingsSteps
     public async Task ThenTheVisibilityToggleReads(string calendarName, string expectedText)
     {
         var toggle = _settingsPage.GetVisibilityToggle(calendarName);
-        var actualText = (await toggle.InnerTextAsync()).Trim();
-        actualText.Should().Be(expectedText,
-            $"The visibility toggle for '{calendarName}' should read '{expectedText}'.");
+        // Web-first: the toggle label flips after the async visibility save; ToHaveTextAsync trims and
+        // auto-retries against the live DOM rather than reading the text once (FHQ-41).
+        await Assertions.Expect(toggle).ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
     }
 
     [Then(@"the Register Webhooks button is visible")]

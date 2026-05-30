@@ -222,10 +222,8 @@ public class DashboardPage : BasePage
         return DateTime.ParseExact(text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    public async Task<int> GetAgendaDayRowCountAsync()
-    {
-        return await Page.Locator(".agenda-day-row").CountAsync();
-    }
+    /// <summary>Agenda day rows. Exposed for web-first count assertions (FHQ-41).</summary>
+    public ILocator AgendaDayRows => Page.Locator(".agenda-day-row");
 
     public async Task<bool> HasTodayRowHighlightAsync()
     {
@@ -341,9 +339,16 @@ public class DashboardPage : BasePage
 
     public async Task<bool> IsCalendarChipActiveAsync(string calendarName)
     {
+        // Web-first: the chip's active class is applied as the modal pre-selects calendars; a single
+        // class read can race that render. ToHaveClassAsync auto-retries against the live DOM (FHQ-41);
+        // a web-first failure throws PlaywrightException, mapped back to false to preserve the bool.
         var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
-        var classes = await chip.GetAttributeAsync("class") ?? "";
-        return classes.Contains("chip-active");
+        try
+        {
+            await Assertions.Expect(chip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 
     public async Task OpenDayPickerAndGoAsync(string dateYyyyMmDd)
@@ -756,11 +761,12 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Number of calendar chips offered in the open modal that match
-    /// <paramref name="calendarName"/>. Used to assert the shared calendar is never offered.
+    /// Calendar chips offered in the open modal that match <paramref name="calendarName"/>.
+    /// Exposed as a locator so callers can use web-first auto-retrying count assertions
+    /// (FHQ-41) instead of a single point-in-time CountAsync.
     /// </summary>
-    public async Task<int> CalendarChipCountInModalAsync(string calendarName)
-        => await EventModal.Locator(".chip").Filter(new() { HasText = calendarName }).CountAsync();
+    public ILocator ModalChipsFor(string calendarName)
+        => EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
 
     /// <summary>
     /// Fills the title and clicks Save without selecting any calendar. Does NOT wait for the
@@ -779,11 +785,19 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task<bool> ModalShowsCalendarValidationErrorAsync()
     {
+        // Web-first: the alert is populated when Save is blocked and the modal stays open.
+        // ToContainTextAsync auto-retries against the live banner rather than reading once
+        // and racing the validation re-render (FHQ-41). A web-first failure throws
+        // PlaywrightException, which we map back to false to preserve the bool contract.
         var alert = EventModal.Locator(".alert-danger");
-        await alert.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        var text = await alert.InnerTextAsync();
-        return await EventModal.IsVisibleAsync()
-            && text.Contains("calendar", StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            await Assertions.Expect(alert).ToContainTextAsync(
+                new Regex("calendar", RegexOptions.IgnoreCase), new() { Timeout = 5000 });
+            await Assertions.Expect(EventModal).ToBeVisibleAsync(new() { Timeout = 5000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 
     /// <summary>Cancels the open event modal and waits for it to close.</summary>
@@ -922,10 +936,8 @@ public class DashboardPage : BasePage
         return string.Empty;
     }
 
-    public async Task<int> GetCalendarHeaderCountAsync()
-    {
-        return await Page.Locator(".calendar-header-col").CountAsync();
-    }
+    /// <summary>Day-view calendar header columns. Exposed for web-first count assertions (FHQ-41).</summary>
+    public ILocator CalendarHeaderColumns => Page.Locator(".calendar-header-col");
 
     public async Task WaitForAllDayEventVisibleAsync(string eventName)
     {
@@ -1469,10 +1481,16 @@ public class DashboardPage : BasePage
         await pill.ClickAsync();
         await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
 
-        // Observable block: the member warning is shown and OK is disabled.
-        await ScopePromptMemberWarning.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
-        var warningVisible = await ScopePromptMemberWarning.IsVisibleAsync();
-        var okDisabled = await ScopePromptOkBtn.IsDisabledAsync();
-        return warningVisible && okDisabled;
+        // Observable block: the member warning is shown and OK is disabled. Web-first assertions
+        // auto-retry against the live DOM rather than reading visibility/disabled state once and
+        // racing the scope-prompt re-render (FHQ-41); a web-first failure throws PlaywrightException,
+        // mapped back to false to preserve the bool contract.
+        try
+        {
+            await Assertions.Expect(ScopePromptMemberWarning).ToBeVisibleAsync(new() { Timeout = 10000 });
+            await Assertions.Expect(ScopePromptOkBtn).ToBeDisabledAsync(new() { Timeout = 10000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 }
