@@ -471,11 +471,18 @@ public class WeatherSteps
     [Then(@"I see hourly temperatures in the day view")]
     public async Task ThenISeeHourlyTemperaturesInTheDayView()
     {
-        // DayView loads hourly data asynchronously after tab switch, so wait
-        // for at least one element to appear before counting.
-        await _dashboardPage.DayHourTemps.First.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        var count = await _dashboardPage.DayHourTemps.CountAsync();
+        // DayView loads hourly data asynchronously after the tab switch and can re-render once
+        // more as data settles — a wait-then-single-count can catch a transient empty re-render
+        // (TOCTOU, cf. intermittent-issues #6). Poll the count, tolerating transient zeros.
+        var deadline = System.DateTime.UtcNow.AddSeconds(30);
+        var count = 0;
+        while (System.DateTime.UtcNow < deadline)
+        {
+            count = await _dashboardPage.DayHourTemps.CountAsync();
+            if (count > 0)
+                break;
+            await Task.Delay(250);
+        }
         count.Should().BeGreaterThan(0, "at least one hourly temperature should be displayed");
     }
 
