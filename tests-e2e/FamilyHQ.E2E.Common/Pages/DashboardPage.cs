@@ -222,44 +222,39 @@ public class DashboardPage : BasePage
         return DateTime.ParseExact(text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    public async Task<int> GetAgendaDayRowCountAsync()
-    {
-        return await Page.Locator(".agenda-day-row").CountAsync();
-    }
+    /// <summary>Agenda day rows. Exposed for web-first count assertions (FHQ-41).</summary>
+    public ILocator AgendaDayRows => Page.Locator(".agenda-day-row");
 
     public async Task<bool> HasTodayRowHighlightAsync()
     {
-        // Wait for the agenda to paint today's row before the instant count (TOCTOU, intermittent-issues #6).
         try
         {
-            await Page.Locator(".agenda-today-row").First
-                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            await Assertions.Expect(Page.Locator(".agenda-today-row"))
+                .ToHaveCountAsync(1, new() { Timeout = 5000 });
+            return true;
         }
-        catch (TimeoutException)
-        {
-            return false;
-        }
-        return await Page.Locator(".agenda-today-row").CountAsync() == 1;
+        catch (PlaywrightException) { return false; }
     }
 
     public async Task<bool> WeekendRowsHaveClassAsync()
     {
-        // Wait for at least one row to be rendered before counting
-        await Page.Locator(".agenda-weekend-row").First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        // A month always has at least 8 weekend days
-        return await Page.Locator(".agenda-weekend-row").CountAsync() >= 8;
+        try
+        {
+            await FamilyHQ.E2E.Common.Helpers.Polling.UntilAsync(
+                async () => await Page.Locator(".agenda-weekend-row").CountAsync() >= 8,
+                "Expected >= 8 .agenda-weekend-row after render", timeoutMs: 5000);
+            return true;
+        }
+        catch (TimeoutException) { return false; }
     }
 
     public async Task<int> GetWeekdayRowsWithoutWeekendClassAsync()
     {
-        // Wait for the agenda to paint at least one day row before counting; an unrendered
-        // agenda yields 0 and a false-negative subtraction (TOCTOU, intermittent-issues #6).
         await Page.Locator(".agenda-day-row").First
             .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        // All .agenda-day-row rows that do NOT have .agenda-weekend-row
-        var all = await Page.Locator(".agenda-day-row").CountAsync();
-        var weekends = await Page.Locator(".agenda-weekend-row").CountAsync();
-        return all - weekends;
+        var counts = await Page.EvaluateAsync<int[]>(
+            "() => [document.querySelectorAll('.agenda-day-row').length, document.querySelectorAll('.agenda-weekend-row').length]");
+        return counts[0] - counts[1];
     }
 
     public async Task<bool> IsAgendaCalendarHeaderVisibleAsync(string calendarName)
@@ -282,17 +277,6 @@ public class DashboardPage : BasePage
     {
         var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
         return await cell.GetByText(expectedText, new() { Exact = false }).CountAsync() > 0;
-    }
-
-    public async Task<int> GetAgendaEventLineCountAsync(string dateKey, Guid calendarId)
-    {
-        var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
-        return await cell.Locator(".agenda-event-line").CountAsync();
-    }
-
-    public async Task<string> GetAgendaOverflowTextAsync(string dateKey, Guid calendarId)
-    {
-        return await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").InnerTextAsync();
     }
 
     public async Task<bool> IsAgendaOverflowVisibleAsync(string dateKey, Guid calendarId)
@@ -344,9 +328,16 @@ public class DashboardPage : BasePage
 
     public async Task<bool> IsCalendarChipActiveAsync(string calendarName)
     {
+        // Web-first: the chip's active class is applied as the modal pre-selects calendars; a single
+        // class read can race that render. ToHaveClassAsync auto-retries against the live DOM (FHQ-41);
+        // a web-first failure throws PlaywrightException, mapped back to false to preserve the bool.
         var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
-        var classes = await chip.GetAttributeAsync("class") ?? "";
-        return classes.Contains("chip-active");
+        try
+        {
+            await Assertions.Expect(chip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 
     public async Task OpenDayPickerAndGoAsync(string dateYyyyMmDd)
@@ -417,6 +408,10 @@ public class DashboardPage : BasePage
             new() { Timeout = 30000 });
         await WaitForCalendarVisibleAsync();
     }
+
+    /// <summary>Awaits the current user's sync queue draining (FHQ-41). No-op when already idle.</summary>
+    public Task WaitForSyncSettledAsync()
+        => FamilyHQ.E2E.Common.Helpers.SyncSettle.WaitForUserQueueDrainAsync(Page);
 
     public async Task WaitForWeatherStripAsync(int timeoutMs = 60000)
     {
@@ -492,6 +487,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task UpdateEventAsync(string oldTitle, string newTitle)
@@ -509,6 +505,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task ChangeEventCalendarAsync(string eventName, string targetCalendarName)
@@ -545,6 +542,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task DeleteEventAsync(string title)
@@ -560,6 +558,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task ClickEventAsync(string eventName)
@@ -630,6 +629,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -657,6 +657,7 @@ public class DashboardPage : BasePage
             await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
             await eventsResponseTask;
             await WaitForCalendarVisibleAsync();
+            await WaitForSyncSettledAsync();
         });
     }
 
@@ -701,6 +702,7 @@ public class DashboardPage : BasePage
         await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -735,6 +737,7 @@ public class DashboardPage : BasePage
         await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     // --- FHQ-32: create modal must not silently default the calendar selection ---
@@ -747,11 +750,12 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Number of calendar chips offered in the open modal that match
-    /// <paramref name="calendarName"/>. Used to assert the shared calendar is never offered.
+    /// Calendar chips offered in the open modal that match <paramref name="calendarName"/>.
+    /// Exposed as a locator so callers can use web-first auto-retrying count assertions
+    /// (FHQ-41) instead of a single point-in-time CountAsync.
     /// </summary>
-    public async Task<int> CalendarChipCountInModalAsync(string calendarName)
-        => await EventModal.Locator(".chip").Filter(new() { HasText = calendarName }).CountAsync();
+    public ILocator ModalChipsFor(string calendarName)
+        => EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
 
     /// <summary>
     /// Fills the title and clicks Save without selecting any calendar. Does NOT wait for the
@@ -770,11 +774,19 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task<bool> ModalShowsCalendarValidationErrorAsync()
     {
+        // Web-first: the alert is populated when Save is blocked and the modal stays open.
+        // ToContainTextAsync auto-retries against the live banner rather than reading once
+        // and racing the validation re-render (FHQ-41). A web-first failure throws
+        // PlaywrightException, which we map back to false to preserve the bool contract.
         var alert = EventModal.Locator(".alert-danger");
-        await alert.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        var text = await alert.InnerTextAsync();
-        return await EventModal.IsVisibleAsync()
-            && text.Contains("calendar", StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            await Assertions.Expect(alert).ToContainTextAsync(
+                new Regex("calendar", RegexOptions.IgnoreCase), new() { Timeout = 5000 });
+            await Assertions.Expect(EventModal).ToBeVisibleAsync(new() { Timeout = 5000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 
     /// <summary>Cancels the open event modal and waits for it to close.</summary>
@@ -808,6 +820,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -912,10 +925,8 @@ public class DashboardPage : BasePage
         return string.Empty;
     }
 
-    public async Task<int> GetCalendarHeaderCountAsync()
-    {
-        return await Page.Locator(".calendar-header-col").CountAsync();
-    }
+    /// <summary>Day-view calendar header columns. Exposed for web-first count assertions (FHQ-41).</summary>
+    public ILocator CalendarHeaderColumns => Page.Locator(".calendar-header-col");
 
     public async Task WaitForAllDayEventVisibleAsync(string eventName)
     {
@@ -962,18 +973,12 @@ public class DashboardPage : BasePage
 
     public async Task<bool> IsCurrentTimeLineVisibleAsync()
     {
-        // Wait for the time line to paint before the instant visibility read; it renders only
-        // when viewing today and can lag the Day-view switch (TOCTOU, intermittent-issues #6).
         try
         {
-            await CurrentTimeLine.First
-                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            await Assertions.Expect(CurrentTimeLine.First).ToBeVisibleAsync(new() { Timeout = 5000 });
+            return true;
         }
-        catch (TimeoutException)
-        {
-            return false;
-        }
-        return await CurrentTimeLine.IsVisibleAsync();
+        catch (PlaywrightException) { return false; }
     }
 
     // FHQ-18.11 recurrence helpers ────────────────────────────────────────────
@@ -1045,20 +1050,6 @@ public class DashboardPage : BasePage
     {
         await RecurrenceIndicators.First.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
-    }
-
-    /// <summary>Number of recurrence indicator glyphs currently rendered in the view.</summary>
-    public async Task<int> CountRecurrenceIndicatorsAsync() => await RecurrenceIndicators.CountAsync();
-
-    /// <summary>
-    /// Reads the recurrence subtitle text from the open event modal (e.g.
-    /// "Repeats weekly on Tuesday"). Waits for the subtitle to be visible first.
-    /// </summary>
-    public async Task<string> GetRecurrenceSubtitleTextAsync(int timeoutMs = 30000)
-    {
-        await RecurrenceSubtitle.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
-        return (await RecurrenceSubtitle.InnerTextAsync()).Trim();
     }
 
     // FHQ-18.11 Pass 2 — native recurring-event create & toggle-off ────────────
@@ -1137,6 +1128,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1165,6 +1157,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1191,6 +1184,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1259,6 +1253,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1332,6 +1327,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1460,10 +1456,16 @@ public class DashboardPage : BasePage
         await pill.ClickAsync();
         await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
 
-        // Observable block: the member warning is shown and OK is disabled.
-        await ScopePromptMemberWarning.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
-        var warningVisible = await ScopePromptMemberWarning.IsVisibleAsync();
-        var okDisabled = await ScopePromptOkBtn.IsDisabledAsync();
-        return warningVisible && okDisabled;
+        // Observable block: the member warning is shown and OK is disabled. Web-first assertions
+        // auto-retry against the live DOM rather than reading visibility/disabled state once and
+        // racing the scope-prompt re-render (FHQ-41); a web-first failure throws PlaywrightException,
+        // mapped back to false to preserve the bool contract.
+        try
+        {
+            await Assertions.Expect(ScopePromptMemberWarning).ToBeVisibleAsync(new() { Timeout = 10000 });
+            await Assertions.Expect(ScopePromptOkBtn).ToBeDisabledAsync(new() { Timeout = 10000 });
+            return true;
+        }
+        catch (PlaywrightException) { return false; }
     }
 }

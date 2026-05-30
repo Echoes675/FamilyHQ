@@ -51,31 +51,21 @@ public class RecurringEventSteps
         // acks immediately, CalendarSyncWorker drains it, then an EventsUpdated SignalR broadcast
         // re-renders the dashboard. A single wait-then-read can therefore land before the sync
         // has applied, or inside the re-render window (same TOCTOU class as intermittent-issues #4).
-        // Poll the indicator count over a deadline, tolerating transient zeros.
-        var deadline = System.DateTime.UtcNow.AddSeconds(20);
-        var count = 0;
-        while (System.DateTime.UtcNow < deadline)
-        {
-            count = await _dashboardPage.CountRecurrenceIndicatorsAsync();
-            if (count > 0)
-                break;
-            await Task.Delay(250);
-        }
-
-        count.Should().BeGreaterThan(0,
-            "recurring event tiles must display the recurrence indicator glyph.");
+        // Web-first: assert the first recurrence indicator becomes visible. ToBeVisibleAsync
+        // auto-retries against the live DOM (the ">= 1 indicator" semantics) rather than reading
+        // the count once and racing the sync/re-render (FHQ-41).
+        await Assertions.Expect(_dashboardPage.RecurrenceIndicators.First)
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"the recurring event details describe the weekly repeat pattern")]
     public async Task ThenTheRecurringEventDetailsDescribeTheWeeklyRepeatPattern()
     {
         var expected = _scenarioContext.Get<string>("RecurringSeriesExpectedSubtitle");
-        var subtitle = await _dashboardPage.GetRecurrenceSubtitleTextAsync();
         // Assert the human-readable weekly pattern is present rather than exact-matching: the
         // describer also appends the end condition (e.g. ", 3 times") for a COUNT-bounded series,
-        // which is not what this scenario is asserting.
-        subtitle.Should().Contain(expected,
-            "the opened recurring instance must describe its weekly repeat pattern.");
+        // which is not what this scenario is asserting. ToContainText = substring match (FHQ-41).
+        await Assertions.Expect(_dashboardPage.RecurrenceSubtitle).ToContainTextAsync(expected, new() { Timeout = 30000 });
     }
 
     // ── FHQ-18.11 Pass 2: native create + toggle-off ──────────────────────────

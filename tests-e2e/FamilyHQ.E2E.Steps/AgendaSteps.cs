@@ -97,16 +97,18 @@ public class AgendaSteps
     public async Task ThenTheAgendaViewShowsThePreviousMonth()
     {
         var expected = DateTime.Today.AddMonths(-1).ToString("MMMM yyyy");
-        var actual = await _dashboardPage.GetAgendaMonthYearTextAsync();
-        actual.Should().Be(expected);
+        // Web-first: the month-year label re-renders after navigation; ToHaveTextAsync auto-retries
+        // against the live label rather than reading once and racing the re-render (FHQ-41).
+        await Assertions.Expect(_page.GetByTestId("agenda-month-year-label"))
+            .ToHaveTextAsync(expected, new() { Timeout = 30000 });
     }
 
     [Then(@"the agenda view shows the next month")]
     public async Task ThenTheAgendaViewShowsTheNextMonth()
     {
         var expected = DateTime.Today.AddMonths(1).ToString("MMMM yyyy");
-        var actual = await _dashboardPage.GetAgendaMonthYearTextAsync();
-        actual.Should().Be(expected);
+        await Assertions.Expect(_page.GetByTestId("agenda-month-year-label"))
+            .ToHaveTextAsync(expected, new() { Timeout = 30000 });
     }
 
     // ─── Display ────────────────────────────────────────────────────────────────
@@ -117,8 +119,10 @@ public class AgendaSteps
         var monthText = await _dashboardPage.GetAgendaMonthYearTextAsync();
         var month = DateTime.ParseExact(monthText, "MMMM yyyy", CultureInfo.InvariantCulture);
         var expected = DateTime.DaysInMonth(month.Year, month.Month);
-        var actual = await _dashboardPage.GetAgendaDayRowCountAsync();
-        actual.Should().Be(expected, $"All {expected} days of {monthText} should be visible.");
+        // Web-first: the day rows render as the agenda paints; ToHaveCountAsync auto-retries
+        // against the live DOM rather than counting once mid-render (FHQ-41).
+        await Assertions.Expect(_dashboardPage.AgendaDayRows)
+            .ToHaveCountAsync(expected, new() { Timeout = 30000 });
     }
 
     [Then(@"weekend rows on the agenda view have the CSS class ""([^""]*)""")]
@@ -191,9 +195,9 @@ public class AgendaSteps
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var cell = _page.GetByTestId($"agenda-cell-{dateKey}-{calId}");
         var eventLine = cell.GetByText(title, new() { Exact = false }).First;
-        var text = await eventLine.InnerTextAsync();
-        // Text should be just the title — no leading "HH:mm " pattern
-        text.Trim().Should().Be(title, $"All-day event '{title}' should show title only, no time prefix.");
+        // Web-first: the event line should read exactly the title — no leading "HH:mm " prefix.
+        // ToHaveTextAsync trims and auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(eventLine).ToHaveTextAsync(title, new() { Timeout = 30000 });
     }
 
     [Then(@"I see (\d+) event lines in the ""([^""]*)"" column for ""([^""]*)""")]
@@ -201,8 +205,10 @@ public class AgendaSteps
     {
         var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
-        var actual = await _dashboardPage.GetAgendaEventLineCountAsync(dateKey, calId);
-        actual.Should().Be(count, $"Expected {count} event lines in {calendarName} on {dateKey}.");
+        // Web-first: the event lines render as the agenda cell paints; ToHaveCountAsync auto-retries
+        // against the live DOM rather than counting once mid-render (FHQ-41).
+        var eventLines = _page.GetByTestId($"agenda-cell-{dateKey}-{calId}").Locator(".agenda-event-line");
+        await Assertions.Expect(eventLines).ToHaveCountAsync(count, new() { Timeout = 30000 });
     }
 
     [Then(@"I see a ""\+(\d+) more"" indicator in the ""([^""]*)"" column for ""([^""]*)""")]
@@ -210,8 +216,10 @@ public class AgendaSteps
     {
         var dateKey = DateExpressionResolver.Resolve(dateExpr);
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
-        var overflowText = await _dashboardPage.GetAgendaOverflowTextAsync(dateKey, calId);
-        overflowText.Trim().Should().Be($"+{n} more");
+        // Web-first: the overflow indicator renders as the cell paints; ToHaveTextAsync auto-retries
+        // against the live DOM rather than reading the text once (FHQ-41).
+        await Assertions.Expect(_page.GetByTestId($"agenda-overflow-{dateKey}-{calId}"))
+            .ToHaveTextAsync($"+{n} more", new() { Timeout = 30000 });
     }
 
     // ─── Interactions ────────────────────────────────────────────────────────────
@@ -299,8 +307,7 @@ public class AgendaSteps
     {
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var leftArrow = _page.GetByTestId($"agenda-reorder-left-{calId}");
-        (await leftArrow.CountAsync()).Should().Be(0,
-            $"'{calendarName}' is the leftmost column and should not render a left reorder arrow.");
+        await Assertions.Expect(leftArrow).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"the ""([^""]*)"" column has no right arrow in agenda reorder mode")]
@@ -308,7 +315,6 @@ public class AgendaSteps
     {
         var calId = await ResolveCalendarIdFromPageAsync(calendarName);
         var rightArrow = _page.GetByTestId($"agenda-reorder-right-{calId}");
-        (await rightArrow.CountAsync()).Should().Be(0,
-            $"'{calendarName}' is the rightmost column and should not render a right reorder arrow.");
+        await Assertions.Expect(rightArrow).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 }

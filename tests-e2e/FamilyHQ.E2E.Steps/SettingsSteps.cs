@@ -128,42 +128,40 @@ public class SettingsSteps
     [Then(@"I see the Morning theme tile with a time")]
     public async Task ThenISeeTheMorningThemeTileWithATime()
     {
-        await _settingsPage.MorningTile.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        var time = await _settingsPage.MorningTile.Locator(".theme-tile__time").InnerTextAsync();
-        time.Trim().Should().NotBeEmpty("Morning tile should display a time");
+        // Web-first: the tile time renders as the Display tab paints; ToHaveTextAsync with a
+        // non-whitespace regex auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(_settingsPage.MorningTile.Locator(".theme-tile__time"))
+            .ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"\S"), new() { Timeout = 30000 });
     }
 
     [Then(@"I see the Daytime theme tile with a time")]
     public async Task ThenISeeTheDaytimeThemeTileWithATime()
     {
-        await _settingsPage.DaytimeTile.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        var time = await _settingsPage.DaytimeTile.Locator(".theme-tile__time").InnerTextAsync();
-        time.Trim().Should().NotBeEmpty("Daytime tile should display a time");
+        await Assertions.Expect(_settingsPage.DaytimeTile.Locator(".theme-tile__time"))
+            .ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"\S"), new() { Timeout = 30000 });
     }
 
     [Then(@"I see the Evening theme tile with a time")]
     public async Task ThenISeeTheEveningThemeTileWithATime()
     {
-        await _settingsPage.EveningTile.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        var time = await _settingsPage.EveningTile.Locator(".theme-tile__time").InnerTextAsync();
-        time.Trim().Should().NotBeEmpty("Evening tile should display a time");
+        await Assertions.Expect(_settingsPage.EveningTile.Locator(".theme-tile__time"))
+            .ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"\S"), new() { Timeout = 30000 });
     }
 
     [Then(@"I see the Night theme tile with a time")]
     public async Task ThenISeeTheNightThemeTileWithATime()
     {
-        await _settingsPage.NightTile.WaitForAsync(new() { State = WaitForSelectorState.Visible });
-        var time = await _settingsPage.NightTile.Locator(".theme-tile__time").InnerTextAsync();
-        time.Trim().Should().NotBeEmpty("Night tile should display a time");
+        await Assertions.Expect(_settingsPage.NightTile.Locator(".theme-tile__time"))
+            .ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"\S"), new() { Timeout = 30000 });
     }
 
     [Then(@"I see the username in the account section")]
     public async Task ThenISeeTheUsernameInTheAccountSection()
     {
-        await _settingsPage.AccountName.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        var text = await _settingsPage.AccountName.InnerTextAsync();
-        text.Trim().Should().NotBeEmpty("Account section should display the signed-in username");
+        // Web-first: the account name renders once the user profile loads; ToHaveTextAsync with a
+        // non-whitespace regex auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(_settingsPage.AccountName)
+            .ToHaveTextAsync(new System.Text.RegularExpressions.Regex(@"\S"), new() { Timeout = 30000 });
     }
 
     [When(@"I disable auto-change theme")]
@@ -189,9 +187,11 @@ public class SettingsSteps
     [Then(@"the theme tiles are not selectable")]
     public async Task ThenTheThemeTilesAreNotSelectable()
     {
-        var classes = await _settingsPage.MorningTile.GetAttributeAsync("class") ?? "";
-        classes.Should().Contain("theme-tile--readonly",
-            "tiles should be read-only when auto-change is enabled");
+        // Web-first: the read-only class is applied when auto-change is enabled; ToHaveClassAsync
+        // auto-retries against the live DOM rather than reading the class once (FHQ-41).
+        await Assertions.Expect(_settingsPage.MorningTile)
+            .ToHaveClassAsync(new System.Text.RegularExpressions.Regex("theme-tile--readonly"),
+                new() { Timeout = 30000 });
     }
 
     [Then(@"the settings tab in position (\d+) is ""([^""]*)""")]
@@ -201,16 +201,18 @@ public class SettingsSteps
         // 1-based position over the settings tab strip
         var tab = page.Locator($".settings-tab-strip .settings-tab:nth-child({position})");
         await Assertions.Expect(tab).ToBeVisibleAsync(new() { Timeout = 10000 });
-        var label = await tab.Locator(".settings-tab__label").InnerTextAsync();
-        label.Trim().Should().Be(expectedLabel,
-            $"settings tab in position {position} should be '{expectedLabel}'");
+        // Web-first: the tab label text auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(tab.Locator(".settings-tab__label"))
+            .ToHaveTextAsync(expectedLabel, new() { Timeout = 30000 });
     }
 
     [Then(@"the ""([^""]*)"" theme tile is selected")]
     public async Task ThenTheThemeTileIsSelected(string themeName)
     {
-        var classes = await _settingsPage.ThemeTile(themeName).GetAttributeAsync("class") ?? "";
-        classes.Should().Contain("theme-tile--selected",
-            $"the {themeName} tile should show as selected after being clicked");
+        // Web-first: the selected class is applied after the tile is tapped; ToHaveClassAsync
+        // auto-retries against the live DOM rather than reading the class once (FHQ-41).
+        await Assertions.Expect(_settingsPage.ThemeTile(themeName))
+            .ToHaveClassAsync(new System.Text.RegularExpressions.Regex("theme-tile--selected"),
+                new() { Timeout = 30000 });
     }
 }
