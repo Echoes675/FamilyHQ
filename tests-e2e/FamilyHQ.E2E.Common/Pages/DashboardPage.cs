@@ -418,6 +418,10 @@ public class DashboardPage : BasePage
         await WaitForCalendarVisibleAsync();
     }
 
+    /// <summary>Awaits the current user's sync queue draining (FHQ-41). No-op when already idle.</summary>
+    public Task WaitForSyncSettledAsync()
+        => FamilyHQ.E2E.Common.Helpers.SyncSettle.WaitForUserQueueDrainAsync(Page);
+
     public async Task WaitForWeatherStripAsync(int timeoutMs = 60000)
     {
         await Assertions.Expect(WeatherStrip).ToBeVisibleAsync(
@@ -492,6 +496,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task UpdateEventAsync(string oldTitle, string newTitle)
@@ -509,6 +514,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task ChangeEventCalendarAsync(string eventName, string targetCalendarName)
@@ -545,6 +551,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task DeleteEventAsync(string title)
@@ -560,6 +567,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     public async Task ClickEventAsync(string eventName)
@@ -630,6 +638,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -657,6 +666,7 @@ public class DashboardPage : BasePage
             await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
             await eventsResponseTask;
             await WaitForCalendarVisibleAsync();
+            await WaitForSyncSettledAsync();
         });
     }
 
@@ -701,6 +711,7 @@ public class DashboardPage : BasePage
         await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -735,6 +746,7 @@ public class DashboardPage : BasePage
         await Assertions.Expect(EventModal).ToBeHiddenAsync(new() { Timeout = 30000 });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     // --- FHQ-32: create modal must not silently default the calendar selection ---
@@ -808,6 +820,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1137,6 +1150,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1165,6 +1179,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1191,6 +1206,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1259,6 +1275,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
@@ -1332,6 +1349,7 @@ public class DashboardPage : BasePage
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
         await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
     }
 
     /// <summary>
