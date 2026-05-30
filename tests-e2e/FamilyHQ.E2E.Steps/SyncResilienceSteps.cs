@@ -17,6 +17,19 @@ namespace FamilyHQ.E2E.Steps;
 [Binding]
 public class SyncResilienceSteps
 {
+    /// <summary>
+    /// Maximum time to wait for the CalendarSyncWorker to drain the enqueued job and
+    /// record the terminally-failed run. Kept generous to absorb the worker's wake
+    /// latency under the parallel E2E runner.
+    /// </summary>
+    private const int WaitForFailedRunSeconds = 40;
+
+    /// <summary>
+    /// Interval between polls of the failed-sync-runs endpoint while waiting for the
+    /// worker to record the run.
+    /// </summary>
+    private const int WaitForFailedRunPollIntervalMs = 1000;
+
     private readonly ScenarioContext _scenarioContext;
     private readonly SimulatorApiClient _simulatorApi;
     private readonly DashboardPage _dashboardPage;
@@ -47,6 +60,58 @@ public class SyncResilienceSteps
 
     [When(@"I view the diagnostics page")]
     public Task WhenIViewTheDiagnosticsPage() => _diagnosticsPage.GotoAsync();
+
+    /// <summary>
+    /// Polls the WebApi's /api/diagnostics/failed-sync-runs endpoint (via the page's
+    /// authenticated fetch) until it reports at least one failed run for the current
+    /// user, or the deadline elapses. The webhook now ENQUEUES a durable CalendarSyncJob
+    /// and acks immediately; the CalendarSyncWorker drains the queue on its own cadence,
+    /// runs the sync, and on the injected GoogleReauthRequiredException marks the run
+    /// terminally Failed on the first attempt. This step gives the worker time to wake
+    /// and process the job before the diagnostics assertion runs.
+    /// </summary>
+    [When(@"I wait for the failed sync run to be recorded")]
+    public async Task WhenIWaitForTheFailedSyncRunToBeRecorded()
+    {
+        // Poll the diagnostics PAGE rather than a raw fetch: FamilyHQ auth is Bearer-JWT
+        // (from localStorage, attached by CustomAuthorizationMessageHandler), not cookie-based,
+        // so a `fetch(..., { credentials: 'include' })` would be unauthenticated and 401. The
+        // Blazor diagnostics page loads the runs list through its authenticated HttpClient, so
+        // we reload it each iteration until the terminally-failed run surfaces. The webhook now
+        // ENQUEUES a durable CalendarSyncJob and acks immediately; CalendarSyncWorker drains the
+        // queue and, on the injected GoogleReauthRequiredException, marks the run terminally
+        // Failed on the first attempt — so the row appears once the worker has processed it.
+        var deadline = DateTime.UtcNow.AddSeconds(WaitForFailedRunSeconds);
+        while (DateTime.UtcNow < deadline)
+        {
+            await _diagnosticsPage.GotoAsync();
+
+            // Non-throwing point-in-time read: if the runs table is present it has at least one
+            // row; if the empty-state is showing instead, IsVisibleAsync returns false and we
+            // reload after a short wait (do NOT call GetFailedRunRowCountAsync here — it waits
+            // up to 30s for the table and would throw while the run is still absent).
+            if (await _diagnosticsPage.RunsTable.IsVisibleAsync()
+                && await _diagnosticsPage.RunsTable.Locator("tbody tr").CountAsync() >= 1)
+                return;
+
+            await Task.Delay(WaitForFailedRunPollIntervalMs);
+        }
+
+        throw new TimeoutException(
+            $"No failed sync run was recorded within {WaitForFailedRunSeconds}s after the webhook notification. " +
+            "Expected the CalendarSyncWorker to drain the enqueued job and mark the reauth-failing run terminally Failed.");
+    }
+
+    [Then(@"I see the failed run in the recent failed sync runs table")]
+    public async Task ThenISeeTheFailedRunInTheRecentFailedSyncRunsTable()
+    {
+        (await _diagnosticsPage.RunsEmptyState.IsVisibleAsync()).Should().BeFalse(
+            "the runs empty-state placeholder must give way to the runs table once a terminally-failed sync run is recorded");
+
+        var rows = await _diagnosticsPage.GetFailedRunRowCountAsync();
+        rows.Should().BeGreaterThanOrEqualTo(1,
+            "the recent failed sync runs table must contain at least one row for the webhook-driven sync that failed terminally");
+    }
 
     [Then(@"I see the failure in the recent sync failures table")]
     public async Task ThenISeeTheFailureInTheRecentSyncFailuresTable()

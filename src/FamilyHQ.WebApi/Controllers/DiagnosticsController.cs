@@ -19,6 +19,7 @@ public class DiagnosticsController : ControllerBase
     private readonly ICalendarRepository _calendarRepository;
     private readonly ITokenStore _tokenStore;
     private readonly ISyncFailureRepository _syncFailureRepository;
+    private readonly ICalendarSyncJobQueue _syncJobQueue;
     private readonly ICurrentUserService _currentUser;
     private readonly ILogger<DiagnosticsController> _logger;
 
@@ -26,12 +27,14 @@ public class DiagnosticsController : ControllerBase
         ICalendarRepository calendarRepository,
         ITokenStore tokenStore,
         ISyncFailureRepository syncFailureRepository,
+        ICalendarSyncJobQueue syncJobQueue,
         ICurrentUserService currentUser,
         ILogger<DiagnosticsController> logger)
     {
         _calendarRepository = calendarRepository;
         _tokenStore = tokenStore;
         _syncFailureRepository = syncFailureRepository;
+        _syncJobQueue = syncJobQueue;
         _currentUser = currentUser;
         _logger = logger;
     }
@@ -81,5 +84,43 @@ public class DiagnosticsController : ControllerBase
             .ToList();
 
         return Ok(dtos);
+    }
+
+    [HttpGet("failed-sync-runs")]
+    public async Task<IActionResult> GetFailedSyncRuns([FromQuery] int limit = DefaultSyncFailureLimit, CancellationToken ct = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var clamped = Math.Clamp(limit, MinSyncFailureLimit, MaxSyncFailureLimit);
+        var runs = await _syncJobQueue.GetRecentFailuresAsync(userId, clamped, ct);
+
+        IReadOnlyList<FailedSyncRunDto> dtos = runs
+            .Select(r => new FailedSyncRunDto(
+                r.Id,
+                r.CalendarInfoId,
+                r.AttemptCount,
+                r.LastError,
+                r.Source.ToString(),
+                r.CompletedAt ?? r.EnqueuedAt))
+            .ToList();
+
+        return Ok(dtos);
+    }
+
+    /// <summary>
+    /// Current user's sync-queue depth — the count of not-yet-terminal jobs (Pending or
+    /// InProgress). Used to observe whether the durable queue has drained.
+    /// </summary>
+    [HttpGet("sync-queue-depth")]
+    public async Task<IActionResult> GetSyncQueueDepth(CancellationToken ct = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var active = await _syncJobQueue.GetActiveJobCountAsync(userId, ct);
+        return Ok(new SyncQueueDepthDto(active));
     }
 }

@@ -66,40 +66,62 @@ public class SyncControllerTests
             "SyncAllAsync must not be invoked when the caller has no resolvable user id.");
     }
 
+    // FHQ-37: the webhook now enqueues a durable job and acks immediately rather than
+    // running the sync inline on the request thread (which, with the request
+    // CancellationToken, caused FHQ-36). These tests assert the enqueue+wake+ack contract.
+
     [Fact]
-    public async Task GooglePushWebhook_ShouldSyncEachRegisteredUserAndNotifyClients()
+    public async Task GooglePushWebhook_WithNoChannelId_EnqueuesPeriodicJobPerUserAndAcks()
     {
         // Arrange
-        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
+        var harness = CreateSutInternal(userIds: ["user1", "user2"],
+            webhookRegistration: null, calendarInfo: null, currentUserId: "__default__");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
 
-        scopedSync.Verify(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
-        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync("user1", null, SyncJobSource.Periodic, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync("user2", null, SyncJobSource.Periodic, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+
+        // No inline sync work on the request thread.
+        harness.ScopedSync.Verify(
+            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.ScopedSync.Verify(
+            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task GooglePushWebhook_WhenNoRegisteredUsers_ShouldStillNotifyClients()
+    public async Task GooglePushWebhook_WhenNoRegisteredUsers_StillAcks()
     {
         // Arrange
-        var (_, _, proxy, systemUnderTest) = CreateSut(userIds: []);
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
+        var harness = CreateSutInternal(userIds: [],
+            webhookRegistration: null, calendarInfo: null, currentUserId: "__default__");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
-        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
     }
 
     [Fact]
-    public async Task GooglePushWebhook_WithMatchingChannelId_SyncsOnlyThatCalendar()
+    public async Task GooglePushWebhook_WithMatchingChannelId_EnqueuesTargetedWebhookJobAndAcks()
     {
         // Arrange
         var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -121,54 +143,58 @@ public class SyncControllerTests
             CalendarInfo = calendarInfo
         };
 
-        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(
-            webhookRegistration: registration,
-            calendarInfo: calendarInfo);
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
 
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
 
         // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
 
-        scopedSync.Verify(
-            s => s.SyncAsync(calendarInfoId, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(userId, calendarInfoId, SyncJobSource.Webhook, channelId, It.IsAny<CancellationToken>()),
             Times.Once);
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), null, SyncJobSource.Periodic, null, It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
 
-        scopedSync.Verify(
+        // No inline sync work on the request thread.
+        harness.ScopedSync.Verify(
+            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.ScopedSync.Verify(
             s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
-
-        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task GooglePushWebhook_WithUnknownChannelId_FallsBackToSyncAll()
+    public async Task GooglePushWebhook_WithUnknownChannelId_FallsBackToPeriodicEnqueue()
     {
         // Arrange
-        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
+        var harness = CreateSutInternal(userIds: ["user1"],
+            webhookRegistration: null, calendarInfo: null, currentUserId: "__default__");
 
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", "unknown-channel");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", "unknown-channel");
 
         // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
 
-        scopedSync.Verify(
-            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync("user1", null, SyncJobSource.Periodic, null, It.IsAny<CancellationToken>()),
             Times.Once);
-
-        scopedSync.Verify(
-            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), SyncJobSource.Webhook, It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
-
-        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
     }
 
     [Fact]
@@ -215,51 +241,23 @@ public class SyncControllerTests
     }
 
     [Fact]
-    public async Task GooglePushWebhook_WhenUserSyncThrowsReauthRequired_MarksUserAndReturnsOk()
+    public async Task GooglePushWebhook_WhenEnqueueThrows_StillAcksWith200()
     {
-        // Arrange
-        var (_, scopedSync, _, systemUnderTest, tokenStore) = CreateSutExposingTokenStore(userIds: ["user-fail"]);
-        scopedSync
-            .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleReauthRequiredException(
-                GoogleAuthFailureSource.CalendarApi, "Insufficient Permission"));
+        // FHQ-37: a 200 ack stops Google's retries; the periodic safety net reconciles.
+        // The webhook must never surface an enqueue failure as a non-200.
+        var harness = CreateSutInternal(userIds: ["user1"],
+            webhookRegistration: null, calendarInfo: null, currentUserId: "__default__");
+        harness.JobQueue
+            .Setup(q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db down"));
 
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "sync");
 
         // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
-
-        // Assert — endpoint still returns 200 to Google, but the user is flagged.
-        result.Should().BeOfType<OkResult>();
-        tokenStore.Verify(
-            t => t.MarkNeedsReauthAsync("user-fail", "Insufficient Permission", It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task GooglePushWebhook_WithoutChannelId_FallsBackToSyncAll()
-    {
-        // Arrange
-        var (_, scopedSync, proxy, systemUnderTest) = CreateSut(userIds: ["user1"]);
-
-        systemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
-        // No x-goog-channel-id header
-
-        // Act
-        var result = await systemUnderTest.GooglePushWebhook(CancellationToken.None);
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
 
         // Assert
         result.Should().BeOfType<OkResult>();
-
-        scopedSync.Verify(
-            s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
-            Times.Once);
-
-        scopedSync.Verify(
-            s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-
-        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // Sentinel that distinguishes "default: a valid test user" from "explicitly null".
@@ -277,9 +275,8 @@ public class SyncControllerTests
         CalendarInfo? calendarInfo = null,
         string? currentUserId = "__default__")
     {
-        var (constructorSync, scopedSync, proxy, sut, _) =
-            CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
-        return (constructorSync, scopedSync, proxy, sut);
+        var harness = CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
+        return (harness.ConstructorSync, harness.ScopedSync, harness.Proxy, harness.SystemUnderTest);
     }
 
     private static (
@@ -293,15 +290,20 @@ public class SyncControllerTests
         CalendarInfo? calendarInfo = null,
         string? currentUserId = "__default__")
     {
-        return CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
+        var harness = CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
+        return (harness.ConstructorSync, harness.ScopedSync, harness.Proxy, harness.SystemUnderTest, harness.TokenStore);
     }
 
-    private static (
+    private sealed record SutHarness(
         Mock<ICalendarSyncService> ConstructorSync,
         Mock<ICalendarSyncService> ScopedSync,
         Mock<IClientProxy> Proxy,
         SyncController SystemUnderTest,
-        Mock<ITokenStore> TokenStore) CreateSutInternal(
+        Mock<ITokenStore> TokenStore,
+        Mock<ICalendarSyncJobQueue> JobQueue,
+        Mock<ISyncJobSignal> Signal);
+
+    private static SutHarness CreateSutInternal(
         IEnumerable<string>? userIds,
         WebhookRegistration? webhookRegistration,
         CalendarInfo? calendarInfo,
@@ -316,6 +318,8 @@ public class SyncControllerTests
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         var webhookRepoMock = new Mock<IWebhookRegistrationRepository>();
         var calendarRepoMock = new Mock<ICalendarRepository>();
+        var jobQueueMock = new Mock<ICalendarSyncJobQueue>();
+        var signalMock = new Mock<ISyncJobSignal>();
 
         var clientsMock = new Mock<IHubClients>();
         clientsMock.Setup(c => c.All).Returns(clientProxyMock.Object);
@@ -361,7 +365,9 @@ public class SyncControllerTests
             webhookRepoMock.Object,
             calendarRepoMock.Object,
             currentUserMock.Object,
-            new Mock<IWebhookRegistrationService>().Object)
+            new Mock<IWebhookRegistrationService>().Object,
+            jobQueueMock.Object,
+            signalMock.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -369,6 +375,13 @@ public class SyncControllerTests
             }
         };
 
-        return (syncServiceMock, scopedSyncServiceMock, clientProxyMock, systemUnderTest, tokenStoreMock);
+        return new SutHarness(
+            syncServiceMock,
+            scopedSyncServiceMock,
+            clientProxyMock,
+            systemUnderTest,
+            tokenStoreMock,
+            jobQueueMock,
+            signalMock);
     }
 }

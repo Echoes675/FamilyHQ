@@ -20,7 +20,7 @@ public class DiagnosticsControllerTests
     public async Task GetConnectionStatus_WhenTokenActive_ReturnsActiveWithPerCalendarLastSyncedAt()
     {
         // Arrange
-        var (calendarRepo, tokenStore, _, currentUser, sut) = CreateSut();
+        var (calendarRepo, tokenStore, _, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-1");
         var lastSyncedA = new DateTimeOffset(2026, 5, 12, 9, 0, 0, TimeSpan.Zero);
         var calA = new CalendarInfo
@@ -65,7 +65,7 @@ public class DiagnosticsControllerTests
     public async Task GetConnectionStatus_WhenTokenNeedsReauth_ReturnsReauthStatusWithDetails()
     {
         // Arrange
-        var (calendarRepo, tokenStore, _, currentUser, sut) = CreateSut();
+        var (calendarRepo, tokenStore, _, _, currentUser, sut) = CreateSut();
         var since = new DateTimeOffset(2026, 5, 13, 18, 34, 0, TimeSpan.Zero);
         currentUser.SetupGet(c => c.UserId).Returns("u-2");
         calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u-2", It.IsAny<CancellationToken>()))
@@ -88,7 +88,7 @@ public class DiagnosticsControllerTests
     public async Task GetConnectionStatus_WhenNoCurrentUser_ReturnsUnauthorized()
     {
         // Arrange
-        var (_, _, _, currentUser, sut) = CreateSut();
+        var (_, _, _, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns((string?)null);
 
         // Act
@@ -104,7 +104,7 @@ public class DiagnosticsControllerTests
         // Arrange — repository's GetCalendarsByUserIdAsync is the scoping boundary; this
         // test asserts we use it (passing the current user id) rather than the
         // unscoped GetCalendarsAsync.
-        var (calendarRepo, tokenStore, _, currentUser, sut) = CreateSut();
+        var (calendarRepo, tokenStore, _, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-mine");
         calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u-mine", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo>
@@ -129,7 +129,7 @@ public class DiagnosticsControllerTests
     public async Task GetSyncFailures_ReturnsUserFailuresAsDtos()
     {
         // Arrange
-        var (_, _, failureRepo, currentUser, sut) = CreateSut();
+        var (_, _, failureRepo, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-3");
         var failure = new SyncEventFailure
         {
@@ -165,7 +165,7 @@ public class DiagnosticsControllerTests
     public async Task GetSyncFailures_WhenNoCurrentUser_ReturnsUnauthorized()
     {
         // Arrange
-        var (_, _, _, currentUser, sut) = CreateSut();
+        var (_, _, _, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns((string?)null);
 
         // Act
@@ -179,7 +179,7 @@ public class DiagnosticsControllerTests
     public async Task GetSyncFailures_ScopesToCurrentUserAndDoesNotReturnAnotherUsersData()
     {
         // Arrange — repo is the scoping boundary; assert we pass the current user id only.
-        var (_, _, failureRepo, currentUser, sut) = CreateSut();
+        var (_, _, failureRepo, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-me");
         failureRepo.Setup(r => r.GetRecentAsync("u-me", It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<SyncEventFailure>());
@@ -210,7 +210,7 @@ public class DiagnosticsControllerTests
     public async Task GetSyncFailures_ClampsLimitToValidRange(int requestedLimit, int expectedLimit)
     {
         // Arrange
-        var (_, _, failureRepo, currentUser, sut) = CreateSut();
+        var (_, _, failureRepo, _, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-clamp");
         failureRepo.Setup(r => r.GetRecentAsync("u-clamp", It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<SyncEventFailure>());
@@ -223,16 +223,152 @@ public class DiagnosticsControllerTests
         failureRepo.Verify(r => r.GetRecentAsync("u-clamp", expectedLimit, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── GetFailedSyncRuns ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetFailedSyncRuns_ReturnsMappedDtos_ForCurrentUser()
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        var calId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarSyncJob>
+            {
+                new()
+                {
+                    Id = jobId, CalendarInfoId = calId, AttemptCount = 5,
+                    LastError = "boom", Source = SyncJobSource.Webhook,
+                    Status = SyncJobStatus.Failed,
+                    CompletedAt = new DateTimeOffset(2026, 5, 29, 10, 0, 0, TimeSpan.Zero)
+                }
+            });
+
+        // Act
+        var result = await sut.GetFailedSyncRuns(limit: 100, CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dtos = ok.Value.Should().BeAssignableTo<IReadOnlyList<FailedSyncRunDto>>().Subject;
+        dtos.Should().ContainSingle();
+        dtos[0].Id.Should().Be(jobId);
+        dtos[0].CalendarInfoId.Should().Be(calId);
+        dtos[0].AttemptCount.Should().Be(5);
+        dtos[0].LastError.Should().Be("boom");
+        dtos[0].Source.Should().Be("Webhook");
+        dtos[0].LastAttemptAt.Should().Be(new DateTimeOffset(2026, 5, 29, 10, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task GetFailedSyncRuns_WhenCompletedAtNull_FallsBackToEnqueuedAt()
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        var enqueuedAt = new DateTimeOffset(2026, 5, 28, 8, 0, 0, TimeSpan.Zero);
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarSyncJob>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(), AttemptCount = 1, Source = SyncJobSource.Periodic,
+                    Status = SyncJobStatus.Failed, CompletedAt = null, EnqueuedAt = enqueuedAt
+                }
+            });
+
+        // Act
+        var result = await sut.GetFailedSyncRuns(limit: 100, CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dtos = ok.Value.Should().BeAssignableTo<IReadOnlyList<FailedSyncRunDto>>().Subject;
+        dtos[0].Source.Should().Be("Periodic");
+        dtos[0].LastAttemptAt.Should().Be(enqueuedAt);
+    }
+
+    [Fact]
+    public async Task GetFailedSyncRuns_WhenNoCurrentUser_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (_, _, _, _, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        // Act
+        var result = await sut.GetFailedSyncRuns(limit: 100, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<UnauthorizedResult>();
+    }
+
+    // ── GetSyncQueueDepth ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetSyncQueueDepth_ReturnsActiveCount_ForCurrentUser()
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        syncJobQueue.Setup(q => q.GetActiveJobCountAsync("u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+
+        // Act
+        var result = await sut.GetSyncQueueDepth(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        ok.Value.Should().BeOfType<SyncQueueDepthDto>().Subject.Active.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetSyncQueueDepth_WhenNoCurrentUser_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (_, _, _, _, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        // Act
+        var result = await sut.GetSyncQueueDepth(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<UnauthorizedResult>();
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-5, 1)]
+    [InlineData(501, 500)]
+    [InlineData(1000, 500)]
+    [InlineData(50, 50)]
+    [InlineData(500, 500)]
+    public async Task GetFailedSyncRuns_ClampsLimitToValidRange(int requestedLimit, int expectedLimit)
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-clamp");
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-clamp", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarSyncJob>());
+
+        // Act
+        var result = await sut.GetFailedSyncRuns(limit: requestedLimit, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        syncJobQueue.Verify(q => q.GetRecentFailuresAsync("u-clamp", expectedLimit, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static (
         Mock<ICalendarRepository> CalendarRepo,
         Mock<ITokenStore> TokenStore,
         Mock<ISyncFailureRepository> FailureRepo,
+        Mock<ICalendarSyncJobQueue> SyncJobQueue,
         Mock<ICurrentUserService> CurrentUser,
         DiagnosticsController Sut) CreateSut()
     {
         var calendarRepoMock = new Mock<ICalendarRepository>();
         var tokenStoreMock   = new Mock<ITokenStore>();
         var failureRepoMock  = new Mock<ISyncFailureRepository>();
+        var syncJobQueueMock = new Mock<ICalendarSyncJobQueue>();
         var currentUserMock  = new Mock<ICurrentUserService>();
         var loggerMock       = new Mock<ILogger<DiagnosticsController>>();
 
@@ -240,9 +376,10 @@ public class DiagnosticsControllerTests
             calendarRepoMock.Object,
             tokenStoreMock.Object,
             failureRepoMock.Object,
+            syncJobQueueMock.Object,
             currentUserMock.Object,
             loggerMock.Object);
 
-        return (calendarRepoMock, tokenStoreMock, failureRepoMock, currentUserMock, sut);
+        return (calendarRepoMock, tokenStoreMock, failureRepoMock, syncJobQueueMock, currentUserMock, sut);
     }
 }

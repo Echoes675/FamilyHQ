@@ -39,10 +39,6 @@ public class WebhookController : ControllerBase
             }
         }
 
-        // Forward the test-only delay header when present (DEBUG-gated in SyncController).
-        if (Request.Headers.TryGetValue("x-test-webhook-delay-seconds", out var delayHeader))
-            webhookRequest.Headers.TryAddWithoutValidation("x-test-webhook-delay-seconds", (string?)delayHeader);
-
         try
         {
             var result = await client.SendAsync(webhookRequest);

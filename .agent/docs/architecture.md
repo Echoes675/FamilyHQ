@@ -52,7 +52,7 @@
 
 ## Webhook echo guard
 
-FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigrationService`. Each write computes a SHA256 over `(title, start, end, isAllDay, description)` via `EventContentHash` and stores the hex hash as `extendedProperties.private["content-hash"]` on the Google event. Google's resulting push notification then arrives at `SyncController.GooglePushWebhook`, which dispatches to `CalendarSyncService.SyncAsync` / `SyncAllAsync`.
+FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigrationService`. Each write computes a SHA256 over `(title, start, end, isAllDay, description)` via `EventContentHash` and stores the hex hash as `extendedProperties.private["content-hash"]` on the Google event. Google's resulting push notification then arrives at `SyncController.GooglePushWebhook`, which enqueues a durable sync job; `CalendarSyncWorker` later dispatches it to `CalendarSyncService.SyncAsync` / `SyncAllAsync` (see "Durable calendar sync queue" below).
 
 The guard is implemented in two halves:
 
@@ -72,6 +72,20 @@ To verify the guard is active in any environment:
 ### Why this matters for recurring events (FHQ-18)
 
 A single PATCH on a series master can produce webhooks for every expanded instance Google touches. The guard ensures all such echoes are skipped cleanly, eliminating the latent loop risk that single-event writes avoid only through convergent upserts.
+
+## Durable calendar sync queue (FHQ-37)
+
+Google Calendar push notifications no longer run the sync on the HTTP request thread. Doing so (FHQ-36) meant Google's short webhook-ack deadline could elapse mid-sync; nginx then aborted the upstream connection, the request `CancellationToken` tripped, and `SaveChangesAsync` was cancelled mid-write — so the change never persisted and the kiosk never updated, even though a manual sync worked. The webhook is now a fast producer onto a durable queue:
+
+1. **Enqueue + ack** — `SyncController.GooglePushWebhook` validates the notification, enqueues a `CalendarSyncJob` (targeted when the channel maps to a calendar, else a sync-all job per user), releases the in-process `ISyncJobSignal`, and returns `200` immediately. It never runs a sync inline and never passes the request `CancellationToken` into sync work. Enqueue failures are logged but still ack `200` (a 200 stops Google's retries; the periodic safety net reconciles).
+2. **Durable store** — `CalendarSyncJob` (table `CalendarSyncJobs`, EF-mapped, migration `AddCalendarSyncJobQueue`) holds `UserId`, optional `CalendarInfoId` (null = sync-all), `Status` (Pending/InProgress/Completed/Failed), `Source` (Webhook/Periodic), attempt count, last error, and timing columns. A partial unique index keeps at most one Pending job per `(UserId, CalendarInfoId)` for coalescing. All queue operations are EF Core (no raw SQL); `ICalendarSyncJobQueue` / `CalendarSyncJobRepository` provides enqueue (coalescing), claim, complete, fail (retryable backoff vs terminal), orphan recovery, prune, and recent-failures read.
+3. **Consumer** — `CalendarSyncWorker` (IHostedService in WebApi) is a single sequential consumer. It waits on the signal (with a poll backstop), recovers orphaned `InProgress` jobs, then drains `Pending` jobs one at a time, each in its own DI scope. Per job it sets `BackgroundUserContext.Current`, runs `CalendarSyncService.SyncAsync`/`SyncAllAsync` with **`CancellationToken.None`** (decoupled from any request/shutdown token — the FHQ-36 fix), and on success persists then broadcasts `EventsUpdated` over SignalR so the kiosk re-fetches. A `GoogleReauthRequiredException` marks the user needs-reauth and fails the job terminally; other exceptions fail retryable with exponential backoff until `MaxSyncAttempts`. Failed jobs are terminal audit rows that never block new enqueues.
+
+Tunables live in `SyncOptions`: `WorkerPollInterval`, `OrphanRecoveryThreshold`, `MaxSyncAttempts`, `RetryBackoffBaseSeconds`, `TerminalJobRetention`. The periodic timer that feeds the same queue (replacing the old no-op `SyncOrchestrator` sweep) is **FHQ-38**.
+
+### Run-level failure diagnostics
+
+Distinct from the per-event `SyncEventFailure` subsystem (individual events that could not be saved), the queue records whole-run failures. `GET /api/diagnostics/failed-sync-runs` returns the current user's recent terminally-failed runs (`FailedSyncRunDto`), surfaced on the Diagnostics page in a third "Recent failed sync runs" section (`data-testid="diagnostics-runs-table"`). These re-run automatically on the next change, so they are informational, not action items.
 
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
