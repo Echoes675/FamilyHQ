@@ -142,5 +142,18 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
             .ToListAsync(ct);
     }
 
+    public async Task<int> GetActiveJobCountAsync(string userId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(userId))
+            return 0;
+
+        return await context.CalendarSyncJobs
+            .AsNoTracking()
+            .CountAsync(
+                j => j.UserId == userId
+                     && (j.Status == SyncJobStatus.Pending || j.Status == SyncJobStatus.InProgress),
+                ct);
+    }
+
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 }

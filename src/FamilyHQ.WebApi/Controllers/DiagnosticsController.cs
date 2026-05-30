@@ -108,4 +108,19 @@ public class DiagnosticsController : ControllerBase
 
         return Ok(dtos);
     }
+
+    /// <summary>
+    /// Current user's sync-queue depth — the count of not-yet-terminal jobs (Pending or
+    /// InProgress). Used to observe whether the durable queue has drained.
+    /// </summary>
+    [HttpGet("sync-queue-depth")]
+    public async Task<IActionResult> GetSyncQueueDepth(CancellationToken ct = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var active = await _syncJobQueue.GetActiveJobCountAsync(userId, ct);
+        return Ok(new SyncQueueDepthDto(active));
+    }
 }

@@ -301,6 +301,39 @@ public class DiagnosticsControllerTests
         result.Should().BeOfType<UnauthorizedResult>();
     }
 
+    // ── GetSyncQueueDepth ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetSyncQueueDepth_ReturnsActiveCount_ForCurrentUser()
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        syncJobQueue.Setup(q => q.GetActiveJobCountAsync("u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+
+        // Act
+        var result = await sut.GetSyncQueueDepth(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        ok.Value.Should().BeOfType<SyncQueueDepthDto>().Subject.Active.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetSyncQueueDepth_WhenNoCurrentUser_ReturnsUnauthorized()
+    {
+        // Arrange
+        var (_, _, _, _, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        // Act
+        var result = await sut.GetSyncQueueDepth(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<UnauthorizedResult>();
+    }
+
     [Theory]
     [InlineData(0, 1)]
     [InlineData(-5, 1)]

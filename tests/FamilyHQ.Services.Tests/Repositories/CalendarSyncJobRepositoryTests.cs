@@ -285,4 +285,26 @@ public class CalendarSyncJobRepositoryTests : IDisposable
         var act = async () => await sut.EnqueueAsync("", Guid.NewGuid(), SyncJobSource.Webhook, null);
         await act.Should().ThrowAsync<ArgumentException>();
     }
+
+    [Fact]
+    public async Task GetActiveJobCountAsync_CountsOnlyPendingAndInProgressForUser()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() });
+        await _db.SaveChangesAsync();
+
+        (await sut.GetActiveJobCountAsync("u")).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GetActiveJobCountAsync_ReturnsZero_ForEmptyUserId()
+    {
+        var sut = CreateSut();
+        (await sut.GetActiveJobCountAsync("")).Should().Be(0);
+    }
 }
