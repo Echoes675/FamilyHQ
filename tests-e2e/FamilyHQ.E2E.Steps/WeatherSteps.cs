@@ -489,18 +489,9 @@ public class WeatherSteps
     public async Task ThenISeeHourlyTemperaturesInTheDayView()
     {
         // DayView loads hourly data asynchronously after the tab switch and can re-render once
-        // more as data settles — a wait-then-single-count can catch a transient empty re-render
-        // (TOCTOU, cf. intermittent-issues #6). Poll the count, tolerating transient zeros.
-        var deadline = System.DateTime.UtcNow.AddSeconds(30);
-        var count = 0;
-        while (System.DateTime.UtcNow < deadline)
-        {
-            count = await _dashboardPage.DayHourTemps.CountAsync();
-            if (count > 0)
-                break;
-            await Task.Delay(250);
-        }
-        count.Should().BeGreaterThan(0, "at least one hourly temperature should be displayed");
+        // more as data settles — web-first assertion auto-retries against the live DOM, tolerating
+        // transient empty re-renders (TOCTOU, cf. intermittent-issues #6) (FHQ-41).
+        await Assertions.Expect(_dashboardPage.DayHourTemps.First).ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I am on the weather settings page")]

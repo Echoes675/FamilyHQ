@@ -199,19 +199,11 @@ public class DashboardSteps
         // is now drained asynchronously by CalendarSyncWorker (FHQ-37), which broadcasts
         // EventsUpdated a beat later and re-renders the grid. A single read can land before the
         // capsule paints or inside that re-render window (TOCTOU, cf. intermittent-issues #4/#6).
-        // Tolerate transient false until the deadline.
-        var deadline = System.DateTime.UtcNow.AddSeconds(15);
-        var found = false;
-        while (System.DateTime.UtcNow < deadline)
-        {
-            found = await _dashboardPage.IsEventDisplayedInCalendarColourAsync(eventName, colour);
-            if (found)
-                break;
-            await Task.Delay(250);
-        }
-
-        found.Should().BeTrue(
-            $"the event '{eventName}' should appear as a capsule coloured '{colour}' ({calendarName}).");
+        // Use shared Polling.UntilAsync to tolerate transient false until the deadline (FHQ-41).
+        await Polling.UntilAsync(
+            () => _dashboardPage.IsEventDisplayedInCalendarColourAsync(eventName, colour),
+            $"the event '{eventName}' should appear as a capsule coloured '{colour}'.",
+            timeoutMs: 15000);
     }
 
     [Then(@"I do not see a ""([^""]*)"" capsule for ""([^""]*)"" on the calendar")]

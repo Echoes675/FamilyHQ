@@ -279,17 +279,6 @@ public class DashboardPage : BasePage
         return await cell.GetByText(expectedText, new() { Exact = false }).CountAsync() > 0;
     }
 
-    public async Task<int> GetAgendaEventLineCountAsync(string dateKey, Guid calendarId)
-    {
-        var cell = Page.GetByTestId($"agenda-cell-{dateKey}-{calendarId}");
-        return await cell.Locator(".agenda-event-line").CountAsync();
-    }
-
-    public async Task<string> GetAgendaOverflowTextAsync(string dateKey, Guid calendarId)
-    {
-        return await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").InnerTextAsync();
-    }
-
     public async Task<bool> IsAgendaOverflowVisibleAsync(string dateKey, Guid calendarId)
     {
         return await Page.GetByTestId($"agenda-overflow-{dateKey}-{calendarId}").CountAsync() > 0;
@@ -1061,20 +1050,6 @@ public class DashboardPage : BasePage
     {
         await RecurrenceIndicators.First.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
-    }
-
-    /// <summary>Number of recurrence indicator glyphs currently rendered in the view.</summary>
-    public async Task<int> CountRecurrenceIndicatorsAsync() => await RecurrenceIndicators.CountAsync();
-
-    /// <summary>
-    /// Reads the recurrence subtitle text from the open event modal (e.g.
-    /// "Repeats weekly on Tuesday"). Waits for the subtitle to be visible first.
-    /// </summary>
-    public async Task<string> GetRecurrenceSubtitleTextAsync(int timeoutMs = 30000)
-    {
-        await RecurrenceSubtitle.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = timeoutMs });
-        return (await RecurrenceSubtitle.InnerTextAsync()).Trim();
     }
 
     // FHQ-18.11 Pass 2 — native recurring-event create & toggle-off ────────────

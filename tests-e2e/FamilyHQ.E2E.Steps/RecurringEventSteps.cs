@@ -62,12 +62,10 @@ public class RecurringEventSteps
     public async Task ThenTheRecurringEventDetailsDescribeTheWeeklyRepeatPattern()
     {
         var expected = _scenarioContext.Get<string>("RecurringSeriesExpectedSubtitle");
-        var subtitle = await _dashboardPage.GetRecurrenceSubtitleTextAsync();
         // Assert the human-readable weekly pattern is present rather than exact-matching: the
         // describer also appends the end condition (e.g. ", 3 times") for a COUNT-bounded series,
-        // which is not what this scenario is asserting.
-        subtitle.Should().Contain(expected,
-            "the opened recurring instance must describe its weekly repeat pattern.");
+        // which is not what this scenario is asserting. ToContainText = substring match (FHQ-41).
+        await Assertions.Expect(_dashboardPage.RecurrenceSubtitle).ToContainTextAsync(expected, new() { Timeout = 30000 });
     }
 
     // ── FHQ-18.11 Pass 2: native create + toggle-off ──────────────────────────
