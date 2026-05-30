@@ -166,6 +166,11 @@ public class EventsController : ControllerBase
             return BadRequest();
         }
 
+        if (RecurringTimedStartMissingTimeZone(body) is { } missingTzError)
+        {
+            return missingTzError;
+        }
+
         var userId = ExtractUserId(Request);
         var newEvent = new SimulatedEvent
         {
@@ -193,11 +198,45 @@ public class EventsController : ControllerBase
         return Ok(MapEventResponse(newEvent, new List<string>()));
     }
 
+    // FHQ-42: mirror real Google Calendar, which rejects events.insert/update for a RECURRING event
+    // whose TIMED start carries no timeZone with 400 "Missing time zone definition for start time."
+    // The simulator was lenient here, so the recurring-create E2E scenarios passed while production
+    // failed. Returns the 400 result for that bad combination, else null. (All-day events use `date`
+    // and need no timeZone; single events are accepted with just the offset.)
+    private IActionResult? RecurringTimedStartMissingTimeZone(GoogleEventRequest body)
+    {
+        var isRecurring = body.Recurrence is { Count: > 0 };
+        var isTimedStart = body.Start?.DateTime is not null;
+        if (isRecurring && isTimedStart && string.IsNullOrWhiteSpace(body.Start!.TimeZone))
+        {
+            _logger.LogWarning("[SIM] Rejecting recurring timed event without a start timeZone (mirrors Google 400).");
+            return BadRequest(new
+            {
+                error = new
+                {
+                    code = 400,
+                    message = "Missing time zone definition for start time.",
+                    errors = new[]
+                    {
+                        new { domain = "global", reason = "required", message = "Missing time zone definition for start time." }
+                    }
+                }
+            });
+        }
+
+        return null;
+    }
+
     [HttpPut("{eventId}")]
     public async Task<IActionResult> UpdateEvent(string calendarId, string eventId, [FromBody] GoogleEventRequest body)
     {
         _logger.LogInformation("[SIM] PUT update event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
+
+        if (body is not null && RecurringTimedStartMissingTimeZone(body) is { } missingTzError)
+        {
+            return missingTzError;
+        }
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 

@@ -519,6 +519,17 @@ public class GoogleCalendarClientTests
         var recurrence = doc.RootElement.GetProperty("recurrence");
         recurrence.GetArrayLength().Should().Be(1);
         recurrence[0].GetString().Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+
+        // FHQ-42: a recurring timed event MUST carry a timeZone on start/end, or Google rejects the
+        // events.insert with 400 "Missing time zone definition for start time."
+        var start = doc.RootElement.GetProperty("start");
+        start.TryGetProperty("timeZone", out var startTz).Should().BeTrue(
+            "Google requires a start.timeZone for a recurring timed event (FHQ-42).");
+        startTz.GetString().Should().Be("UTC");
+        var end = doc.RootElement.GetProperty("end");
+        end.TryGetProperty("timeZone", out var endTz).Should().BeTrue(
+            "Google requires an end.timeZone for a recurring timed event (FHQ-42).");
+        endTz.GetString().Should().Be("UTC");
     }
 
     [Fact]

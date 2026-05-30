@@ -423,13 +423,18 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             };
         }
 
+        // Google REQUIRES a timeZone on start/end for a recurring event (one with a recurrence
+        // array) — without it the events.insert is rejected 400 "Missing time zone definition for
+        // start time." (FHQ-42). A single event is accepted with just the offset, but sending the
+        // timeZone unconditionally is harmless and keeps create/update of recurring series working.
+        // The dateTime is normalised to UTC so its offset (+00:00) is consistent with timeZone=UTC.
         return new
         {
             summary = evt.Title,
             description = evt.Description,
             location = evt.Location,
-            start = new { dateTime = evt.Start.ToString("yyyy-MM-ddTHH:mm:ssK") },
-            end = new { dateTime = evt.End.ToString("yyyy-MM-ddTHH:mm:ssK") },
+            start = new { dateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
+            end = new { dateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
             recurrence,
             extendedProperties
         };
