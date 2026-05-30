@@ -419,45 +419,62 @@ public class WeatherSteps
     [Then(@"the weather strip is not visible")]
     public async Task ThenTheWeatherStripIsNotVisible()
     {
-        var count = await _dashboardPage.WeatherStrip.CountAsync();
-        count.Should().Be(0, "the weather strip should not be visible");
+        // Web-first: the strip is removed asynchronously when weather is disabled; ToHaveCountAsync
+        // auto-retries against the live DOM rather than counting once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.WeatherStrip)
+            .ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"the weather strip shows a temperature")]
     public async Task ThenTheWeatherStripShowsATemperature()
     {
-        var text = await _dashboardPage.WeatherStripTemp.InnerTextAsync();
-        text.Should().NotBeEmpty();
-        text.Should().Contain("°");
+        // Web-first: the temperature text populates after the weather fetch resolves; ToContainTextAsync
+        // auto-retries against the live DOM (the "°" also proves the text is non-empty) (FHQ-41).
+        await Assertions.Expect(_dashboardPage.WeatherStripTemp)
+            .ToContainTextAsync("°", new() { Timeout = 30000 });
     }
 
     [Then(@"the weather strip shows condition ""([^""]*)""")]
     public async Task ThenTheWeatherStripShowsCondition(string expectedText)
     {
-        var text = await _dashboardPage.WeatherStripCondition.InnerTextAsync();
-        text.Should().Contain(expectedText);
+        // Web-first: the condition text populates after the weather fetch resolves; ToContainTextAsync
+        // auto-retries against the live DOM rather than reading the text once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.WeatherStripCondition)
+            .ToContainTextAsync(expectedText, new() { Timeout = 30000 });
     }
 
     [Then(@"I see forecast days in the weather strip")]
     public async Task ThenISeeForecaseDaysInTheWeatherStrip()
     {
-        var count = await _dashboardPage.WeatherStripForecastDays.CountAsync();
-        count.Should().BeGreaterThan(0, "at least one forecast day should be displayed");
+        // Web-first: forecast days render after the weather fetch resolves. Asserting the first
+        // becomes visible is the ">= 1 day" semantics and auto-retries against the live DOM (FHQ-41).
+        await Assertions.Expect(_dashboardPage.WeatherStripForecastDays.First)
+            .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"the weather overlay has class ""([^""]*)""")]
     public async Task ThenTheWeatherOverlayHasClass(string className)
     {
-        var classes = await _dashboardPage.WeatherOverlay.GetAttributeAsync("class") ?? "";
-        classes.Should().Contain(className);
+        // Web-first: the overlay condition class is applied after the weather fetch resolves;
+        // ToHaveClassAsync auto-retries against the live DOM rather than reading once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.WeatherOverlay)
+            .ToHaveClassAsync(new System.Text.RegularExpressions.Regex(className), new() { Timeout = 30000 });
     }
 
     [Then(@"the weather overlay has no condition class")]
     public async Task ThenTheWeatherOverlayHasNoConditionClass()
     {
-        var classes = await _dashboardPage.WeatherOverlay.GetAttributeAsync("class") ?? "";
-        classes.Should().NotMatchRegex(@"weather-\w+",
-            "the weather overlay should not have any weather condition class");
+        // Negative class match cannot be expressed as a single web-first assertion, so poll the
+        // computed "class carries no weather-* condition" condition, re-reading the live class
+        // attribute each iteration rather than once (FHQ-41).
+        await Polling.UntilAsync(
+            async () =>
+            {
+                var classes = await _dashboardPage.WeatherOverlay.GetAttributeAsync("class") ?? "";
+                return !System.Text.RegularExpressions.Regex.IsMatch(classes, @"weather-\w+");
+            },
+            "the weather overlay should not have any weather condition class",
+            timeoutMs: 10000);
     }
 
     [Then(@"the agenda row for ""([^""]*)"" shows weather temperatures")]
@@ -472,18 +489,9 @@ public class WeatherSteps
     public async Task ThenISeeHourlyTemperaturesInTheDayView()
     {
         // DayView loads hourly data asynchronously after the tab switch and can re-render once
-        // more as data settles — a wait-then-single-count can catch a transient empty re-render
-        // (TOCTOU, cf. intermittent-issues #6). Poll the count, tolerating transient zeros.
-        var deadline = System.DateTime.UtcNow.AddSeconds(30);
-        var count = 0;
-        while (System.DateTime.UtcNow < deadline)
-        {
-            count = await _dashboardPage.DayHourTemps.CountAsync();
-            if (count > 0)
-                break;
-            await Task.Delay(250);
-        }
-        count.Should().BeGreaterThan(0, "at least one hourly temperature should be displayed");
+        // more as data settles — web-first assertion auto-retries against the live DOM, tolerating
+        // transient empty re-renders (TOCTOU, cf. intermittent-issues #6) (FHQ-41).
+        await Assertions.Expect(_dashboardPage.DayHourTemps.First).ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
     [Then(@"I am on the weather settings page")]
@@ -528,8 +536,10 @@ public class WeatherSteps
     [Then(@"the save button is not visible")]
     public async Task ThenTheSaveButtonIsNotVisible()
     {
-        var count = await _weatherSettingsPage.SaveBtn.CountAsync();
-        count.Should().Be(0, "the save button should not be visible");
+        // Web-first: the save button is removed when settings are not dirty; ToHaveCountAsync
+        // auto-retries against the live DOM rather than counting once (FHQ-41).
+        await Assertions.Expect(_weatherSettingsPage.SaveBtn)
+            .ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"the cancel button is visible")]
@@ -563,11 +573,10 @@ public class WeatherSteps
     [Then(@"I see the ""([^""]*)"" confirmation")]
     public async Task ThenISeeTheConfirmation(string expectedText)
     {
-        var message = _weatherSettingsPage.SuccessMessage;
-        await message.WaitForAsync(
-            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-        var text = await message.InnerTextAsync();
-        text.Should().Contain(expectedText);
+        // Web-first: the success banner appears after the async save completes; ToContainTextAsync
+        // auto-retries against the live DOM rather than waiting-then-reading once (FHQ-41).
+        await Assertions.Expect(_weatherSettingsPage.SuccessMessage)
+            .ToContainTextAsync(expectedText, new() { Timeout = 30000 });
     }
 
     // No [AfterScenario] cleanup needed — each scenario uses a unique

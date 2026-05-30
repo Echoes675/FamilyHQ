@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FluentAssertions;
 using Microsoft.Playwright;
@@ -218,16 +219,22 @@ public class AuthenticationSteps
     [Then(@"I do not see the username displayed")]
     public async Task ThenIDoNotSeeTheUsernameDisplayed()
     {
-        // After sign-out the user is on the home page; the dashboard-header is not rendered
-        var signedIn = await _dashboardPage.IsSignedInAsync();
-        signedIn.Should().BeFalse("User should not be signed in after sign out");
+        // After sign-out the user is on the home page; the dashboard-header is not rendered.
+        // Poll: sign-out clears the token and reloads, so the header tears down asynchronously —
+        // a single presence read can race that teardown. Re-read each iteration (FHQ-41).
+        await Polling.UntilAsync(
+            async () => !await _dashboardPage.IsSignedInAsync(),
+            "User should not be signed in after sign out",
+            timeoutMs: 10000);
     }
 
     [Then(@"I do not see the calendar")]
     public async Task ThenIDoNotSeeTheCalendar()
     {
-        var calendarVisible = await _dashboardPage.MonthTable.CountAsync() > 0;
-        calendarVisible.Should().BeFalse("Calendar should not be visible when not authenticated");
+        // Web-first: the month table is absent when unauthenticated; ToHaveCountAsync auto-retries
+        // against the live DOM rather than counting once (FHQ-41).
+        await Assertions.Expect(_dashboardPage.MonthTable)
+            .ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"I see the calendar displayed")]

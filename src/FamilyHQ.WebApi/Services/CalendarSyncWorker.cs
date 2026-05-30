@@ -76,15 +76,16 @@ public class CalendarSyncWorker(
             var end = DateTimeOffset.UtcNow.AddDays(365);
 
             // CancellationToken.None: never abort a sync mid-write because of client/request lifetime (FHQ-36).
-            if (job.CalendarInfoId is Guid calendarId)
-                await sync.SyncAsync(calendarId, start, end, CancellationToken.None);
-            else
-                await sync.SyncAllAsync(start, end, CancellationToken.None);
+            var result = job.CalendarInfoId is Guid calendarId
+                ? await sync.SyncAsync(calendarId, start, end, CancellationToken.None)
+                : await sync.SyncAllAsync(start, end, CancellationToken.None);
 
             await queue.CompleteAsync(job.Id, stoppingToken);
 
-            // Broadcast AFTER persist so the kiosk re-fetches fresh data.
-            await hubContext.Clients.All.SendAsync("EventsUpdated", CancellationToken.None);
+            // Broadcast only when the sync actually changed data, so no-op/echo syncs
+            // don't trigger a kiosk refresh (FHQ-44).
+            if (result.HadChanges)
+                await hubContext.Clients.All.SendAsync("EventsUpdated", CancellationToken.None);
         }
         catch (GoogleReauthRequiredException ex)
         {

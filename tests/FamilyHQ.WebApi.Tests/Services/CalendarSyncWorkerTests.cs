@@ -54,6 +54,8 @@ public class CalendarSyncWorkerTests
         var cal = Guid.NewGuid();
         var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = cal, Status = SyncJobStatus.InProgress, AttemptCount = 1 };
         var (worker, queue, sync, proxy, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(cal, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(1));
 
         await worker.DrainAsync(CancellationToken.None);
 
@@ -67,6 +69,8 @@ public class CalendarSyncWorkerTests
     {
         var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.InProgress, AttemptCount = 1 };
         var (worker, _, sync, _, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(1));
 
         await worker.DrainAsync(CancellationToken.None);
 
@@ -114,5 +118,32 @@ public class CalendarSyncWorkerTests
         // AttemptCount (5) == MaxSyncAttempts default (5) → not retryable → terminal fail, no backoff, no broadcast.
         queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), false, null, It.IsAny<CancellationToken>()), Times.Once);
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_NoMaterialChanges_DoesNotBroadcast()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, queue, sync, proxy, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(0));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        queue.Verify(q => q.CompleteAsync(job.Id, It.IsAny<CancellationToken>()), Times.Once); // still completed
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", It.IsAny<object[]>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_WithMaterialChanges_Broadcasts()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, _, sync, proxy, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(3));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }
