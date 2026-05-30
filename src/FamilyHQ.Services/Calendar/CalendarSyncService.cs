@@ -166,17 +166,27 @@ public class CalendarSyncService(
 
         try
         {
-            var (events, nextSyncToken) = await googleCalendarClient.GetEventsAsync(
+            var (fetchedEvents, nextSyncToken) = await googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
                 syncState.SyncToken,
                 ct);
 
+            // Materialise once: the sequence is enumerated several times below (pass-2 resolution,
+            // tombstone diff, the persistence loop, the final count) and the loop mutates each
+            // instance's RecurrenceRule — a lazy sequence would re-execute and lose those writes.
+            var events = fetchedEvents as IReadOnlyList<CalendarEvent> ?? fetchedEvents.ToList();
+
             var allLocalCalendars = await calendarRepository.GetCalendarsAsync(ct);
             var knownMemberNames  = allLocalCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
             var calendarByName    = allLocalCalendars.Where(c => !c.IsShared)
                 .ToDictionary(c => c.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+            // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the
+            // pass-1 instances and cache it for this sync run, so each unknown master is fetched
+            // at most once. Cancelled tombstones and self-echoes are excluded (see the resolver).
+            var rruleCache = await ResolveSeriesRecurrenceRulesAsync(calendar.GoogleCalendarId, events, ct);
 
             if (isFullSync)
             {
@@ -194,14 +204,21 @@ public class CalendarSyncService(
                 // Self-echo guard (FHQ-30): skip events that echo our own outbound writes.
                 // ContentHash is populated by GoogleCalendarClient from extendedProperties.private["content-hash"].
                 // Null hash means a manually-edited event, a delete tombstone, or a legacy event — always process.
-                var inboundHash = evt.ContentHash;
-                if (!string.IsNullOrEmpty(inboundHash) &&
-                    outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, inboundHash))
+                if (IsSelfEcho(evt))
                 {
                     logger.LogInformation(
                         "Self-echo skipped for event {EventId} on calendar {CalendarInfoId} (hash {Hash}).",
-                        evt.GoogleEventId, calendarInfoId, inboundHash);
+                        evt.GoogleEventId, calendarInfoId, evt.ContentHash);
                     continue;
+                }
+
+                // Stamp the resolved RRULE (pass 2) onto recurring instances before persistence.
+                // A series whose master could not be fetched this run is left with RecurrenceRule
+                // null so the next sync retries it.
+                if (evt.GoogleRecurringEventId is not null
+                    && rruleCache.TryGetValue(evt.GoogleRecurringEventId, out var resolvedRrule))
+                {
+                    evt.RecurrenceRule = resolvedRrule;
                 }
 
                 // The entity actually written to the change tracker for this event.
@@ -238,13 +255,18 @@ public class CalendarSyncService(
                     if (existing != null)
                     {
                         touched = existing;
-                        existing.Title       = evt.Title;
-                        existing.Start       = evt.Start;
-                        existing.End         = evt.End;
-                        existing.IsAllDay    = evt.IsAllDay;
-                        existing.Location    = evt.Location;
-                        existing.Description = evt.Description;
-                        existing.Members     = parsedMembers;
+                        existing.Title                  = evt.Title;
+                        existing.Start                  = evt.Start;
+                        existing.End                    = evt.End;
+                        existing.IsAllDay               = evt.IsAllDay;
+                        existing.Location               = evt.Location;
+                        existing.Description            = evt.Description;
+                        existing.Members                = parsedMembers;
+                        existing.GoogleRecurringEventId = evt.GoogleRecurringEventId;
+                        existing.OriginalStartTime      = evt.OriginalStartTime;
+                        // Preserve an already-stored RRULE if pass 2 could not resolve one this run
+                        // (transient master-fetch failure must not blank out a known rule).
+                        existing.RecurrenceRule         = evt.RecurrenceRule ?? existing.RecurrenceRule;
                         await calendarRepository.UpdateEventAsync(existing, ct);
                     }
                     else
@@ -317,6 +339,68 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
+    }
+
+    /// <summary>
+    /// FHQ-30 self-echo guard: true when this inbound event echoes one of our own recent
+    /// outbound writes (matching GoogleEventId + content-hash). A null/empty hash means a
+    /// manually-edited event, a tombstone, or a legacy event — never an echo.
+    /// </summary>
+    private bool IsSelfEcho(CalendarEvent evt)
+        => !string.IsNullOrEmpty(evt.ContentHash)
+           && outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash);
+
+    /// <summary>
+    /// Pass 2 of recurring ingestion. Builds a per-run series-id → RRULE cache from the
+    /// pass-1 instances: series whose RRULE is already stored locally skip the API entirely,
+    /// and each remaining unknown master is fetched exactly once. A transient master-fetch
+    /// failure (null or non-reauth exception) leaves that series out of the cache so its
+    /// instances persist with a null RRULE and the next sync retries; a reauth failure
+    /// propagates so the user is prompted to reconnect.
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, string>> ResolveSeriesRecurrenceRulesAsync(
+        string googleCalendarId, IEnumerable<CalendarEvent> events, CancellationToken ct)
+    {
+        // Cancelled tombstones reuse the recurring id but are being deleted, so they need no RRULE.
+        // Self-echoes (FHQ-30) are short-circuited in the persistence loop and never stored, so
+        // they must not trigger a wasted master fetch either.
+        var seriesIds = events
+            .Where(e => e.GoogleRecurringEventId is not null
+                     && e.Title != "CANCELLED_TOMBSTONE"
+                     && !IsSelfEcho(e))
+            .Select(e => e.GoogleRecurringEventId!)
+            .Distinct()
+            .ToList();
+
+        if (seriesIds.Count == 0)
+            return new Dictionary<string, string>();
+
+        var cache = new Dictionary<string, string>(
+            await calendarRepository.GetStoredRecurrenceRulesAsync(seriesIds, ct));
+
+        foreach (var seriesId in seriesIds.Where(id => !cache.ContainsKey(id)))
+        {
+            try
+            {
+                var master = await googleCalendarClient.GetSeriesMasterAsync(googleCalendarId, seriesId, ct);
+                if (master is not null)
+                    cache[seriesId] = master.Rrule;
+                else
+                    logger.LogWarning(
+                        "Series master {SeriesId} on calendar {GoogleCalendarId} returned no RRULE; instances persisted without one and will retry next sync.",
+                        seriesId, googleCalendarId);
+            }
+            catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
+            {
+                // Transient API failure: degrade gracefully, retry the series next sync.
+                logger.LogWarning(
+                    ex,
+                    "Failed to fetch series master {SeriesId} on calendar {GoogleCalendarId}; instances persisted without an RRULE and will retry next sync.",
+                    seriesId, googleCalendarId);
+            }
+        }
+
+        return cache;
     }
 
     private async Task RecordEventFailureAsync(CalendarEvent evt, Guid calendarInfoId, Exception ex, CancellationToken ct)

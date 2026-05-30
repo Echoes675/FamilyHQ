@@ -12,6 +12,11 @@ public interface ICalendarApiService
     Task<CalendarEventViewModel> CreateEventAsync(CreateEventRequest request, CancellationToken ct = default);
     Task<CalendarEventViewModel> UpdateEventAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct = default);
     Task DeleteEventAsync(Guid eventId, CancellationToken ct = default);
+
+    // FHQ-18: recurring-series edit/delete at a Google-parity scope. These proxy the matching
+    // ICalendarEventService methods through the WebApi /api/events/{id}/recurring endpoints.
+    Task<CalendarEventViewModel> UpdateRecurringEventAsync(Guid eventId, UpdateEventRequest request, RecurrenceScope scope, CancellationToken ct = default);
+    Task DeleteRecurringEventAsync(Guid eventId, RecurrenceScope scope, CancellationToken ct = default);
     Task<CalendarEventViewModel> SetEventMembersAsync(Guid eventId, IReadOnlyList<Guid> memberCalendarInfoIds, CancellationToken ct = default);
     Task TriggerSyncAsync(CancellationToken ct = default);
     Task RegisterWebhooksAsync(CancellationToken ct = default);

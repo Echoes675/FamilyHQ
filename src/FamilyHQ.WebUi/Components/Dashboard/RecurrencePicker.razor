@@ -1,0 +1,321 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+@using FamilyHQ.Core.Calendar.Recurrence
+@using MonthlyModeEnum = FamilyHQ.Core.Calendar.Recurrence.MonthlyMode
+
+<div class="recurrence-picker" data-testid="recurrence-picker">
+    <PillSegmentGroup TValue="RecurrenceMode"
+                      Options="ModeOptions"
+                      Value="_model.Mode"
+                      ValueChanged="OnModeChanged"
+                      AriaLabel="Repeat" />
+
+    @if (_model.Mode == RecurrenceMode.Custom)
+    {
+        <div class="recurrence-drawer" data-testid="recurrence-drawer">
+            <div class="recurrence-field">
+                <label class="form-label">Frequency</label>
+                <PillSegmentGroup TValue="RecurrenceFrequency"
+                                  Options="FrequencyOptions"
+                                  Value="_model.Frequency"
+                                  ValueChanged="OnFrequencyChanged"
+                                  AriaLabel="Repeat frequency" />
+            </div>
+
+            <div class="recurrence-field">
+                <label class="form-label" for="recurrence-interval">Repeat every</label>
+                <div class="recurrence-interval">
+                    <input id="recurrence-interval"
+                           type="number"
+                           min="1"
+                           class="form-input recurrence-number"
+                           data-testid="recurrence-interval"
+                           value="@_model.Interval"
+                           @onchange="OnIntervalChanged" />
+                    <span class="recurrence-unit">@IntervalUnitLabel</span>
+                </div>
+            </div>
+
+            @if (_model.Frequency == RecurrenceFrequency.Weekly)
+            {
+                <div class="recurrence-field">
+                    <label class="form-label">On days</label>
+                    <div class="pill-segment-group recurrence-weekdays" role="group" aria-label="Repeat on weekdays">
+                        @foreach (var (day, label) in Weekdays)
+                        {
+                            var isOn = _model.Weekdays.Contains(day);
+                            <button type="button"
+                                    class="@($"pill-toggle {(isOn ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                    data-testid="@($"recurrence-weekday-{day}")"
+                                    aria-pressed="@(isOn ? "true" : "false")"
+                                    aria-label="@day.ToString()"
+                                    @onclick="() => ToggleWeekdayAsync(day)">
+                                @label
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (_model.Frequency == RecurrenceFrequency.Monthly)
+            {
+                <div class="recurrence-field">
+                    <label class="form-label">Monthly on</label>
+                    <PillSegmentGroup TValue="MonthlyModeEnum"
+                                      Options="MonthlyModeOptions"
+                                      Value="_model.MonthlyMode"
+                                      ValueChanged="OnMonthlyModeChanged"
+                                      AriaLabel="Monthly anchor" />
+                </div>
+            }
+
+            <div class="recurrence-field">
+                <label class="form-label">Ends</label>
+                <PillSegmentGroup TValue="RecurrenceEndMode"
+                                  Options="EndModeOptions"
+                                  Value="_model.EndMode"
+                                  ValueChanged="OnEndModeChanged"
+                                  AriaLabel="Recurrence end" />
+
+                @if (_model.EndMode == RecurrenceEndMode.Count)
+                {
+                    <div class="recurrence-interval mt-2">
+                        <input type="number"
+                               min="1"
+                               class="form-input recurrence-number"
+                               data-testid="recurrence-count"
+                               value="@_model.Count"
+                               @onchange="OnCountChanged" />
+                        <span class="recurrence-unit">occurrence@(_model.Count == 1 ? "" : "s")</span>
+                    </div>
+                }
+                else if (_model.EndMode == RecurrenceEndMode.Until)
+                {
+                    <input type="date"
+                           class="form-input mt-2"
+                           data-testid="recurrence-until"
+                           value="@_model.Until.ToString("yyyy-MM-dd")"
+                           @onchange="OnUntilChanged" />
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>The canonical RRULE string; null means "Does not repeat". Two-way bindable.</summary>
+    [Parameter] public string? Value { get; set; }
+
+    /// <summary>Raised with the recomputed RRULE (or null) whenever the selection changes.</summary>
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>The event start the picker anchors its defaults to (weekday, day-of-month, …).</summary>
+    [Parameter] public DateTimeOffset Start { get; set; }
+
+    private RecurrencePickerModel _model = null!;
+    private string? _syncedValue;
+    private DateTimeOffset _syncedStart;
+    private bool _initialised;
+
+    // FHQ-18.11 Pass 2: per-option data-testids so E2E can drive the picker without depending on
+    // pill label text (which is user-facing copy and may be reworded).
+    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceMode>> ModeOptions =
+    [
+        new(RecurrenceMode.DoesNotRepeat, "Does not repeat", "recurrence-mode-none"),
+        new(RecurrenceMode.Daily, "Daily", "recurrence-mode-daily"),
+        new(RecurrenceMode.Weekly, "Weekly", "recurrence-mode-weekly"),
+        new(RecurrenceMode.Monthly, "Monthly", "recurrence-mode-monthly"),
+        new(RecurrenceMode.Yearly, "Yearly", "recurrence-mode-yearly"),
+        new(RecurrenceMode.Custom, "Custom…", "recurrence-mode-custom")
+    ];
+
+    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceFrequency>> FrequencyOptions =
+    [
+        new(RecurrenceFrequency.Daily, "Day", "recurrence-frequency-daily"),
+        new(RecurrenceFrequency.Weekly, "Week", "recurrence-frequency-weekly"),
+        new(RecurrenceFrequency.Monthly, "Month", "recurrence-frequency-monthly"),
+        new(RecurrenceFrequency.Yearly, "Year", "recurrence-frequency-yearly")
+    ];
+
+    private IReadOnlyList<PillSegmentOption<MonthlyModeEnum>> MonthlyModeOptions =>
+    [
+        new(MonthlyModeEnum.ByDate, $"On day {_model.ByMonthDay}"),
+        new(MonthlyModeEnum.ByOrdinalWeekday, $"On {_model.StartOrdinalWeekdayLabel()}")
+    ];
+
+    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceEndMode>> EndModeOptions =
+    [
+        new(RecurrenceEndMode.Never, "Never", "recurrence-end-never"),
+        new(RecurrenceEndMode.Count, "After", "recurrence-end-count"),
+        new(RecurrenceEndMode.Until, "On date", "recurrence-end-until")
+    ];
+
+    // M T W T F S S labels in the calendar's Sunday-first DayOfWeek order, rendered Monday-first
+    // to match Google's weekday row (the model stores DayOfWeek, not display position).
+    private static readonly IReadOnlyList<(DayOfWeek Day, string Label)> Weekdays =
+    [
+        (DayOfWeek.Monday, "M"),
+        (DayOfWeek.Tuesday, "T"),
+        (DayOfWeek.Wednesday, "W"),
+        (DayOfWeek.Thursday, "T"),
+        (DayOfWeek.Friday, "F"),
+        (DayOfWeek.Saturday, "S"),
+        (DayOfWeek.Sunday, "S")
+    ];
+
+    private string IntervalUnitLabel => _model.Frequency switch
+    {
+        RecurrenceFrequency.Daily => _model.Interval == 1 ? "day" : "days",
+        RecurrenceFrequency.Weekly => _model.Interval == 1 ? "week" : "weeks",
+        RecurrenceFrequency.Monthly => _model.Interval == 1 ? "month" : "months",
+        RecurrenceFrequency.Yearly => _model.Interval == 1 ? "year" : "years",
+        _ => ""
+    };
+
+    protected override void OnParametersSet()
+    {
+        // Rebuild from the incoming Value/Start only when they actually change, so local edits
+        // (which flow out via ValueChanged) are not clobbered by the re-render they trigger.
+        // A Start change is *intended* to reseed the anchors (matching Google: moving the event
+        // date re-derives the weekly weekday / monthly day-of-month), so it forces a rebuild.
+        if (!_initialised || Value != _syncedValue || Start != _syncedStart)
+        {
+            _model = RecurrencePickerModel.FromRecurrenceRule(Value, Start);
+            _syncedValue = Value;
+            _syncedStart = Start;
+            _initialised = true;
+        }
+    }
+
+    private async Task OnModeChanged(RecurrenceMode mode)
+    {
+        // Switching to Custom from a preset seeds the drawer from that preset's frequency so the
+        // user continues editing what they had selected rather than a blank slate.
+        if (mode == RecurrenceMode.Custom && _model.Mode != RecurrenceMode.Custom)
+        {
+            _model.Frequency = _model.Mode switch
+            {
+                RecurrenceMode.Daily => RecurrenceFrequency.Daily,
+                RecurrenceMode.Weekly => RecurrenceFrequency.Weekly,
+                RecurrenceMode.Monthly => RecurrenceFrequency.Monthly,
+                RecurrenceMode.Yearly => RecurrenceFrequency.Yearly,
+                _ => _model.Frequency
+            };
+        }
+
+        _model.Mode = mode;
+        await EmitAsync();
+    }
+
+    private async Task OnFrequencyChanged(RecurrenceFrequency frequency)
+    {
+        _model.Frequency = frequency;
+        await EmitAsync();
+    }
+
+    private async Task OnMonthlyModeChanged(MonthlyModeEnum mode)
+    {
+        _model.MonthlyMode = mode;
+        await EmitAsync();
+    }
+
+    private async Task OnEndModeChanged(RecurrenceEndMode mode)
+    {
+        _model.EndMode = mode;
+        await EmitAsync();
+    }
+
+    private async Task ToggleWeekdayAsync(DayOfWeek day)
+    {
+        if (!_model.Weekdays.Add(day))
+        {
+            _model.Weekdays.Remove(day);
+        }
+
+        await EmitAsync();
+    }
+
+    private async Task OnIntervalChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var interval) && interval >= 1)
+        {
+            _model.Interval = interval;
+            await EmitAsync();
+        }
+    }
+
+    private async Task OnCountChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var count) && count >= 1)
+        {
+            _model.Count = count;
+            await EmitAsync();
+        }
+    }
+
+    private async Task OnUntilChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), out var until))
+        {
+            _model.Until = until;
+            await EmitAsync();
+        }
+    }
+
+    private async Task EmitAsync()
+    {
+        var rrule = _model.ToRecurrenceRule();
+        // Record what we are emitting so the resulting re-render's OnParametersSet does not rebuild
+        // the model and discard in-flight drawer state (e.g. a half-selected weekly set).
+        _syncedValue = rrule;
+        Value = rrule;
+        await ValueChanged.InvokeAsync(rrule);
+    }
+}
+
+<style>
+    .recurrence-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .recurrence-drawer {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 16px;
+        border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+        border-radius: 8px;
+    }
+
+    .recurrence-field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .recurrence-interval {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .recurrence-number {
+        width: 88px;
+        min-height: 48px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .recurrence-unit {
+        color: var(--theme-text-muted);
+        font-size: 0.95rem;
+    }
+
+    .recurrence-weekdays .pill-toggle {
+        min-width: 48px;
+        flex: 0 0 auto;
+        padding: 10px 0;
+    }
+</style>

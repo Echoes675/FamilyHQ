@@ -269,6 +269,87 @@ public class CalendarApiServiceTests
         result.Should().BeNull();
     }
 
+    [Fact]
+    public async Task GetEventsForMonthAsync_RecurringDto_FlowsRecurrenceIntoViewModel()
+    {
+        var calA = new EventCalendarDto(CalAId, "Cal A", "#ff0000");
+        var dto = new CalendarEventDto(
+            EventId, "gid-1", "Standup",
+            FixedStart, FixedEnd,
+            false, null, null,
+            [calA],
+            IsRecurring: true,
+            RecurrenceRule: "RRULE:FREQ=WEEKLY;BYDAY=MO");
+
+        var monthViewDto = new MonthViewDto { Year = 2026, Month = 3, Days = new() { [FixedDateKey] = [dto] } };
+        var sut = CreateSut(monthViewDto);
+
+        var result = await sut.GetEventsForMonthAsync(2026, 3, CancellationToken.None);
+
+        var vm = result.Days[FixedDateKey].Single();
+        vm.IsRecurring.Should().BeTrue();
+        vm.RecurrenceRule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=MO");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringEventAsync_PutsToScopedRecurringEndpoint()
+    {
+        var (sut, requests) = CreateCapturingSut(SerializeEventDto());
+
+        await sut.UpdateRecurringEventAsync(
+            EventId,
+            new UpdateEventRequest("New", FixedStart, FixedEnd, false, null, null, RecurrenceRule: "RRULE:FREQ=DAILY"),
+            RecurrenceScope.ThisAndFollowing,
+            CancellationToken.None);
+
+        var req = requests.Should().ContainSingle().Subject;
+        req.Method.Should().Be(HttpMethod.Put);
+        req.RequestUri!.PathAndQuery.Should().Contain($"api/events/{EventId}/recurring");
+        req.RequestUri!.Query.Should().Contain("scope=ThisAndFollowing");
+    }
+
+    [Fact]
+    public async Task DeleteRecurringEventAsync_DeletesToScopedRecurringEndpoint()
+    {
+        var (sut, requests) = CreateCapturingSut("");
+
+        await sut.DeleteRecurringEventAsync(EventId, RecurrenceScope.AllInSeries, CancellationToken.None);
+
+        var req = requests.Should().ContainSingle().Subject;
+        req.Method.Should().Be(HttpMethod.Delete);
+        req.RequestUri!.PathAndQuery.Should().Contain($"api/events/{EventId}/recurring");
+        req.RequestUri!.Query.Should().Contain("scope=AllInSeries");
+    }
+
+    private static string SerializeEventDto()
+    {
+        var dto = new CalendarEventDto(
+            EventId, "gid-1", "Std", FixedStart, FixedEnd, false, null, null,
+            [new EventCalendarDto(CalAId, "Cal A", "#ff0000")],
+            IsRecurring: true, RecurrenceRule: "RRULE:FREQ=DAILY");
+        return JsonSerializer.Serialize(dto);
+    }
+
+    private static (CalendarApiService Sut, List<HttpRequestMessage> Requests) CreateCapturingSut(string body)
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((r, _) => requests.Add(r))
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var httpClient = new HttpClient(handlerMock.Object) { BaseAddress = new Uri("https://test.local/") };
+        return (new CalendarApiService(httpClient), requests);
+    }
+
     private static CalendarApiService CreateSut(MonthViewDto responseBody)
     {
         var json = JsonSerializer.Serialize(responseBody);

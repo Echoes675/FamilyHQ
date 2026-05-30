@@ -139,6 +139,84 @@ public class DiagnosticsApiServiceTests
         capturedRequest!.RequestUri!.PathAndQuery.Should().Be("/api/diagnostics/sync-failures?limit=42");
     }
 
+    [Fact]
+    public async Task GetFailedSyncRunsAsync_HappyPath_ParsesList()
+    {
+        const string json = """
+        [
+          {
+            "id": "44444444-4444-4444-4444-444444444444",
+            "calendarInfoId": "11111111-1111-1111-1111-111111111111",
+            "attemptCount": 5,
+            "lastError": "Token has been expired or revoked.",
+            "source": "google",
+            "lastAttemptAt": "2026-05-13T12:00:00+00:00"
+          }
+        ]
+        """;
+        var sut = CreateSut(HttpStatusCode.OK, json);
+
+        var result = await sut.GetFailedSyncRunsAsync(100, CancellationToken.None);
+
+        result.Loaded.Should().BeTrue();
+        result.Data.Should().NotBeNull().And.HaveCount(1);
+        result.Data![0].AttemptCount.Should().Be(5);
+        result.Data[0].LastError.Should().Be("Token has been expired or revoked.");
+        result.Data[0].Source.Should().Be("google");
+        result.Data[0].LastAttemptAt.Should().Be(new DateTimeOffset(2026, 5, 13, 12, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task GetFailedSyncRunsAsync_OnFailure_ReturnsFailedResult()
+    {
+        var sut = CreateSut(HttpStatusCode.InternalServerError, "");
+
+        var result = await sut.GetFailedSyncRunsAsync(100, CancellationToken.None);
+
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetFailedSyncRunsAsync_OnHttpRequestException_ReturnsFailedResult()
+    {
+        var sut = CreateSutThatThrows(new HttpRequestException("network down"));
+
+        var result = await sut.GetFailedSyncRunsAsync(100, CancellationToken.None);
+
+        result.Loaded.Should().BeFalse();
+        result.Data.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetFailedSyncRunsAsync_PassesLimitAsQueryParameter()
+    {
+        HttpRequestMessage? capturedRequest = null;
+
+        var handlerMock = new Mock<HttpMessageHandler>();
+        handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var sut = new DiagnosticsApiService(new HttpClient(handlerMock.Object)
+        {
+            BaseAddress = new Uri("https://test.local/")
+        });
+
+        await sut.GetFailedSyncRunsAsync(42, CancellationToken.None);
+
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.RequestUri!.PathAndQuery.Should().Be("/api/diagnostics/failed-sync-runs?limit=42");
+    }
+
     private static DiagnosticsApiService CreateSut(HttpStatusCode status, string body)
     {
         var handlerMock = new Mock<HttpMessageHandler>();

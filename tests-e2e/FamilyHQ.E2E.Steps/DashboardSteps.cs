@@ -194,7 +194,21 @@ public class DashboardSteps
     public async Task ThenISeeTheEventDisplayedInCalendarColour(string eventName, string calendarName)
     {
         var colour = GetCalendarColour(calendarName);
-        var found = await _dashboardPage.IsEventDisplayedInCalendarColourAsync(eventName, colour);
+        // Poll: creating/editing an event triggers an app re-fetch, and the resulting echo webhook
+        // is now drained asynchronously by CalendarSyncWorker (FHQ-37), which broadcasts
+        // EventsUpdated a beat later and re-renders the grid. A single read can land before the
+        // capsule paints or inside that re-render window (TOCTOU, cf. intermittent-issues #4/#6).
+        // Tolerate transient false until the deadline.
+        var deadline = System.DateTime.UtcNow.AddSeconds(15);
+        var found = false;
+        while (System.DateTime.UtcNow < deadline)
+        {
+            found = await _dashboardPage.IsEventDisplayedInCalendarColourAsync(eventName, colour);
+            if (found)
+                break;
+            await Task.Delay(250);
+        }
+
         found.Should().BeTrue(
             $"the event '{eventName}' should appear as a capsule coloured '{colour}' ({calendarName}).");
     }

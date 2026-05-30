@@ -141,38 +141,6 @@ public class WebhookEchoGuardSteps
         await _simulatorApi.UpdateEventAsync(template.UserName, templateEvent.Id, newTitle);
     }
 
-    /// <summary>
-    /// Fires a webhook to the WebApi via the Simulator with the test-only delay header
-    /// injected. The Simulator forwards the header to the WebApi, which delays processing
-    /// by the given number of seconds (DEBUG-gated branch in SyncController). By the
-    /// time the sync runs, the 60-second TTL in OutboundWriteHashCache has expired and
-    /// the echo is NOT suppressed — proving stale echoes flow through normally.
-    ///
-    /// NOTE: This step incurs a real wall-clock wait equal to delaySeconds. It is tagged
-    /// @Slow and should only be run in environments where long test durations are acceptable.
-    /// </summary>
-    [When(@"the echo webhook is delayed by (\d+) seconds via the test delay header")]
-    public async Task WhenTheEchoWebhookIsDelayedBySecondsViaTestDelayHeader(int delaySeconds)
-    {
-        // Ensure the event ID is stashed (should have been set by the preceding When step).
-        if (!_scenarioContext.TryGetValue("EchoGuardEventId", out _))
-        {
-            var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
-            var templateEvent = template.Events.LastOrDefault()
-                ?? throw new InvalidOperationException("No events in UserTemplate.");
-            _scenarioContext["EchoGuardEventId"] = templateEvent.Id;
-        }
-
-        // TriggerDelayedWebhookAsync sends the delay header to the Simulator, which
-        // forwards it to the WebApi. The HttpClient here waits for the full response,
-        // so this call blocks for approximately delaySeconds seconds. That is intentional
-        // — the xUnit test timeout (default 5 min) is well above 65s.
-        await _simulatorApi.TriggerDelayedWebhookAsync(delaySeconds);
-
-        // Brief settle after the delayed webhook returns.
-        await Task.Delay(1000);
-    }
-
     // ── Then ───────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -261,33 +229,5 @@ public class WebhookEchoGuardSteps
         writeCount.Should().Be(0,
             $"a Google-side edit must not cause FamilyHQ to write back to Google for event '{eventId}'. " +
             $"A count > 0 means FamilyHQ incorrectly echoed a Google-originated change back.");
-    }
-
-    /// <summary>
-    /// After a delayed echo webhook (TTL expired), asserts the event title is visible on
-    /// the dashboard (reconciled) and the Simulator received no second outbound write
-    /// (the WebApi applied the inbound Google data without writing back to Google again).
-    /// </summary>
-    [Then(@"the event title is reconciled on the dashboard without a second outbound write")]
-    public async Task ThenTheEventTitleIsReconciledOnTheDashboardWithoutASecondOutboundWrite()
-    {
-        // The delayed webhook should have caused the sync to process the event
-        // because the TTL expired before the sync ran.
-        // The event is in Google with the FamilyHQ-updated title, so reconciliation
-        // leaves the title unchanged — verify it is still visible on the dashboard.
-        var eventName = _scenarioContext.TryGetValue("EchoGuardEventName", out var stored) && stored is string n
-            ? n
-            : throw new InvalidOperationException("EchoGuardEventName not set in ScenarioContext.");
-
-        var capsule = _dashboardPage.EventCapsules.Filter(new() { HasText = eventName }).First;
-        await capsule.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-
-        // Verify no second outbound write was triggered by reconciliation.
-        var eventId = _scenarioContext.Get<string>("EchoGuardEventId");
-        var writeCount = await _simulatorApi.GetOutboundWriteCountAsync(eventId);
-
-        writeCount.Should().Be(1,
-            $"reconciling a stale echo must not trigger a second outbound write to Google " +
-            $"for event '{eventId}'. A count of 2+ means the reconciliation incorrectly wrote back.");
     }
 }

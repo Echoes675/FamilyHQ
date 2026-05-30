@@ -54,6 +54,10 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("GoogleRecurringEventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
 
@@ -61,8 +65,15 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<DateTimeOffset?>("OriginalStartTime")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("OwnerCalendarInfoId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RecurrenceRule")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTimeOffset>("Start")
                         .HasColumnType("timestamp with time zone");
@@ -79,9 +90,13 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.HasIndex("GoogleEventId")
                         .IsUnique();
 
+                    b.HasIndex("GoogleRecurringEventId");
+
                     b.HasIndex("OwnerCalendarInfoId");
 
                     b.HasIndex("Start");
+
+                    b.HasIndex("GoogleRecurringEventId", "OriginalStartTime");
 
                     b.ToTable("Events", (string)null);
                 });
@@ -130,6 +145,60 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .IsUnique();
 
                     b.ToTable("Calendars", (string)null);
+                });
+
+            modelBuilder.Entity("FamilyHQ.Core.Models.CalendarSyncJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("CalendarInfoId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChannelId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("EnqueuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.HasIndex("UserId", "CalendarInfoId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 0 AND \"CalendarInfoId\" IS NOT NULL");
+
+                    b.ToTable("CalendarSyncJobs", (string)null);
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.DayTheme", b =>

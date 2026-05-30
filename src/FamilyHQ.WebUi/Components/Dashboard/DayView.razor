@@ -124,6 +124,10 @@
                                  title="@($"{p.Event.Title}\n{p.Event.StartLocal():t} - {p.Event.EndLocal():t}\n{p.Event.Location}")"
                                  @onclick:stopPropagation="true"
                                  @onclick="() => OnEditEvent.InvokeAsync(p.Event)">
+                                @if (p.Event.IsRecurring)
+                                {
+                                    <RecurrenceIndicator />
+                                }
                                 <div class="fw-bold">@p.Event.Title</div>
                                 <div>@p.Event.StartLocal().ToString("h:mm tt")</div>
                             </div>

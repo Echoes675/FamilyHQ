@@ -1,0 +1,118 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+@using FamilyHQ.Core.DTOs
+
+@if (IsVisible)
+{
+    <div class="modal-backdrop modal-sm" tabindex="-1" data-testid="recurrence-scope-prompt">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" data-testid="recurrence-scope-title">@RecurrenceScopePromptLogic.HeaderText(IsDelete)</h5>
+                    <button type="button" class="btn-close" @onclick="HandleCancel" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <PillSegmentGroup TValue="RecurrenceScope"
+                                      Options="_scopeOptions"
+                                      AriaLabel="Which occurrences to change"
+                                      Value="_selectedScope"
+                                      ValueChanged="OnScopeChanged">
+                    </PillSegmentGroup>
+
+                    @if (_showMemberWarning)
+                    {
+                        <div class="alert alert-warning recurrence-scope-warning"
+                             role="alert"
+                             data-testid="recurrence-scope-member-warning">
+                            Member changes apply to the whole series. Select "All events" to continue.
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer justify-end">
+                    <button type="button"
+                            class="btn btn-secondary"
+                            data-testid="recurrence-scope-cancel"
+                            @onclick="HandleCancel">
+                        Cancel
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-testid="recurrence-scope-ok"
+                            disabled="@(!_isConfirmAllowed)"
+                            @onclick="HandleConfirm">
+                        OK
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceScope>> _scopeOptions =
+    [
+        new(RecurrenceScope.ThisOnly, "This event", "recurrence-scope-this"),
+        new(RecurrenceScope.ThisAndFollowing, "This and following events", "recurrence-scope-following"),
+        new(RecurrenceScope.AllInSeries, "All events", "recurrence-scope-all")
+    ];
+
+    /// <summary>Controls whether the prompt overlay is rendered. Mirrors the other dashboard modals.</summary>
+    [Parameter] public bool IsVisible { get; set; }
+
+    /// <summary>When true the header reads "Delete recurring event"; otherwise "Edit recurring event".</summary>
+    [Parameter] public bool IsDelete { get; set; }
+
+    /// <summary>
+    /// When true a member (calendar) change is pending. Member changes are only valid for the
+    /// whole series (FHQ-18 §10.1), so OK is disabled and an inline warning is shown at any
+    /// scope other than <see cref="RecurrenceScope.AllInSeries"/>.
+    /// </summary>
+    [Parameter] public bool MemberChangePending { get; set; }
+
+    /// <summary>Raised with the chosen scope when the user confirms with OK.</summary>
+    [Parameter] public EventCallback<RecurrenceScope> OnConfirm { get; set; }
+
+    /// <summary>Raised when the user cancels (Cancel button or the close icon).</summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    // Default to AllInSeries: the safest, most-common Google-parity default and the only
+    // scope that is always confirmable (incl. when a member change is pending).
+    private RecurrenceScope _selectedScope = RecurrenceScope.AllInSeries;
+    private bool _isConfirmAllowed = true;
+    private bool _showMemberWarning;
+
+    protected override void OnParametersSet()
+    {
+        if (IsVisible)
+        {
+            // Reset to the safe default each time the prompt is (re)shown so a previous
+            // selection cannot leak into a new edit/delete flow.
+            _selectedScope = RecurrenceScope.AllInSeries;
+            RecomputeGate();
+        }
+    }
+
+    private void OnScopeChanged(RecurrenceScope scope)
+    {
+        _selectedScope = scope;
+        RecomputeGate();
+    }
+
+    private void RecomputeGate()
+    {
+        _isConfirmAllowed = RecurrenceScopePromptLogic.IsConfirmAllowed(_selectedScope, MemberChangePending);
+        _showMemberWarning = RecurrenceScopePromptLogic.ShouldShowMemberChangeWarning(_selectedScope, MemberChangePending);
+    }
+
+    private async Task HandleConfirm()
+    {
+        // Guard in code as well as via the disabled attribute — never confirm a blocked scope.
+        if (!_isConfirmAllowed)
+        {
+            return;
+        }
+
+        await OnConfirm.InvokeAsync(_selectedScope);
+    }
+
+    private Task HandleCancel() => OnCancel.InvokeAsync();
+}

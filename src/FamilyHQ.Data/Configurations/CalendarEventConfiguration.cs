@@ -29,9 +29,25 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.Property(e => e.End)
             .HasConversion(v => v.ToUniversalTime(), v => v);
 
+        builder.Property(e => e.OriginalStartTime)
+            .HasConversion(
+                v => v.HasValue ? v.Value.ToUniversalTime() : v,
+                v => v);
+
+        // Google series ID — same shape as GoogleEventId, so the same 255 cap.
+        builder.Property(e => e.GoogleRecurringEventId)
+            .HasMaxLength(255);
+
+        // RRULE text (e.g. "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR"). Bounded in practice;
+        // capped for consistency with the entity's other string columns.
+        builder.Property(e => e.RecurrenceRule)
+            .HasMaxLength(1000);
+
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
         builder.HasIndex(e => e.End);
+        builder.HasIndex(e => e.GoogleRecurringEventId);
+        builder.HasIndex(e => new { e.GoogleRecurringEventId, e.OriginalStartTime });
 
         builder.Property(e => e.OwnerCalendarInfoId).IsRequired();
 

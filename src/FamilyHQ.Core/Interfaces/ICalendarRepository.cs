@@ -17,7 +17,23 @@ public interface ICalendarRepository
 
     Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default);
     Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns every locally-stored instance whose <see cref="CalendarEvent.GoogleRecurringEventId"/>
+    /// matches <paramref name="seriesId"/> (i.e. all rows belonging to that recurring series),
+    /// including the Members navigation property. Used by recurring edit/delete reconcile to remove
+    /// truncated or deleted instances.
+    /// </summary>
+    Task<IReadOnlyList<CalendarEvent>> GetEventsBySeriesIdAsync(string seriesId, CancellationToken ct = default);
     Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default);
+
+    /// <summary>
+    /// For the given recurring-series ids, returns a map of series id → stored RRULE for
+    /// every series that already has at least one persisted instance carrying a non-null
+    /// <see cref="CalendarEvent.RecurrenceRule"/>. Series with no stored RRULE are omitted,
+    /// letting the sync service decide which masters still need a (second-pass) fetch.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>> GetStoredRecurrenceRulesAsync(IEnumerable<string> seriesIds, CancellationToken ct = default);
 
     Task AddCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
     Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default);

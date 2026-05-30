@@ -70,12 +70,26 @@ namespace FamilyHQ.Simulator.Migrations
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsCancelled")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
                     b.Property<string>("Location")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("OriginalStartTime")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecurrenceRule")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RecurringEventId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<DateTime>("StartTime")
                         .HasColumnType("timestamp with time zone");

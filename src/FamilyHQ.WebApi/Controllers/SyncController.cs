@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
@@ -6,7 +7,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Controllers;
@@ -18,33 +18,36 @@ public class SyncController : ControllerBase
     private readonly ICalendarSyncService _syncService;
     private readonly IHubContext<CalendarHub> _hubContext;
     private readonly ITokenStore _tokenStore;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<SyncController> _logger;
     private readonly IWebhookRegistrationRepository _webhookRegistrationRepo;
     private readonly ICalendarRepository _calendarRepo;
     private readonly ICurrentUserService _currentUser;
     private readonly IWebhookRegistrationService _webhookRegistrationService;
+    private readonly ICalendarSyncJobQueue _syncJobQueue;
+    private readonly ISyncJobSignal _syncJobSignal;
 
     public SyncController(
         ICalendarSyncService syncService,
         IHubContext<CalendarHub> hubContext,
         ITokenStore tokenStore,
-        IServiceScopeFactory scopeFactory,
         ILogger<SyncController> logger,
         IWebhookRegistrationRepository webhookRegistrationRepo,
         ICalendarRepository calendarRepo,
         ICurrentUserService currentUser,
-        IWebhookRegistrationService webhookRegistrationService)
+        IWebhookRegistrationService webhookRegistrationService,
+        ICalendarSyncJobQueue syncJobQueue,
+        ISyncJobSignal syncJobSignal)
     {
         _syncService = syncService;
         _hubContext = hubContext;
         _tokenStore = tokenStore;
-        _scopeFactory = scopeFactory;
         _logger = logger;
         _webhookRegistrationRepo = webhookRegistrationRepo;
         _calendarRepo = calendarRepo;
         _currentUser = currentUser;
         _webhookRegistrationService = webhookRegistrationService;
+        _syncJobQueue = syncJobQueue;
+        _syncJobSignal = syncJobSignal;
     }
 
     /// <summary>
@@ -147,22 +150,16 @@ public class SyncController : ControllerBase
             _logger.LogInformation("Received Sync trigger (e.g. from Simulator).");
         }
 
-#if DEBUG
-        if (int.TryParse(Request.Headers["x-test-webhook-delay-seconds"].ToString(), out var delaySeconds) && delaySeconds > 0)
-        {
-            _logger.LogInformation("Test-only webhook delay of {Delay}s injected.", delaySeconds);
-            await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
-        }
-#endif
-
-        var startDate = DateTimeOffset.UtcNow.AddDays(-30);
-        var endDate = DateTimeOffset.UtcNow.AddDays(365);
-
+        // FHQ-37: enqueue a durable job and ack immediately. We must NOT run the sync
+        // inline on the request thread — doing so under the request CancellationToken
+        // was the root cause of FHQ-36 (work cancelled when the request completed/aborted).
+        // A 200 ack stops Google's retries; the durable queue + periodic safety net
+        // guarantee the work actually runs.
         try
         {
-            var synced = false;
+            var enqueuedAny = false;
 
-            // Attempt targeted sync via channel-id lookup
+            // Attempt a targeted enqueue via channel-id lookup.
             if (Request.Headers.TryGetValue("x-goog-channel-id", out var channelIdHeader))
             {
                 var channelId = channelIdHeader.ToString();
@@ -174,39 +171,12 @@ public class SyncController : ControllerBase
                     var calendarInfo = await _calendarRepo.GetCalendarByIdAsync(registration.CalendarInfoId, ct);
                     if (calendarInfo is not null)
                     {
+                        await _syncJobQueue.EnqueueAsync(
+                            calendarInfo.UserId, registration.CalendarInfoId, SyncJobSource.Webhook, channelId, ct);
                         _logger.LogInformation(
-                            "Targeted sync for calendar {CalendarInfoId} (user {UserId}) via channel {ChannelId}.",
+                            "Enqueued targeted sync job for calendar {CalendarInfoId} (user {UserId}) via channel {ChannelId}.",
                             registration.CalendarInfoId, calendarInfo.UserId, channelId);
-
-                        BackgroundUserContext.Current = calendarInfo.UserId;
-                        try
-                        {
-                            using var scope = _scopeFactory.CreateScope();
-                            var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-                            await syncService.SyncAsync(registration.CalendarInfoId, startDate, endDate, ct);
-                            synced = true;
-                        }
-                        catch (GoogleReauthRequiredException ex)
-                        {
-                            _logger.LogWarning(
-                                "Targeted sync for calendar {CalendarInfoId} (user {UserId}) needs re-auth ({Source}): {Description}",
-                                registration.CalendarInfoId, calendarInfo.UserId, ex.FailureSource, ex.ErrorDescription);
-                            await _tokenStore.MarkNeedsReauthAsync(calendarInfo.UserId, ex.ErrorDescription, ct);
-                        }
-                        catch (GoogleApiException ex)
-                        {
-                            _logger.LogWarning(
-                                "Targeted sync for calendar {CalendarInfoId} (user {UserId}) failed with upstream {Status} ({Operation}).",
-                                registration.CalendarInfoId, calendarInfo.UserId, (int)ex.StatusCode, ex.Operation);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error during targeted sync for calendar {CalendarInfoId}.", registration.CalendarInfoId);
-                        }
-                        finally
-                        {
-                            BackgroundUserContext.Current = null;
-                        }
+                        enqueuedAny = true;
                     }
                     else
                     {
@@ -221,51 +191,25 @@ public class SyncController : ControllerBase
                 }
             }
 
-            // Fall back to sync-all if targeted sync was not performed
-            if (!synced)
+            // Fall back to a periodic sync-all enqueue per user if no targeted job was enqueued.
+            if (!enqueuedAny)
             {
                 var userIds = (await _tokenStore.GetAllUserIdsAsync(ct)).ToList();
-                _logger.LogInformation("Webhook sync: found {Count} registered user(s).", userIds.Count);
+                _logger.LogInformation("Webhook fallback: enqueuing sync-all for {Count} user(s).", userIds.Count);
 
                 foreach (var userId in userIds)
                 {
-                    BackgroundUserContext.Current = userId;
-                    try
-                    {
-                        using var scope = _scopeFactory.CreateScope();
-                        var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-                        await syncService.SyncAllAsync(startDate, endDate, ct);
-                    }
-                    catch (GoogleReauthRequiredException ex)
-                    {
-                        _logger.LogWarning(
-                            "Webhook sync for user {UserId} needs re-auth ({Source}): {Description}",
-                            userId, ex.FailureSource, ex.ErrorDescription);
-                        await _tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
-                    }
-                    catch (GoogleApiException ex)
-                    {
-                        _logger.LogWarning(
-                            "Webhook sync for user {UserId} failed with upstream {Status} ({Operation}).",
-                            userId, (int)ex.StatusCode, ex.Operation);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error syncing user {UserId} during webhook.", userId);
-                    }
-                    finally
-                    {
-                        BackgroundUserContext.Current = null;
-                    }
+                    await _syncJobQueue.EnqueueAsync(userId, null, SyncJobSource.Periodic, null, ct);
                 }
             }
 
-            // Notify clients via SignalR
-            await _hubContext.Clients.All.SendAsync("EventsUpdated", ct);
+            // Wake the worker so the job is drained immediately rather than at the next poll.
+            _syncJobSignal.Release();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing webhook sync.");
+            // Never fail the ack: a 200 stops Google's retries and the periodic safety net reconciles.
+            _logger.LogError(ex, "Error enqueuing webhook sync job(s).");
         }
 
         return Ok();

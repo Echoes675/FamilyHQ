@@ -14,11 +14,39 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-(none)
+### 6. Async webhook sync re-surfaces TOCTOU re-render / not-yet-synced races in webhook-driven scenarios (FHQ-37)
+
+**Status:** mitigated on branch `fix/FHQ-37-durable-sync-queue` (test-side polling); awaiting the 3-run Deploy-Dev streak to confirm before moving to *Resolved*.
+**Component:** E2E steps only — `tests-e2e/.../RecurringEventSteps.cs` (`the recurring event shows a recurrence indicator`), `tests-e2e/.../SyncResilienceSteps.cs` (`I wait for the failed sync run to be recorded`), and `tests-e2e/.../DashboardSteps.cs` (`I see the event … displayed on the calendar in … colour` — an app-create scenario whose echo webhook now re-renders the grid asynchronously). No production code involved.
+**First seen:** Deploy-Dev #395 (2026-05-29), scenarios *"A synced recurring instance is marked with a recurrence indicator"* and the new *"Diagnostics page lists a failed sync run when a webhook-driven sync fails terminally"*.
+
+**Why FHQ-37 surfaced this:** before FHQ-37 the Google push webhook ran the sync **inline** on the request thread, so by the time `TriggerWebhookAsync()` returned the data was already synced and the dashboard was stable. FHQ-37 makes the webhook enqueue a durable job and ack immediately; `CalendarSyncWorker` drains it a beat later and then broadcasts `EventsUpdated`, which re-renders the dashboard. Any step that delivered a webhook and then did a single read of the dashboard now races (a) the sync landing and (b) the EventsUpdated re-render window — the same TOCTOU class as issue #4. Sibling recurring scenarios that navigate to Day/Agenda first happened to pass because the navigation bought enough time.
+
+**Two distinct symptoms / fixes:**
+1. *Recurrence indicator "found 0"* — `ThenTheRecurringEventShowsARecurrenceIndicator` now polls `CountRecurrenceIndicatorsAsync()` over a 20s deadline tolerating transient zeros, instead of a single wait-then-read.
+2. *Failed-run poll 401 → 40s timeout* — the new wait step polled `/api/diagnostics/failed-sync-runs` with a raw `fetch(..., { credentials:'include' })`. FamilyHQ auth is **Bearer-JWT from localStorage** (attached by `CustomAuthorizationMessageHandler`), not cookies, so the raw fetch was unauthenticated → 401 → the run was never observed even though it was recorded. Now polls the **diagnostics page** (authenticated Blazor HttpClient), reloading until the runs table shows a row.
+
+**Systemic barrier (the real fix):** the shared step `WhenGoogleCalendarSendsAWebhookNotification` now waits for the sync queue to drain before returning, restoring the synchronous-sync timing contract the scenarios were written against. It polls `GET /api/diagnostics/sync-queue-depth` (new authorized endpoint backed by `ICalendarSyncJobQueue.GetActiveJobCountAsync`, **per-user** so a parallel scenario's queue activity never blocks this one) until the current user's Pending+InProgress count is 0, then proceeds. The poll reads the Bearer token from `localStorage['familyhq_auth_token']` and attaches it explicitly (a raw `fetch` would be unauthenticated). It degrades gracefully (brief settle if not yet authenticated; proceeds at the 40s deadline).
+
+**If the symptom returns / generalises:** any other webhook-driven scenario that reads synced data with a single shot may flake the same way. Prefer routing webhook delivery through the shared step above (so the drain barrier applies); otherwise convert the assertion to a poll (deadline + tolerate transient empties), matching this entry and issue #4. Never read a WebApi endpoint from a raw page `fetch` expecting auth — go through the Blazor app (page object) or attach the Bearer token explicitly.
+
+---
 
 ---
 
 ## Resolved issues
+
+### 5. Outbound-write-count ClearAll race recurs in recurring echo-guard scenarios (FHQ-18.11)
+
+**Resolved:** branch `feat/FHQ-18-recurring-events`, commit `03011b6` (2026-05-29). Tracked under FHQ-18.11.
+**Component:** E2E test infra only — `tests-e2e/.../Hooks/WebhookEchoGuardHooks.cs`, the Simulator `OutboundWriteCountStore` + its backdoor.
+**First seen:** Deploy-Dev #389 (2026-05-29), recurring echo-guard scenarios *"Native creation … exactly one outbound write"* and *"An All events edit … exactly one outbound write"*.
+
+**This is the SAME class of bug as issue #3 (FHQ-31), under a different guise.** A `[Before/AfterScenario("WebhookEchoGuard")]` hook called a **global** `ResetAll` on the Simulator's write-count store. With `maxParallelThreads=2` and three `@WebhookEchoGuard` scenarios, one scenario's reset wiped a concurrently-running scenario's counts mid-flight → the assertion read `0` (non-deterministic: #388 had one of the two pass, #389 had both fail). A precursor bug in the same area: the native-create scenario first asserted a **global** outbound-write *total*, which the same parallelism inflated to 4 (concurrent scenarios' writes) — fixed in `9eb10fd` by keying the total per isolated user.
+
+**Fix (FHQ-31 pattern):** counts are isolated by unique (Guid) event id and per isolated user, so no global reset is needed. Dropped the before-scenario global reset; scoped the after-scenario reset to the scenario's own user (`DELETE /api/simulator/backdoor/write-counts/user/{userId}` → `OutboundWriteCountStore.Reset(userId)`). `ResetAll` retained for manual/dev use only.
+
+**If the symptom returns:** check no E2E hook calls a global `ResetAll`/`ClearAll` against a store shared by parallel scenarios — scope every between-scenario reset to the scenario's isolated user (the `feedback_e2e_isolation` rule).
 
 ### 3. Calendar API 403 path does not always mark UserToken as NeedsReauth — recurrence was a test-side race (FHQ-31)
 

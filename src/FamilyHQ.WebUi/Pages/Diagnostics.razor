@@ -124,6 +124,7 @@
 
     <section class="diagnostics-section" aria-labelledby="diagnostics-failures-heading">
         <h2 id="diagnostics-failures-heading" class="diagnostics-section__title">Recent sync failures</h2>
+        <p class="diagnostics-section__caption">Individual events that could not be saved.</p>
 
         @if (DiagnosticsView.ShouldShowEmptyState(_failures))
         {
@@ -162,17 +163,57 @@
             </table>
         }
     </section>
+
+    <section class="diagnostics-section" aria-labelledby="diagnostics-runs-heading">
+        <h2 id="diagnostics-runs-heading" class="diagnostics-section__title">Recent failed sync runs</h2>
+        <p class="diagnostics-section__caption">Whole sync attempts that gave up after retries. These re-run automatically on the next change — no action needed.</p>
+
+        @if (_failedRuns is null || _failedRuns.Count == 0)
+        {
+            <p class="diagnostics-empty" data-testid="diagnostics-runs-empty">
+                No failed sync runs — automatic sync is healthy.
+            </p>
+        }
+        else
+        {
+            <table class="diagnostics-table" data-testid="diagnostics-runs-table">
+                <thead>
+                    <tr>
+                        <th scope="col">When</th>
+                        <th scope="col">Calendar</th>
+                        <th scope="col">Source</th>
+                        <th scope="col">Attempts</th>
+                        <th scope="col">Last error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var run in _failedRuns)
+                    {
+                        <tr>
+                            <td><time title="@DiagnosticsView.FormatAbsolute(run.LastAttemptAt)">@DiagnosticsView.FormatRelative(run.LastAttemptAt, _now)</time></td>
+                            <td>@(run.CalendarInfoId is null ? "All calendars" : ResolveCalendarName(run.CalendarInfoId))</td>
+                            <td>@run.Source</td>
+                            <td>@run.AttemptCount</td>
+                            <td>@run.LastError</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
 </div>
 
 @code {
     private ConnectionStatusWithCalendarsDto? _connectionStatus;
     private IReadOnlyList<SyncFailureDto>? _failures;
+    private IReadOnlyList<FailedSyncRunDto>? _failedRuns;
     private bool _isLoading;
     private bool _connectionStatusFailed;
     private bool _failuresFailed;
+    private bool _failedRunsFailed;
     private DateTimeOffset _now;
 
-    private bool _loadFailed => _connectionStatusFailed || _failuresFailed;
+    private bool _loadFailed => _connectionStatusFailed || _failuresFailed || _failedRunsFailed;
 
     protected override async Task OnInitializedAsync()
     {
@@ -192,20 +233,25 @@
         _isLoading = true;
         _connectionStatusFailed = false;
         _failuresFailed = false;
+        _failedRunsFailed = false;
         _now = TimeProvider.GetUtcNow();
         StateHasChanged();
 
         var statusTask = DiagnosticsApi.GetConnectionStatusAsync();
         var failuresTask = DiagnosticsApi.GetSyncFailuresAsync();
-        await Task.WhenAll(statusTask, failuresTask);
+        var failedRunsTask = DiagnosticsApi.GetFailedSyncRunsAsync();
+        await Task.WhenAll(statusTask, failuresTask, failedRunsTask);
 
         var statusResult = await statusTask;
         var failuresResult = await failuresTask;
+        var failedRunsResult = await failedRunsTask;
 
         _connectionStatus = statusResult.Data;
         _connectionStatusFailed = !statusResult.Loaded;
         _failures = failuresResult.Data;
         _failuresFailed = !failuresResult.Loaded;
+        _failedRuns = failedRunsResult.Data;
+        _failedRunsFailed = !failedRunsResult.Loaded;
         _isLoading = false;
         StateHasChanged();
     }

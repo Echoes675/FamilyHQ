@@ -1,0 +1,49 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+@typeparam TValue
+
+<div class="pill-segment-group" role="group" aria-label="@AriaLabel">
+    @foreach (var option in Options)
+    {
+        var isSelected = EqualityComparer<TValue>.Default.Equals(option.Value, Value);
+        <button type="button"
+                class="@($"pill-toggle {(isSelected ? "pill-toggle--on" : "pill-toggle--off")}")"
+                aria-pressed="@(isSelected ? "true" : "false")"
+                data-testid="@option.TestId"
+                disabled="@Disabled"
+                @onclick="() => SelectAsync(option.Value)">
+            @option.Label
+        </button>
+    }
+</div>
+
+@code {
+    /// <summary>The selectable options, rendered left-to-right as pills.</summary>
+    [Parameter, EditorRequired] public IReadOnlyList<PillSegmentOption<TValue>> Options { get; set; } = [];
+
+    /// <summary>The currently selected value. Two-way bindable via <c>@bind-Value</c>.</summary>
+    [Parameter] public TValue? Value { get; set; }
+
+    /// <summary>Raised with the newly selected value when a different pill is activated.</summary>
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    /// <summary>When true, all pills are disabled and selection cannot change.</summary>
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Accessible label for the segmented group as a whole.</summary>
+    [Parameter] public string? AriaLabel { get; set; }
+
+    private async Task SelectAsync(TValue value)
+    {
+        if (Disabled)
+        {
+            return;
+        }
+
+        if (EqualityComparer<TValue>.Default.Equals(value, Value))
+        {
+            return;
+        }
+
+        await ValueChanged.InvokeAsync(value);
+    }
+}

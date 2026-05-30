@@ -172,6 +172,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
                     if (startParam == null || endParam == null) continue;
 
+                    var originalStart = item.OriginalStartTime?.DateTime
+                        ?? (item.OriginalStartTime?.Date != null
+                            ? DateTimeOffset.Parse(item.OriginalStartTime.Date, CultureInfo.InvariantCulture)
+                            : (DateTimeOffset?)null);
+
                     events.Add(new CalendarEvent
                     {
                         GoogleEventId = item.Id,
@@ -181,7 +186,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         IsAllDay = item.Start?.Date != null,
                         Location = item.Location,
                         Description = item.Description,
-                        ContentHash = item.ExtendedProperties?.Private?.ContentHash
+                        ContentHash = item.ExtendedProperties?.Private?.ContentHash,
+                        // Series link from pass 1. RecurrenceRule is filled in pass 2 by the
+                        // two-pass master fetch in CalendarSyncService.
+                        GoogleRecurringEventId = item.RecurringEventId,
+                        OriginalStartTime = originalStart
                     });
                 }
 
@@ -209,6 +218,54 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
         return calendarEvent;
+    }
+
+    public async Task<CalendarEvent> CreateRecurringEventAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        string rrule,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
+        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule);
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "CreateRecurringEvent", ct);
+
+        var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+        calendarEvent.GoogleEventId = result!.Id;
+        return calendarEvent;
+    }
+
+    public async Task PatchSeriesRecurrenceAsync(
+        string googleCalendarId,
+        string seriesId,
+        string rrule,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        // events.patch with only the recurrence array — every other master field is left untouched.
+        var body = new { recurrence = new[] { rrule } };
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "PatchSeriesRecurrence", ct);
+    }
+
+    public async Task ClearSeriesRecurrenceAsync(
+        string googleCalendarId,
+        string seriesId,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        // events.patch with an empty recurrence array — Google collapses the series to a single event.
+        var body = new { recurrence = Array.Empty<string>() };
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
+        request.Content = JsonContent.Create(body, options: _jsonOptions);
+        var response = await _httpClient.SendAsync(request, ct);
+        await ThrowIfFailedAsync(response, "ClearSeriesRecurrence", ct);
     }
 
     public async Task<CalendarEvent> UpdateEventAsync(
@@ -275,6 +332,35 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
     }
 
+    public async Task<SeriesMaster?> GetSeriesMasterAsync(
+        string googleCalendarId,
+        string seriesId,
+        CancellationToken ct = default)
+    {
+        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(seriesId)}";
+        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Get, endpoint, ct);
+        var response = await _httpClient.SendAsync(request, ct);
+
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await ThrowIfFailedAsync(response, "GetSeriesMaster", ct);
+
+        var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+
+        // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
+        var rrule = apiEvent?.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
+        if (rrule is null) return null;
+
+        var start = ParseEventStart(apiEvent!.Start);
+        if (start is null) return null;
+
+        return new SeriesMaster(rrule, start.Value);
+    }
+
+    // Resolves an event's start instant from either a timed (dateTime) or all-day (date) field.
+    private static DateTimeOffset? ParseEventStart(GoogleApiEventDateTime? start) =>
+        start?.DateTime
+        ?? (start?.Date != null ? DateTimeOffset.Parse(start.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
+
     public async Task<WatchChannelResponse> WatchEventsAsync(
         string googleCalendarId,
         string channelId,
@@ -302,12 +388,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
-    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash)
+    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash, string? rrule = null)
     {
         var extendedProperties = new
         {
             @private = new Dictionary<string, string> { ["content-hash"] = contentHash }
         };
+
+        // Google expects the recurrence array only when the event is a series master.
+        var recurrence = rrule is null ? null : new[] { rrule };
 
         if (evt.IsAllDay)
         {
@@ -329,6 +418,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 location = evt.Location,
                 start = new { date = evt.Start.ToString("yyyy-MM-dd") },
                 end = new { date = exclusiveEndDate.ToString("yyyy-MM-dd") },
+                recurrence,
                 extendedProperties
             };
         }
@@ -340,6 +430,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             location = evt.Location,
             start = new { dateTime = evt.Start.ToString("yyyy-MM-ddTHH:mm:ssK") },
             end = new { dateTime = evt.End.ToString("yyyy-MM-ddTHH:mm:ssK") },
+            recurrence,
             extendedProperties
         };
     }

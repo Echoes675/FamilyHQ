@@ -277,6 +277,7 @@ html, body {
 }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--theme-glass-divider); flex: 0 0 auto; }
 .modal-title { font-size: 18px; font-weight: 600; }
+.modal-subtitle { font-size: 13px; font-weight: 400; color: var(--theme-text-muted); margin-top: 2px; }
 .modal-body { padding: 20px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .modal-footer { display: flex; justify-content: space-between; padding: 16px 20px; border-top: 1px solid var(--theme-glass-divider); gap: 8px; flex: 0 0 auto; }
 
@@ -312,6 +313,7 @@ html, body {
 .diagnostics-refresh-btn { min-height: 48px; min-width: 48px; }
 .diagnostics-section { margin-bottom: 32px; }
 .diagnostics-section__title { font-size: 18px; font-weight: 600; color: var(--theme-text); margin-bottom: 12px; }
+.diagnostics-section__caption { color: var(--theme-text-muted); font-size: 0.85rem; margin: 0 0 0.5rem; }
 .diagnostics-empty { color: var(--theme-text-muted); font-size: 14px; margin: 0; padding: 12px 0; }
 .diagnostics-muted { color: var(--theme-text-muted); }
 .diagnostics-connection { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px; background: var(--theme-surface); border: 1px solid var(--theme-border); border-radius: 8px; margin-bottom: 12px; }
@@ -414,6 +416,33 @@ html, body {
     font-size: 0.85rem;
     font-weight: 600;
     cursor: pointer;
+}
+
+/* ── Recurrence indicator (FHQ-18.10) ────────────────────────────────────
+   Repeat glyph shown on recurring event tiles in the Day / Month / Agenda
+   views. Inherits the tile's text colour via currentColor; no animation so
+   it stays cheap to render on the Pi 3B+. */
+.event-tile__recur-icon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: inherit;
+    opacity: 0.85;
+    vertical-align: text-bottom;
+}
+
+/* Month capsule + agenda row flow the glyph inline at the trailing edge. */
+.event-capsule .event-tile__recur-icon,
+.agenda-event-line .event-tile__recur-icon {
+    margin-left: 4px;
+}
+
+/* The absolutely-positioned day block (position:absolute set above) pins the
+   glyph to the top-right corner so it never collides with the title/time text. */
+.day-event-block .event-tile__recur-icon {
+    position: absolute;
+    top: 2px;
+    right: 4px;
 }
 
 /* ── Calendar chip selector ─────────────────────────────────────────── */
@@ -1387,6 +1416,24 @@ body:not([data-theme]) .brand-logo__img--morning {
     font-size: 1rem;
     font-weight: 500;
     flex: 1;
+}
+
+/* Single-select segmented pill row (PillSegmentGroup). Reuses .pill-toggle
+   segment styling for selected (--on) / unselected (--off) states. */
+.pill-segment-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pill-segment-group .pill-toggle {
+    flex: 1 1 auto;
+}
+
+/* RecurrenceScopePrompt: inline "member changes apply to the whole series" notice,
+   shown beneath the scope pills when a member change is pending at a non-All scope. */
+.recurrence-scope-warning {
+    margin-top: 16px;
 }
 
 .weather-override__toggle-row,

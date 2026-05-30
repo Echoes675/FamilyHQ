@@ -63,6 +63,10 @@
                                     {
                                         <span><b>@evt.StartLocal().ToString("h:mm tt")</b> @evt.Title</span>
                                     }
+                                    @if (evt.IsRecurring)
+                                    {
+                                        <RecurrenceIndicator />
+                                    }
                                 </div>
                             }
                             @if (day.Events.Count() > 3)
