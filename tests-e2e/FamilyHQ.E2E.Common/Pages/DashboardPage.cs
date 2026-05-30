@@ -1387,12 +1387,20 @@ public class DashboardPage : BasePage
         var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
         await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
 
-        var count = await tiles.CountAsync();
-        for (var i = 0; i < count; i++)
+        // The specific member-colour tile can render a beat after the first tile, as the member-linkage
+        // sync lands and the day view re-renders (async sync + EventsUpdated; TOCTOU, intermittent-issues #6).
+        // Poll for the colour rather than reading once.
+        var deadline = System.DateTime.UtcNow.AddSeconds(15);
+        while (System.DateTime.UtcNow < deadline)
         {
-            var style = await tiles.Nth(i).GetAttributeAsync("style") ?? string.Empty;
-            if (style.Contains(calendarColour, StringComparison.OrdinalIgnoreCase))
-                return;
+            var count = await tiles.CountAsync();
+            for (var i = 0; i < count; i++)
+            {
+                var style = await tiles.Nth(i).GetAttributeAsync("style") ?? string.Empty;
+                if (style.Contains(calendarColour, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            await Task.Delay(250);
         }
 
         throw new InvalidOperationException(

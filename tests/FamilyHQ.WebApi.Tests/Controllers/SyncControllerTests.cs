@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -23,7 +22,7 @@ public class SyncControllerTests
     public async Task TriggerSync_ShouldCallSyncAndNotifyClients()
     {
         // Arrange
-        var (constructorSync, _, proxy, systemUnderTest) = CreateSut();
+        var (constructorSync, proxy, systemUnderTest) = CreateSut();
 
         // Act
         var result = await systemUnderTest.TriggerSync(CancellationToken.None);
@@ -55,7 +54,7 @@ public class SyncControllerTests
         // FHQ-31: belt-and-braces guard. Even if the principal is authenticated,
         // a missing 'sub' claim would let an unidentifiable request enter
         // SyncAllAsync, which would log-and-return silently. Refuse explicitly.
-        var (constructorSync, _, _, systemUnderTest) = CreateSut(currentUserId: null);
+        var (constructorSync, _, systemUnderTest) = CreateSut(currentUserId: null);
 
         var result = await systemUnderTest.TriggerSync(CancellationToken.None);
 
@@ -93,10 +92,10 @@ public class SyncControllerTests
         harness.Signal.Verify(s => s.Release(), Times.Once);
 
         // No inline sync work on the request thread.
-        harness.ScopedSync.Verify(
+        harness.ConstructorSync.Verify(
             s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        harness.ScopedSync.Verify(
+        harness.ConstructorSync.Verify(
             s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -164,10 +163,10 @@ public class SyncControllerTests
         harness.Signal.Verify(s => s.Release(), Times.Once);
 
         // No inline sync work on the request thread.
-        harness.ScopedSync.Verify(
+        harness.ConstructorSync.Verify(
             s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
-        harness.ScopedSync.Verify(
+        harness.ConstructorSync.Verify(
             s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -201,7 +200,7 @@ public class SyncControllerTests
     public async Task TriggerSync_WhenSyncThrowsGoogleReauthRequired_Returns409Conflict()
     {
         // Arrange
-        var (constructorSync, _, _, systemUnderTest) = CreateSut();
+        var (constructorSync, _, systemUnderTest) = CreateSut();
         constructorSync
             .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleReauthRequiredException(
@@ -224,7 +223,7 @@ public class SyncControllerTests
     public async Task TriggerSync_WhenSyncThrowsGoogleApiException_Returns502BadGateway()
     {
         // Arrange
-        var (constructorSync, _, _, systemUnderTest) = CreateSut();
+        var (constructorSync, _, systemUnderTest) = CreateSut();
         constructorSync
             .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "server boom"));
@@ -267,7 +266,6 @@ public class SyncControllerTests
 
     private static (
         Mock<ICalendarSyncService> ConstructorSync,
-        Mock<ICalendarSyncService> ScopedSync,
         Mock<IClientProxy> Proxy,
         SyncController SystemUnderTest) CreateSut(
         IEnumerable<string>? userIds = null,
@@ -276,12 +274,11 @@ public class SyncControllerTests
         string? currentUserId = "__default__")
     {
         var harness = CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
-        return (harness.ConstructorSync, harness.ScopedSync, harness.Proxy, harness.SystemUnderTest);
+        return (harness.ConstructorSync, harness.Proxy, harness.SystemUnderTest);
     }
 
     private static (
         Mock<ICalendarSyncService> ConstructorSync,
-        Mock<ICalendarSyncService> ScopedSync,
         Mock<IClientProxy> Proxy,
         SyncController SystemUnderTest,
         Mock<ITokenStore> TokenStore) CreateSutExposingTokenStore(
@@ -291,12 +288,11 @@ public class SyncControllerTests
         string? currentUserId = "__default__")
     {
         var harness = CreateSutInternal(userIds, webhookRegistration, calendarInfo, currentUserId);
-        return (harness.ConstructorSync, harness.ScopedSync, harness.Proxy, harness.SystemUnderTest, harness.TokenStore);
+        return (harness.ConstructorSync, harness.Proxy, harness.SystemUnderTest, harness.TokenStore);
     }
 
     private sealed record SutHarness(
         Mock<ICalendarSyncService> ConstructorSync,
-        Mock<ICalendarSyncService> ScopedSync,
         Mock<IClientProxy> Proxy,
         SyncController SystemUnderTest,
         Mock<ITokenStore> TokenStore,
@@ -310,12 +306,10 @@ public class SyncControllerTests
         string? currentUserId)
     {
         var syncServiceMock = new Mock<ICalendarSyncService>();
-        var scopedSyncServiceMock = new Mock<ICalendarSyncService>();
         var hubContextMock = new Mock<IHubContext<CalendarHub>>();
         var clientProxyMock = new Mock<IClientProxy>();
         var loggerMock = new Mock<ILogger<SyncController>>();
         var tokenStoreMock = new Mock<ITokenStore>();
-        var scopeFactoryMock = new Mock<IServiceScopeFactory>();
         var webhookRepoMock = new Mock<IWebhookRegistrationRepository>();
         var calendarRepoMock = new Mock<ICalendarRepository>();
         var jobQueueMock = new Mock<ICalendarSyncJobQueue>();
@@ -343,15 +337,6 @@ public class SyncControllerTests
                 .ReturnsAsync(calendarInfo);
         }
 
-        var serviceProviderMock = new Mock<IServiceProvider>();
-        serviceProviderMock
-            .Setup(sp => sp.GetService(typeof(ICalendarSyncService)))
-            .Returns(scopedSyncServiceMock.Object);
-
-        var scopeMock = new Mock<IServiceScope>();
-        scopeMock.Setup(s => s.ServiceProvider).Returns(serviceProviderMock.Object);
-        scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
-
         var currentUserMock = new Mock<ICurrentUserService>();
         var resolvedUserId = ReferenceEquals(currentUserId, "__default__") ? DefaultTestUserId : currentUserId;
         currentUserMock.Setup(c => c.UserId).Returns(resolvedUserId);
@@ -360,7 +345,6 @@ public class SyncControllerTests
             syncServiceMock.Object,
             hubContextMock.Object,
             tokenStoreMock.Object,
-            scopeFactoryMock.Object,
             loggerMock.Object,
             webhookRepoMock.Object,
             calendarRepoMock.Object,
@@ -377,7 +361,6 @@ public class SyncControllerTests
 
         return new SutHarness(
             syncServiceMock,
-            scopedSyncServiceMock,
             clientProxyMock,
             systemUnderTest,
             tokenStoreMock,
