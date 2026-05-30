@@ -229,37 +229,34 @@ public class DashboardPage : BasePage
 
     public async Task<bool> HasTodayRowHighlightAsync()
     {
-        // Wait for the agenda to paint today's row before the instant count (TOCTOU, intermittent-issues #6).
         try
         {
-            await Page.Locator(".agenda-today-row").First
-                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            await Assertions.Expect(Page.Locator(".agenda-today-row"))
+                .ToHaveCountAsync(1, new() { Timeout = 5000 });
+            return true;
         }
-        catch (TimeoutException)
-        {
-            return false;
-        }
-        return await Page.Locator(".agenda-today-row").CountAsync() == 1;
+        catch (PlaywrightException) { return false; }
     }
 
     public async Task<bool> WeekendRowsHaveClassAsync()
     {
-        // Wait for at least one row to be rendered before counting
-        await Page.Locator(".agenda-weekend-row").First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        // A month always has at least 8 weekend days
-        return await Page.Locator(".agenda-weekend-row").CountAsync() >= 8;
+        try
+        {
+            await FamilyHQ.E2E.Common.Helpers.Polling.UntilAsync(
+                async () => await Page.Locator(".agenda-weekend-row").CountAsync() >= 8,
+                "Expected >= 8 .agenda-weekend-row after render", timeoutMs: 5000);
+            return true;
+        }
+        catch (TimeoutException) { return false; }
     }
 
     public async Task<int> GetWeekdayRowsWithoutWeekendClassAsync()
     {
-        // Wait for the agenda to paint at least one day row before counting; an unrendered
-        // agenda yields 0 and a false-negative subtraction (TOCTOU, intermittent-issues #6).
         await Page.Locator(".agenda-day-row").First
             .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
-        // All .agenda-day-row rows that do NOT have .agenda-weekend-row
-        var all = await Page.Locator(".agenda-day-row").CountAsync();
-        var weekends = await Page.Locator(".agenda-weekend-row").CountAsync();
-        return all - weekends;
+        var counts = await Page.EvaluateAsync<int[]>(
+            "() => [document.querySelectorAll('.agenda-day-row').length, document.querySelectorAll('.agenda-weekend-row').length]");
+        return counts[0] - counts[1];
     }
 
     public async Task<bool> IsAgendaCalendarHeaderVisibleAsync(string calendarName)
@@ -975,18 +972,12 @@ public class DashboardPage : BasePage
 
     public async Task<bool> IsCurrentTimeLineVisibleAsync()
     {
-        // Wait for the time line to paint before the instant visibility read; it renders only
-        // when viewing today and can lag the Day-view switch (TOCTOU, intermittent-issues #6).
         try
         {
-            await CurrentTimeLine.First
-                .WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
+            await Assertions.Expect(CurrentTimeLine.First).ToBeVisibleAsync(new() { Timeout = 5000 });
+            return true;
         }
-        catch (TimeoutException)
-        {
-            return false;
-        }
-        return await CurrentTimeLine.IsVisibleAsync();
+        catch (PlaywrightException) { return false; }
     }
 
     // FHQ-18.11 recurrence helpers ────────────────────────────────────────────
