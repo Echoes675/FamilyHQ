@@ -23,7 +23,7 @@ public class SettingsControllerTests
         locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((LocationSetting?)null);
         locationServiceMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new FamilyHQ.Core.DTOs.LocationResult("Belfast, Northern Ireland, UK", 54.5, -5.9, IsAutoDetected: true));
+            .ReturnsAsync(new FamilyHQ.Core.DTOs.LocationResult("Belfast, Northern Ireland, UK", 54.5, -5.9, IsAutoDetected: true, IanaTimeZone: null));
 
         // Act
         var result = await sut.GetLocation(CancellationToken.None);
