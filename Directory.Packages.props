@@ -32,6 +32,9 @@
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.7" />
+    <!-- Time zones -->
+    <PackageVersion Include="NodaTime" Version="3.2.0" />
+    <PackageVersion Include="GeoTimeZone" Version="5.3.0" />
     <!-- Versioning -->
     <PackageVersion Include="MinVer" Version="6.0.0" />
     <!-- Testing -->
