@@ -51,6 +51,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();
 
+        services.AddMemoryCache();
+        services.AddScoped<ITimeZoneService, TimeZoneService>();
+
         return services;
     }
 }
