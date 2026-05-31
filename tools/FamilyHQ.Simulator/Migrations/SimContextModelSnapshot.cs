@@ -138,40 +138,6 @@ namespace FamilyHQ.Simulator.Migrations
                     b.ToTable("SimulatedEventAttendees", (string)null);
                 });
 
-            modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedIpApiResponse", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("City")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<double>("Latitude")
-                        .HasColumnType("double precision");
-
-                    b.Property<double>("Longitude")
-                        .HasColumnType("double precision");
-
-                    b.Property<string>("RegionName")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.Property<string>("Timezone")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("SimulatedIpApiResponses", (string)null);
-                });
-
             modelBuilder.Entity("FamilyHQ.Simulator.Models.SimulatedLocation", b =>
                 {
                     b.Property<int>("Id")

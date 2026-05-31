@@ -161,14 +161,15 @@ public class SettingsController : ControllerBase
             return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
 
         var userId = _currentUser.UserId!;
-        var setting = new DisplaySetting
-        {
-            SurfaceMultiplier = dto.SurfaceMultiplier,
-            OpaqueSurfaces = dto.OpaqueSurfaces,
-            TransitionDurationSecs = dto.TransitionDurationSecs,
-            ThemeSelection = dto.ThemeSelection,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
+        var existing = await _displayRepo.GetAsync(userId, ct);
+        var setting = existing ?? new DisplaySetting();
+        setting.SurfaceMultiplier = dto.SurfaceMultiplier;
+        setting.OpaqueSurfaces = dto.OpaqueSurfaces;
+        setting.TransitionDurationSecs = dto.TransitionDurationSecs;
+        setting.ThemeSelection = dto.ThemeSelection;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+        // IanaTimeZone is intentionally NOT overwritten here — display settings must not
+        // wipe the user's explicit timezone (FHQ-43).
 
         await _displayRepo.UpsertAsync(userId, setting, ct);
 

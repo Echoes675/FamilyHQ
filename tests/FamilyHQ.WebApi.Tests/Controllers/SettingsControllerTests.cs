@@ -156,6 +156,41 @@ public class SettingsControllerTests
     }
 
     [Fact]
+    public async Task PutDisplay_WhenUserHasExplicitTimeZone_PreservesIanaTimeZone()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, _) = CreateSut();
+        var existingSetting = new DisplaySetting
+        {
+            UserId = TestUserId,
+            SurfaceMultiplier = 1.0,
+            OpaqueSurfaces = false,
+            TransitionDurationSecs = 15,
+            ThemeSelection = "auto",
+            IanaTimeZone = "America/New_York"
+        };
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingSetting);
+        DisplaySetting? upsertedSetting = null;
+        displayRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
+            .Callback<string, DisplaySetting, CancellationToken>((_, s, _) => upsertedSetting = s)
+            .ReturnsAsync((string _, DisplaySetting s, CancellationToken _) => s);
+
+        var dto = new DisplaySettingDto(0.8, true, 20, "evening");
+
+        // Act
+        var result = await sut.PutDisplay(dto, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        upsertedSetting.Should().NotBeNull();
+        upsertedSetting!.IanaTimeZone.Should().Be("America/New_York",
+            "display settings must not wipe an explicitly-set IANA timezone");
+        upsertedSetting.SurfaceMultiplier.Should().Be(0.8);
+        upsertedSetting.ThemeSelection.Should().Be("evening");
+    }
+
+    [Fact]
     public async Task SetTimeZone_WithInvalidZone_ReturnsBadRequest()
     {
         // Arrange
