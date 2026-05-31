@@ -1,20 +1,40 @@
 namespace FamilyHQ.Simulator.Controllers;
 
+using FamilyHQ.Simulator.Data;
+using FamilyHQ.Simulator.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 [ApiController]
 [Route("json")]
 public class IpApiController : ControllerBase
 {
-    // Simulates ip-api.com auto-detection: always returns the dev server's fixed location.
-    [HttpGet]
-    public IActionResult Get() => Ok(new
+    private readonly SimContext _db;
+
+    public IpApiController(SimContext db)
     {
-        status = "success",
-        city = "Edinburgh",
-        regionName = "Scotland",
-        country = "",
-        lat = 55.9533,
-        lon = -3.1883
-    });
+        _db = db;
+    }
+
+    // Simulates ip-api.com auto-detection. Dev/staging geolocation auto-detect hits this instead of
+    // real ip-api; the WebApi reads the `timezone` field to resolve a user's IANA zone when none is
+    // configured (FHQ-43). Returns the per-scenario override when set (BackdoorIpApiController), else
+    // the fixed Edinburgh / Europe/London default.
+    [HttpGet]
+    public async Task<IActionResult> Get(CancellationToken ct)
+    {
+        var configured = await _db.IpApiResponses.AsNoTracking().FirstOrDefaultAsync(ct);
+        var result = configured ?? new SimulatedIpApiResponse();
+
+        return Ok(new
+        {
+            status = "success",
+            city = result.City,
+            regionName = result.RegionName,
+            country = "",
+            lat = result.Latitude,
+            lon = result.Longitude,
+            timezone = result.Timezone
+        });
+    }
 }

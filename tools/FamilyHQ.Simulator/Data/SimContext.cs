@@ -14,6 +14,7 @@ public class SimContext : DbContext
     public DbSet<SimulatedWeather> SimulatedWeather => Set<SimulatedWeather>();
     public DbSet<SimulatedLocation> SimulatedLocations => Set<SimulatedLocation>();
     public DbSet<SimulatedWatchChannel> WatchChannels => Set<SimulatedWatchChannel>();
+    public DbSet<SimulatedIpApiResponse> IpApiResponses => Set<SimulatedIpApiResponse>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -73,6 +74,15 @@ public class SimContext : DbContext
             entity.Property(e => e.ChannelId).IsRequired().HasMaxLength(255);
             entity.Property(e => e.Address).IsRequired().HasMaxLength(1000);
             entity.Property(e => e.ResourceId).IsRequired().HasMaxLength(255);
+        });
+
+        modelBuilder.Entity<SimulatedIpApiResponse>(entity =>
+        {
+            entity.ToTable("SimulatedIpApiResponses");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.City).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.RegionName).IsRequired().HasMaxLength(255);
+            entity.Property(e => e.Timezone).IsRequired().HasMaxLength(255);
         });
 
         // Universal UTC conversion for all DateTime properties

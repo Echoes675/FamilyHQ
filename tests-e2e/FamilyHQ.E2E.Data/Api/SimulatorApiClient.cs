@@ -161,6 +161,31 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
+    /// FHQ-43: drives the Simulator's ip-api auto-detect mock for a scenario. Sets the IANA
+    /// <paramref name="timezone"/> (and optionally city/region/lat/lon) the WebApi's geolocation
+    /// auto-detect resolves to when no explicit zone is configured. Useful when a scenario must
+    /// control the auto-detect outcome rather than relying on the Edinburgh / Europe/London default.
+    /// </summary>
+    public async Task SetIpApiResponseAsync(
+        string timezone, string? city = null, string? regionName = null,
+        double? lat = null, double? lon = null)
+    {
+        var body = new { Timezone = timezone, City = city, RegionName = regionName, Lat = lat, Lon = lon };
+        var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/ipapi", body);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// FHQ-43: clears any per-scenario ip-api auto-detect override, reverting the Simulator's mock
+    /// to its Edinburgh / Europe/London default. Intended for scenario teardown.
+    /// </summary>
+    public async Task ClearIpApiResponseAsync()
+    {
+        var response = await _httpClient.DeleteAsync("api/simulator/backdoor/ipapi");
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
     /// Retrieves all webhook channel registrations from the Simulator backdoor.
     /// </summary>
     public async Task<List<WebhookRegistrationDto>> GetWebhookRegistrationsAsync()
