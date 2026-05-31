@@ -26,6 +26,7 @@ public class SettingsController : ControllerBase
     private readonly IWeatherRefreshService _weatherRefreshService;
     private readonly ICurrentUserService _currentUser;
     private readonly ILocationService _locationService;
+    private readonly ITimeZoneService _timeZoneService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -38,7 +39,8 @@ public class SettingsController : ControllerBase
         IWeatherService weatherService,
         IWeatherRefreshService weatherRefreshService,
         ICurrentUserService currentUser,
-        ILocationService locationService)
+        ILocationService locationService,
+        ITimeZoneService timeZoneService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -51,6 +53,7 @@ public class SettingsController : ControllerBase
         _weatherRefreshService = weatherRefreshService;
         _currentUser = currentUser;
         _locationService = locationService;
+        _timeZoneService = timeZoneService;
     }
 
     [HttpGet("location")]
@@ -188,5 +191,52 @@ public class SettingsController : ControllerBase
             return BadRequest(validationResult.Errors);
         var updated = await _weatherService.UpdateSettingsAsync(dto, ct);
         return Ok(updated);
+    }
+
+    [HttpGet("timezones")]
+    public IActionResult GetTimeZones() => Ok(_timeZoneService.GetAvailableZoneIds());
+
+    [HttpGet("timezone")]
+    public async Task<IActionResult> GetTimeZone(CancellationToken ct)
+    {
+        var userId = _currentUser.UserId!;
+        var setting = await _displayRepo.GetAsync(userId, ct);
+        var explicitZone = setting?.IanaTimeZone;
+        var effective = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        return Ok(new TimeZoneSettingDto(effective ?? "UTC", explicitZone is not null, explicitZone));
+    }
+
+    [HttpPut("timezone")]
+    public async Task<IActionResult> SetTimeZone([FromBody] SetTimeZoneRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
+            return BadRequest("Unknown IANA timezone.");
+        var userId = _currentUser.UserId!;
+        var setting = await _displayRepo.GetAsync(userId, ct) ?? new DisplaySetting
+        {
+            UserId = userId,
+            SurfaceMultiplier = 1.0,
+            OpaqueSurfaces = false,
+            TransitionDurationSecs = 15,
+            ThemeSelection = "auto"
+        };
+        setting.IanaTimeZone = request.IanaTimeZone;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+        await _displayRepo.UpsertAsync(userId, setting, ct);
+        return NoContent();
+    }
+
+    [HttpDelete("timezone")]
+    public async Task<IActionResult> ResetTimeZone(CancellationToken ct)
+    {
+        var userId = _currentUser.UserId!;
+        var setting = await _displayRepo.GetAsync(userId, ct);
+        if (setting is not null)
+        {
+            setting.IanaTimeZone = null;
+            setting.UpdatedAt = DateTimeOffset.UtcNow;
+            await _displayRepo.UpsertAsync(userId, setting, ct);
+        }
+        return NoContent();
     }
 }
