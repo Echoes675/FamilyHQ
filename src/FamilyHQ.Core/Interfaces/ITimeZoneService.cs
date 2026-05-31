@@ -9,6 +9,7 @@ public interface ITimeZoneService
     Task<string?> GetEffectiveIanaZoneAsync(CancellationToken ct = default);
 
     /// <summary>UTC instant -> "uuuu-MM-ddTHH:mm:ss" wall-clock in the given IANA zone (NodaTime).</summary>
+    /// <remarks>Pass a zone validated via <see cref="IsValidZone"/>; throws ArgumentException otherwise.</remarks>
     string ToZonedWallClock(DateTimeOffset utcInstant, string ianaZone);
 
     bool IsValidZone(string ianaZone);

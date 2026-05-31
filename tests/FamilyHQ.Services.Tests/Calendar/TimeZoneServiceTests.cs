@@ -69,4 +69,30 @@ public class TimeZoneServiceTests
         sut.ToZonedWallClock(new DateTimeOffset(2026, 7, 1, 8, 0, 0, TimeSpan.Zero), "Europe/London").Should().Be("2026-07-01T09:00:00");
         sut.ToZonedWallClock(new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero), "Europe/London").Should().Be("2026-01-01T09:00:00");
     }
+
+    [Fact]
+    public async Task Invalid_explicit_falls_through_to_location()
+    {
+        var (sut, display, loc, _) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new DisplaySetting { UserId = "u-1", IanaTimeZone = "Not/AZone" });
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>()))
+           .ReturnsAsync(new LocationSetting { Latitude = 51.5074, Longitude = -0.1278 });
+        (await sut.GetEffectiveIanaZoneAsync()).Should().Be("Europe/London");
+    }
+
+    [Fact]
+    public async Task Ipapi_result_is_cached_for_subsequent_calls()
+    {
+        var (sut, display, loc, ipapi) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
+        ipapi.Setup(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
+             .ReturnsAsync(new LocationResult("Berlin", 52.52, 13.405, true, "Europe/Berlin"));
+
+        await sut.GetEffectiveIanaZoneAsync();
+        await sut.GetEffectiveIanaZoneAsync();
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

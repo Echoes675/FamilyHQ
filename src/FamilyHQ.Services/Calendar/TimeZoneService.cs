@@ -35,20 +35,30 @@ public class TimeZoneService(
         }
 
         // 3. Auto: ip-api timezone (cached per user — tz rarely changes; avoids a lookup per create).
-        return await cache.GetOrCreateAsync($"ipapi-tz:{userId}", async entry =>
+        //    Only positive results are cached; a failure returns null without poisoning the cache.
+        var cacheKey = $"ipapi-tz:{userId}";
+        if (cache.TryGetValue(cacheKey, out string? cached))
+            return cached;
+
+        string? resolved = null;
+        try
         {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(6);
-            try
-            {
-                var auto = await locationService.GetEffectiveLocationAsync(ct);
-                return !string.IsNullOrWhiteSpace(auto.IanaTimeZone) && IsValidZone(auto.IanaTimeZone) ? auto.IanaTimeZone : null;
-            }
-            catch { return null; } // never fail an event create on a tz lookup
-        });
+            var auto = await locationService.GetEffectiveLocationAsync(ct);
+            if (!string.IsNullOrWhiteSpace(auto.IanaTimeZone) && IsValidZone(auto.IanaTimeZone))
+                resolved = auto.IanaTimeZone;
+        }
+        catch { /* never fail an event create on a tz lookup */ }
+
+        if (resolved is not null)
+            cache.Set(cacheKey, resolved, TimeSpan.FromHours(6));
+
+        return resolved;
     }
 
     public string ToZonedWallClock(DateTimeOffset utcInstant, string ianaZone)
     {
+        if (!IsValidZone(ianaZone))
+            throw new ArgumentException($"Unknown IANA timezone '{ianaZone}'.", nameof(ianaZone));
         var zone = DateTimeZoneProviders.Tzdb[ianaZone];
         var local = Instant.FromDateTimeOffset(utcInstant).InZone(zone).LocalDateTime;
         return Pattern.Format(local);
