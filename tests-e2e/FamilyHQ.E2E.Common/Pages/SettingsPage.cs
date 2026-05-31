@@ -33,6 +33,17 @@ public class SettingsPage : BasePage
     public ILocator LocationPillBadge => Page.Locator(".settings-location-pill__badge");
     public ILocator PlaceNameInput   => Page.Locator("#place-input");
     public ILocator SaveLocationBtn  => Page.GetByTestId("save-location-btn");
+    // The "Reset to auto-detect" ghost button under the location section (rendered only when a
+    // location is explicitly saved). The time-zone section's reset button has its own testid.
+    public ILocator ResetLocationBtn => Page.GetByRole(AriaRole.Button, new() { Name = "Reset to auto-detect" }).First;
+
+    // Location tab — time zone section (FHQ-43)
+    public ILocator TimeZoneSelect      => Page.GetByTestId("tz-select");
+    public ILocator SaveTimeZoneBtn     => Page.GetByTestId("save-timezone-btn");
+    public ILocator ResetTimeZoneBtn    => Page.GetByTestId("reset-timezone-btn");
+    public ILocator TimeZonePill        => Page.GetByTestId("tz-pill");
+    public ILocator TimeZoneBadge       => Page.GetByTestId("tz-badge");
+    public ILocator TimeZoneEffective   => Page.GetByTestId("tz-effective-zone");
 
     // Weather tab (for WeatherSteps access)
     public ILocator WeatherEnabledToggle  => Page.Locator("#weather-enabled-toggle");
@@ -85,6 +96,32 @@ public class SettingsPage : BasePage
         await LocationTab.ClickAsync();
         await PlaceNameInput.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    // FHQ-43: selects an IANA zone in the time-zone override dropdown and saves it. The Save
+    // button is disabled until a zone is selected and re-disables after the save (the component
+    // clears the selection), so we drive the select then click. Returns once the request the
+    // component fires has completed, so callers don't race the post-save re-render.
+    public async Task SelectAndSaveTimeZoneAsync(string ianaZone)
+    {
+        await TimeZoneSelect.SelectOptionAsync(new SelectOptionValue { Value = ianaZone });
+
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/settings/timezone") && r.Request.Method == "PUT",
+            new() { Timeout = 30000 });
+        await SaveTimeZoneBtn.ClickAsync();
+        await responseTask;
+    }
+
+    // FHQ-43: resets the explicit time-zone override back to auto-detect via the section's reset
+    // button (only rendered while an explicit zone is saved). Waits for the DELETE to complete.
+    public async Task ResetTimeZoneToAutoAsync()
+    {
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/settings/timezone") && r.Request.Method == "DELETE",
+            new() { Timeout = 30000 });
+        await ResetTimeZoneBtn.ClickAsync();
+        await responseTask;
     }
 
     public async Task NavigateToWeatherTabAsync()

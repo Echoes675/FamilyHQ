@@ -28,6 +28,7 @@ public class SimContext : DbContext
             entity.Property(e => e.UserId).HasMaxLength(255);
             entity.Property(e => e.RecurrenceRule).HasMaxLength(1000);
             entity.Property(e => e.RecurringEventId).HasMaxLength(255);
+            entity.Property(e => e.StartTimeZone).HasMaxLength(255);
         });
 
         modelBuilder.Entity<SimulatedCalendar>(entity =>

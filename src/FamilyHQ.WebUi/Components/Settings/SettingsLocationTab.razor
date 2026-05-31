@@ -53,9 +53,9 @@
         <p class="settings-label">Time zone</p>
         @if (_tz is not null)
         {
-            <div class="settings-location-pill">
-                <span>@_tz.EffectiveIanaZone</span>
-                <span class="settings-location-pill__badge @(_tz.IsExplicit ? "badge--saved" : "badge--auto")">
+            <div class="settings-location-pill" data-testid="tz-pill">
+                <span data-testid="tz-effective-zone">@_tz.EffectiveIanaZone</span>
+                <span class="settings-location-pill__badge @(_tz.IsExplicit ? "badge--saved" : "badge--auto")" data-testid="tz-badge">
                     @(_tz.IsExplicit ? "Saved" : "Auto")
                 </span>
             </div>
@@ -68,6 +68,7 @@
         <div class="settings-input-container">
             <label for="timezone-select" class="settings-label">Override time zone</label>
             <select id="timezone-select"
+                    data-testid="tz-select"
                     class="settings-input"
                     @bind="_selectedZone">
                 <option value="">— select a time zone —</option>

@@ -647,6 +647,29 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task CreateEvent_CapturesStartTimeZone()
+    {
+        // FHQ-43: the app anchors a recurring timed event to the user's effective IANA zone via
+        // Google start.timeZone. The simulator must persist it (it previously discarded it) so an
+        // E2E backdoor read can prove the configured zone reached Google.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var seriesStart = new DateTime(2026, 6, 2, 9, 0, 0, DateTimeKind.Utc);
+        var body = new GoogleEventRequest
+        {
+            Summary = "Standup",
+            Start = new GoogleDateTime { DateTime = seriesStart, TimeZone = "Europe/London" },
+            End = new GoogleDateTime { DateTime = seriesStart.AddMinutes(15), TimeZone = "Europe/London" },
+            Recurrence = new List<string> { "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3" }
+        };
+
+        await sut.CreateEvent("cal-alice", body);
+
+        var stored = await db.Events.FirstAsync(e => e.Summary == "Standup");
+        stored.StartTimeZone.Should().Be("Europe/London");
+    }
+
+    [Fact]
     public async Task CreateEvent_WithoutRecurrenceArray_StoresNonRecurringEvent()
     {
         // Arrange — a plain (non-recurring) insert must leave RecurrenceRule null.
