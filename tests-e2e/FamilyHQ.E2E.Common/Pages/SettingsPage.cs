@@ -29,8 +29,8 @@ public class SettingsPage : BasePage
 
     // Location tab
     public ILocator LocationHint     => Page.Locator(".settings-hint").Filter(new() { HasText = "No location saved" });
-    public ILocator LocationPill     => Page.Locator(".settings-location-pill");
-    public ILocator LocationPillBadge => Page.Locator(".settings-location-pill__badge");
+    public ILocator LocationPill      => Page.GetByTestId("location-pill");
+    public ILocator LocationPillBadge => Page.GetByTestId("location-badge");
     public ILocator PlaceNameInput   => Page.Locator("#place-input");
     public ILocator SaveLocationBtn  => Page.GetByTestId("save-location-btn");
     // The "Reset to auto-detect" ghost button under the location section (rendered only when a

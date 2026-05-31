@@ -10,9 +10,9 @@
         <p class="settings-label">Current location</p>
         @if (_locationSetting is not null)
         {
-            <div class="settings-location-pill">
+            <div class="settings-location-pill" data-testid="location-pill">
                 <span>@_locationSetting.PlaceName</span>
-                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")">
+                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")" data-testid="location-badge">
                     @(_locationSetting.IsAutoDetected ? "Auto" : "Saved")
                 </span>
             </div>
