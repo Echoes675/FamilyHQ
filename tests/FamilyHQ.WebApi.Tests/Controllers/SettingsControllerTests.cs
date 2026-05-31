@@ -148,6 +148,30 @@ public class SettingsControllerTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task ResetTimeZone_ClearsExplicitZone_AndReturnsNoContent()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, _) = CreateSut();
+        DisplaySetting? upsertedSetting = null;
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DisplaySetting { UserId = TestUserId, IanaTimeZone = "Europe/London" });
+        displayRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
+            .Callback<string, DisplaySetting, CancellationToken>((_, s, _) => upsertedSetting = s)
+            .ReturnsAsync((string _, DisplaySetting s, CancellationToken _) => s);
+
+        // Act
+        var result = await sut.ResetTimeZone(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<NoContentResult>();
+        displayRepoMock.Verify(
+            x => x.UpsertAsync(TestUserId, It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        upsertedSetting.Should().NotBeNull();
+        upsertedSetting!.IanaTimeZone.Should().BeNull();
+    }
+
     private static (
         SettingsController sut,
         Mock<ILocationSettingRepository> locationRepoMock,

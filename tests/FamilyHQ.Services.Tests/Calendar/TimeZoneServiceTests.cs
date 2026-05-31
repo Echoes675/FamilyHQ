@@ -82,6 +82,13 @@ public class TimeZoneServiceTests
     }
 
     [Fact]
+    public async Task Returns_null_when_no_current_user()
+    {
+        var (sut, _, _, _) = CreateSut(userId: "");
+        (await sut.GetEffectiveIanaZoneAsync()).Should().BeNull();
+    }
+
+    [Fact]
     public async Task Ipapi_result_is_cached_for_subsequent_calls()
     {
         var (sut, display, loc, ipapi) = CreateSut();
