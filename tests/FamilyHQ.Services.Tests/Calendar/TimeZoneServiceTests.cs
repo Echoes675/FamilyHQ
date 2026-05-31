@@ -102,4 +102,43 @@ public class TimeZoneServiceTests
 
         ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // ── GetConfiguredIanaZoneAsync tests ────────────────────────────────────
+
+    [Fact]
+    public async Task GetConfiguredIanaZone_NoExplicit_NoLocation_ReturnsNull_WithoutCallingIpApi()
+    {
+        var (sut, display, loc, ipapi) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
+
+        (await sut.GetConfiguredIanaZoneAsync()).Should().BeNull();
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetConfiguredIanaZone_ReturnsExplicitZone_WithoutCallingIpApi()
+    {
+        var (sut, display, _, ipapi) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new DisplaySetting { UserId = "u-1", IanaTimeZone = "America/New_York" });
+
+        (await sut.GetConfiguredIanaZoneAsync()).Should().Be("America/New_York");
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetConfiguredIanaZone_NoExplicit_DerivesFromLocationLatLon_WithoutCallingIpApi()
+    {
+        var (sut, display, loc, ipapi) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>()))
+           .ReturnsAsync(new LocationSetting { Latitude = 51.5074, Longitude = -0.1278 });
+
+        (await sut.GetConfiguredIanaZoneAsync()).Should().Be("Europe/London");
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

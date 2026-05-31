@@ -114,6 +114,48 @@ public class SettingsControllerTests
     }
 
     [Fact]
+    public async Task GetTimeZone_ReturnsConfiguredZone_WithoutIpApiCall()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, timeZoneServiceMock) = CreateSut();
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DisplaySetting { UserId = TestUserId, IanaTimeZone = "Europe/London" });
+        timeZoneServiceMock.Setup(x => x.GetConfiguredIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Europe/London");
+
+        // Act
+        var result = await sut.GetTimeZone(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<TimeZoneSettingDto>().Subject;
+        dto.EffectiveIanaZone.Should().Be("Europe/London");
+        dto.IsExplicit.Should().BeTrue();
+        timeZoneServiceMock.Verify(x => x.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetTimeZone_NoConfigured_FallsBackToUtc()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, timeZoneServiceMock) = CreateSut();
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DisplaySetting?)null);
+        timeZoneServiceMock.Setup(x => x.GetConfiguredIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        // Act
+        var result = await sut.GetTimeZone(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<TimeZoneSettingDto>().Subject;
+        dto.EffectiveIanaZone.Should().Be("UTC");
+        dto.IsExplicit.Should().BeFalse();
+        timeZoneServiceMock.Verify(x => x.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SetTimeZone_WithInvalidZone_ReturnsBadRequest()
     {
         // Arrange

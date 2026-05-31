@@ -202,8 +202,8 @@ public class SettingsController : ControllerBase
         var userId = _currentUser.UserId!;
         var setting = await _displayRepo.GetAsync(userId, ct);
         var explicitZone = setting?.IanaTimeZone;
-        var effective = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
-        return Ok(new TimeZoneSettingDto(effective ?? "UTC", explicitZone is not null, explicitZone));
+        var configured = await _timeZoneService.GetConfiguredIanaZoneAsync(ct);
+        return Ok(new TimeZoneSettingDto(configured ?? "UTC", explicitZone is not null, explicitZone));
     }
 
     [HttpPut("timezone")]

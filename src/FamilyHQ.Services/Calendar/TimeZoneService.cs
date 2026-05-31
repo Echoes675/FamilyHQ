@@ -16,7 +16,7 @@ public class TimeZoneService(
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
 
-    public async Task<string?> GetEffectiveIanaZoneAsync(CancellationToken ct = default)
+    public async Task<string?> GetConfiguredIanaZoneAsync(CancellationToken ct = default)
     {
         var userId = currentUser.UserId;
         if (string.IsNullOrEmpty(userId)) return null;
@@ -26,7 +26,7 @@ public class TimeZoneService(
         if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone) && IsValidZone(display.IanaTimeZone))
             return display.IanaTimeZone;
 
-        // 2. Custom location -> derive from its lat/lon (GeoTimeZone, bundled data).
+        // 2. Custom location -> derive from its lat/lon (GeoTimeZone, bundled data). NO ip-api.
         var location = await locationRepo.GetAsync(userId, ct);
         if (location is not null)
         {
@@ -34,8 +34,20 @@ public class TimeZoneService(
             if (!string.IsNullOrWhiteSpace(derived) && IsValidZone(derived)) return derived;
         }
 
-        // 3. Auto: ip-api timezone (cached per user — tz rarely changes; avoids a lookup per create).
-        //    Only positive results are cached; a failure returns null without poisoning the cache.
+        return null;
+    }
+
+    public async Task<string?> GetEffectiveIanaZoneAsync(CancellationToken ct = default)
+    {
+        // Configured (no ip-api) first; only falls to ip-api when nothing is configured.
+        var configured = await GetConfiguredIanaZoneAsync(ct);
+        if (configured is not null) return configured;
+
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId)) return null;
+
+        // ip-api timezone (cached per user — tz rarely changes; avoids a lookup per create).
+        // Only positive results are cached; a failure returns null without poisoning the cache.
         var cacheKey = $"ipapi-tz:{userId}";
         if (cache.TryGetValue(cacheKey, out string? cached))
             return cached;

@@ -106,6 +106,7 @@
     protected override async Task OnInitializedAsync()
     {
         _locationSetting = await SettingsApiService.GetLocationAsync();
+        StateHasChanged();   // show the location section immediately; don't gate it on the tz load
         _zones = await SettingsApiService.GetTimeZonesAsync();
         _tz = await SettingsApiService.GetTimeZoneAsync();
     }
