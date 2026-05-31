@@ -9,5 +9,6 @@ public class DisplaySetting
     public int TransitionDurationSecs { get; set; } = 15;
     public string ThemeSelection { get; set; } = "auto";
     public string? IanaTimeZone { get; set; }
+    public bool IsTimeZoneAutoDetected { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

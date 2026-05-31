@@ -19,6 +19,7 @@ public class DisplaySettingConfiguration : IEntityTypeConfiguration<DisplaySetti
                 v => v.ToUniversalTime(),
                 v => v);
         builder.Property(x => x.IanaTimeZone).HasMaxLength(64);
+        builder.Property(x => x.IsTimeZoneAutoDetected).IsRequired();
         builder.HasIndex(x => x.UserId).IsUnique();
     }
 }

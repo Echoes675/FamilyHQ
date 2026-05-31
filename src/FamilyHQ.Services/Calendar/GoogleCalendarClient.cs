@@ -212,7 +212,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
         var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
@@ -232,7 +232,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
         var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
@@ -280,7 +280,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
         var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Put, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);

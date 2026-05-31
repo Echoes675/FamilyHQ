@@ -116,6 +116,9 @@ public class SettingsController : ControllerBase
 
         await _weatherRefreshService.RefreshAsync(userId, ct);
 
+        // Re-resolve the auto timezone from the new location, unless the user set one explicitly.
+        await _timeZoneService.RepersistAutoIfNotExplicitAsync(ct);
+
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }
 
@@ -133,6 +136,9 @@ public class SettingsController : ControllerBase
         await _scheduler.TriggerRecalculationAsync();
 
         await _weatherRefreshService.RefreshAsync(userId, ct);
+
+        // Re-resolve the auto timezone after clearing the location, unless explicitly set.
+        await _timeZoneService.RepersistAutoIfNotExplicitAsync(ct);
 
         return NoContent();
     }
@@ -202,9 +208,11 @@ public class SettingsController : ControllerBase
     {
         var userId = _currentUser.UserId!;
         var setting = await _displayRepo.GetAsync(userId, ct);
-        var explicitZone = setting?.IanaTimeZone;
-        var configured = await _timeZoneService.GetConfiguredIanaZoneAsync(ct);
-        return Ok(new TimeZoneSettingDto(configured ?? "UTC", explicitZone is not null, explicitZone));
+        var isExplicit = setting?.IanaTimeZone is not null && !setting.IsTimeZoneAutoDetected;
+        return Ok(new TimeZoneSettingDto(
+            setting?.IanaTimeZone ?? "UTC",
+            isExplicit,
+            isExplicit ? setting!.IanaTimeZone : null));
     }
 
     [HttpPut("timezone")]
@@ -212,32 +220,14 @@ public class SettingsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
             return BadRequest("Unknown IANA timezone.");
-        var userId = _currentUser.UserId!;
-        var setting = await _displayRepo.GetAsync(userId, ct) ?? new DisplaySetting
-        {
-            UserId = userId,
-            SurfaceMultiplier = 1.0,
-            OpaqueSurfaces = false,
-            TransitionDurationSecs = 15,
-            ThemeSelection = "auto"
-        };
-        setting.IanaTimeZone = request.IanaTimeZone;
-        setting.UpdatedAt = DateTimeOffset.UtcNow;
-        await _displayRepo.UpsertAsync(userId, setting, ct);
+        await _timeZoneService.SetExplicitZoneAsync(request.IanaTimeZone, ct);
         return NoContent();
     }
 
     [HttpDelete("timezone")]
     public async Task<IActionResult> ResetTimeZone(CancellationToken ct)
     {
-        var userId = _currentUser.UserId!;
-        var setting = await _displayRepo.GetAsync(userId, ct);
-        if (setting is not null)
-        {
-            setting.IanaTimeZone = null;
-            setting.UpdatedAt = DateTimeOffset.UtcNow;
-            await _displayRepo.UpsertAsync(userId, setting, ct);
-        }
+        await _timeZoneService.ResetToAutoZoneAsync(ct);
         return NoContent();
     }
 }

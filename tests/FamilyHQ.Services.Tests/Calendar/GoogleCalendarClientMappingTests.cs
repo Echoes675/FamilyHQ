@@ -223,7 +223,7 @@ public class GoogleCalendarClientMappingTests
         var authService = new GoogleAuthService(httpClient, options, new Mock<ILogger<GoogleAuthService>>().Object);
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
-            .Setup(s => s.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
         var sut = new GoogleCalendarClient(
             httpClient, authService,

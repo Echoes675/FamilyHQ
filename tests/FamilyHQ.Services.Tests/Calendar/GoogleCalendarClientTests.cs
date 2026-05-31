@@ -1145,7 +1145,7 @@ public class GoogleCalendarClientTests
 
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
-            .Setup(s => s.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(timeZoneZone);
         if (timeZoneZone is not null)
         {

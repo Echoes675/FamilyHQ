@@ -1,6 +1,6 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using GeoTimeZone;
-using Microsoft.Extensions.Caching.Memory;
 using NodaTime;
 using NodaTime.Text;
 
@@ -10,23 +10,17 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ILocationService locationService,
-    IMemoryCache cache) : ITimeZoneService
+    ILocationService locationService) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
 
-    public async Task<string?> GetConfiguredIanaZoneAsync(CancellationToken ct = default)
+    public async Task<string?> ResolveAutoZoneAsync(CancellationToken ct = default)
     {
         var userId = currentUser.UserId;
         if (string.IsNullOrEmpty(userId)) return null;
 
-        // 1. Explicit per-user setting (sticky, independent of location).
-        var display = await displayRepo.GetAsync(userId, ct);
-        if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone) && IsValidZone(display.IanaTimeZone))
-            return display.IanaTimeZone;
-
-        // 2. Custom location -> derive from its lat/lon (GeoTimeZone, bundled data). NO ip-api.
+        // Saved custom location -> derive from its lat/lon (GeoTimeZone, bundled data). NO ip-api.
         var location = await locationRepo.GetAsync(userId, ct);
         if (location is not null)
         {
@@ -34,37 +28,89 @@ public class TimeZoneService(
             if (!string.IsNullOrWhiteSpace(derived) && IsValidZone(derived)) return derived;
         }
 
-        return null;
-    }
-
-    public async Task<string?> GetEffectiveIanaZoneAsync(CancellationToken ct = default)
-    {
-        // Configured (no ip-api) first; only falls to ip-api when nothing is configured.
-        var configured = await GetConfiguredIanaZoneAsync(ct);
-        if (configured is not null) return configured;
-
-        var userId = currentUser.UserId;
-        if (string.IsNullOrEmpty(userId)) return null;
-
-        // ip-api timezone (cached per user — tz rarely changes; avoids a lookup per create).
-        // Only positive results are cached; a failure returns null without poisoning the cache.
-        var cacheKey = $"ipapi-tz:{userId}";
-        if (cache.TryGetValue(cacheKey, out string? cached))
-            return cached;
-
-        string? resolved = null;
+        // No saved location -> auto-detect via ip-api (single call returns location AND timezone).
+        // Never let a tz lookup throw — return null on any failure.
         try
         {
             var auto = await locationService.GetEffectiveLocationAsync(ct);
             if (!string.IsNullOrWhiteSpace(auto.IanaTimeZone) && IsValidZone(auto.IanaTimeZone))
-                resolved = auto.IanaTimeZone;
+                return auto.IanaTimeZone;
         }
-        catch { /* never fail an event create on a tz lookup */ }
+        catch { /* never fail a resolve on a tz lookup */ }
 
-        if (resolved is not null)
-            cache.Set(cacheKey, resolved, TimeSpan.FromHours(6));
+        return null;
+    }
 
+    public async Task<string?> GetSendZoneAsync(CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId)) return null;
+
+        var display = await displayRepo.GetAsync(userId, ct);
+        if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone))
+            return display.IanaTimeZone;
+
+        // Unset -> lazily resolve the AUTO zone ONCE and persist it.
+        var resolved = await ResolveAutoZoneAsync(ct);
+        if (resolved is null) return null;
+
+        await PersistZoneAsync(userId, display, resolved, isAutoDetected: true, ct);
         return resolved;
+    }
+
+    public async Task SetExplicitZoneAsync(string ianaZone, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId)) return;
+
+        var display = await displayRepo.GetAsync(userId, ct);
+        await PersistZoneAsync(userId, display, ianaZone, isAutoDetected: false, ct);
+    }
+
+    public async Task ResetToAutoZoneAsync(CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId)) return;
+
+        var resolved = await ResolveAutoZoneAsync(ct);
+        var display = await displayRepo.GetAsync(userId, ct);
+        await PersistZoneAsync(userId, display, resolved, isAutoDetected: true, ct);
+    }
+
+    public async Task RepersistAutoIfNotExplicitAsync(CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId)) return;
+
+        var display = await displayRepo.GetAsync(userId, ct);
+
+        // Explicit (zone set and NOT auto-detected) is sticky across location changes -> no-op.
+        if (display is not null
+            && !string.IsNullOrWhiteSpace(display.IanaTimeZone)
+            && !display.IsTimeZoneAutoDetected)
+        {
+            return;
+        }
+
+        var resolved = await ResolveAutoZoneAsync(ct);
+        await PersistZoneAsync(userId, display, resolved, isAutoDetected: true, ct);
+    }
+
+    private async Task PersistZoneAsync(
+        string userId, DisplaySetting? existing, string? ianaZone, bool isAutoDetected, CancellationToken ct)
+    {
+        var setting = existing ?? new DisplaySetting
+        {
+            UserId = userId,
+            SurfaceMultiplier = 1.0,
+            OpaqueSurfaces = false,
+            TransitionDurationSecs = 15,
+            ThemeSelection = "auto"
+        };
+        setting.IanaTimeZone = ianaZone;
+        setting.IsTimeZoneAutoDetected = isAutoDetected;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+        await displayRepo.UpsertAsync(userId, setting, ct);
     }
 
     public string ToZonedWallClock(DateTimeOffset utcInstant, string ianaZone)
