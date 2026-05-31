@@ -1007,7 +1007,122 @@ public class GoogleCalendarClientTests
         capturedUrl.Should().Contain("iCalUID");
     }
 
-    private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut()
+    [Fact]
+    public async Task CreateRecurringEvent_WithUserZone_SendsLocalWallClockAndIana()
+    {
+        // Arrange — ITimeZoneService resolves "Europe/London"; the UTC 08:00 event becomes
+        // 09:00 wall-clock (BST, UTC+1) and is sent with timeZone "Europe/London".
+        string? capturedBody = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut(timeZoneZone: "Europe/London");
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-london-id" }))
+            });
+
+        // 2026-07-01T08:00:00+00:00 → BST = UTC+1 → wall-clock 2026-07-01T09:00:00
+        var newEvent = new CalendarEvent
+        {
+            Title = "London Meeting",
+            Start = new DateTimeOffset(2026, 7, 1, 8, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 7, 1, 9, 0, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        // Act
+        await systemUnderTest.CreateRecurringEventAsync("cal1", newEvent, "testhash", "RRULE:FREQ=WEEKLY;BYDAY=WE");
+
+        // Assert
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("timeZone").GetString().Should().Be("Europe/London",
+            "the user's IANA zone must be sent so recurring events don't drift across DST (FHQ-43)");
+        start.GetProperty("dateTime").GetString().Should().Be("2026-07-01T09:00:00",
+            "UTC 08:00 in Europe/London BST (UTC+1) is wall-clock 09:00 (FHQ-43)");
+        var end = doc.RootElement.GetProperty("end");
+        end.GetProperty("timeZone").GetString().Should().Be("Europe/London");
+        end.GetProperty("dateTime").GetString().Should().Be("2026-07-01T10:00:00");
+    }
+
+    [Fact]
+    public async Task CreateRecurringEvent_NoUserZone_FallsBackToUtc()
+    {
+        // Arrange — ITimeZoneService returns null; behaviour falls back to UTC (FHQ-42 compat).
+        string? capturedBody = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut(timeZoneZone: null);
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-utc-id" }))
+            });
+
+        var newEvent = new CalendarEvent
+        {
+            Title = "UTC Meeting",
+            Start = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 3, 1, 10, 0, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        // Act
+        await systemUnderTest.CreateRecurringEventAsync("cal1", newEvent, "testhash", "RRULE:FREQ=WEEKLY;BYDAY=MO");
+
+        // Assert — UTC fallback: timeZone = "UTC" and dateTime is the UTC instant
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("timeZone").GetString().Should().Be("UTC",
+            "when no IANA zone is resolved the client falls back to UTC (FHQ-42 compat)");
+        start.GetProperty("dateTime").GetString().Should().Be("2026-03-01T09:00:00+00:00");
+    }
+
+    private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut(
+        string? timeZoneZone = null)
     {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(httpMessageHandlerMock.Object);
@@ -1028,13 +1143,32 @@ public class GoogleCalendarClientTests
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
 
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
+        timeZoneServiceMock
+            .Setup(s => s.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(timeZoneZone);
+        if (timeZoneZone is not null)
+        {
+            // Stub ToZonedWallClock to return a predictable wall-clock string.
+            // The unit test validates that GoogleCalendarClient calls ToZonedWallClock and
+            // forwards its return value verbatim — the NodaTime conversion itself is tested
+            // separately in TimeZoneServiceTests.
+            timeZoneServiceMock
+                .Setup(s => s.ToZonedWallClock(new DateTimeOffset(2026, 7, 1, 8, 0, 0, TimeSpan.Zero), "Europe/London"))
+                .Returns("2026-07-01T09:00:00");
+            timeZoneServiceMock
+                .Setup(s => s.ToZonedWallClock(new DateTimeOffset(2026, 7, 1, 9, 0, 0, TimeSpan.Zero), "Europe/London"))
+                .Returns("2026-07-01T10:00:00");
+        }
+
         var systemUnderTest = new GoogleCalendarClient(
             httpClient,
             authService,
             tokenStoreMock.Object,
             accessTokenProviderMock.Object,
             options,
-            loggerMock.Object);
+            loggerMock.Object,
+            timeZoneServiceMock.Object);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
     }

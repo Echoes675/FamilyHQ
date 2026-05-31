@@ -22,6 +22,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly IAccessTokenProvider _accessTokenProvider;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
+    private readonly ITimeZoneService _timeZoneService;
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -33,7 +34,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         ITokenStore tokenStore,
         IAccessTokenProvider accessTokenProvider,
         IOptions<GoogleCalendarOptions> options,
-        ILogger<GoogleCalendarClient> logger)
+        ILogger<GoogleCalendarClient> logger,
+        ITimeZoneService timeZoneService)
     {
         _httpClient = httpClient;
         _authService = authService;
@@ -41,6 +43,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _accessTokenProvider = accessTokenProvider;
         _options = options.Value;
         _logger = logger;
+        _timeZoneService = timeZoneService;
     }
 
     private const int MaxLoggedBodyLength = 4096;
@@ -209,7 +212,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var body = MapToGoogleEvent(calendarEvent, contentHash);
+        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -228,7 +232,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule);
+        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -275,7 +280,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-        var body = MapToGoogleEvent(calendarEvent, contentHash);
+        var ianaZone = await _timeZoneService.GetEffectiveIanaZoneAsync(ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Put, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -388,7 +394,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
-    private static object MapToGoogleEvent(CalendarEvent evt, string contentHash, string? rrule = null)
+    private object MapToGoogleEvent(CalendarEvent evt, string contentHash, string? rrule = null, string? ianaZone = null)
     {
         var extendedProperties = new
         {
@@ -423,6 +429,24 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             };
         }
 
+        // When the user's IANA zone is known, send the wall-clock time in that zone so recurring
+        // series don't drift across DST transitions (FHQ-43). The timeZone field tells Google
+        // how to interpret the dateTime and how to expand future occurrences.
+        if (!string.IsNullOrWhiteSpace(ianaZone))
+        {
+            return new
+            {
+                summary = evt.Title,
+                description = evt.Description,
+                location = evt.Location,
+                start = new { dateTime = _timeZoneService.ToZonedWallClock(evt.Start, ianaZone), timeZone = ianaZone },
+                end = new { dateTime = _timeZoneService.ToZonedWallClock(evt.End, ianaZone), timeZone = ianaZone },
+                recurrence,
+                extendedProperties
+            };
+        }
+
+        // UTC fallback — preserves FHQ-42 behaviour when no zone is resolved.
         // Google REQUIRES a timeZone on start/end for a recurring event (one with a recurrence
         // array) — without it the events.insert is rejected 400 "Missing time zone definition for
         // start time." (FHQ-42). A single event is accepted with just the offset, but sending the

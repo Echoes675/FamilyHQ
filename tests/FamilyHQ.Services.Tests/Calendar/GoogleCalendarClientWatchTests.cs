@@ -182,13 +182,19 @@ public class GoogleCalendarClientWatchTests
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
 
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
+        timeZoneServiceMock
+            .Setup(s => s.GetEffectiveIanaZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
         var systemUnderTest = new GoogleCalendarClient(
             httpClient,
             authService,
             tokenStoreMock.Object,
             accessTokenProviderMock.Object,
             options,
-            loggerMock.Object);
+            loggerMock.Object,
+            timeZoneServiceMock.Object);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
     }
