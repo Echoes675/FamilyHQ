@@ -12,8 +12,8 @@ The vault at `D:\Obsidian Vault\FamilyHQ` is the single source of truth for Fami
 ```
 D:\Obsidian Vault\FamilyHQ\
 ├── README.md
-├── _Templates/        (8 templates: Idea, Feature, Bug, Investigation, Chore, Subtask, Spec, Plan)
-├── _Dashboards/       (5 dashboards: Inbox, Backlog, Active, Done, All Tickets)
+├── _Templates/        (9 templates: Idea, Feature, Bug, Investigation, Chore, Epic, Subtask, Spec, Plan)
+├── _Dashboards/       (6 dashboards: Inbox, Backlog, Active, Done, All Tickets, Epics)
 ├── Tickets/
 │   └── FHQ-N/                  (active tickets: Inbox / Ready / In Progress / In Review)
 │       ├── FHQ-N.md
@@ -26,12 +26,15 @@ D:\Obsidian Vault\FamilyHQ\
     └── FHQ-N/                  (Cancelled tickets moved here on user confirmation)
 ```
 
-A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at any time. Subtasks always live inside their parent's folder regardless of subtask state — when a parent moves, subtasks (and the spec/plan files) come with it as part of the folder.
+A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at any time. Subtasks always live inside their parent's folder regardless of subtask state — when a parent moves, subtasks (and the spec/plan files) come with it as part of the folder. **Epics are the exception:** they live under a top-level `Epics/` folder (active in `Epics/FHQ-E0N/`, closed in `Epics/Done/FHQ-E0N/` or `Epics/Cancelled/FHQ-E0N/`) and never in `Tickets/`.
 
 ## ID scheme
 
 - Top-level: `FHQ-N` (monotonic, never reused). Counter: scan `Tickets/FHQ-*/`, `Done/FHQ-*/`, and `Archive/FHQ-*/` directories — take max N across all three → next is N+1. (A ticket may live in any one of these locations depending on its terminal/active state.)
 - Subtasks: `FHQ-P.S`. Counter: locate the parent's folder (in `Tickets/`, `Done/`, or `Archive/`) and scan that folder for `FHQ-P.*.md` for max S → next is S+1.
+- Epics: `FHQ-E0N` (zero-padded, e.g. `FHQ-E01`). **Separate** counter: scan `Epics/` recursively (incl. `Done/`, `Cancelled/`) for `FHQ-E\d+` → max + 1. The letter keeps epic ids out of the numeric `FHQ-N` scan, so the two sequences never collide.
+
+**Title field:** every ticket carries a `title:` frontmatter field — the human title (its H1 text without the `FHQ-N — ` prefix). Set it on create and keep it in sync with the H1; dashboards display it (DQL cannot read the H1, and DataviewJS is disabled). Epic members in particular need `title:` for the epic's member roll-up.
 
 ## Lifecycle states
 
@@ -39,11 +42,13 @@ A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at
 
 **Subtasks:** `Ready → In Progress → In Review → Done` (terminal) | `Cancelled` (terminal) | `Promoted` (terminal — became a top-level ticket). Subtasks have no branch, no PR. "Done" means local sign-off (review agent finds no Blocker/Major, tests green).
 
+**Epics:** `Open → Done` (terminal) | `Cancelled` (terminal). No branch/PR, no `In Review`. Members drive their own lifecycle; when *all* members reach a terminal state, prompt to close the epic (moving its folder to `Epics/Done/` or `Epics/Cancelled/`).
+
 ## Trigger → action rules
 
 | # | Trigger | Action |
 |---|---|---|
-| 1 | User says "add an idea / log a bug / throw in the vault" | Compute next `FHQ-N`. Create `Tickets/FHQ-N/FHQ-N.md` from the appropriate template (Idea/Bug/Feature/etc.), `status: Inbox`. Confirm: "Logged as FHQ-N." |
+| 1 | User says "add an idea / log a bug / throw in the vault" | Compute next `FHQ-N`. Create `Tickets/FHQ-N/FHQ-N.md` from the appropriate template (Idea/Bug/Feature/etc.), `status: Inbox`, with `title:` set to the ticket's title. Confirm: "Logged as FHQ-N." |
 | 2 | User says "let's flesh out FHQ-N" | Open the ticket. Walk through the structured body sections. Promote `type` if needed (e.g., Idea → Feature). |
 | 3 | User says "FHQ-N is ready" OR every acceptance-criteria checkbox in the ticket body is ticked | Set `status: Ready`, bump `updated`. |
 | 4a | About to write a spec via `superpowers:brainstorming` for FHQ-N | Save spec output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-spec.md` (overrides skill default `docs/superpowers/specs/...`). Status remains `Ready`. |
@@ -59,6 +64,9 @@ A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at
 | 13 | About to move ticket to `In Progress` | Check `blocked_by`. Refuse if any blocker is not in terminal state (`Done`/`Cancelled`/`Promoted`); list which. |
 | 14 | A blocker becomes `Done` | For each ticket whose `blocked_by` array contained this blocker, recompute remaining open blockers. Surface "FHQ-X is now unblocked." individually for each that has no remaining open blockers (multiple unblockings on a single transition are surfaced as separate lines). When a blocker becomes `Cancelled` or `Promoted` instead, do NOT auto-unblock — those terminal states abandoned/redirected the dependency rather than resolving it. Prompt the user: "FHQ-N's blocker FHQ-X was <Cancelled|Promoted to FHQ-M>; should FHQ-N be unblocked, point at FHQ-M, or stay blocked?" |
 | 15 | Subtask should become a top-level ticket | Apply Promotion rule: create new top-level `FHQ-M` (next main counter) from Feature template with `replaces: FHQ-N.S`. Set the subtask `status: Promoted`, `promoted_to: FHQ-M`. Append body line "Promoted to [[FHQ-M]] on YYYY-MM-DD". |
+| 16 | User says "create an epic &lt;title&gt;" / "group FHQ-X, FHQ-Y… into an epic" | Compute next `FHQ-E0N` (scan `Epics/`). Create `Epics/FHQ-E0N/FHQ-E0N.md` from the **Epic** template (`status: Open`, `title: <title>`). For each named member set `epic: FHQ-E0N` (and a `title:` from its H1 if absent). Confirm "Created epic FHQ-E0N (N members)." |
+| 17 | User says "add/assign FHQ-X to epic FHQ-E0N" | Set `epic: FHQ-E0N` on FHQ-X (and `title:` from its H1 if absent), bump `updated`. Refuse if the target is not `type: Epic`. |
+| 18 | All member tickets of epic FHQ-E0N reach a terminal state (`Done`/`Cancelled`/`Promoted`) | Prompt: "All members of FHQ-E0N are terminal — close the epic?" On Done → `status: Done`, move folder to `Epics/Done/FHQ-E0N/`. On Cancel → `status: Cancelled`, move to `Epics/Cancelled/FHQ-E0N/` (create the subfolder on demand). |
 
 ## MCP usage
 
