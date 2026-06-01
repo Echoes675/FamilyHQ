@@ -28,6 +28,7 @@ Feature: Recurring Event Time Zone
 
   Scenario: Creating a recurring event sends the configured IANA timezone to Google
     Given I have selected and saved the timezone "Europe/London"
+    And I view the dashboard
     When I create a weekly recurring event "Standup" in "Appointments"
     Then the event "Standup" was sent to Google with timezone "Europe/London"
 
@@ -37,6 +38,7 @@ Feature: Recurring Event Time Zone
   # on the seeded New York coords is deterministic, so the value is safe to assert.
   Scenario: A selected location's timezone is used when no timezone is set
     Given I have saved the location "New York, USA"
+    And I view the dashboard
     When I create a weekly recurring event "NY Standup" in "Appointments"
     Then the event "NY Standup" was sent to Google with timezone "America/New_York"
 
@@ -45,5 +47,6 @@ Feature: Recurring Event Time Zone
   Scenario: Changing the selected location re-derives the timezone
     Given I have saved the location "New York, USA"
     And I have saved the location "Tokyo, Japan"
+    And I view the dashboard
     When I create a weekly recurring event "Tokyo Standup" in "Appointments"
     Then the event "Tokyo Standup" was sent to Google with timezone "Asia/Tokyo"
