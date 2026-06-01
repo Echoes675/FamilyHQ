@@ -82,6 +82,51 @@ public class CalendarMigrationServiceSeriesTests
     }
 
     [Fact]
+    public async Task EnsureCorrectCalendarForSeries_ExplicitTagNamingSharedCalendar_RetainsThatMember()
+    {
+        // FHQ-47 (Gap 2): a member calendar that is TRANSIENTLY marked IsShared (the first-login
+        // auto-designation window) must NOT be dropped from a series instance whose description
+        // carries an explicit "[members: ...]" tag naming it. The reconcile resolves the explicit
+        // tag against ALL calendars (authoritative), so the tagged member survives.
+        var (google, repo, _, sut) = CreateSut();
+
+        // Bob's individual calendar is currently (transiently) flagged shared.
+        var transientlySharedBob = new CalendarInfo { Id = BobCalId, GoogleCalendarId = "bob@", DisplayName = "Bob", IsShared = true };
+
+        var inst1 = SeriesInstance("inst-1", WindowStart.AddDays(7), AliceCalId);
+        repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([inst1]);
+        repo.Setup(r => r.GetCalendarByIdAsync(AliceCalId, It.IsAny<CancellationToken>())).ReturnsAsync(Alice);
+        repo.Setup(r => r.GetSharedCalendarAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Shared);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Alice, transientlySharedBob, Shared]);
+        repo.Setup(r => r.GetSyncStateAsync(SharedCalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = SharedCalId, SyncWindowStart = WindowStart, SyncWindowEnd = WindowEnd });
+        repo.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        google.Setup(g => g.CreateRecurringEventAsync(SharedGoogleCal, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-series-id"; return e; });
+
+        // The migrated instance's description explicitly tags Alice AND Bob (Bob now shared).
+        var newInst = NewInstance("new-1", WindowStart.AddDays(7));
+        newInst.Description = "Body\n[members: Alice, Bob]";
+        google.Setup(g => g.GetEventsAsync(SharedGoogleCal, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { newInst }, (string?)null));
+
+        // Migrate the series to the shared calendar (Alice + transiently-shared Bob → multi-member).
+        var migrated = await sut.EnsureCorrectCalendarForSeriesAsync(SeriesId, [Alice, transientlySharedBob]);
+
+        migrated.Should().BeTrue();
+        // The reconciled instance retains BOTH tagged members — Bob is NOT dropped despite IsShared.
+        repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "new-1"
+                && e.Members.Any(m => m.DisplayName == "Alice")
+                && e.Members.Any(m => m.DisplayName == "Bob")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task EnsureCorrectCalendarForSeries_AlreadyOnCorrectCalendar_NoMigration()
     {
         var (google, repo, _, sut) = CreateSut();

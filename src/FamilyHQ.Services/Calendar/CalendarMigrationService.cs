@@ -168,11 +168,16 @@ public class CalendarMigrationService(
             target.GoogleCalendarId, windowStart, windowEnd, null, ct);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
+        // FHQ-47 (Gap 2): mirror CalendarSyncService — the free-form fallback resolves against
+        // non-shared calendars only, while an explicit "[members: ...]" tag is authoritative and
+        // resolves against ALL calendars, so a tagged member is not dropped while its calendar is
+        // transiently shared (the first-login auto-designation window).
         var knownMemberNames = allCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
+        var allCalendarNames = allCalendars.Select(c => c.DisplayName).ToList();
 
         foreach (var fetchedEvent in fetched.Where(e => e.GoogleRecurringEventId == newSeriesId))
         {
-            var parsedNames = memberTagParser.ParseMembers(fetchedEvent.Description, knownMemberNames);
+            var parsedNames = memberTagParser.ParseMembers(fetchedEvent.Description, knownMemberNames, allCalendarNames);
             var members = allCalendars
                 .Where(c => parsedNames.Contains(c.DisplayName, StringComparer.OrdinalIgnoreCase))
                 .ToList();
