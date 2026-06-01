@@ -14,11 +14,35 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-_None currently. The async-sync E2E fragility (FHQ-37) was resolved in FHQ-41 — see below._
+_None currently._
 
 ---
 
 ## Resolved issues
+
+### 7. Multi-calendar event membership flaps during the first-login auto-designation window (FHQ-46)
+
+**Resolved:** branch `fix/FHQ-46-login-sync-barrier`, commits `042543a` + `cf33534` (+ `d91057b` E2E instrumentation). Verified across **10 consecutive Deploy-Dev passes #435–#444** (2026-06-01), zero E2E failures. Merged via the FHQ-46 PR into dev. **Note:** this single fix also resolves the long-running MonthAgendaView agenda flakes and the *"Remove calendar chip"* flake tracked as **FHQ-29**.
+**Component:** **Production** — `src/FamilyHQ.Services/Calendar/CalendarSyncService.cs` (`SyncCoreAsync` member resolution). Surfaced through E2E flakes, but the defect is in the sync, not the tests.
+**First seen as this root cause:** Deploy-Dev #433 (2026-06-01), *"Remove calendar chip from event"* (30s timeout: the modal showed only one active chip + `remove-buttons=[]`). The same root cause also explains intermittent *"An event in two calendars appears in both columns"* and the broader MonthAgendaView agenda flakes on clean `dev` (#426) — these are **not** a regression of #6; #6 was test-infra timing, this is production sync-correctness.
+
+**Root cause (confirmed by code + dev-container logs):**
+- A multi-member event carries an explicit `[members: Work Calendar, Personal Calendar]` description tag. `SyncCoreAsync` re-derives `Members` from that tag **on every sync** and **overwrites** the stored value (`existing.Members = parsedMembers`).
+- Member resolution excluded shared calendars (`allLocalCalendars.Where(c => !c.IsShared)`), so a calendar named in the tag was dropped whenever it was currently `IsShared`.
+- On first login, auto-designation marks the **first** calendar (Work — confirmed `33×` *"Auto-designated Work Calendar as the shared"* in the dev WebApi log) shared, before the user/E2E picks the real shared calendar (Family). During that window, Work is shared → dropped from the tag resolution → `Members=[Personal]`.
+- The Simulator's events endpoint has **no syncToken support**, so every one of the ~48 periodic syncs per user (`SyncOrchestrator`) re-fetches and re-parses the event. A re-parse inside the Work-shared window corrupts membership to `[Personal]`; a later sync (Work cleared) re-adds it. **Membership flaps**, and a test/UI read landing in the corrupted interval fails. Intermittent by construction.
+
+**Why the earlier FHQ-46 login-sync hardening didn't fix it:** the sync job *completes successfully* (no abort, no failure — confirmed: zero *"aborting sync"* / *"Sync job failed"* lines in the dev log), it just produces transiently-incomplete membership. The enqueue→durable-queue + drain-wait changes fixed the *webhook-registration-before-calendars* timing variant; this commit fixes the membership variant.
+
+**Fix (two candidate sets — `IMemberTagParser.ParseMembers` gained an optional `taggedCalendarNames`):**
+- An **explicit `[members: …]` tag** is authoritative → resolved against **all** calendars (incl. a transiently-shared one), so a tagged member is never dropped while its calendar is shared. The app never writes the shared calendar into a tag (`NormaliseDescription` strips it), so the broader set only ever rescues a legitimately-tagged member.
+- The **free-form fallback** (no tag — a user typing member names in any format/separator/case) still matches **member (non-shared)** names only, so a description that merely mentions the shared container calendar's name is never treated as a membership. Free-form entry is fully preserved.
+
+The sync caller (`CalendarSyncService.SyncCoreAsync`) passes both sets; `!IsShared` is retained for the free-form fallback and the memberless-event fallback. Regression tests: `CalendarSyncServiceTests.SyncAsync_ExistingMultiMemberEvent_RetainsTaggedMemberThatIsTransientlyShared` (service) + `MemberTagParserTests.ParseMembers_ExplicitTag_ResolvesAgainstTaggedCalendarNames` / `_FreeForm_DoesNotMatchSharedOnlyName` / `_FreeForm_PreservesAnyFormatSeparatorAndCase` (parser).
+
+**Known twin (follow-up):** `CalendarMigrationService.ReconcileSeriesWindowAsync` has the same `.Where(c => !c.IsShared)` pattern for the recurring-series migration path — fix alongside the designation-change→migration follow-up ticket.
+
+**If the symptom returns:** check that member-tag resolution in any sync/migration path resolves against all calendars (not `!IsShared`), and that `Members` is not destructively overwritten from a transient parse. The 10-green Deploy-Dev streak is the recurrence gate.
 
 ### 6. Async webhook sync re-surfaced TOCTOU re-render / not-yet-synced E2E races (FHQ-37 → fixed in FHQ-41)
 
