@@ -345,7 +345,7 @@ public class CalendarSyncServiceRecurringTests
         var outboundCacheMock   = new Mock<IOutboundWriteHashCache>();
         currentUserMock.SetupGet(c => c.UserId).Returns(userId);
 
-        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new List<string>());
 
         var sut = new CalendarSyncService(

@@ -69,6 +69,39 @@ public class MemberTagParserTests
         result.Should().BeEquivalentTo(["Eoin"]);
     }
 
+    // ── FHQ-46: explicit tag is authoritative (resolves against taggedCalendarNames); ────────────
+    //    free-form fallback only ever matches member (non-shared) names. "Family" models the shared
+    //    container calendar — present in the all-calendars tag set but NOT in the member set.
+    private static readonly string[] AllNames = ["Eoin", "Sarah", "Kids", "Family"];
+
+    [Fact]
+    public void ParseMembers_ExplicitTag_ResolvesAgainstTaggedCalendarNames()
+    {
+        // "Family" is not a member name but IS in the authoritative tag-candidate set, so an explicit
+        // tag naming it resolves it — this is what keeps a tagged member from being dropped while its
+        // calendar is transiently shared.
+        var result = _sut.ParseMembers("[members: Eoin, Family]", KnownNames, AllNames);
+        result.Should().BeEquivalentTo(["Eoin", "Family"]);
+    }
+
+    [Fact]
+    public void ParseMembers_FreeForm_DoesNotMatchSharedOnlyName()
+    {
+        // No tag → free-form fallback scans member names only. A description that merely mentions the
+        // shared calendar's name ("Family") must NOT make it a member, even though it is in AllNames.
+        var result = _sut.ParseMembers("Family movie night with Eoin", KnownNames, AllNames);
+        result.Should().Contain("Eoin").And.NotContain("Family");
+    }
+
+    [Fact]
+    public void ParseMembers_FreeForm_PreservesAnyFormatSeparatorAndCase()
+    {
+        // The user types member names however they like; the fallback matches whole-word,
+        // case-insensitively, regardless of separator.
+        var result = _sut.ParseMembers("EOIN & sarah; plus the KIDS", KnownNames, AllNames);
+        result.Should().BeEquivalentTo(["Eoin", "Sarah", "Kids"]);
+    }
+
     // ── ExtractTaggedMembers (explicit tag only, no fallback) ─────────────────
 
     [Fact]

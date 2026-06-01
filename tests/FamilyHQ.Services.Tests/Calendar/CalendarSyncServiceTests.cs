@@ -433,10 +433,13 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-tm", It.IsAny<CancellationToken>()))
             .ReturnsAsync(existing);
 
-        // Realistic parser: returns the tagged names that are present in the supplied known names.
-        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
-            .Returns((string _, IReadOnlyList<string> known) =>
-                new[] { "Work Calendar", "Personal Calendar" }.Where(known.Contains).ToList());
+        // Realistic parser: the event carries an explicit [members:] tag, so it resolves against the
+        // authoritative tag-candidate set (3rd arg = all calendars, incl. the transiently-shared Work).
+        // If the sync regressed to passing only the member (non-shared) set as tag candidates, Work
+        // would be absent and this would return [Personal] — the bug.
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns((string _, IReadOnlyList<string> known, IReadOnlyList<string>? tagged) =>
+                new[] { "Work Calendar", "Personal Calendar" }.Where((tagged ?? known).Contains).ToList());
 
         CalendarEvent? updated = null;
         calendarRepository.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
@@ -596,7 +599,7 @@ public class CalendarSyncServiceTests
         currentUserMock.SetupGet(c => c.UserId).Returns(() =>
             googleCallObserved ? null : "u-race");
 
-        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new List<string>());
 
         var sut = new CalendarSyncService(
@@ -952,7 +955,7 @@ public class CalendarSyncServiceTests
         currentUserMock.SetupGet(c => c.UserId).Returns(userId);
 
         // Default tag parser returns empty list
-        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+        tagParserMock.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
             .Returns(new List<string>());
 
         var sut = new CalendarSyncService(
