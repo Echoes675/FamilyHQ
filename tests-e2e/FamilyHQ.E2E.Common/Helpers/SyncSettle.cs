@@ -47,4 +47,34 @@ public static class SyncSettle
         }
         // Deadline elapsed: proceed; downstream assertions have their own waits/polls.
     }
+
+    /// <summary>
+    /// FHQ-46: surface a terminal Login-source sync failure. The worker persists the exception
+    /// message to CalendarSyncJob.LastError (durable — survives container teardown) and exposes it
+    /// at /api/diagnostics/failed-sync-runs. A swallowed login-sync failure otherwise manifests only
+    /// as a downstream "no events" flake on whichever scenario gets unlucky; this converts it into an
+    /// explicit, exception-bearing failure naming the actual cause and whether it exhausted retries.
+    /// Only TERMINALLY failed jobs appear here — a transient failure that succeeded on retry leaves no
+    /// row and does not throw. No-ops without an auth context. Call after WaitForUserQueueDrainAsync.
+    /// </summary>
+    public static async Task ThrowIfLoginSyncFailedAsync(IPage page)
+    {
+        var failure = await page.EvaluateAsync<string?>(@"
+            async () => {
+                try {
+                    const t = localStorage.getItem('familyhq_auth_token');
+                    if (!t) return null;
+                    const r = await fetch('/api/diagnostics/failed-sync-runs?limit=20', { headers: { 'Authorization': 'Bearer ' + t } });
+                    if (!r.ok) return null;
+                    const rows = await r.json();
+                    if (!Array.isArray(rows)) return null;
+                    const login = rows.find(x => x && x.source === 'Login');
+                    if (!login) return null;
+                    return 'attempts=' + login.attemptCount + ' lastError=' + (login.lastError || '(none)');
+                } catch (e) { return null; }
+            }");
+
+        if (!string.IsNullOrEmpty(failure))
+            throw new InvalidOperationException($"[FHQ-46] Initial login sync failed (terminal): {failure}");
+    }
 }

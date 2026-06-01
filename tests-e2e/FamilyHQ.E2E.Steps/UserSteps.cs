@@ -224,5 +224,10 @@ public class UserSteps
         // This makes seeded-data scenarios (Given the user has [event] -> first-login sync -> assert)
         // deterministic instead of racing the async initial sync.
         await FamilyHQ.E2E.Common.Helpers.SyncSettle.WaitForUserQueueDrainAsync(page);
+
+        // FHQ-46 diagnostic + guard: if the initial login sync failed terminally, surface its actual
+        // exception (worker-persisted LastError) here instead of letting it manifest as a downstream
+        // "no events" flake on a random scenario.
+        await FamilyHQ.E2E.Common.Helpers.SyncSettle.ThrowIfLoginSyncFailedAsync(page);
     }
 }
