@@ -184,8 +184,17 @@ public class CalendarSyncService(
             var events = fetchedEvents as IReadOnlyList<CalendarEvent> ?? fetchedEvents.ToList();
 
             var allLocalCalendars = await calendarRepository.GetCalendarsAsync(ct);
-            var knownMemberNames  = allLocalCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
-            var calendarByName    = allLocalCalendars.Where(c => !c.IsShared)
+            // FHQ-46: resolve member tags against ALL calendars, not just non-shared ones. An explicit
+            // "[members: ...]" tag is an authoritative membership declaration, so a calendar named in it
+            // must resolve even when it is currently IsShared. Otherwise the transient first-login window
+            // — where auto-designation marks the first calendar shared before the user/E2E picks the real
+            // shared calendar — silently DROPS that member on every re-sync (membership is re-derived and
+            // overwritten below), making an event's calendar membership flap (the chip-remove/agenda flake).
+            // The app never writes the shared calendar into a tag (NormaliseDescription strips it), so
+            // including shared calendars here only ever rescues a legitimately-tagged member; it never
+            // invents one. The memberless-event fallback below still excludes the shared container calendar.
+            var knownMemberNames  = allLocalCalendars.Select(c => c.DisplayName).ToList();
+            var calendarByName    = allLocalCalendars
                 .ToDictionary(c => c.DisplayName, StringComparer.OrdinalIgnoreCase);
 
             // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the

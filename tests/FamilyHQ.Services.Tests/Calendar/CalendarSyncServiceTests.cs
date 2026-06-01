@@ -382,6 +382,76 @@ public class CalendarSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_ExistingMultiMemberEvent_RetainsTaggedMemberThatIsTransientlyShared()
+    {
+        // FHQ-46 regression: an explicit "[members: Work, Personal]" tag is an authoritative member
+        // declaration, so it must resolve to BOTH calendars even when one of them (Work) is currently
+        // IsShared — e.g. the transient first-login window where auto-designation marks the first
+        // calendar shared before the user/E2E picks the real shared calendar. Previously member
+        // resolution excluded shared calendars and OVERWROTE membership on every re-sync, so Work was
+        // silently dropped -> Members=[Personal] -> the event's remove-chip vanished (the agenda/
+        // chip-remove flake). The Simulator has no incremental support, so this re-parse ran on every
+        // one of the ~48 periodic syncs per user, making the membership flap.
+        var (client, calendarRepository, tagParser, systemUnderTest) = CreateSut();
+        var familyId        = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var workId          = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        var personalId      = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        var familyGoogleId  = "family@group.calendar.google.com";
+        var start           = DateTimeOffset.UtcNow.AddDays(-30);
+        var end             = DateTimeOffset.UtcNow.AddDays(30);
+
+        var family   = new CalendarInfo { Id = familyId,   GoogleCalendarId = familyGoogleId, DisplayName = "Family Calendar",   IsShared = false };
+        var work     = new CalendarInfo { Id = workId,     GoogleCalendarId = "work@g",       DisplayName = "Work Calendar",     IsShared = true };  // transiently (wrongly) shared
+        var personal = new CalendarInfo { Id = personalId, GoogleCalendarId = "personal@g",   DisplayName = "Personal Calendar", IsShared = false };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(familyId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(family);
+        // Existing sync token => incremental sync (skips the full-sync tombstone branch).
+        calendarRepository.Setup(r => r.GetSyncStateAsync(familyId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = familyId, SyncToken = "tok" });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { work, personal, family });
+
+        var fetched = new CalendarEvent
+        {
+            GoogleEventId = "evt-tm",
+            Title         = "Team Meeting",
+            Description   = "[members: Work Calendar, Personal Calendar]"
+        };
+        client.Setup(c => c.GetEventsAsync(familyGoogleId, null, null, "tok", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+
+        // The event already carries the correct membership from an earlier (un-corrupted) sync.
+        var existing = new CalendarEvent
+        {
+            Id                  = Guid.NewGuid(),
+            GoogleEventId       = "evt-tm",
+            Title               = "Team Meeting",
+            OwnerCalendarInfoId = familyId,
+            Members             = new List<CalendarInfo> { work, personal }
+        };
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-tm", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        // Realistic parser: returns the tagged names that are present in the supplied known names.
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns((string _, IReadOnlyList<string> known) =>
+                new[] { "Work Calendar", "Personal Calendar" }.Where(known.Contains).ToList());
+
+        CalendarEvent? updated = null;
+        calendarRepository.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<CalendarEvent, CancellationToken>((e, _) => updated = e);
+
+        // Act
+        await systemUnderTest.SyncAsync(familyId, start, end);
+
+        // Assert — the transiently-shared Work calendar is retained, not silently dropped.
+        updated.Should().NotBeNull();
+        updated!.Members.Select(m => m.DisplayName)
+            .Should().BeEquivalentTo(new[] { "Work Calendar", "Personal Calendar" });
+    }
+
+    [Fact]
     public async Task SyncAsync_TombstoneEvent_DeletesFromDb()
     {
         // Arrange
