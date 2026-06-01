@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
         services.AddScoped<IMemberTagParser, MemberTagParser>();
         services.AddScoped<ICalendarMigrationService, CalendarMigrationService>();
+        services.AddScoped<IPlacementReconciler, PlacementReconciler>();
         services.AddScoped<ICalendarSyncService, CalendarSyncService>();
         services.AddScoped<IWebhookRegistrationService, WebhookRegistrationService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();

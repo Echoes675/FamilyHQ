@@ -12,7 +12,8 @@ public enum SyncJobSource
 {
     Webhook = 0,
     Periodic = 1,
-    Login = 2
+    Login = 2,
+    DesignationChange = 3
 }
 
 /// <summary>
