@@ -3,7 +3,6 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
-using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 
@@ -18,14 +17,7 @@ public class TimeZoneServiceTests
         var display = new Mock<IDisplaySettingRepository>();
         var loc = new Mock<ILocationSettingRepository>();
         var ipapi = new Mock<ILocationService>();
-        // FHQ-43: the lazy auto-zone persist (GetSendZoneAsync) runs on a separate DI scope so it can't
-        // flush the request DbContext mid-outbound-write. Wire the scope's IDisplaySettingRepository to
-        // the SAME display mock so persistence assertions still observe the upsert.
-        var sp = new Mock<IServiceProvider>();
-        sp.Setup(s => s.GetService(typeof(IDisplaySettingRepository))).Returns(display.Object);
-        var scope = new Mock<IServiceScope>(); scope.SetupGet(s => s.ServiceProvider).Returns(sp.Object);
-        var scopeFactory = new Mock<IServiceScopeFactory>(); scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
-        return (new TimeZoneService(cu.Object, display.Object, loc.Object, ipapi.Object, scopeFactory.Object), display, loc, ipapi);
+        return (new TimeZoneService(cu.Object, display.Object, loc.Object, ipapi.Object), display, loc, ipapi);
     }
 
     // ── ResolveAutoZoneAsync ────────────────────────────────────────────────
@@ -87,19 +79,32 @@ public class TimeZoneServiceTests
     }
 
     [Fact]
-    public async Task GetSendZone_WhenUnset_ResolvesPersistsAndReturns()
+    public async Task GetSendZone_WhenUnset_ReturnsNull_WithoutResolvingOrPersisting()
     {
+        // READ-ONLY: the outbound path must never resolve (no ip-api / saved-location lookup) or persist.
         var (sut, display, loc, ipapi) = CreateSut();
         display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
-        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
-        ipapi.Setup(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
-             .ReturnsAsync(new LocationResult("Berlin", 52.52, 13.405, true, "Europe/Berlin"));
+
+        (await sut.GetSendZoneAsync()).Should().BeNull();
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Never);
+        loc.Verify(l => l.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        display.Verify(d => d.UpsertAsync(It.IsAny<string>(), It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── EnsureAutoZonePersistedAsync ────────────────────────────────────────
+
+    [Fact]
+    public async Task EnsureAutoZonePersisted_WhenUnset_PersistsAsAutoDetected()
+    {
+        var (sut, display, _, _) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
         DisplaySetting? upserted = null;
         display.Setup(d => d.UpsertAsync("u-1", It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
                .Callback<string, DisplaySetting, CancellationToken>((_, s, _) => upserted = s)
                .ReturnsAsync((string _, DisplaySetting s, CancellationToken _) => s);
 
-        (await sut.GetSendZoneAsync()).Should().Be("Europe/Berlin");
+        await sut.EnsureAutoZonePersistedAsync("Europe/Berlin");
 
         upserted.Should().NotBeNull();
         upserted!.IanaTimeZone.Should().Be("Europe/Berlin");
@@ -107,14 +112,24 @@ public class TimeZoneServiceTests
     }
 
     [Fact]
-    public async Task GetSendZone_WhenUnsetAndUnresolvable_ReturnsNull_WithoutPersisting()
+    public async Task EnsureAutoZonePersisted_WhenAlreadySet_IsNoOp()
     {
-        var (sut, display, loc, ipapi) = CreateSut();
-        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
-        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((LocationSetting?)null);
-        ipapi.Setup(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException());
+        var (sut, display, _, _) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new DisplaySetting { UserId = "u-1", IanaTimeZone = "America/New_York" });
 
-        (await sut.GetSendZoneAsync()).Should().BeNull();
+        await sut.EnsureAutoZonePersistedAsync("Europe/Berlin");
+
+        display.Verify(d => d.UpsertAsync(It.IsAny<string>(), It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EnsureAutoZonePersisted_WhenZoneNullOrInvalid_IsNoOp()
+    {
+        var (sut, display, _, _) = CreateSut();
+
+        await sut.EnsureAutoZonePersistedAsync(null);
+        await sut.EnsureAutoZonePersistedAsync("Not/AZone");
 
         display.Verify(d => d.UpsertAsync(It.IsAny<string>(), It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()), Times.Never);
     }

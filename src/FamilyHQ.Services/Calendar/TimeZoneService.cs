@@ -1,7 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using GeoTimeZone;
-using Microsoft.Extensions.DependencyInjection;
 using NodaTime;
 using NodaTime.Text;
 
@@ -11,8 +10,7 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ILocationService locationService,
-    IServiceScopeFactory scopeFactory) : ITimeZoneService
+    ILocationService locationService) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
@@ -48,21 +46,26 @@ public class TimeZoneService(
         var userId = currentUser.UserId;
         if (string.IsNullOrEmpty(userId)) return null;
 
+        // READ-ONLY. The effective zone is persisted ONCE at a change point: location auto-discovery
+        // (SettingsController.GetLocation -> EnsureAutoZonePersistedAsync), manual set, or location
+        // save/reset. The outbound Google-write path must NEVER resolve here — doing so would call
+        // ip-api on every write AND write the request-scoped DbContext mid event/member operation
+        // (which shifted sync timing and re-exposed the membership flap). Unset -> null (caller -> UTC).
         var display = await displayRepo.GetAsync(userId, ct);
-        if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone))
-            return display.IanaTimeZone;
+        return string.IsNullOrWhiteSpace(display?.IanaTimeZone) ? null : display.IanaTimeZone;
+    }
 
-        // Unset -> lazily resolve the AUTO zone ONCE and cache it. GetSendZoneAsync runs INSIDE
-        // outbound event writes (Create/UpdateEventAsync), which execute mid-way through event/member
-        // operations holding uncommitted changes on the request-scoped DbContext. Persisting on that
-        // shared context would SaveChanges and flush those in-flight member changes early (FHQ-43
-        // regression: membership silently dropped). Persist on a SEPARATE scope so this is a
-        // side-effect-free cache write that cannot disturb the caller's transaction.
-        var resolved = await ResolveAutoZoneAsync(ct);
-        if (resolved is null) return null;
+    public async Task EnsureAutoZonePersistedAsync(string? ianaZone, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId) || string.IsNullOrWhiteSpace(ianaZone) || !IsValidZone(ianaZone))
+            return;
 
-        await PersistAutoZoneInSeparateScopeAsync(userId, resolved, ct);
-        return resolved;
+        var display = await displayRepo.GetAsync(userId, ct);
+        // Auto-discovery sets the zone ONCE. If the user already has a zone (auto or explicit), leave it.
+        if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone)) return;
+
+        await PersistZoneAsync(userId, display, ianaZone, isAutoDetected: true, ct);
     }
 
     public async Task SetExplicitZoneAsync(string ianaZone, CancellationToken ct = default)
@@ -118,28 +121,6 @@ public class TimeZoneService(
         setting.IsTimeZoneAutoDetected = isAutoDetected;
         setting.UpdatedAt = DateTimeOffset.UtcNow;
         await displayRepo.UpsertAsync(userId, setting, ct);
-    }
-
-    // FHQ-43: persist the lazily-resolved auto zone on a FRESH DbContext scope (see GetSendZoneAsync)
-    // so this cache write never shares the request's change tracker / SaveChanges and so cannot flush
-    // a caller's in-flight event/member changes mid-operation.
-    private async Task PersistAutoZoneInSeparateScopeAsync(string userId, string zone, CancellationToken ct)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var repo = scope.ServiceProvider.GetRequiredService<IDisplaySettingRepository>();
-        var existing = await repo.GetAsync(userId, ct);
-        var setting = existing ?? new DisplaySetting
-        {
-            UserId = userId,
-            SurfaceMultiplier = 1.0,
-            OpaqueSurfaces = false,
-            TransitionDurationSecs = 15,
-            ThemeSelection = "auto"
-        };
-        setting.IanaTimeZone = zone;
-        setting.IsTimeZoneAutoDetected = true;
-        setting.UpdatedAt = DateTimeOffset.UtcNow;
-        await repo.UpsertAsync(userId, setting, ct);
     }
 
     public string ToZonedWallClock(DateTimeOffset utcInstant, string ianaZone)

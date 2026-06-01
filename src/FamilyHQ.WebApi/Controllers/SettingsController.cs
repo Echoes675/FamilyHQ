@@ -67,6 +67,9 @@ public class SettingsController : ControllerBase
         try
         {
             var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
+            // Auto-discovery is a change point: persist the detected zone ONCE so outbound Google
+            // writes read it (GetSendZoneAsync) instead of resolving ip-api per write (FHQ-43).
+            await _timeZoneService.EnsureAutoZonePersistedAsync(autoLocation.IanaTimeZone, ct);
             return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
         }
         catch (Exception ex)
