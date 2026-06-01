@@ -1,6 +1,7 @@
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,7 +78,7 @@ public class AuthController : ControllerBase
         BackgroundUserContext.Current = userId;
         try
         {
-            await SyncCalendarEventsAsync(userId, accessToken);
+            await SyncCalendarEventsAsync(userId);
 
             // Register webhook channels for push notifications (non-blocking)
             if (_syncOptions.Value.WebhookRegistrationEnabled)
@@ -131,29 +132,27 @@ public class AuthController : ControllerBase
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    private async Task SyncCalendarEventsAsync(string userId, string accessToken)
+    private async Task SyncCalendarEventsAsync(string userId)
     {
         using var scope = _scopeFactory.CreateScope();
 
-        // Provide the fresh access token so the sync can use it directly
-        // instead of going through the refresh token flow
-        var tokenProvider = scope.ServiceProvider.GetRequiredService<IAccessTokenProvider>();
-        tokenProvider.AccessToken = accessToken;
-
-        var syncService = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
-
+        // FHQ-46: ENQUEUE the initial sync onto the durable queue (FHQ-37) rather than running it
+        // inline. Running it inline meant a transient failure (Google/Simulator hiccup under load)
+        // was silently swallowed, leaving the user's seeded events unsynced — the root cause of the
+        // intermittent MonthAgendaView E2E flakes. The single-consumer worker drains the job with
+        // retry/backoff (resilient to transient failures) and broadcasts EventsUpdated when done.
+        // The worker authenticates via the stored refresh token (saved earlier in the callback), so
+        // the fresh access token is no longer needed here. Login also returns faster.
         try
         {
-            // Sync window: -30 to +365 days
-            await syncService.SyncAllAsync(DateTimeOffset.UtcNow.AddDays(-30), DateTimeOffset.UtcNow.AddDays(365), CancellationToken.None);
-
-            // Notify connected Blazor clients to refresh the UI
-            var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
-            await hubContext.Clients.All.SendAsync("EventsUpdated");
+            var queue = scope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
+            var signal = scope.ServiceProvider.GetRequiredService<ISyncJobSignal>();
+            await queue.EnqueueAsync(userId, null, SyncJobSource.Login, null, CancellationToken.None);
+            signal.Release();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[FHQ-46] Initial calendar sync on login failed: {Message}", ex.Message);
+            _logger.LogError(ex, "[FHQ-46] Failed to enqueue initial calendar sync on login for user {UserId}: {Message}", userId, ex.Message);
         }
     }
 }

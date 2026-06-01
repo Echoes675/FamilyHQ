@@ -11,7 +11,8 @@ public enum SyncJobStatus
 public enum SyncJobSource
 {
     Webhook = 0,
-    Periodic = 1
+    Periodic = 1,
+    Login = 2
 }
 
 /// <summary>

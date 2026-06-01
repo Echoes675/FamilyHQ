@@ -218,5 +218,11 @@ public class UserSteps
         await page.GotoAsync(config.BaseUrl + "/");
         await page.Locator(".dashboard-header__settings").WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        // FHQ-46: login now ENQUEUES the initial sync onto the durable queue (AuthController), so
+        // wait for the user's sync queue to drain — incl. worker retries — before any assertion.
+        // This makes seeded-data scenarios (Given the user has [event] -> first-login sync -> assert)
+        // deterministic instead of racing the async initial sync.
+        await FamilyHQ.E2E.Common.Helpers.SyncSettle.WaitForUserQueueDrainAsync(page);
     }
 }
