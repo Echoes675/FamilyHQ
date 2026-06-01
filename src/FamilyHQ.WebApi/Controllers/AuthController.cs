@@ -140,19 +140,35 @@ public class AuthController : ControllerBase
         // inline. Running it inline meant a transient failure (Google/Simulator hiccup under load)
         // was silently swallowed, leaving the user's seeded events unsynced — the root cause of the
         // intermittent MonthAgendaView E2E flakes. The single-consumer worker drains the job with
-        // retry/backoff (resilient to transient failures) and broadcasts EventsUpdated when done.
-        // The worker authenticates via the stored refresh token (saved earlier in the callback), so
-        // the fresh access token is no longer needed here. Login also returns faster.
+        // retry/backoff (resilient to transient failures) and broadcasts EventsUpdated when done;
+        // it authenticates via the stored refresh token (saved earlier in the callback).
+        //
+        // We then wait (bounded) for the job to drain before returning, because the caller registers
+        // webhooks next and RegisterAllAsync reads the user's calendars from the local DB — which
+        // only exist once the worker has synced. Login latency is unchanged (the old inline sync
+        // blocked too); the gain is that the sync now self-heals transient failures via worker retry
+        // rather than swallowing them, and the E2E sync-settle barrier can observe queue depth.
         try
         {
             var queue = scope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
             var signal = scope.ServiceProvider.GetRequiredService<ISyncJobSignal>();
             await queue.EnqueueAsync(userId, null, SyncJobSource.Login, null, CancellationToken.None);
             signal.Release();
+
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (await queue.GetActiveJobCountAsync(userId, CancellationToken.None) > 0)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    _logger.LogWarning("[FHQ-46] Initial login sync for user {UserId} did not drain within 60s; proceeding.", userId);
+                    break;
+                }
+                await Task.Delay(500);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[FHQ-46] Failed to enqueue initial calendar sync on login for user {UserId}: {Message}", userId, ex.Message);
+            _logger.LogError(ex, "[FHQ-46] Failed to enqueue/await initial calendar sync on login for user {UserId}: {Message}", userId, ex.Message);
         }
     }
 }
