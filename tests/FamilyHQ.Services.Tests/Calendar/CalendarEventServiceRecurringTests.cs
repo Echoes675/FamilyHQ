@@ -713,8 +713,8 @@ public class CalendarEventServiceRecurringTests
                 .Returns((string d, IReadOnlyList<string> names) => realParser.NormaliseDescription(d, names));
             TagParser.Setup(p => p.StripMemberTag(It.IsAny<string>()))
                 .Returns((string d) => realParser.StripMemberTag(d));
-            TagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
-                .Returns((string d, IReadOnlyList<string> names) => realParser.ParseMembers(d, names));
+            TagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+                .Returns((string d, IReadOnlyList<string> names, IReadOnlyList<string>? tagged) => realParser.ParseMembers(d, names, tagged));
             TagParser.Setup(p => p.ExtractTaggedMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
                 .Returns((string d, IReadOnlyList<string> names) => realParser.ExtractTaggedMembers(d, names));
 
