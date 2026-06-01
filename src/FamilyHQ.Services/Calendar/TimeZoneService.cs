@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using GeoTimeZone;
+using Microsoft.Extensions.DependencyInjection;
 using NodaTime;
 using NodaTime.Text;
 
@@ -10,7 +11,8 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ILocationService locationService) : ITimeZoneService
+    ILocationService locationService,
+    IServiceScopeFactory scopeFactory) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
@@ -50,11 +52,16 @@ public class TimeZoneService(
         if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone))
             return display.IanaTimeZone;
 
-        // Unset -> lazily resolve the AUTO zone ONCE and persist it.
+        // Unset -> lazily resolve the AUTO zone ONCE and cache it. GetSendZoneAsync runs INSIDE
+        // outbound event writes (Create/UpdateEventAsync), which execute mid-way through event/member
+        // operations holding uncommitted changes on the request-scoped DbContext. Persisting on that
+        // shared context would SaveChanges and flush those in-flight member changes early (FHQ-43
+        // regression: membership silently dropped). Persist on a SEPARATE scope so this is a
+        // side-effect-free cache write that cannot disturb the caller's transaction.
         var resolved = await ResolveAutoZoneAsync(ct);
         if (resolved is null) return null;
 
-        await PersistZoneAsync(userId, display, resolved, isAutoDetected: true, ct);
+        await PersistAutoZoneInSeparateScopeAsync(userId, resolved, ct);
         return resolved;
     }
 
@@ -111,6 +118,28 @@ public class TimeZoneService(
         setting.IsTimeZoneAutoDetected = isAutoDetected;
         setting.UpdatedAt = DateTimeOffset.UtcNow;
         await displayRepo.UpsertAsync(userId, setting, ct);
+    }
+
+    // FHQ-43: persist the lazily-resolved auto zone on a FRESH DbContext scope (see GetSendZoneAsync)
+    // so this cache write never shares the request's change tracker / SaveChanges and so cannot flush
+    // a caller's in-flight event/member changes mid-operation.
+    private async Task PersistAutoZoneInSeparateScopeAsync(string userId, string zone, CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IDisplaySettingRepository>();
+        var existing = await repo.GetAsync(userId, ct);
+        var setting = existing ?? new DisplaySetting
+        {
+            UserId = userId,
+            SurfaceMultiplier = 1.0,
+            OpaqueSurfaces = false,
+            TransitionDurationSecs = 15,
+            ThemeSelection = "auto"
+        };
+        setting.IanaTimeZone = zone;
+        setting.IsTimeZoneAutoDetected = true;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+        await repo.UpsertAsync(userId, setting, ct);
     }
 
     public string ToZonedWallClock(DateTimeOffset utcInstant, string ianaZone)

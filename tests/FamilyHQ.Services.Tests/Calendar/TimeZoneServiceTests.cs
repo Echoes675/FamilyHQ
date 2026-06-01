@@ -3,6 +3,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 
@@ -17,7 +18,14 @@ public class TimeZoneServiceTests
         var display = new Mock<IDisplaySettingRepository>();
         var loc = new Mock<ILocationSettingRepository>();
         var ipapi = new Mock<ILocationService>();
-        return (new TimeZoneService(cu.Object, display.Object, loc.Object, ipapi.Object), display, loc, ipapi);
+        // FHQ-43: the lazy auto-zone persist (GetSendZoneAsync) runs on a separate DI scope so it can't
+        // flush the request DbContext mid-outbound-write. Wire the scope's IDisplaySettingRepository to
+        // the SAME display mock so persistence assertions still observe the upsert.
+        var sp = new Mock<IServiceProvider>();
+        sp.Setup(s => s.GetService(typeof(IDisplaySettingRepository))).Returns(display.Object);
+        var scope = new Mock<IServiceScope>(); scope.SetupGet(s => s.ServiceProvider).Returns(sp.Object);
+        var scopeFactory = new Mock<IServiceScopeFactory>(); scopeFactory.Setup(f => f.CreateScope()).Returns(scope.Object);
+        return (new TimeZoneService(cu.Object, display.Object, loc.Object, ipapi.Object, scopeFactory.Object), display, loc, ipapi);
     }
 
     // ── ResolveAutoZoneAsync ────────────────────────────────────────────────
