@@ -56,4 +56,26 @@ public class SettingsApiService : ISettingsApiService
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<DisplaySettingDto>())!;
     }
+
+    public async Task<IReadOnlyList<string>> GetTimeZonesAsync()
+    {
+        return (await _httpClient.GetFromJsonAsync<IReadOnlyList<string>>("api/settings/timezones"))!;
+    }
+
+    public async Task<TimeZoneSettingDto> GetTimeZoneAsync()
+    {
+        return (await _httpClient.GetFromJsonAsync<TimeZoneSettingDto>("api/settings/timezone"))!;
+    }
+
+    public async Task SetTimeZoneAsync(string ianaTimeZone)
+    {
+        var response = await _httpClient.PutAsJsonAsync("api/settings/timezone", new SetTimeZoneRequest(ianaTimeZone));
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ResetTimeZoneAsync()
+    {
+        var response = await _httpClient.DeleteAsync("api/settings/timezone");
+        response.EnsureSuccessStatusCode();
+    }
 }

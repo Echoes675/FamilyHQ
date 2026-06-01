@@ -26,6 +26,7 @@ public class SettingsController : ControllerBase
     private readonly IWeatherRefreshService _weatherRefreshService;
     private readonly ICurrentUserService _currentUser;
     private readonly ILocationService _locationService;
+    private readonly ITimeZoneService _timeZoneService;
 
     public SettingsController(
         ILocationSettingRepository locationRepo,
@@ -38,7 +39,8 @@ public class SettingsController : ControllerBase
         IWeatherService weatherService,
         IWeatherRefreshService weatherRefreshService,
         ICurrentUserService currentUser,
-        ILocationService locationService)
+        ILocationService locationService,
+        ITimeZoneService timeZoneService)
     {
         _locationRepo = locationRepo;
         _geocodingService = geocodingService;
@@ -51,6 +53,7 @@ public class SettingsController : ControllerBase
         _weatherRefreshService = weatherRefreshService;
         _currentUser = currentUser;
         _locationService = locationService;
+        _timeZoneService = timeZoneService;
     }
 
     [HttpGet("location")]
@@ -64,6 +67,9 @@ public class SettingsController : ControllerBase
         try
         {
             var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
+            // Auto-discovery is a change point: persist the detected zone ONCE so outbound Google
+            // writes read it (GetSendZoneAsync) instead of resolving ip-api per write (FHQ-43).
+            await _timeZoneService.EnsureAutoZonePersistedAsync(autoLocation.IanaTimeZone, ct);
             return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
         }
         catch (Exception ex)
@@ -113,6 +119,9 @@ public class SettingsController : ControllerBase
 
         await _weatherRefreshService.RefreshAsync(userId, ct);
 
+        // Re-resolve the auto timezone from the new location, unless the user set one explicitly.
+        await _timeZoneService.RepersistAutoIfNotExplicitAsync(ct);
+
         return Ok(new LocationSettingDto(request.PlaceName, IsAutoDetected: false));
     }
 
@@ -130,6 +139,9 @@ public class SettingsController : ControllerBase
         await _scheduler.TriggerRecalculationAsync();
 
         await _weatherRefreshService.RefreshAsync(userId, ct);
+
+        // Re-resolve the auto timezone after clearing the location, unless explicitly set.
+        await _timeZoneService.RepersistAutoIfNotExplicitAsync(ct);
 
         return NoContent();
     }
@@ -158,14 +170,15 @@ public class SettingsController : ControllerBase
             return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
 
         var userId = _currentUser.UserId!;
-        var setting = new DisplaySetting
-        {
-            SurfaceMultiplier = dto.SurfaceMultiplier,
-            OpaqueSurfaces = dto.OpaqueSurfaces,
-            TransitionDurationSecs = dto.TransitionDurationSecs,
-            ThemeSelection = dto.ThemeSelection,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
+        var existing = await _displayRepo.GetAsync(userId, ct);
+        var setting = existing ?? new DisplaySetting();
+        setting.SurfaceMultiplier = dto.SurfaceMultiplier;
+        setting.OpaqueSurfaces = dto.OpaqueSurfaces;
+        setting.TransitionDurationSecs = dto.TransitionDurationSecs;
+        setting.ThemeSelection = dto.ThemeSelection;
+        setting.UpdatedAt = DateTimeOffset.UtcNow;
+        // IanaTimeZone is intentionally NOT overwritten here — display settings must not
+        // wipe the user's explicit timezone (FHQ-43).
 
         await _displayRepo.UpsertAsync(userId, setting, ct);
 
@@ -188,5 +201,36 @@ public class SettingsController : ControllerBase
             return BadRequest(validationResult.Errors);
         var updated = await _weatherService.UpdateSettingsAsync(dto, ct);
         return Ok(updated);
+    }
+
+    [HttpGet("timezones")]
+    public IActionResult GetTimeZones() => Ok(_timeZoneService.GetAvailableZoneIds());
+
+    [HttpGet("timezone")]
+    public async Task<IActionResult> GetTimeZone(CancellationToken ct)
+    {
+        var userId = _currentUser.UserId!;
+        var setting = await _displayRepo.GetAsync(userId, ct);
+        var isExplicit = setting?.IanaTimeZone is not null && !setting.IsTimeZoneAutoDetected;
+        return Ok(new TimeZoneSettingDto(
+            setting?.IanaTimeZone ?? "UTC",
+            isExplicit,
+            isExplicit ? setting!.IanaTimeZone : null));
+    }
+
+    [HttpPut("timezone")]
+    public async Task<IActionResult> SetTimeZone([FromBody] SetTimeZoneRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
+            return BadRequest("Unknown IANA timezone.");
+        await _timeZoneService.SetExplicitZoneAsync(request.IanaTimeZone, ct);
+        return NoContent();
+    }
+
+    [HttpDelete("timezone")]
+    public async Task<IActionResult> ResetTimeZone(CancellationToken ct)
+    {
+        await _timeZoneService.ResetToAutoZoneAsync(ct);
+        return NoContent();
     }
 }

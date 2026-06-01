@@ -41,7 +41,7 @@ public class DayThemeServiceTests
             .ReturnsAsync((DayTheme dt, CancellationToken _) => dt);
         var locationMock = new Mock<ILocationService>();
         locationMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false));
+            .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false, IanaTimeZone: null));
         var sunCalcMock = new Mock<ISunCalculatorService>();
         sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today))
             .ReturnsAsync(new DayThemeBoundaries(
@@ -95,7 +95,7 @@ public class DayThemeServiceTests
             .ReturnsAsync((DayTheme dt, CancellationToken _) => dt);
         var locationMock = new Mock<ILocationService>();
         locationMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false));
+            .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false, IanaTimeZone: null));
         var sunCalcMock = new Mock<ISunCalculatorService>();
         // Adapt the setup call to match the actual ISunCalculatorService method signature
         sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today))

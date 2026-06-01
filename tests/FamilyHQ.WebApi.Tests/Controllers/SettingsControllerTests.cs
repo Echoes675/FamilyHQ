@@ -19,11 +19,11 @@ public class SettingsControllerTests
     public async Task GetLocation_WhenNoSavedLocation_ReturnsAutoDetectedLocation()
     {
         // Arrange
-        var (sut, locationRepoMock, _, _, _, _, _, _, locationServiceMock) = CreateSut();
+        var (sut, locationRepoMock, _, _, _, _, _, _, locationServiceMock, _) = CreateSut();
         locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((LocationSetting?)null);
         locationServiceMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new FamilyHQ.Core.DTOs.LocationResult("Belfast, Northern Ireland, UK", 54.5, -5.9, IsAutoDetected: true));
+            .ReturnsAsync(new FamilyHQ.Core.DTOs.LocationResult("Belfast, Northern Ireland, UK", 54.5, -5.9, IsAutoDetected: true, IanaTimeZone: null));
 
         // Act
         var result = await sut.GetLocation(CancellationToken.None);
@@ -39,7 +39,7 @@ public class SettingsControllerTests
     public async Task GetLocation_ReturnsOk_WhenSet()
     {
         // Arrange
-        var (sut, locationRepoMock, _, _, _, _, _, _, _) = CreateSut();
+        var (sut, locationRepoMock, _, _, _, _, _, _, _, _) = CreateSut();
         locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LocationSetting { PlaceName = "Edinburgh, Scotland", Latitude = 55.9, Longitude = -3.2 });
 
@@ -56,7 +56,7 @@ public class SettingsControllerTests
     public async Task SaveLocation_Geocodes_SavesPersists_AndTriggers()
     {
         // Arrange
-        var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, _) = CreateSut();
+        var (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, _, timeZoneServiceMock) = CreateSut();
         weatherRefreshServiceMock
             .Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 1, DataPointsWritten: 5));
@@ -84,13 +84,14 @@ public class SettingsControllerTests
         schedulerMock.Verify(x => x.TriggerRecalculationAsync(), Times.Once);
         clientMock.Verify(x => x.SendCoreAsync("ThemeChanged", It.Is<object[]>(o => o.Length > 0), It.IsAny<CancellationToken>()), Times.Once);
         weatherRefreshServiceMock.Verify(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()), Times.Once);
+        timeZoneServiceMock.Verify(x => x.RepersistAutoIfNotExplicitAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task DeleteLocation_TriggersWeatherRefresh()
     {
         // Arrange
-        var (sut, locationRepoMock, _, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, locationServiceMock) = CreateSut();
+        var (sut, locationRepoMock, _, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, locationServiceMock, timeZoneServiceMock) = CreateSut();
         locationRepoMock.Setup(x => x.DeleteAsync(TestUserId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
@@ -111,6 +112,152 @@ public class SettingsControllerTests
 
         // Assert
         weatherRefreshServiceMock.Verify(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()), Times.Once);
+        timeZoneServiceMock.Verify(x => x.RepersistAutoIfNotExplicitAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetTimeZone_WhenExplicit_ReturnsZoneAndIsExplicit_FromPersistedState()
+    {
+        // Arrange — persisted explicit zone (auto-detected = false).
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, timeZoneServiceMock) = CreateSut();
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DisplaySetting { UserId = TestUserId, IanaTimeZone = "Europe/London", IsTimeZoneAutoDetected = false });
+
+        // Act
+        var result = await sut.GetTimeZone(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<TimeZoneSettingDto>().Subject;
+        dto.EffectiveIanaZone.Should().Be("Europe/London");
+        dto.IsExplicit.Should().BeTrue();
+        dto.ExplicitIanaZone.Should().Be("Europe/London");
+        // The display path must never trigger a live resolve.
+        timeZoneServiceMock.Verify(x => x.ResolveAutoZoneAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetTimeZone_WhenAutoDetected_ReturnsZoneButNotExplicit()
+    {
+        // Arrange — persisted auto-detected zone.
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, _) = CreateSut();
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DisplaySetting { UserId = TestUserId, IanaTimeZone = "Europe/Berlin", IsTimeZoneAutoDetected = true });
+
+        // Act
+        var result = await sut.GetTimeZone(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<TimeZoneSettingDto>().Subject;
+        dto.EffectiveIanaZone.Should().Be("Europe/Berlin");
+        dto.IsExplicit.Should().BeFalse();
+        dto.ExplicitIanaZone.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetTimeZone_WhenUnset_FallsBackToUtc()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, _) = CreateSut();
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DisplaySetting?)null);
+
+        // Act
+        var result = await sut.GetTimeZone(CancellationToken.None);
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<TimeZoneSettingDto>().Subject;
+        dto.EffectiveIanaZone.Should().Be("UTC");
+        dto.IsExplicit.Should().BeFalse();
+        dto.ExplicitIanaZone.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PutDisplay_WhenUserHasExplicitTimeZone_PreservesIanaTimeZone()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, displayRepoMock, _, _, _) = CreateSut();
+        var existingSetting = new DisplaySetting
+        {
+            UserId = TestUserId,
+            SurfaceMultiplier = 1.0,
+            OpaqueSurfaces = false,
+            TransitionDurationSecs = 15,
+            ThemeSelection = "auto",
+            IanaTimeZone = "America/New_York"
+        };
+        displayRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingSetting);
+        DisplaySetting? upsertedSetting = null;
+        displayRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
+            .Callback<string, DisplaySetting, CancellationToken>((_, s, _) => upsertedSetting = s)
+            .ReturnsAsync((string _, DisplaySetting s, CancellationToken _) => s);
+
+        var dto = new DisplaySettingDto(0.8, true, 20, "evening");
+
+        // Act
+        var result = await sut.PutDisplay(dto, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        upsertedSetting.Should().NotBeNull();
+        upsertedSetting!.IanaTimeZone.Should().Be("America/New_York",
+            "display settings must not wipe an explicitly-set IANA timezone");
+        upsertedSetting.SurfaceMultiplier.Should().Be(0.8);
+        upsertedSetting.ThemeSelection.Should().Be("evening");
+    }
+
+    [Fact]
+    public async Task SetTimeZone_WithInvalidZone_ReturnsBadRequest()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, _, _, _, timeZoneServiceMock) = CreateSut();
+        timeZoneServiceMock.Setup(x => x.IsValidZone("Not/A/Zone")).Returns(false);
+
+        // Act
+        var result = await sut.SetTimeZone(new SetTimeZoneRequest("Not/A/Zone"), CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task SetTimeZone_WithValidZone_CallsSetExplicit_AndReturnsNoContent()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, _, _, _, timeZoneServiceMock) = CreateSut();
+        timeZoneServiceMock.Setup(x => x.IsValidZone("Europe/London")).Returns(true);
+        timeZoneServiceMock.Setup(x => x.SetExplicitZoneAsync("Europe/London", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await sut.SetTimeZone(new SetTimeZoneRequest("Europe/London"), CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<NoContentResult>();
+        timeZoneServiceMock.Verify(
+            x => x.SetExplicitZoneAsync("Europe/London", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetTimeZone_CallsResetToAuto_AndReturnsNoContent()
+    {
+        // Arrange
+        var (sut, _, _, _, _, _, _, _, _, timeZoneServiceMock) = CreateSut();
+        timeZoneServiceMock.Setup(x => x.ResetToAutoZoneAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await sut.ResetTimeZone(CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<NoContentResult>();
+        timeZoneServiceMock.Verify(
+            x => x.ResetToAutoZoneAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     private static (
@@ -122,7 +269,8 @@ public class SettingsControllerTests
         Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>> hubMock,
         Mock<IDisplaySettingRepository> displayRepoMock,
         Mock<IWeatherRefreshService> weatherRefreshServiceMock,
-        Mock<ILocationService> locationServiceMock) CreateSut()
+        Mock<ILocationService> locationServiceMock,
+        Mock<ITimeZoneService> timeZoneServiceMock) CreateSut()
     {
         var locationRepoMock = new Mock<ILocationSettingRepository>();
         var geocodingMock = new Mock<IGeocodingService>();
@@ -135,6 +283,7 @@ public class SettingsControllerTests
         var weatherRefreshServiceMock = new Mock<IWeatherRefreshService>();
         var currentUserMock = new Mock<ICurrentUserService>();
         var locationServiceMock = new Mock<ILocationService>();
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
         currentUserMock.Setup(x => x.UserId).Returns(TestUserId);
 
         var sut = new SettingsController(
@@ -148,8 +297,9 @@ public class SettingsControllerTests
             weatherServiceMock.Object,
             weatherRefreshServiceMock.Object,
             currentUserMock.Object,
-            locationServiceMock.Object);
+            locationServiceMock.Object,
+            timeZoneServiceMock.Object);
 
-        return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock, weatherRefreshServiceMock, locationServiceMock);
+        return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock, weatherRefreshServiceMock, locationServiceMock, timeZoneServiceMock);
     }
 }
