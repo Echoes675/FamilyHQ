@@ -96,7 +96,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Sync Error during login: {ex.Message}");
+            _logger.LogError(ex, "[FHQ-46] Login sync/webhook block failed for user {UserId}: {Message}", userId, ex.Message);
         }
         finally
         {
@@ -153,7 +153,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Sync Error: {ex.Message}");
+            _logger.LogError(ex, "[FHQ-46] Initial calendar sync on login failed: {Message}", ex.Message);
         }
     }
 }

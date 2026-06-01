@@ -218,12 +218,5 @@ public class UserSteps
         await page.GotoAsync(config.BaseUrl + "/");
         await page.Locator(".dashboard-header__settings").WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
-
-        // FHQ-46: the OAuth callback enqueues the async initial sync (FHQ-37) that pulls the
-        // user's seeded events into the local DB; a shared-calendar designation above can also
-        // enqueue a sync. Wait for the user's sync queue to drain so seeded-data scenarios
-        // (Given the user has [event] -> first-login sync -> assert) don't race the worker.
-        // Mirrors the barrier FHQ-41 added to the webhook step, applied to the login path it missed.
-        await FamilyHQ.E2E.Common.Helpers.SyncSettle.WaitForUserQueueDrainAsync(page);
     }
 }
