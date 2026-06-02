@@ -64,6 +64,11 @@ If `seqcli` or the `familyhq-omv` profile is missing — e.g. on a fresh worksta
    seqcli profile create -n familyhq-omv -s http://192.168.86.23:8500 -a <READONLY_KEY>
    ```
 4. **Verify:** `seqcli profile list` shows `familyhq-omv (http://192.168.86.23:8500)`, and `seqcli search --profile familyhq-omv -c 1` returns an event.
+5. **Allowlist the read commands** (avoids a permission prompt on every query). `.claude/` is **gitignored** in this repo, so `.claude/settings.json` is per-workstation — re-add it on a new machine (or via `/permissions`):
+   ```json
+   { "permissions": { "allow": ["Bash(seqcli search:*)", "Bash(seqcli tail:*)", "Bash(seqcli query:*)"] } }
+   ```
+   Read sub-commands only — leave `apikey`/`user`/`config`/ingest/write prompted.
 
 ### Rotating the key
 Revoke the old key in the Seq UI → mint a new **read-only** key → re-run `seqcli profile create -n familyhq-omv -s http://192.168.86.23:8500 -a <NEW_KEY>` (overwrites the profile). The profile is the only place the key lives on the workstation.
