@@ -184,6 +184,9 @@ public class EventsController : ControllerBase
             IsAllDay = body.Start.Date != null,
             UserId = userId,
             ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash"),
+            // FHQ-43: capture the IANA zone the app anchored the (recurring) timed event to so an
+            // E2E backdoor read can prove the configured zone reached Google rather than being dropped.
+            StartTimeZone = body.Start?.TimeZone,
             // FHQ-18.11: events.insert with a recurrence array creates a series MASTER. The first
             // RRULE line is stored so the subsequent reconcile list (singleEvents=true) expands it
             // into per-occurrence instances. A non-recurring insert leaves this null.
@@ -281,6 +284,8 @@ public class EventsController : ControllerBase
         existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : existing.StartTime);
         existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
+        // FHQ-43: keep the anchored IANA zone in sync when the update maps the start.
+        existing.StartTimeZone = body.Start?.TimeZone;
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
 

@@ -11,6 +11,12 @@ public class SimulatedEvent
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public bool IsAllDay { get; set; }
+
+    // FHQ-43: the IANA time zone the app anchors a recurring timed event to (Google start.timeZone).
+    // Captured from the incoming events.insert/update body so an E2E backdoor read can prove the
+    // app sent the user's configured zone (e.g. "Europe/London") rather than discarding it. Null for
+    // all-day events and any write that omitted the field.
+    public string? StartTimeZone { get; set; }
     public string? UserId { get; set; }
     public bool IsDeleted { get; set; }
 

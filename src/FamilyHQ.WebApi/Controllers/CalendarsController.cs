@@ -16,17 +16,23 @@ public class CalendarsController : ControllerBase
     private readonly ILogger<CalendarsController> _logger;
     private readonly ITokenStore _tokenStore;
     private readonly ICurrentUserService _currentUser;
+    private readonly ICalendarSyncJobQueue _syncJobQueue;
+    private readonly ISyncJobSignal _syncJobSignal;
 
     public CalendarsController(
         ICalendarRepository calendarRepository,
         ILogger<CalendarsController> logger,
         ITokenStore tokenStore,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        ICalendarSyncJobQueue syncJobQueue,
+        ISyncJobSignal syncJobSignal)
     {
         _calendarRepository = calendarRepository;
         _logger = logger;
         _tokenStore = tokenStore;
         _currentUser = currentUser;
+        _syncJobQueue = syncJobQueue;
+        _syncJobSignal = syncJobSignal;
     }
 
     [HttpGet("connection-status")]
@@ -148,8 +154,14 @@ public class CalendarsController : ControllerBase
     public async Task<IActionResult> UpdateCalendarSettings(
         Guid id, [FromBody] CalendarSettingsRequest request, CancellationToken ct)
     {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
         var calendar = await _calendarRepository.GetCalendarByIdAsync(id, ct);
         if (calendar == null) return NotFound();
+
+        var sharedDesignationChanged = calendar.IsShared != request.IsShared;
 
         // Only one calendar can be shared at a time
         if (request.IsShared)
@@ -166,6 +178,14 @@ public class CalendarsController : ControllerBase
         calendar.IsShared  = request.IsShared;
         await _calendarRepository.UpdateCalendarAsync(calendar, ct);
         await _calendarRepository.SaveChangesAsync(ct);
+
+        // A shared-designation change can strand existing events on a stale calendar — placement
+        // only runs on app edits. Enqueue a durable reconcile job and wake the worker (FHQ-47 Gap 1).
+        if (sharedDesignationChanged)
+        {
+            await _syncJobQueue.EnqueueAsync(userId, null, SyncJobSource.DesignationChange, null, ct);
+            _syncJobSignal.Release();
+        }
 
         return Ok(new EventCalendarDto(calendar.Id, calendar.DisplayName, calendar.Color, calendar.IsShared, calendar.IsVisible));
     }

@@ -13,7 +13,7 @@ public class LocationService(HttpClient httpClient) : ILocationService
     public async Task<LocationResult> GetEffectiveLocationAsync(CancellationToken ct = default)
     {
         var response = await httpClient.GetFromJsonAsync<IpApiResponse>(
-            "json/?fields=status,city,regionName,country,lat,lon", ct)
+            "json/?fields=status,city,regionName,country,lat,lon,timezone", ct)
             ?? throw new InvalidOperationException("IP geolocation returned null response.");
 
         if (response.Status != "success")
@@ -21,8 +21,9 @@ public class LocationService(HttpClient httpClient) : ILocationService
 
         var placeName = string.Join(", ", new[] { response.City, response.RegionName, response.Country }
             .Where(s => !string.IsNullOrWhiteSpace(s)));
-        return new LocationResult(placeName, response.Lat, response.Lon, IsAutoDetected: true);
+        return new LocationResult(placeName, response.Lat, response.Lon, IsAutoDetected: true,
+            IanaTimeZone: string.IsNullOrWhiteSpace(response.Timezone) ? null : response.Timezone);
     }
 
-    private record IpApiResponse(string Status, string City, string RegionName, string Country, double Lat, double Lon);
+    private record IpApiResponse(string Status, string City, string RegionName, string Country, double Lat, double Lon, string? Timezone);
 }

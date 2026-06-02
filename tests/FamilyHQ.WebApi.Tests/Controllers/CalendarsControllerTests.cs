@@ -191,9 +191,57 @@ public class CalendarsControllerTests
         result.Should().BeOfType<UnauthorizedResult>();
     }
 
+    // ── UpdateCalendarSettings ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateCalendarSettings_WhenSharedDesignationChanges_EnqueuesReconcileAndWakesWorker()
+    {
+        // Arrange
+        var (calendarRepository, _, currentUser, syncJobQueue, syncJobSignal, systemUnderTest) = CreateFullSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+
+        var cal = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsShared = false, IsVisible = true };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cal);
+
+        var request = new CalendarSettingsRequest(IsVisible: true, IsShared: true);
+
+        // Act
+        var result = await systemUnderTest.UpdateCalendarSettings(CalAId, request, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        syncJobQueue.Verify(q => q.EnqueueAsync(
+            "u-1", null, SyncJobSource.DesignationChange, null, It.IsAny<CancellationToken>()), Times.Once);
+        syncJobSignal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateCalendarSettings_WhenSharedDesignationUnchanged_DoesNotEnqueue()
+    {
+        // Arrange
+        var (calendarRepository, _, currentUser, syncJobQueue, syncJobSignal, systemUnderTest) = CreateFullSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+
+        var cal = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsShared = false, IsVisible = false };
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cal);
+
+        var request = new CalendarSettingsRequest(IsVisible: true, IsShared: false);
+
+        // Act
+        var result = await systemUnderTest.UpdateCalendarSettings(CalAId, request, CancellationToken.None);
+
+        // Assert
+        result.Should().BeOfType<OkObjectResult>();
+        syncJobQueue.Verify(q => q.EnqueueAsync(
+            It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        syncJobSignal.Verify(s => s.Release(), Times.Never);
+    }
+
     private static (Mock<ICalendarRepository>, CalendarsController) CreateSut()
     {
-        var (calRepo, _, _, sut) = CreateSutWithAuth();
+        var (calRepo, _, _, _, _, sut) = CreateFullSut();
         return (calRepo, sut);
     }
 
@@ -203,17 +251,33 @@ public class CalendarsControllerTests
         Mock<ICurrentUserService> CurrentUser,
         CalendarsController SystemUnderTest) CreateSutWithAuth()
     {
+        var (calRepo, tokenStore, currentUser, _, _, sut) = CreateFullSut();
+        return (calRepo, tokenStore, currentUser, sut);
+    }
+
+    private static (
+        Mock<ICalendarRepository> CalendarRepo,
+        Mock<ITokenStore> TokenStore,
+        Mock<ICurrentUserService> CurrentUser,
+        Mock<ICalendarSyncJobQueue> SyncJobQueue,
+        Mock<ISyncJobSignal> SyncJobSignal,
+        CalendarsController SystemUnderTest) CreateFullSut()
+    {
         var calendarRepositoryMock = new Mock<ICalendarRepository>();
         var loggerMock = new Mock<ILogger<CalendarsController>>();
         var tokenStoreMock = new Mock<ITokenStore>();
         var currentUserMock = new Mock<ICurrentUserService>();
+        var syncJobQueueMock = new Mock<ICalendarSyncJobQueue>();
+        var syncJobSignalMock = new Mock<ISyncJobSignal>();
 
         var systemUnderTest = new CalendarsController(
             calendarRepositoryMock.Object,
             loggerMock.Object,
             tokenStoreMock.Object,
-            currentUserMock.Object);
+            currentUserMock.Object,
+            syncJobQueueMock.Object,
+            syncJobSignalMock.Object);
 
-        return (calendarRepositoryMock, tokenStoreMock, currentUserMock, systemUnderTest);
+        return (calendarRepositoryMock, tokenStoreMock, currentUserMock, syncJobQueueMock, syncJobSignalMock, systemUnderTest);
     }
 }

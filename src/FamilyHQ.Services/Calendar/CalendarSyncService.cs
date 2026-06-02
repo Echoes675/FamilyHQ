@@ -184,8 +184,19 @@ public class CalendarSyncService(
             var events = fetchedEvents as IReadOnlyList<CalendarEvent> ?? fetchedEvents.ToList();
 
             var allLocalCalendars = await calendarRepository.GetCalendarsAsync(ct);
-            var knownMemberNames  = allLocalCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
-            var calendarByName    = allLocalCalendars.Where(c => !c.IsShared)
+            // FHQ-46: two candidate sets for member resolution (see IMemberTagParser.ParseMembers).
+            //  - memberCalendarNames (non-shared) governs the FREE-FORM fallback, so a user's free-text
+            //    description that merely mentions the shared (container) calendar's name is NOT treated as
+            //    a membership. Free-form member entry (any format/separator/case) is otherwise preserved.
+            //  - allCalendarNames resolves an EXPLICIT "[members: ...]" tag, which is authoritative — so a
+            //    tagged member is not dropped while its calendar is transiently shared (the first-login
+            //    auto-designation window). The app never writes the shared calendar into a tag
+            //    (NormaliseDescription strips it), so the broader set only ever rescues a legitimately-
+            //    tagged member; it never invents one. The memberless-event fallback below still excludes
+            //    the shared container calendar.
+            var memberCalendarNames = allLocalCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
+            var allCalendarNames    = allLocalCalendars.Select(c => c.DisplayName).ToList();
+            var calendarByName      = allLocalCalendars
                 .ToDictionary(c => c.DisplayName, StringComparer.OrdinalIgnoreCase);
 
             // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the
@@ -248,8 +259,9 @@ public class CalendarSyncService(
                         continue;
                     }
 
-                    // Derive members from description
-                    var parsedNames   = memberTagParser.ParseMembers(evt.Description, knownMemberNames);
+                    // Derive members from description: free-form fallback over member calendars only,
+                    // explicit [members:] tag resolved authoritatively over all calendars (FHQ-46).
+                    var parsedNames   = memberTagParser.ParseMembers(evt.Description, memberCalendarNames, allCalendarNames);
                     var parsedMembers = parsedNames
                         .Where(n => calendarByName.ContainsKey(n))
                         .Select(n => calendarByName[n])

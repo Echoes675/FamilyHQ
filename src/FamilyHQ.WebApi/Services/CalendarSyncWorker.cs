@@ -71,6 +71,17 @@ public class CalendarSyncWorker(
         BackgroundUserContext.Current = job.UserId;
         try
         {
+            if (job.Source == SyncJobSource.DesignationChange)
+            {
+                var reconciler = scope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
+                var rStart = DateTimeOffset.UtcNow.AddDays(-30);
+                var rEnd = DateTimeOffset.UtcNow.AddDays(365);
+                var reconciled = await reconciler.ReconcileForUserAsync(rStart, rEnd, CancellationToken.None);
+                await queue.CompleteAsync(job.Id, stoppingToken);
+                if (reconciled) await hubContext.Clients.All.SendAsync("EventsUpdated", CancellationToken.None);
+                return;
+            }
+
             var sync = scope.ServiceProvider.GetRequiredService<ICalendarSyncService>();
             var start = DateTimeOffset.UtcNow.AddDays(-30);
             var end = DateTimeOffset.UtcNow.AddDays(365);

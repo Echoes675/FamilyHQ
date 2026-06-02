@@ -27,6 +27,8 @@ services:
       - Weather__BaseUrl=${Weather__BaseUrl}
       - Geocoding__BaseUrl=${Geocoding__BaseUrl}
       - ReverseProxy__Enabled=true
+      - Seq__ServerUrl=${Seq__ServerUrl}
+      - Seq__ApiKey=${Seq__ApiKey}
       - VIRTUAL_HOST=${VIRTUAL_HOST_API}
       - VIRTUAL_PORT=8080
       - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_API}

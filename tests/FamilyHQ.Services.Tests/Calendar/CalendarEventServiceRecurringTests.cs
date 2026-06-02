@@ -260,6 +260,33 @@ public class CalendarEventServiceRecurringTests
     }
 
     [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ExplicitTagNamingSharedCalendar_RetainsThatMember()
+    {
+        // FHQ-47 (Gap 2): the reconcile re-derives an instance's members from its description. When a
+        // tagged calendar is TRANSIENTLY marked IsShared (the first-login auto-designation window), an
+        // explicit "[members: ...]" tag naming it must still resolve it — the tag is authoritative and
+        // resolves against ALL calendars, so the member is not silently dropped.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        // Google returns an instance whose description explicitly tags Alice AND Family (Family is the
+        // shared calendar — i.e. a calendar currently flagged IsShared=true).
+        var fetched = f.GoogleInstance("inst-1", WindowStart.AddDays(7));
+        fetched.Description = "Body\n[members: Alice, Family]";
+        f.ArrangeReconcileWindow([fetched]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("T", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        // The reconciled row retains BOTH tagged members — Family is NOT dropped despite IsShared.
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"
+                && e.Members.Any(m => m.DisplayName == "Alice")
+                && e.Members.Any(m => m.DisplayName == "Family")),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task UpdateRecurringAsync_ThisAndFollowing_PersistsNewInstancesWithNonNullRecurrenceRule()
     {
         var f = new Fixture();
@@ -713,8 +740,8 @@ public class CalendarEventServiceRecurringTests
                 .Returns((string d, IReadOnlyList<string> names) => realParser.NormaliseDescription(d, names));
             TagParser.Setup(p => p.StripMemberTag(It.IsAny<string>()))
                 .Returns((string d) => realParser.StripMemberTag(d));
-            TagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
-                .Returns((string d, IReadOnlyList<string> names) => realParser.ParseMembers(d, names));
+            TagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+                .Returns((string d, IReadOnlyList<string> names, IReadOnlyList<string>? tagged) => realParser.ParseMembers(d, names, tagged));
             TagParser.Setup(p => p.ExtractTaggedMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
                 .Returns((string d, IReadOnlyList<string> names) => realParser.ExtractTaggedMembers(d, names));
 

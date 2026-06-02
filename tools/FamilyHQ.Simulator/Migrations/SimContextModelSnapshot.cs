@@ -94,6 +94,10 @@ namespace FamilyHQ.Simulator.Migrations
                     b.Property<DateTime>("StartTime")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("StartTimeZone")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.Property<string>("Summary")
                         .IsRequired()
                         .HasMaxLength(500)

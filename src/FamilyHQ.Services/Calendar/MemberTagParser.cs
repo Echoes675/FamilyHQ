@@ -10,16 +10,24 @@ public class MemberTagParser : IMemberTagParser
         @"\[members:\s*([^\]]*)\]",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public IReadOnlyList<string> ParseMembers(string? description, IReadOnlyList<string> knownMemberNames)
+    public IReadOnlyList<string> ParseMembers(
+        string? description,
+        IReadOnlyList<string> knownMemberNames,
+        IReadOnlyList<string>? taggedCalendarNames = null)
     {
         if (string.IsNullOrWhiteSpace(description))
             return [];
 
         var tagMatch = TagRegex.Match(description);
         if (tagMatch.Success)
-            return ResolveTagContent(tagMatch.Groups[1].Value, knownMemberNames);
+            // An explicit tag is authoritative: resolve it against the broader candidate set (all
+            // calendars, incl. a transiently-shared one) when supplied, so a tagged member is not
+            // dropped while its calendar is shared (FHQ-46). Falls back to the member set when null.
+            return ResolveTagContent(tagMatch.Groups[1].Value, taggedCalendarNames ?? knownMemberNames);
 
-        // Fallback: whole-word name matching
+        // Free-form fallback: whole-word, case-insensitive, any separator/format (e.g. "Alice and
+        // Bob", "alice; bob"). Matches ONLY member (non-shared) calendar names, so a description that
+        // merely mentions the shared container calendar's name does not silently make it a member.
         return knownMemberNames
             .Where(name => Regex.IsMatch(description, $@"\b{Regex.Escape(name)}\b", RegexOptions.IgnoreCase))
             .ToList();

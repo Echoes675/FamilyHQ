@@ -1,0 +1,42 @@
+# Shared Seq for the PRODUCTION host — FHQ-34 Phase 2.
+#
+# DOCUMENTED REFERENCE for a standalone, manually-managed Seq stack on the prod host
+# (alphaepsilon.co.uk). It is deliberately NOT part of the FamilyHQ deploy
+# (docker-compose.prod.yml / Jenkinsfile.deploy-prod), so:
+#   - FamilyHQ (or any other app) redeploying never restarts or resets it, and
+#   - ANY application on the box can ship logs to it — shared logging infrastructure.
+# Deploy it ONCE, manually, alongside the host's other shared-service compose files.
+#
+# It joins the shared external `nginx-proxy-ssl` network, so:
+#   - nginx-proxy + acme-companion expose the UI at ${VIRTUAL_HOST_SEQ} over TLS (auto cert), and
+#   - any app on that network reaches it internally at http://seq (the container name).
+#
+# Secrets (admin password hash) come from a host-only .env beside this file — never committed.
+# Generate the hash once:  echo '<password>' | docker run --rm -i datalust/seq config hash
+# Retention (30 days for prod) is set in the Seq UI after first boot.
+services:
+  seq:
+    image: datalust/seq:latest        # pin to a specific version once validated on the host
+    container_name: seq
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINPASSWORDHASH=${SEQ_FIRSTRUN_ADMINPASSWORDHASH}
+      - VIRTUAL_HOST=${VIRTUAL_HOST_SEQ:-seq.alphaepsilon.co.uk}
+      - VIRTUAL_PORT=80
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_SEQ:-seq.alphaepsilon.co.uk}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      - seq-data:/data
+    mem_limit: 512m
+    networks:
+      - nginx-proxy-ssl
+
+networks:
+  nginx-proxy-ssl:
+    external: true
+    name: ${APP_NETWORK_NAME:-nginx-proxy-ssl_default}
+
+volumes:
+  seq-data:
+    name: seq-data

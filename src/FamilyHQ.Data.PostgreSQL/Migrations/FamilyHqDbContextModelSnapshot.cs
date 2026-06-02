@@ -240,6 +240,13 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("IanaTimeZone")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsTimeZoneAutoDetected")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("OpaqueSurfaces")
                         .HasColumnType("boolean");
 

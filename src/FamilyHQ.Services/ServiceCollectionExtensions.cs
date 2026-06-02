@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
         services.AddScoped<IMemberTagParser, MemberTagParser>();
         services.AddScoped<ICalendarMigrationService, CalendarMigrationService>();
+        services.AddScoped<IPlacementReconciler, PlacementReconciler>();
         services.AddScoped<ICalendarSyncService, CalendarSyncService>();
         services.AddScoped<IWebhookRegistrationService, WebhookRegistrationService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();
@@ -50,6 +51,9 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();
+
+        services.AddMemoryCache();
+        services.AddScoped<ITimeZoneService, TimeZoneService>();
 
         return services;
     }

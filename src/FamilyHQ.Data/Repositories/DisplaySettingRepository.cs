@@ -25,6 +25,7 @@ public class DisplaySettingRepository(FamilyHqDbContext context) : IDisplaySetti
         existing.OpaqueSurfaces = setting.OpaqueSurfaces;
         existing.TransitionDurationSecs = setting.TransitionDurationSecs;
         existing.ThemeSelection = setting.ThemeSelection;
+        existing.IanaTimeZone = setting.IanaTimeZone;
         existing.UpdatedAt = setting.UpdatedAt;
         await context.SaveChangesAsync(ct);
         return existing;

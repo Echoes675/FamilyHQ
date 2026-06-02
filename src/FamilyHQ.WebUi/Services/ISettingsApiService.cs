@@ -10,4 +10,8 @@ public interface ISettingsApiService
     Task<DayThemeDto> GetTodayThemeAsync();
     Task<DisplaySettingDto> GetDisplayAsync();
     Task<DisplaySettingDto> SaveDisplayAsync(DisplaySettingDto dto);
+    Task<IReadOnlyList<string>> GetTimeZonesAsync();
+    Task<TimeZoneSettingDto> GetTimeZoneAsync();
+    Task SetTimeZoneAsync(string ianaTimeZone);
+    Task ResetTimeZoneAsync();
 }

@@ -47,6 +47,42 @@ public class BackdoorEventsController : ControllerBase
     }
 
     /// <summary>
+    /// FHQ-43: returns the stored event matching userId + calendarId + summary, including the IANA
+    /// StartTimeZone the app anchored a recurring timed event to (Google start.timeZone). E2E uses
+    /// this to prove the user's configured zone reached Google rather than being discarded. Excludes
+    /// soft-deleted rows and instance-override tombstones; returns the most recent match if several
+    /// share a summary. 404 when no match exists yet so callers can poll.
+    /// </summary>
+    [HttpGet]
+    public async Task<IActionResult> GetEvent(
+        [FromQuery] string userId, [FromQuery] string calendarId, [FromQuery] string summary)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(calendarId) || string.IsNullOrWhiteSpace(summary))
+            return BadRequest("userId, calendarId and summary query parameters are required.");
+
+        var match = await _db.Events
+            .Where(e => e.UserId == userId
+                        && e.CalendarId == calendarId
+                        && e.Summary == summary
+                        && !e.IsDeleted
+                        && e.RecurringEventId == null)
+            .OrderByDescending(e => e.StartTime)
+            .FirstOrDefaultAsync();
+
+        if (match == null)
+            return NotFound();
+
+        return Ok(new
+        {
+            match.Id,
+            match.CalendarId,
+            match.Summary,
+            match.StartTimeZone,
+            match.RecurrenceRule
+        });
+    }
+
+    /// <summary>
     /// Updates the summary of an existing event. Accepts userId in body.
     /// </summary>
     [HttpPut("{eventId}")]

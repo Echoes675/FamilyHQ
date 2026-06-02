@@ -10,9 +10,9 @@
         <p class="settings-label">Current location</p>
         @if (_locationSetting is not null)
         {
-            <div class="settings-location-pill">
+            <div class="settings-location-pill" data-testid="location-pill">
                 <span>@_locationSetting.PlaceName</span>
-                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")">
+                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")" data-testid="location-badge">
                     @(_locationSetting.IsAutoDetected ? "Auto" : "Saved")
                 </span>
             </div>
@@ -48,6 +48,48 @@
         }
         <p class="settings-hint">Takes effect immediately.</p>
     </div>
+
+    <div class="settings-section">
+        <p class="settings-label">Time zone</p>
+        @if (_tz is not null)
+        {
+            <div class="settings-location-pill" data-testid="tz-pill">
+                <span data-testid="tz-effective-zone">@_tz.EffectiveIanaZone</span>
+                <span class="settings-location-pill__badge @(_tz.IsExplicit ? "badge--saved" : "badge--auto")" data-testid="tz-badge">
+                    @(_tz.IsExplicit ? "Saved" : "Auto")
+                </span>
+            </div>
+        }
+        else
+        {
+            <p class="settings-hint">Loading time zone…</p>
+        }
+
+        <div class="settings-input-container">
+            <label for="timezone-select" class="settings-label">Override time zone</label>
+            <select id="timezone-select"
+                    data-testid="tz-select"
+                    class="settings-input"
+                    @bind="_selectedZone">
+                <option value="">— select a time zone —</option>
+                @foreach (var zone in _zones)
+                {
+                    <option value="@zone">@zone</option>
+                }
+            </select>
+        </div>
+
+        <button class="settings-btn" data-testid="save-timezone-btn" @onclick="SaveTimeZoneAsync" disabled="@(_isSavingTz || string.IsNullOrEmpty(_selectedZone))">
+            @(_isSavingTz ? "Saving…" : "Save Time Zone")
+        </button>
+        @if (_tz is { IsExplicit: true })
+        {
+            <button class="settings-btn settings-btn--ghost" data-testid="reset-timezone-btn" @onclick="ResetTimeZoneAsync" disabled="@_isSavingTz">
+                Reset to auto-detect
+            </button>
+        }
+        <p class="settings-hint">Keeps recurring events at the right local time across daylight saving changes.</p>
+    </div>
 </div>
 
 @code {
@@ -56,9 +98,17 @@
     private bool _isSaving;
     private string? _saveError;
 
+    private TimeZoneSettingDto? _tz;
+    private IReadOnlyList<string> _zones = Array.Empty<string>();
+    private string _selectedZone = string.Empty;
+    private bool _isSavingTz;
+
     protected override async Task OnInitializedAsync()
     {
         _locationSetting = await SettingsApiService.GetLocationAsync();
+        StateHasChanged();   // show the location section immediately; don't gate it on the tz load
+        _zones = await SettingsApiService.GetTimeZonesAsync();
+        _tz = await SettingsApiService.GetTimeZoneAsync();
     }
 
     private async Task OnInputFocus()
@@ -109,6 +159,37 @@
         finally
         {
             _isSaving = false;
+        }
+    }
+
+    private async Task SaveTimeZoneAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedZone)) return;
+
+        _isSavingTz = true;
+        try
+        {
+            await SettingsApiService.SetTimeZoneAsync(_selectedZone);
+            _tz = await SettingsApiService.GetTimeZoneAsync();
+            _selectedZone = string.Empty;
+        }
+        finally
+        {
+            _isSavingTz = false;
+        }
+    }
+
+    private async Task ResetTimeZoneAsync()
+    {
+        _isSavingTz = true;
+        try
+        {
+            await SettingsApiService.ResetTimeZoneAsync();
+            _tz = await SettingsApiService.GetTimeZoneAsync();
+        }
+        finally
+        {
+            _isSavingTz = false;
         }
     }
 }

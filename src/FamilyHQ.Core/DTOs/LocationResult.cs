@@ -4,5 +4,5 @@ public record LocationResult(
     string PlaceName,
     double Latitude,
     double Longitude,
-    bool IsAutoDetected
-);
+    bool IsAutoDetected,
+    string? IanaTimeZone);

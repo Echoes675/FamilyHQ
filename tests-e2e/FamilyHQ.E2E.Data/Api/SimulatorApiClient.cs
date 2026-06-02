@@ -82,6 +82,35 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
+    /// FHQ-43: reads the stored event matching userId + calendarId + summary from the Simulator
+    /// backdoor, returning the IANA <c>StartTimeZone</c> the app anchored the (recurring) timed
+    /// event to. Returns null when no matching event exists yet, so callers can poll for the
+    /// asynchronous create to land.
+    /// </summary>
+    public async Task<string?> GetEventStartTimeZoneAsync(string userId, string calendarId, string summary)
+    {
+        var url = $"api/simulator/backdoor/events" +
+                  $"?userId={Uri.EscapeDataString(userId)}" +
+                  $"&calendarId={Uri.EscapeDataString(calendarId)}" +
+                  $"&summary={Uri.EscapeDataString(summary)}";
+        var response = await _httpClient.GetAsync(url);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<BackdoorEventResponse>();
+        return result?.StartTimeZone;
+    }
+
+    private sealed class BackdoorEventResponse
+    {
+        public string? Id { get; set; }
+        public string? CalendarId { get; set; }
+        public string? Summary { get; set; }
+        public string? StartTimeZone { get; set; }
+        public string? RecurrenceRule { get; set; }
+    }
+
+    /// <summary>
     /// Triggers the Simulator to fire a push notification to the WebApi webhook endpoint,
     /// which causes the WebApi to run SyncAllAsync and notify clients via SignalR.
     /// </summary>

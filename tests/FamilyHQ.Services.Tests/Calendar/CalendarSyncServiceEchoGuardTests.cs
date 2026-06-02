@@ -35,7 +35,7 @@ public class CalendarSyncServiceEchoGuardTests
         var logger          = new RecordingLogger<CalendarSyncService>();
 
         currentUser.SetupGet(c => c.UserId).Returns("test-user");
-        tagParser.Setup(p => p.ParseMembers(It.IsAny<string?>(), It.IsAny<IReadOnlyList<string>>()))
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string?>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
                  .Returns(new List<string>());
 
         // Wire up a calendar for every test
