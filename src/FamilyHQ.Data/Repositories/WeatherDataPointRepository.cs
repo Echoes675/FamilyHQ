@@ -46,12 +46,16 @@ public class WeatherDataPointRepository(FamilyHqDbContext context) : IWeatherDat
 
     public async Task ReplaceAllAsync(int locationSettingId, List<WeatherDataPoint> dataPoints, CancellationToken ct = default)
     {
-        var existing = await context.WeatherDataPoints
+        // Set-based delete (one statement, no per-row params) instead of loading + RemoveRange,
+        // which produced a multi-thousand-parameter DELETE whose EF command-log event exceeded
+        // Seq's 256 KB limit (FHQ-52). The transaction wraps the delete + insert for atomicity,
+        // since ExecuteDeleteAsync runs immediately, outside SaveChanges.
+        await using var tx = await context.Database.BeginTransactionAsync(ct);
+        await context.WeatherDataPoints
             .Where(x => x.LocationSettingId == locationSettingId)
-            .ToListAsync(ct);
-
-        context.WeatherDataPoints.RemoveRange(existing);
+            .ExecuteDeleteAsync(ct);
         context.WeatherDataPoints.AddRange(dataPoints);
         await context.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
     }
 }
