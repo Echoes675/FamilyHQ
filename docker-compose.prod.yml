@@ -27,6 +27,8 @@ services:
       - Weather__BaseUrl=${Weather__BaseUrl}
       - Geocoding__BaseUrl=${Geocoding__BaseUrl}
       - ReverseProxy__Enabled=true
+      - Seq__ServerUrl=${Seq__ServerUrl}
+      - Seq__ApiKey=${Seq__ApiKey}
       - VIRTUAL_HOST=${VIRTUAL_HOST_API}
       - VIRTUAL_PORT=8080
       - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_API}
@@ -36,7 +38,33 @@ services:
     networks:
       - nginx-proxy-ssl
 
+  # Production Seq — co-located on the prod host, holds ONLY production logs (FHQ-34).
+  # Exposed at seq.alphaepsilon.co.uk via nginx-proxy-ssl (TLS auto-issued by the
+  # acme-companion). The app ingests internally over the shared network at
+  # http://familyhq-seq-prod; the prod ingestion API key + admin hash come from the
+  # gitignored .env, never committed. Retention (30d) is set in the Seq UI after first boot.
+  seq:
+    image: datalust/seq:latest        # pin to a specific version once validated on the prod host
+    container_name: familyhq-seq-prod
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINPASSWORDHASH=${SEQ_FIRSTRUN_ADMINPASSWORDHASH}
+      - VIRTUAL_HOST=${VIRTUAL_HOST_SEQ}
+      - VIRTUAL_PORT=80
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_SEQ}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      - familyhq-seq-prod-data:/data
+    mem_limit: 512m
+    networks:
+      - nginx-proxy-ssl
+
 networks:
   nginx-proxy-ssl:
     external: true
     name: ${APP_NETWORK_NAME:-nginx-proxy-ssl_default}
+
+volumes:
+  familyhq-seq-prod-data:
+    name: familyhq-seq-prod-data
