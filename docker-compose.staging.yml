@@ -31,6 +31,8 @@ services:
       - DataProtection__CertificatePath=/app/certs/dataprotection.pfx
       - DataProtection__CertificatePassword=${DataProtection__CertificatePassword}
       - ReverseProxy__Enabled=true
+      - Seq__ServerUrl=${Seq__ServerUrl}
+      - Seq__ApiKey=${Seq__ApiKey}
     volumes:
       - ./dataprotection.pfx:/app/certs/dataprotection.pfx:ro
     labels:
@@ -53,6 +55,8 @@ services:
       - ConnectionStrings__DefaultConnection=${Simulator__ConnectionStrings__DefaultConnection}
       - PathBase=/simulator
       - WebApiBaseUrl=http://familyhq-webapi-staging:8080
+      - Seq__ServerUrl=${Seq__ServerUrl}
+      - Seq__ApiKey=${Seq__ApiKey}
     labels:
       - "traefik.enable=true"
       - "traefik.constraint-label=familyhq-staging"
