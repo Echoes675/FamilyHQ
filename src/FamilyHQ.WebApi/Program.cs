@@ -7,18 +7,24 @@ using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-builder.Logging.AddDebug();
+// Structured logging via Serilog: Console (Docker stdout) + prod-safe Seq sink.
+// Verbosity is still governed by the existing Logging:LogLevel section.
+builder.Host.UseSerilog((context, loggerConfiguration) =>
+    SerilogConfigurator.Configure(
+        loggerConfiguration,
+        context.Configuration,
+        application: "FamilyHQ.WebApi",
+        environment: builder.Environment.EnvironmentName));
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();

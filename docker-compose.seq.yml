@@ -1,0 +1,39 @@
+# Shared Seq for the lower environments (dev / staging / preprod) — FHQ-33 Phase 1b.
+#
+# DOCUMENTED REFERENCE ONLY. The live container is managed by the OpenMediaVault Compose
+# plugin on the OMV host (192.168.86.23), NOT by Jenkins — it must never be torn down or
+# recreated by a per-environment deploy, so it lives outside the env stacks and is stood up
+# once. This file is the source-of-truth record of that stack.
+#
+# It joins the shared external `postgres` network that every environment's webapi + simulator
+# already attach to, so they reach it internally at http://familyhq-seq. The UI is on host
+# port 8500 (LAN only), protected by Seq's own login (authentication enabled at first run;
+# anonymous access disabled).
+#
+# The admin password is seeded once via SEQ_FIRSTRUN_ADMINPASSWORDHASH (generate with
+#   echo '<password>' | docker run --rm -i datalust/seq config hash
+# ) supplied from a host-only .env next to this file — never committed here.
+services:
+  seq:
+    image: datalust/seq:latest        # pin to a specific version once validated on the host
+    container_name: familyhq-seq
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINPASSWORDHASH=${SEQ_FIRSTRUN_ADMINPASSWORDHASH}
+    ports:
+      - "8500:80"                      # LAN UI: http://192.168.86.23:8500
+    volumes:
+      - familyhq-seq-data:/data
+    mem_limit: 512m
+    networks:
+      - postgres
+
+networks:
+  postgres:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:-postgres_default}
+
+volumes:
+  familyhq-seq-data:
+    name: familyhq-seq-data

@@ -1,11 +1,22 @@
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
 using FamilyHQ.Simulator.Middleware;
 using FamilyHQ.Simulator.State;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Structured logging via Serilog: Console (Docker stdout) + prod-safe Seq sink.
+// Verbosity is still governed by the existing Logging:LogLevel section.
+builder.Host.UseSerilog((context, loggerConfiguration) =>
+    SerilogConfigurator.Configure(
+        loggerConfiguration,
+        context.Configuration,
+        application: "FamilyHQ.Simulator",
+        environment: builder.Environment.EnvironmentName));
 
 builder.Services.AddControllers();
 builder.Services.AddDbContext<SimContext>(options =>
