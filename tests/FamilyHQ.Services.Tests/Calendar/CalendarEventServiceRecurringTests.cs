@@ -1,4 +1,5 @@
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
@@ -355,7 +356,7 @@ public class CalendarEventServiceRecurringTests
         var request = Req("T", InstanceStart, "Body\n[members: Alice, Bob]");
 
         await f.Sut.Invoking(s => s.UpdateRecurringAsync(EventId, request, RecurrenceScope.ThisOnly))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<MemberScopeViolationException>();
     }
 
     [Fact]
@@ -383,7 +384,7 @@ public class CalendarEventServiceRecurringTests
         var request = Req("T", InstanceStart, "Body\n[members: Alice, Bob]");
 
         await f.Sut.Invoking(s => s.UpdateRecurringAsync(EventId, request, RecurrenceScope.ThisAndFollowing))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<MemberScopeViolationException>();
     }
 
     [Fact]
@@ -490,7 +491,7 @@ public class CalendarEventServiceRecurringTests
         f.ArrangeEvent(nonRecurring);
 
         await f.Sut.Invoking(s => s.UpdateRecurringAsync(EventId, Req("T", InstanceStart, "B"), RecurrenceScope.ThisOnly))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<NotPartOfRecurringSeriesException>();
     }
 
     [Fact]
@@ -506,7 +507,7 @@ public class CalendarEventServiceRecurringTests
         f.ArrangeEvent(nonRecurring);
 
         await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.ThisOnly))
-            .Should().ThrowAsync<InvalidOperationException>();
+            .Should().ThrowAsync<NotPartOfRecurringSeriesException>();
     }
 
     // ── Native recurring creation (FHQ-18.5 Part A) ───────────────────────────
