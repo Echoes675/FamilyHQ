@@ -29,6 +29,11 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
+// Single point that maps typed domain exceptions to HTTP status codes (FHQ-39). RFC7807
+// ProblemDetails are emitted for handled domain exceptions; anything else falls through to 500.
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<FamilyHQ.WebApi.Middleware.DomainExceptionHandler>();
+
 // Configure Services
 builder.Services.Configure<GoogleCalendarOptions>(builder.Configuration.GetSection(GoogleCalendarOptions.SectionName));
 
@@ -169,6 +174,10 @@ if (app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GlobalExceptionMiddleware>();
+// Maps typed domain exceptions to ProblemDetails (FHQ-39). Registered inside GlobalExceptionMiddleware
+// so domain exceptions are turned into 4xx here; any non-domain exception this handler declines falls
+// through to GlobalExceptionMiddleware and surfaces as a 500.
+app.UseExceptionHandler();
 app.UseMiddleware<RequestTimingMiddleware>();
 
 // Configure the HTTP request pipeline.

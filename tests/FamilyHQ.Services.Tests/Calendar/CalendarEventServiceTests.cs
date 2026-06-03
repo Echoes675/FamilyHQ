@@ -1,5 +1,6 @@
 using FluentAssertions;
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
@@ -79,7 +80,7 @@ public class CalendarEventServiceTests
             [CalBId], "Title", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1), false, null, null);
 
         await sut.Invoking(s => s.CreateAsync(request))
-            .Should().ThrowAsync<ArgumentException>();
+            .Should().ThrowAsync<UnknownCalendarException>();
     }
 
     // ── UpdateAsync ───────────────────────────────────────────────────────────
@@ -110,12 +111,12 @@ public class CalendarEventServiceTests
     // ── SetMembersAsync ───────────────────────────────────────────────────────
 
     [Fact]
-    public async Task SetMembersAsync_EmptyList_ThrowsArgumentException()
+    public async Task SetMembersAsync_EmptyList_ThrowsNoMembersException()
     {
         var (google, repo, migration, tagParser, sut) = CreateSut();
 
         await sut.Invoking(s => s.SetMembersAsync(EventId, Array.Empty<Guid>()))
-            .Should().ThrowAsync<ArgumentException>();
+            .Should().ThrowAsync<NoMembersException>();
     }
 
     [Fact]
