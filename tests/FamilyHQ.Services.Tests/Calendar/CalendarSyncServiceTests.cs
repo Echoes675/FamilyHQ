@@ -922,6 +922,48 @@ public class CalendarSyncServiceTests
         result.HadChanges.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task SyncAsync_WhenSyncTokenExpires_ClearsTokenAndRetriesAsFullSync()
+    {
+        // Arrange
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var calendarId       = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var googleCalendarId = "test@group.calendar.google.com";
+        var startDate        = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var endDate          = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(365);
+
+        var calendarInfo  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
+        var existingState = new SyncState { CalendarInfoId = calendarId, SyncToken = "stale-token" };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendarInfo);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existingState);
+
+        // First call (incremental, stale token) → 410
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "stale-token", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new SyncTokenExpiredException());
+
+        // Second call (full sync after token cleared) → success
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "fresh-token"));
+
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendarInfo });
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, startDate, endDate);
+
+        // Assert — incremental call was attempted once, then a full-sync retry was made
+        client.Verify(c => c.GetEventsAsync(googleCalendarId, null, null, "stale-token", It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — SaveSyncStateAsync called twice: once to clear the token, once to persist the fresh token
+        calendarRepository.Verify(r => r.SaveSyncStateAsync(It.IsAny<SyncState>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {

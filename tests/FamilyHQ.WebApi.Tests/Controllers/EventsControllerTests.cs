@@ -1,5 +1,6 @@
 using FluentAssertions;
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Controllers;
@@ -137,32 +138,49 @@ public class EventsControllerTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    // The controller no longer maps exceptions — typed domain exceptions propagate to the global
+    // DomainExceptionHandler (see DomainExceptionHandlerTests for the status mapping). These tests
+    // assert the controller surfaces the typed exception rather than masking it.
     [Fact]
-    public async Task UpdateRecurringEvent_EventNotPartOfSeries_Returns400()
+    public async Task UpdateRecurringEvent_EventNotPartOfSeries_PropagatesTypedException()
     {
         var (service, sut) = CreateSut();
         var request = new UpdateEventRequest("Title", FixedStart, FixedEnd, false, null, null);
         service.Setup(s => s.UpdateRecurringAsync(
                 EventId, It.IsAny<UpdateEventRequest>(), It.IsAny<RecurrenceScope>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException($"Event {EventId} is not part of a recurring series."));
+            .ThrowsAsync(new NotPartOfRecurringSeriesException(EventId));
 
-        var result = await sut.UpdateRecurringEvent(EventId, RecurrenceScope.ThisOnly, request, CancellationToken.None);
-
-        result.Should().BeOfType<BadRequestObjectResult>();
+        await sut.Invoking(s => s.UpdateRecurringEvent(EventId, RecurrenceScope.ThisOnly, request, CancellationToken.None))
+            .Should().ThrowAsync<NotPartOfRecurringSeriesException>();
     }
 
     [Fact]
-    public async Task UpdateRecurringEvent_MemberChangeOutsideAllScope_Returns400()
+    public async Task UpdateRecurringEvent_MemberChangeOutsideAllScope_PropagatesTypedException()
     {
         var (service, sut) = CreateSut();
         var request = new UpdateEventRequest("Title", FixedStart, FixedEnd, false, null, null);
         service.Setup(s => s.UpdateRecurringAsync(
                 EventId, It.IsAny<UpdateEventRequest>(), RecurrenceScope.ThisOnly, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Member changes apply to the whole series."));
+            .ThrowsAsync(new MemberScopeViolationException());
 
-        var result = await sut.UpdateRecurringEvent(EventId, RecurrenceScope.ThisOnly, request, CancellationToken.None);
+        await sut.Invoking(s => s.UpdateRecurringEvent(EventId, RecurrenceScope.ThisOnly, request, CancellationToken.None))
+            .Should().ThrowAsync<MemberScopeViolationException>();
+    }
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+    [Fact]
+    public async Task UpdateRecurringEvent_UnexpectedServerPrecondition_PropagatesInvalidOperationException()
+    {
+        var (service, sut) = CreateSut();
+        var request = new UpdateEventRequest("Title", FixedStart, FixedEnd, false, null, null);
+        // A genuine server-precondition failure (e.g. missing sync window) must NOT be masked as a
+        // 4xx: the controller lets the raw InvalidOperationException propagate so the handler declines
+        // it and it surfaces as a 500.
+        service.Setup(s => s.UpdateRecurringAsync(
+                EventId, It.IsAny<UpdateEventRequest>(), It.IsAny<RecurrenceScope>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Cannot reconcile recurring write: no stored sync window."));
+
+        await sut.Invoking(s => s.UpdateRecurringEvent(EventId, RecurrenceScope.AllInSeries, request, CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
     }
 
     // ── DELETE /api/events/{eventId}/recurring ────────────────────────────────
@@ -182,28 +200,26 @@ public class EventsControllerTests
     }
 
     [Fact]
-    public async Task DeleteRecurringEvent_InvalidScope_Returns400()
+    public async Task DeleteRecurringEvent_InvalidScope_PropagatesTypedException()
     {
         var (service, sut) = CreateSut();
         // The service's default scope branch fails fast on an unmapped scope value.
         service.Setup(s => s.DeleteRecurringAsync(EventId, It.IsAny<RecurrenceScope>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ArgumentOutOfRangeException("scope"));
+            .ThrowsAsync(new UnknownRecurrenceScopeException((RecurrenceScope)99));
 
-        var result = await sut.DeleteRecurringEvent(EventId, (RecurrenceScope)99, CancellationToken.None);
-
-        result.Should().BeOfType<BadRequestObjectResult>();
+        await sut.Invoking(s => s.DeleteRecurringEvent(EventId, (RecurrenceScope)99, CancellationToken.None))
+            .Should().ThrowAsync<UnknownRecurrenceScopeException>();
     }
 
     [Fact]
-    public async Task DeleteRecurringEvent_EventNotPartOfSeries_Returns400()
+    public async Task DeleteRecurringEvent_EventNotPartOfSeries_PropagatesTypedException()
     {
         var (service, sut) = CreateSut();
         service.Setup(s => s.DeleteRecurringAsync(EventId, It.IsAny<RecurrenceScope>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException($"Event {EventId} is not part of a recurring series."));
+            .ThrowsAsync(new NotPartOfRecurringSeriesException(EventId));
 
-        var result = await sut.DeleteRecurringEvent(EventId, RecurrenceScope.ThisOnly, CancellationToken.None);
-
-        result.Should().BeOfType<BadRequestObjectResult>();
+        await sut.Invoking(s => s.DeleteRecurringEvent(EventId, RecurrenceScope.ThisOnly, CancellationToken.None))
+            .Should().ThrowAsync<NotPartOfRecurringSeriesException>();
     }
 
     // ── DELETE /api/events/{eventId} ──────────────────────────────────────────

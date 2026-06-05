@@ -47,6 +47,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     }
 
     private const int MaxLoggedBodyLength = 4096;
+    public const int MaxSyncPages = 20;
     private const string EventsListFields =
         "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)";
 
@@ -124,12 +125,14 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var events = new List<CalendarEvent>();
         string? nextSyncToken = null;
         string? pageToken = null;
+        var pageCount = 0;
 
         do
         {
             var query = new List<string>
             {
                 "singleEvents=true",
+                "maxResults=250",
                 "fields=" + Uri.EscapeDataString(EventsListFields)
             };
 
@@ -153,7 +156,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var response = await _httpClient.SendAsync(request, ct);
 
             if (response.StatusCode == HttpStatusCode.Gone)
-                throw new InvalidOperationException("Sync token is no longer valid. Full sync required.");
+                throw new SyncTokenExpiredException();
 
             await ThrowIfFailedAsync(response, "GetEvents", ct);
 
@@ -199,6 +202,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
                 pageToken = result.NextPageToken;
                 nextSyncToken = result.NextSyncToken;
+            }
+
+            pageCount++;
+            if (pageCount >= MaxSyncPages && !string.IsNullOrEmpty(pageToken))
+            {
+                _logger.LogWarning(
+                    "GetEventsAsync reached the {MaxPages}-page cap for calendar {CalendarId}. Returning {EventCount} events collected so far.",
+                    MaxSyncPages, googleCalendarId, events.Count);
+                break;
             }
         } while (!string.IsNullOrEmpty(pageToken));
 

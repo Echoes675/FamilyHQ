@@ -15,6 +15,12 @@ public interface ITokenStore
     Task<IEnumerable<string>> GetAllUserIdsAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Returns each user that has a stored token paired with that token's auth status, so callers
+    /// can decide sync eligibility (e.g. skip accounts needing re-auth) without a per-user round trip.
+    /// </summary>
+    Task<IReadOnlyList<UserAuthState>> GetAllUserAuthStatesAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Marks the user's token as needing re-consent and records the failure reason.
     /// </summary>
     Task MarkNeedsReauthAsync(string userId, string? errorDescription, CancellationToken ct = default);

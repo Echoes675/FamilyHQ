@@ -1,4 +1,5 @@
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Core.Calendar.Recurrence;
@@ -22,7 +23,7 @@ public class CalendarEventService(
         var assignedMembers = request.MemberCalendarInfoIds
             .Select(id => calendarLookup.TryGetValue(id, out var cal)
                 ? cal
-                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(request)))
+                : throw new UnknownCalendarException(id))
             .ToList();
 
         // Determine target calendar
@@ -104,7 +105,7 @@ public class CalendarEventService(
     public async Task<CalendarEvent> UpdateAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct = default)
     {
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
-            ?? throw new InvalidOperationException($"Event {eventId} not found.");
+            ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
@@ -113,9 +114,7 @@ public class CalendarEventService(
         // Contradictory request: "clear recurrence" and "set a new rule" cannot both hold. Fail fast
         // rather than silently picking one (the two fields are mutually exclusive by contract).
         if (request.ClearRecurrence && request.RecurrenceRule is not null)
-            throw new ArgumentException(
-                "ClearRecurrence and RecurrenceRule are mutually exclusive: a single update cannot both remove and set a recurrence.",
-                nameof(request));
+            throw new ContradictoryRecurrenceUpdateException();
 
         // Recurrence toggle: ON promotes a single event to a series in place; OFF collapses a series
         // back to one event. Both materialise/clean up the local rows via a window reconcile.
@@ -262,10 +261,10 @@ public class CalendarEventService(
         CancellationToken ct = default)
     {
         if (memberCalendarInfoIds.Count == 0)
-            throw new ArgumentException("At least one member is required.", nameof(memberCalendarInfoIds));
+            throw new NoMembersException();
 
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
-            ?? throw new InvalidOperationException($"Event {eventId} not found.");
+            ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var calendarLookup = allCalendars.ToDictionary(c => c.Id);
@@ -273,7 +272,7 @@ public class CalendarEventService(
         var newMembers = memberCalendarInfoIds
             .Select(id => calendarLookup.TryGetValue(id, out var cal)
                 ? cal
-                : throw new ArgumentException($"CalendarInfoId {id} is not known to the user.", nameof(memberCalendarInfoIds)))
+                : throw new UnknownCalendarException(id))
             .ToList();
 
         // Update description with new member tag
@@ -317,7 +316,7 @@ public class CalendarEventService(
     public async Task DeleteAsync(Guid eventId, CancellationToken ct = default)
     {
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
-            ?? throw new InvalidOperationException($"Event {eventId} not found.");
+            ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         var ownerCalendar = allCalendars.FirstOrDefault(c => c.Id == calendarEvent.OwnerCalendarInfoId)
@@ -373,7 +372,7 @@ public class CalendarEventService(
                 break;
 
             default:
-                throw new ArgumentOutOfRangeException(nameof(scope), scope, "Unknown recurrence scope.");
+                throw new UnknownRecurrenceScopeException(scope);
         }
 
         await ReconcileWindowAsync(ownerCalendar, seriesRules, ct);
@@ -409,7 +408,7 @@ public class CalendarEventService(
                 break;
 
             default:
-                throw new ArgumentOutOfRangeException(nameof(scope), scope, "Unknown recurrence scope.");
+                throw new UnknownRecurrenceScopeException(scope);
         }
 
         logger.LogInformation("Recurring event {EventId} deleted at scope {Scope}.", eventId, scope);
@@ -420,11 +419,10 @@ public class CalendarEventService(
     private async Task<(CalendarEvent Event, CalendarInfo Owner)> LoadRecurringEventAsync(Guid eventId, CancellationToken ct)
     {
         var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
-            ?? throw new InvalidOperationException($"Event {eventId} not found.");
+            ?? throw new EventNotFoundException(eventId);
 
         if (!calendarEvent.IsRecurring)
-            throw new InvalidOperationException(
-                $"Event {eventId} is not part of a recurring series. Use UpdateAsync/DeleteAsync for non-recurring events.");
+            throw new NotPartOfRecurringSeriesException(eventId);
 
         var owner = await calendarRepository.GetCalendarByIdAsync(calendarEvent.OwnerCalendarInfoId, ct)
             ?? throw new InvalidOperationException(
@@ -454,8 +452,7 @@ public class CalendarEventService(
 
         var current = calendarEvent.Members.Select(m => m.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!requestedNames.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(current))
-            throw new InvalidOperationException(
-                "Member changes apply to the whole series and are only permitted at the 'All events' scope.");
+            throw new MemberScopeViolationException();
     }
 
     private async Task PatchInstanceAsync(
@@ -605,7 +602,7 @@ public class CalendarEventService(
         var remaining = spec.End.Occurrences!.Value - before;
 
         if (remaining < 1)
-            throw new InvalidOperationException(
+            throw new InvalidSeriesSplitException(
                 $"Cannot split a COUNT-based series: the split point leaves no occurrences for the " +
                 $"forward series (original COUNT {spec.End.Occurrences}, {before} occurrences before the split).");
 

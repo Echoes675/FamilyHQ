@@ -29,12 +29,8 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
-        try
-        {
-            var created = await _service.CreateAsync(request, ct);
-            return Created($"/api/events/{created.Id}", MapToDto(created));
-        }
-        catch (ArgumentException ex) { return BadRequest(ex.Message); }
+        var created = await _service.CreateAsync(request, ct);
+        return Created($"/api/events/{created.Id}", MapToDto(created));
     }
 
     [HttpPut("{eventId:guid}")]
@@ -45,23 +41,15 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
-        try
-        {
-            var updated = await _service.UpdateAsync(eventId, request, ct);
-            return Ok(MapToDto(updated));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
+        var updated = await _service.UpdateAsync(eventId, request, ct);
+        return Ok(MapToDto(updated));
     }
 
     [HttpDelete("{eventId:guid}")]
     public async Task<IActionResult> DeleteEvent(Guid eventId, CancellationToken ct)
     {
-        try
-        {
-            await _service.DeleteAsync(eventId, ct);
-            return NoContent();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
+        await _service.DeleteAsync(eventId, ct);
+        return NoContent();
     }
 
     /// <summary>
@@ -78,32 +66,16 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
-        try
-        {
-            var updated = await _service.UpdateRecurringAsync(eventId, request, scope, ct);
-            return Ok(MapToDto(updated));
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
-        // Invalid scope (ArgumentOutOfRangeException) and the service's fail-fast business-rule
-        // violations (event not part of a series; member change outside AllInSeries) are client
-        // errors, not 500s.
-        catch (ArgumentException ex) { return BadRequest(ex.Message); }
-        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
+        var updated = await _service.UpdateRecurringAsync(eventId, request, scope, ct);
+        return Ok(MapToDto(updated));
     }
 
     /// <summary>Deletes a recurring series at the given <see cref="RecurrenceScope"/> (FHQ-18).</summary>
     [HttpDelete("{eventId:guid}/recurring")]
     public async Task<IActionResult> DeleteRecurringEvent(Guid eventId, [FromQuery] RecurrenceScope scope, CancellationToken ct)
     {
-        try
-        {
-            await _service.DeleteRecurringAsync(eventId, scope, ct);
-            return NoContent();
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
-        // Invalid scope and the service's fail-fast business-rule violations are client errors.
-        catch (ArgumentException ex) { return BadRequest(ex.Message); }
-        catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
+        await _service.DeleteRecurringAsync(eventId, scope, ct);
+        return NoContent();
     }
 
     /// <summary>Replaces the full member list for an event.</summary>
@@ -113,13 +85,8 @@ public class EventsController : ControllerBase
         if (request.MemberCalendarInfoIds == null || request.MemberCalendarInfoIds.Count == 0)
             return BadRequest("At least one member is required.");
 
-        try
-        {
-            var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
-            return Ok(MapToDto(updated));
-        }
-        catch (ArgumentException ex) { return BadRequest(ex.Message); }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not found")) { return NotFound(ex.Message); }
+        var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
+        return Ok(MapToDto(updated));
     }
 
     private static CalendarEventDto MapToDto(CalendarEvent e) => new(

@@ -163,6 +163,14 @@ public class DatabaseTokenStore : ITokenStore
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<UserAuthState>> GetAllUserAuthStatesAsync(CancellationToken ct = default)
+    {
+        return await _dbContext.UserTokens
+            .Where(t => t.Provider == _provider)
+            .Select(t => new UserAuthState(t.UserId, t.AuthStatus))
+            .ToListAsync(ct);
+    }
+
     public async Task MarkNeedsReauthAsync(string userId, string? errorDescription, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(userId))
