@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWebhookRegistrationService, WebhookRegistrationService>();
         services.AddScoped<ICalendarEventService, CalendarEventService>();
         services.AddHostedService<SyncOrchestrator>();
+        services.Configure<DayThemeOptions>(configuration.GetSection(DayThemeOptions.SectionName));
         services.AddSingleton<ISunCalculatorService, SunCalculatorService>();
         services.AddScoped<IDayThemeService, DayThemeService>();
         services.AddSingleton<DayThemeSchedulerService>();

@@ -1,15 +1,19 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.Services.Theme;
 
 public class DayThemeSchedulerService(
     IServiceProvider serviceProvider,
     IThemeBroadcaster themeBroadcaster,
-    ILogger<DayThemeSchedulerService> logger) : BackgroundService, IDayThemeScheduler
+    ILogger<DayThemeSchedulerService> logger,
+    IOptions<DayThemeOptions> options) : BackgroundService, IDayThemeScheduler
 {
+    private readonly DayThemeOptions _options = options.Value;
     private CancellationTokenSource _delayCts = new();
 
     public Task TriggerRecalculationAsync()
@@ -22,7 +26,7 @@ public class DayThemeSchedulerService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Fix 3: startup wrapped in try/catch so a TriggerRecalculationAsync race or
+        // Startup wrapped in try/catch so a TriggerRecalculationAsync race or
         // transient failure does not crash the hosted service.
         try
         {
@@ -52,6 +56,32 @@ public class DayThemeSchedulerService(
             {
                 // Recalculation was triggered — loop restarts to re-read boundaries
             }
+            catch (OperationCanceledException)
+            {
+                // Host is shutting down — exit the loop cleanly
+                break;
+            }
+            catch (Exception ex)
+            {
+                // FHQ-55: never let a loop-iteration failure (e.g. a missing DayTheme record at a day
+                // boundary, or a transient DB/location/sun-calc error) propagate to the host, which runs
+                // with BackgroundServiceExceptionBehavior.StopHost and would otherwise stop the whole app.
+                // Log the failure and continue after a backoff so we don't hot-loop on a persistent fault.
+                logger.LogError(ex, "DayThemeScheduler loop iteration failed; continuing after {Backoff}", _options.LoopErrorBackoff);
+                await DelayQuietlyAsync(_options.LoopErrorBackoff, stoppingToken);
+            }
+        }
+    }
+
+    private static async Task DelayQuietlyAsync(TimeSpan delay, CancellationToken stoppingToken)
+    {
+        // Swallow cancellation during the backoff so shutdown is graceful; the loop condition exits next.
+        try
+        {
+            await Task.Delay(delay, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
@@ -60,22 +90,23 @@ public class DayThemeSchedulerService(
         using var scope = serviceProvider.CreateScope();
         var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
 
+        // Always ensure today's record exists before reading it. EnsureTodayAsync is idempotent
+        // (a single indexed read when the record is already present), so this is cheap, and it removes
+        // the day-boundary race where the date rolled over after the previous iteration's delay.
+        await dayThemeService.EnsureTodayAsync(stoppingToken);
         var dto = await dayThemeService.GetTodayAsync(stoppingToken);
-        // Fix 2: capture date before the delay so midnight-crossing can be detected
-        var dateBeforeDelay = dto.Date;
 
         var nextBoundary = GetNextBoundaryDelay(dto);
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _delayCts.Token);
         await Task.Delay(nextBoundary, linkedCts.Token);
 
-        // After delay: if the calendar date rolled over, ensure today's record exists
-        if (dateBeforeDelay != DateOnly.FromDateTime(DateTime.Today))
-        {
-            await dayThemeService.EnsureTodayAsync(stoppingToken);
-        }
+        // The delay may have crossed midnight; ensure again before the post-delay read so the new
+        // calendar day's record is present. This closes the FHQ-55 race in which the rollover check
+        // and the read straddled the date boundary, leaving GetTodayAsync to throw and crash the host.
+        await dayThemeService.EnsureTodayAsync(stoppingToken);
 
-        // Fix 1: broadcast AFTER the delay so we emit the period that just became active
+        // Broadcast AFTER the delay so we emit the period that just became active
         var updatedDto = await dayThemeService.GetTodayAsync(stoppingToken);
         await themeBroadcaster.BroadcastThemeAsync(updatedDto.CurrentPeriod, stoppingToken);
         logger.LogInformation("Theme broadcast: {Period}", updatedDto.CurrentPeriod);
@@ -85,7 +116,7 @@ public class DayThemeSchedulerService(
     {
         var now = TimeOnly.FromDateTime(DateTime.Now);
         var boundaries = new[] { dto.MorningStart, dto.DaytimeStart, dto.EveningStart, dto.NightStart };
-        // Fix 4: use TimeOnly? so default(TimeOnly) midnight is never mistaken for "no boundary"
+        // Use TimeOnly? so default(TimeOnly) midnight is never mistaken for "no boundary"
         var next = boundaries.Cast<TimeOnly?>().Where(b => b > now).OrderBy(b => b).FirstOrDefault();
 
         if (next is null)
