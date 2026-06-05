@@ -77,7 +77,7 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
-    public async Task GetEventsAsync_WithSyncTokenExpired_ThrowsInvalidOperationException()
+    public async Task GetEventsAsync_WithSyncTokenExpired_ThrowsSyncTokenExpiredException()
     {
         // Arrange
         var (http, tokenStore, systemUnderTest) = CreateSut();
@@ -101,13 +101,12 @@ public class GoogleCalendarClientTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage
             {
-                StatusCode = HttpStatusCode.Gone // 410 Gone triggers the exception
+                StatusCode = HttpStatusCode.Gone // 410 Gone
             });
 
         // Act & Assert
         await systemUnderTest.Invoking(s => s.GetEventsAsync("cal1", null, null, "expired-token"))
-            .Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*Full sync required*");
+            .Should().ThrowAsync<SyncTokenExpiredException>();
     }
 
     [Fact]

@@ -156,7 +156,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var response = await _httpClient.SendAsync(request, ct);
 
             if (response.StatusCode == HttpStatusCode.Gone)
-                throw new InvalidOperationException("Sync token is no longer valid. Full sync required.");
+                throw new SyncTokenExpiredException();
 
             await ThrowIfFailedAsync(response, "GetEvents", ct);
 
