@@ -40,14 +40,26 @@ public class SyncOrchestrator : BackgroundService
                 var tokenStore = scope.ServiceProvider.GetRequiredService<ITokenStore>();
                 var queue = scope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
 
-                var userIds = await tokenStore.GetAllUserIdsAsync(stoppingToken);
+                var userStates = await tokenStore.GetAllUserAuthStatesAsync(stoppingToken);
                 var enqueued = 0;
-                foreach (var userId in userIds)
+                foreach (var state in userStates)
                 {
-                    if (string.IsNullOrEmpty(userId))
+                    if (string.IsNullOrEmpty(state.UserId))
                         continue;
+
+                    // FHQ-56: an account flagged for re-auth fails every token refresh, so attempting it
+                    // on the scheduled sync is pure invalid_grant noise — and the user is already prompted
+                    // to reconnect via the re-auth banner. Skip it until re-consent flips AuthStatus back to
+                    // Active, at which point the next cycle picks it up automatically. (Manual "Sync Now" and
+                    // webhook-driven syncs are unaffected — they still attempt and surface the re-auth.)
+                    if (state.AuthStatus == TokenAuthStatus.NeedsReauth)
+                    {
+                        _logger.LogInformation("Skipping periodic sync for {UserId}: account needs re-authentication.", state.UserId);
+                        continue;
+                    }
+
                     // null calendar = sync-all; Periodic source. Coalesces against an existing Pending job.
-                    await queue.EnqueueAsync(userId, null, SyncJobSource.Periodic, null, stoppingToken);
+                    await queue.EnqueueAsync(state.UserId, null, SyncJobSource.Periodic, null, stoppingToken);
                     enqueued++;
                 }
 

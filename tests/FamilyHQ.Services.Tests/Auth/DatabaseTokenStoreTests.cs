@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Data;
 using FamilyHQ.Services.Auth;
+using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -450,6 +451,24 @@ public class DatabaseTokenStoreTests : IDisposable
         broadcasterMock.Verify(
             b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task GetAllUserAuthStatesAsync_ReturnsEachUserWithTheirAuthStatus()
+    {
+        // Arrange — one healthy user, one flagged for re-auth.
+        var sut = CreateSut("seed-user");
+        await sut.SaveRefreshTokenAsync("active-token", "u-active", CancellationToken.None);
+        await sut.SaveRefreshTokenAsync("stale-token", "u-stale", CancellationToken.None);
+        await sut.MarkNeedsReauthAsync("u-stale", "invalid_grant", CancellationToken.None);
+
+        // Act
+        var states = await sut.GetAllUserAuthStatesAsync(CancellationToken.None);
+
+        // Assert
+        states.Should().HaveCount(2);
+        states.Should().ContainSingle(s => s.UserId == "u-active" && s.AuthStatus == TokenAuthStatus.Active);
+        states.Should().ContainSingle(s => s.UserId == "u-stale" && s.AuthStatus == TokenAuthStatus.NeedsReauth);
     }
 
     public void Dispose()
