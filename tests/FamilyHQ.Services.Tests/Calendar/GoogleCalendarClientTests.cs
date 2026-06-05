@@ -1121,6 +1121,163 @@ public class GoogleCalendarClientTests
         start.GetProperty("dateTime").GetString().Should().Be("2026-03-01T09:00:00+00:00");
     }
 
+    [Fact]
+    public async Task GetEventsAsync_WithMultiplePages_CollectsEventsFromAllPages()
+    {
+        // Arrange
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) => Task.FromResult(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "tok", expires_in = 3600, token_type = "Bearer" }))
+            }));
+
+        var eventsCallCount = 0;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                eventsCallCount++;
+                var isLastPage = eventsCallCount >= 3;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = isLastPage ? null : "page-token",
+                        nextSyncToken = isLastPage ? "final-sync-token" : null,
+                        items = new[]
+                        {
+                            new { id = $"event-{eventsCallCount}", status = "confirmed", summary = $"Event {eventsCallCount}",
+                                  start = new { dateTime = "2026-03-01T10:00:00Z" }, end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                        }
+                    }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        // Assert
+        eventsCallCount.Should().Be(3);
+        result.Events.Should().HaveCount(3);
+        result.NextSyncToken.Should().Be("final-sync-token");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenPaginationExceedsCap_StopsAtCapAndLogsWarning()
+    {
+        // Arrange
+        var (http, tokenStore, loggerMock, systemUnderTest) = CreateSutWithLogger();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) => Task.FromResult(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "tok", expires_in = 3600, token_type = "Bearer" }))
+            }));
+
+        var eventsCallCount = 0;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                eventsCallCount++;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = "always-more",
+                        items = new[]
+                        {
+                            new { id = $"event-{eventsCallCount}", status = "confirmed", summary = "Event",
+                                  start = new { dateTime = "2026-03-01T10:00:00Z" }, end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                        }
+                    }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        // Assert — loop stopped at cap
+        eventsCallCount.Should().Be(GoogleCalendarClient.MaxSyncPages);
+        result.Events.Should().HaveCount(GoogleCalendarClient.MaxSyncPages);
+
+        // Assert — warning logged mentioning the calendar ID and the cap
+        loggerMock.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("cal1") && v.ToString()!.Contains(GoogleCalendarClient.MaxSyncPages.ToString())),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_RequestIncludesMaxResultsPageSizeHint()
+    {
+        // Arrange
+        HttpRequestMessage? capturedRequest = null;
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "tok", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { nextSyncToken = "tok", items = Array.Empty<object>() }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        // Assert
+        capturedRequest!.RequestUri!.ToString().Should().Contain("maxResults=250");
+    }
+
     private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut(
         string? timeZoneZone = null)
     {
@@ -1171,5 +1328,44 @@ public class GoogleCalendarClientTests
             timeZoneServiceMock.Object);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
+    }
+
+    private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, Mock<ILogger<GoogleCalendarClient>> LoggerMock, GoogleCalendarClient SystemUnderTest) CreateSutWithLogger(
+        string? timeZoneZone = null)
+    {
+        var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
+        var httpClient = new HttpClient(httpMessageHandlerMock.Object);
+
+        var tokenStoreMock = new Mock<ITokenStore>();
+
+        var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
+        {
+            CalendarApiBaseUrl = "https://calendar.test.com",
+            ClientId = "test-client",
+            ClientSecret = "test-secret",
+            AuthBaseUrl = "https://auth.test.com"
+        });
+
+        var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object);
+
+        var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
+        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
+        timeZoneServiceMock
+            .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(timeZoneZone);
+
+        var systemUnderTest = new GoogleCalendarClient(
+            httpClient,
+            authService,
+            tokenStoreMock.Object,
+            accessTokenProviderMock.Object,
+            options,
+            loggerMock.Object,
+            timeZoneServiceMock.Object);
+
+        return (httpMessageHandlerMock, tokenStoreMock, loggerMock, systemUnderTest);
     }
 }
