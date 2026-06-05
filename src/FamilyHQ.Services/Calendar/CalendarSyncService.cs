@@ -352,7 +352,7 @@ public class CalendarSyncService(
             logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
             return changeCount;
         }
-        catch (InvalidOperationException ex) when (!isRetry && ex.Message.Contains("no longer valid"))
+        catch (SyncTokenExpiredException) when (!isRetry)
         {
             logger.LogWarning("Sync token expired for {CalendarName}. Restarting full sync.", calendar.DisplayName);
             syncState.SyncToken = null;
