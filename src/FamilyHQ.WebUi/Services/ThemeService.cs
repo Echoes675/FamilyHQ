@@ -10,6 +10,7 @@ public class ThemeService : IThemeService, IAsyncDisposable
     private readonly IJSRuntime _jsRuntime;
     private readonly SignalRService _signalRService;
     private readonly IDisplaySettingService _displaySettingService;
+    private readonly ILogger<ThemeService> _logger;
     private readonly Action<string> _themeChangedHandler;
     private IJSObjectReference? _module;
 
@@ -17,12 +18,14 @@ public class ThemeService : IThemeService, IAsyncDisposable
         HttpClient httpClient,
         IJSRuntime jsRuntime,
         SignalRService signalRService,
-        IDisplaySettingService displaySettingService)
+        IDisplaySettingService displaySettingService,
+        ILogger<ThemeService> logger)
     {
         _httpClient = httpClient;
         _jsRuntime = jsRuntime;
         _signalRService = signalRService;
         _displaySettingService = displaySettingService;
+        _logger = logger;
 
         _themeChangedHandler = period =>
         {
@@ -48,9 +51,10 @@ public class ThemeService : IThemeService, IAsyncDisposable
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
             // Theme is non-critical — fall back to default if API is unreachable or returns an error
+            _logger.LogDebug(ex, "Theme API unreachable during initialise; using default theme.");
         }
     }
 
@@ -62,7 +66,10 @@ public class ThemeService : IThemeService, IAsyncDisposable
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
-        catch (HttpRequestException) { }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug(ex, "Failed to apply current theme period; leaving theme unchanged.");
+        }
     }
 
     private async Task SetThemeAsync(string period)
