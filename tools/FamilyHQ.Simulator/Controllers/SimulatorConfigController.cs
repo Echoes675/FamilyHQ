@@ -10,10 +10,12 @@ namespace FamilyHQ.Simulator.Controllers;
 public class SimulatorConfigController : ControllerBase
 {
     private readonly SimContext _db;
+    private readonly ILogger<SimulatorConfigController> _logger;
 
-    public SimulatorConfigController(SimContext db)
+    public SimulatorConfigController(SimContext db, ILogger<SimulatorConfigController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     [HttpPost("configure")]
@@ -74,7 +76,9 @@ public class SimulatorConfigController : ControllerBase
         }
 
         await _db.SaveChangesAsync();
-        Console.WriteLine($"[SIM] Configured user '{config.UserName}' with {config.Calendars.Count} calendars and {config.Events.Count} events.");
+        _logger.LogInformation(
+            "[SIM] Configured user {UserName} with {CalendarCount} calendars and {EventCount} events.",
+            config.UserName, config.Calendars.Count, config.Events.Count);
 
         return Ok();
     }

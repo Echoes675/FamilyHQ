@@ -7,6 +7,7 @@ public class WeatherUiService : IWeatherUiService
 {
     private readonly HttpClient _httpClient;
     private readonly SignalRService _signalRService;
+    private readonly ILogger<WeatherUiService> _logger;
     private readonly Action _weatherUpdatedHandler;
 
     public CurrentWeatherDto? CurrentWeather { get; private set; }
@@ -17,10 +18,11 @@ public class WeatherUiService : IWeatherUiService
 
     public event Action? OnWeatherChanged;
 
-    public WeatherUiService(HttpClient httpClient, SignalRService signalRService)
+    public WeatherUiService(HttpClient httpClient, SignalRService signalRService, ILogger<WeatherUiService> logger)
     {
         _httpClient = httpClient;
         _signalRService = signalRService;
+        _logger = logger;
 
         _weatherUpdatedHandler = () => _ = RefreshAsync();
         _signalRService.OnWeatherUpdated += _weatherUpdatedHandler;
@@ -36,9 +38,10 @@ public class WeatherUiService : IWeatherUiService
             DailyForecast = await GetOrDefaultAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
             OnWeatherChanged?.Invoke();
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex)
         {
             // Non-critical — weather may not be available yet
+            _logger.LogDebug(ex, "Weather unavailable during initialise; continuing without it.");
         }
     }
 
@@ -59,7 +62,10 @@ public class WeatherUiService : IWeatherUiService
             DailyForecast = await GetOrDefaultAsync<List<DailyForecastItemDto>>("api/weather/forecast?days=14") ?? [];
             OnWeatherChanged?.Invoke();
         }
-        catch (HttpRequestException) { }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug(ex, "Weather refresh failed; keeping previous values.");
+        }
     }
 
     public async Task LoadHourlyAsync(DateOnly date)
@@ -70,7 +76,10 @@ public class WeatherUiService : IWeatherUiService
                 $"api/weather/hourly?date={date:yyyy-MM-dd}") ?? [];
             OnWeatherChanged?.Invoke();
         }
-        catch (HttpRequestException) { }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug(ex, "Hourly forecast load failed for {Date}.", date);
+        }
     }
 
     public async Task LoadDailyAsync(int days)
@@ -81,7 +90,10 @@ public class WeatherUiService : IWeatherUiService
                 $"api/weather/forecast?days={days}") ?? [];
             OnWeatherChanged?.Invoke();
         }
-        catch (HttpRequestException) { }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogDebug(ex, "Daily forecast load failed for {Days} days.", days);
+        }
     }
 
     public async Task<WeatherSettingDto> LoadSettingsAsync()

@@ -218,6 +218,45 @@ public class GoogleAuthServiceTests
     }
 
     [Fact]
+    public async Task ExchangeCodeForTokenAsync_WhenFails_DoesNotLogRawBodyButLogsParsedError()
+    {
+        // Arrange — the raw OAuth body must never reach the log; only the parsed error code may, per security/logging skills.
+        var (httpMock, systemUnderTest, loggerMock) = CreateSutWithLogger();
+        var body = JsonSerializer.Serialize(new
+        {
+            error = "invalid_grant",
+            error_description = "Bad Request",
+            access_token = "SENSITIVE-LEAK"
+        });
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent(body)
+            });
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => systemUnderTest.ExchangeCodeForTokenAsync("the-code", "https://app/callback"));
+
+        // Assert — no log entry leaks the sensitive token value from the raw body.
+        loggerMock.Verify(l => l.Log(
+            It.IsAny<LogLevel>(), It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("SENSITIVE-LEAK")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+
+        // Assert — the parsed OAuth error code is logged at Error level.
+        loggerMock.Verify(l => l.Log(
+            LogLevel.Error, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("invalid_grant")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
     public void GetAuthorizationUrl_WithAllParameters_ReturnsUrlWithRequiredQueryParams()
     {
         // Arrange
