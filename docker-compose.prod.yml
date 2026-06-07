@@ -29,6 +29,8 @@ services:
       - ReverseProxy__Enabled=true
       - Seq__ServerUrl=${Seq__ServerUrl}
       - Seq__ApiKey=${Seq__ApiKey}
+      # Production-only: silence EF Core per-SQL-command logging (noise). Lower envs stay verbose. (FHQ-57)
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command=Warning
       - VIRTUAL_HOST=${VIRTUAL_HOST_API}
       - VIRTUAL_PORT=8080
       - LETSENCRYPT_HOST=${LETSENCRYPT_HOST_API}

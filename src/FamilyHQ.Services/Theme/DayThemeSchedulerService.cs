@@ -82,6 +82,7 @@ public class DayThemeSchedulerService(
         }
         catch (OperationCanceledException)
         {
+            // Expected on host shutdown — nothing to log; the loop condition exits on the next check.
         }
     }
 

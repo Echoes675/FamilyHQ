@@ -48,6 +48,7 @@ Read the relevant skill file before starting any task of that type:
 - **Security-sensitive code**: Read `.agent/skills/security/SKILL.md`
 - **Any code changes**: Read `.agent/skills/coding-standards/SKILL.md`
 - **Error handling or validation**: Read `.agent/skills/fail-fast-standard/SKILL.md`
+- **Adding or modifying any log statement, catch block, or logging config**: Read `.agent/skills/logging/SKILL.md`
 - **Frontend UI development**: Read `.agent/skills/frontend-design/SKILL.md`
 - **Any CSS, component, layout, or page changes**: Read `.agent/skills/ui-theming/SKILL.md` (project-specific theme rules — takes precedence over frontend-design for colour and animation decisions)
 - **Pushing a branch and verifying CI (before raising a PR)**: Read `.agent/skills/ci-gate/SKILL.md`

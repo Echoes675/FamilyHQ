@@ -88,7 +88,8 @@ public class Program
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             var client = factory.CreateClient("Weather");
             var signalR = sp.GetRequiredService<SignalRService>();
-            return new WeatherUiService(client, signalR);
+            var logger = sp.GetRequiredService<ILogger<WeatherUiService>>();
+            return new WeatherUiService(client, signalR, logger);
         });
 
         builder.Services.AddScoped<IDisplaySettingService, DisplaySettingService>();
