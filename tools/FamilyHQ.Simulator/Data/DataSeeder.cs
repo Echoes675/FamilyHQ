@@ -4,7 +4,7 @@ using FamilyHQ.Simulator.Models;
 
 public class DataSeeder
 {
-    public static void SeedData(SimContext db)
+    public static void SeedData(SimContext db, ILogger logger)
     {
         if (!db.Users.Any())
         {
@@ -79,7 +79,7 @@ public class DataSeeder
             );
 
             db.SaveChanges();
-            Console.WriteLine("[SIM] Data seeded.");
+            logger.LogInformation("[SIM] Data seeded.");
         }
 
         if (!db.SimulatedLocations.Any())

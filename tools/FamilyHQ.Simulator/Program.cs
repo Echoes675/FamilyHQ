@@ -35,7 +35,8 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SimContext>();
     db.Database.Migrate();
-    DataSeeder.SeedData(db);
+    var seedLogger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("DataSeeder");
+    DataSeeder.SeedData(db, seedLogger);
 }
 // Removed all inline maps because they have been extracted to Controllers.
 app.Run();
