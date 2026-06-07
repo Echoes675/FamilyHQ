@@ -4,6 +4,7 @@ using FamilyHQ.Simulator.Models;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace FamilyHQ.Simulator.Tests.Controllers;
@@ -15,7 +16,7 @@ public class SimulatorConfigControllerTests
     {
         // Arrange
         using var db = CreateDb();
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
         var config = new SimulatorConfigurationModel
         {
             UserName = "test-user",
@@ -37,7 +38,7 @@ public class SimulatorConfigControllerTests
     {
         // Arrange
         using var db = CreateDb();
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
         var config = new SimulatorConfigurationModel
         {
             UserName = "alice",
@@ -66,7 +67,7 @@ public class SimulatorConfigControllerTests
         db.Events.Add(new SimulatedEvent { Id = "other-evt", CalendarId = "other-cal", Summary = "Other Event", UserId = "other-user" });
         await db.SaveChangesAsync();
 
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
         var config = new SimulatorConfigurationModel
         {
             UserName = "new-user",
@@ -91,7 +92,7 @@ public class SimulatorConfigControllerTests
         db.Calendars.Add(new SimulatedCalendar { Id = "old-cal", Summary = "Old", UserId = "alice" });
         await db.SaveChangesAsync();
 
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
         var config = new SimulatorConfigurationModel
         {
             UserName = "alice",
@@ -112,7 +113,7 @@ public class SimulatorConfigControllerTests
     {
         // Arrange
         using var db = CreateDb();
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
 
         // Act
         var result = await sut.Configure(null!);
@@ -129,7 +130,7 @@ public class SimulatorConfigControllerTests
         db.Users.Add(new SimulatedUser { Id = "alice", Username = "alice" });
         await db.SaveChangesAsync();
 
-        var sut = new SimulatorConfigController(db);
+        var sut = new SimulatorConfigController(db, NullLogger<SimulatorConfigController>.Instance);
         var config = new SimulatorConfigurationModel { UserName = "alice", Calendars = [], Events = [] };
 
         // Act
