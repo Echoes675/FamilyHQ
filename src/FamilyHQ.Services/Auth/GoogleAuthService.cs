@@ -50,9 +50,16 @@ public class GoogleAuthService
 
         if (!response.IsSuccessStatusCode)
         {
-            var error = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("Failed to exchange code for token: {Error}", error);
-            throw new InvalidOperationException($"Failed to exchange code. Status: {response.StatusCode}");
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var (error, description) = ParseOAuthError(body);
+
+            // Raw OAuth response body is intentionally never logged — only the parsed Google error codes.
+            _logger.LogError(
+                "Failed to exchange code for token. Status: {Status} Error: {Error} Description: {Description}",
+                response.StatusCode, error, description);
+
+            throw new InvalidOperationException(
+                $"Failed to exchange code. Status: {response.StatusCode}. Error: {error ?? "<none>"}.");
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
