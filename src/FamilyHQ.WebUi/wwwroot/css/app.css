@@ -1560,12 +1560,6 @@ body:not([data-theme]) .brand-logo__img--morning {
     font-size: 11px;
 }
 
-.weather-strip__today-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
 /* ── Weather Icon ── */
 .weather-icon {
     display: inline-flex;
