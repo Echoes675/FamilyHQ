@@ -23,5 +23,11 @@ public enum RecurrenceMode
     Yearly,
 
     /// <summary>Custom — the full editable drawer (frequency, interval, weekdays, monthly mode, end).</summary>
-    Custom
+    Custom,
+
+    /// <summary>
+    /// Repeating intent with no frequency chosen yet: the picker shows the frequency pills with
+    /// none highlighted and the host blocks Save until one is picked. Emits a null RRULE.
+    /// </summary>
+    Unset
 }

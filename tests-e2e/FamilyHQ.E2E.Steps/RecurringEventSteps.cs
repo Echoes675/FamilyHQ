@@ -227,6 +227,89 @@ public class RecurringEventSteps
         return calendar.BackgroundColor ?? "#9e9e9e";
     }
 
+    // ── FHQ-62: does-not-repeat ↔ repeats toggle + save gating ──────────────────────────────────
+
+    [When(@"I begin creating an event in ""([^""]*)""")]
+    public async Task WhenIBeginCreatingAnEvent(string calendarName)
+    {
+        await _dashboardPage.BeginCreatingEventAsync(calendarName);
+    }
+
+    [Then(@"the event is set to not repeat and no repeat frequencies are offered")]
+    public async Task ThenTheEventIsSetToNotRepeatAndNoFrequenciesOffered()
+    {
+        await _dashboardPage.AssertRecurrenceOffAndNoFrequenciesAsync();
+    }
+
+    [When(@"I turn on repeat for the event")]
+    public async Task WhenITurnOnRepeatForTheEvent()
+    {
+        await _dashboardPage.TurnOnRepeatAsync();
+    }
+
+    [Then(@"a repeat frequency must be chosen and the event cannot yet be saved")]
+    public async Task ThenARepeatFrequencyMustBeChosenAndCannotYetBeSaved()
+    {
+        await _dashboardPage.AssertRepeatOnNoFrequencySelectedAndSaveDisabledAsync();
+    }
+
+    [When(@"I choose the weekly repeat frequency")]
+    public async Task WhenIChooseTheWeeklyRepeatFrequency()
+    {
+        await _dashboardPage.ChooseWeeklyFrequencyAsync();
+    }
+
+    [Then(@"the event can be saved")]
+    public async Task ThenTheEventCanBeSaved()
+    {
+        await _dashboardPage.AssertSaveEnabledAsync();
+    }
+
+    // ── FHQ-62: Custom-drawer interval stepper pills ────────────────────────────────────────────
+
+    [When(@"I begin creating a custom repeating event in ""([^""]*)""")]
+    public async Task WhenIBeginCreatingACustomRepeatingEvent(string calendarName)
+    {
+        await _dashboardPage.BeginCreatingCustomRepeatingEventAsync(calendarName);
+    }
+
+    [Then(@"the repeat interval is ""([^""]*)"" and cannot be lowered")]
+    public async Task ThenTheRepeatIntervalIsAndCannotBeLowered(string expected)
+    {
+        await _dashboardPage.AssertIntervalAtFloorWithDecrementDisabledAsync(expected);
+    }
+
+    [When(@"I step the repeat interval up")]
+    public async Task WhenIStepTheRepeatIntervalUp()
+    {
+        await _dashboardPage.IncrementIntervalAndAssertValueAsync("2");
+    }
+
+    [When(@"I step the repeat interval down")]
+    public async Task WhenIStepTheRepeatIntervalDown()
+    {
+        await _dashboardPage.DecrementIntervalAndAssertValueAsync("1");
+    }
+
+    [Then(@"the repeat interval is ""([^""]*)""")]
+    public async Task ThenTheRepeatIntervalIs(string expected)
+    {
+        await _dashboardPage.AssertIntervalValueAsync(expected);
+    }
+
+    [When(@"I open occurrence (\d+) of ""([^""]*)"" for editing")]
+    public async Task WhenIOpenOccurrenceForEditing(int occurrence, string seriesName)
+    {
+        var date = OccurrenceDate(occurrence);
+        await _dashboardPage.OpenOccurrenceForEditingAsync(seriesName, date);
+    }
+
+    [Then(@"the event is shown as repeating with the weekly frequency selected")]
+    public async Task ThenTheEventIsShownAsRepeatingWeekly()
+    {
+        await _dashboardPage.AssertRepeatingWeeklySelectedAsync();
+    }
+
     // Occurrence N (1-based) of the weekly series falls N-1 weeks after the seeded first occurrence.
     private System.DateTime OccurrenceDate(int occurrence)
     {

@@ -46,6 +46,13 @@ public sealed class RecurrencePickerModel
     /// <summary>The compact top-level selection (Does not repeat / Daily / … / Custom).</summary>
     public RecurrenceMode Mode { get; set; } = RecurrenceMode.DoesNotRepeat;
 
+    /// <summary>
+    /// True when the selection is complete enough to save: either non-repeating, or repeating
+    /// with a concrete frequency chosen. <see cref="RecurrenceMode.Unset"/> — repeats toggled on
+    /// but no frequency picked — is the only incomplete state.
+    /// </summary>
+    public bool IsSelectionComplete => Mode != RecurrenceMode.Unset;
+
     /// <summary>The custom-drawer frequency (only consulted when <see cref="Mode"/> is Custom).</summary>
     public RecurrenceFrequency Frequency { get; set; }
 
@@ -86,7 +93,7 @@ public sealed class RecurrencePickerModel
     /// </exception>
     public string? ToRecurrenceRule()
     {
-        if (Mode == RecurrenceMode.DoesNotRepeat)
+        if (Mode is RecurrenceMode.DoesNotRepeat or RecurrenceMode.Unset)
         {
             return null;
         }

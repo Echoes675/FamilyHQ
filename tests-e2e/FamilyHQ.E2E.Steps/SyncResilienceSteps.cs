@@ -59,8 +59,8 @@ public class SyncResilienceSteps
         await TriggerManualSyncAsync();
     }
 
-    [When(@"I view the diagnostics page")]
-    public Task WhenIViewTheDiagnosticsPage() => _diagnosticsPage.GotoAsync();
+    [When(@"I view the diagnostics tab")]
+    public Task WhenIViewTheDiagnosticsTab() => _diagnosticsPage.GotoAsync();
 
     /// <summary>
     /// Polls the WebApi's /api/diagnostics/failed-sync-runs endpoint (via the page's
@@ -297,7 +297,7 @@ public class SyncResilienceSteps
         }
     }
 
-    [Then(@"I see a reconnect button on the diagnostics page")]
+    [Then(@"I see a reconnect button on the diagnostics tab")]
     public async Task ThenISeeReconnectButton()
     {
         // Web-first: the reconnect button renders when AuthStatus is NeedsReauth; ToBeVisibleAsync

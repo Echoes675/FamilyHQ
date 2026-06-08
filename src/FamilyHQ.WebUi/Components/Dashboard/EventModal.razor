@@ -82,7 +82,9 @@
                     }
                     <div class="mb-3" data-testid="recurrence-section">
                         <label class="form-label">Repeat</label>
-                        <RecurrencePicker Start="_eventModel.Start" @bind-Value="_recurrenceRule" />
+                        <RecurrencePicker Start="_eventModel.Start"
+                                          @bind-Value="_recurrenceRule"
+                                          SelectionCompleteChanged="v => _recurrenceComplete = v" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Location (Optional)</label>
@@ -107,7 +109,9 @@
                     </div>
                     <div>
                         <button type="button" class="btn btn-secondary" @onclick="Close">Cancel</button>
-                        <button type="button" class="btn btn-primary" @onclick="SaveEvent" disabled="@_isSaving">
+                        <button type="button" class="btn btn-primary" @onclick="SaveEvent"
+                                data-testid="event-save-btn"
+                                disabled="@(_isSaving || !_recurrenceComplete)">
                             @if (_isSaving)
                             {
                                 <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
@@ -150,6 +154,7 @@
     private HashSet<Guid> _selectedCalendarIds = new();
     private string? _modalError;
     private bool _isSaving;
+    private bool _recurrenceComplete = true;
 
     // FHQ-18 recurrence state.
     // _recurrenceRule: the picker's current RRULE (null = does not repeat). Two-way bound.
@@ -269,6 +274,7 @@
         _selectedCalendarIds = EventModalLogic.InitialCreateSelection(calendarId);
         // A new event is never recurring and has no pre-existing members to compare against.
         _recurrenceRule = null;
+        _recurrenceComplete = true;
         _wasRecurring = false;
         _originalMemberIds = Array.Empty<Guid>();
         _modalError = null;
@@ -294,6 +300,7 @@
         // Seed the picker from the loaded event's rule and remember the recurring state + members
         // so Save/Delete can decide whether to prompt for scope and whether a member change is pending.
         _recurrenceRule = evt.RecurrenceRule;
+        _recurrenceComplete = true;
         _wasRecurring = evt.IsRecurring;
         _originalMemberIds = evt.AllCalendars.Select(c => c.Id).ToList();
         _modalError = null;
@@ -308,6 +315,7 @@
         _eventModel = new();
         _modalError = null;
         _recurrenceRule = null;
+        _recurrenceComplete = true;
         _wasRecurring = false;
         _originalMemberIds = Array.Empty<Guid>();
         _pendingMemberIds = new();
@@ -321,6 +329,12 @@
         if (string.IsNullOrWhiteSpace(_eventModel.Title))
         {
             _modalError = "Title is required.";
+            return;
+        }
+
+        if (!_recurrenceComplete)
+        {
+            _modalError = "Choose how often the event repeats, or turn off Repeat.";
             return;
         }
 

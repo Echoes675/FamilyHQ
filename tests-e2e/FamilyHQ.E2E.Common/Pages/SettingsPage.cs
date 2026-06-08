@@ -22,6 +22,7 @@ public class SettingsPage : BasePage
     public ILocator WeatherTab          => Page.GetByTestId("tab-weather");
     public ILocator DisplayTab          => Page.GetByTestId("tab-display");
     public ILocator WeatherOverrideTab  => Page.GetByTestId("tab-weather-override");
+    public ILocator DiagnosticsTab      => Page.GetByTestId("tab-diagnostics");
 
     // General tab
     public ILocator AccountName => Page.GetByTestId("account-name");
@@ -196,8 +197,13 @@ public class SettingsPage : BasePage
     public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");
     public ILocator RegisterWebhooksBtn => Page.GetByTestId("register-webhooks-btn");
 
-    // General tab — diagnostics link
+    // General tab — diagnostics link (removed in FHQ-62; kept for absence assertions)
     public ILocator DiagnosticsLink => Page.GetByTestId("settings-diagnostics-link");
+
+    // Diagnostics tab
+    public ILocator DiagnosticsConnectionHeading => Page.GetByTestId("diagnostics-connection-heading");
+    public ILocator DiagnosticsSyncAllBtn => Page.GetByTestId("diagnostics-sync-all-btn");
+    public ILocator DiagnosticsSyncMessage => Page.GetByTestId("diagnostics-sync-message");
 
     // Calendars tab — reauth banner (mirrors the dashboard banner)
     public ILocator ReauthBannerSettings    => Page.GetByTestId("reauth-banner-settings");
@@ -216,6 +222,18 @@ public class SettingsPage : BasePage
         await SyncNowBtn.ClickAsync();
         var response = await responseTask;
         return response.Status;
+    }
+
+    public async Task ClickSyncAllAsync()
+    {
+        // Mirrors ClickSyncNowAsync: the Sync All button hits POST /api/sync/trigger.
+        // Wait for the response before returning so callers don't race Blazor's state update.
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/sync/trigger"),
+            new() { Timeout = 30000 });
+
+        await DiagnosticsSyncAllBtn.ClickAsync();
+        await responseTask;
     }
 
     public async Task ClickRegisterWebhooksAsync()
