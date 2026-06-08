@@ -224,7 +224,7 @@ public class SettingsPage : BasePage
         return response.Status;
     }
 
-    public async Task<int> ClickSyncAllAsync()
+    public async Task ClickSyncAllAsync()
     {
         // Mirrors ClickSyncNowAsync: the Sync All button hits POST /api/sync/trigger.
         // Wait for the response before returning so callers don't race Blazor's state update.
@@ -233,8 +233,7 @@ public class SettingsPage : BasePage
             new() { Timeout = 30000 });
 
         await DiagnosticsSyncAllBtn.ClickAsync();
-        var response = await responseTask;
-        return response.Status;
+        await responseTask;
     }
 
     public async Task ClickRegisterWebhooksAsync()

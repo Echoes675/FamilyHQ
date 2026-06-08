@@ -2,11 +2,13 @@
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Components.Diagnostics
 @using FamilyHQ.WebUi.Services
+@using Microsoft.Extensions.Logging
 @inject IDiagnosticsApiService DiagnosticsApi
 @inject ICalendarApiService CalendarApi
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject TimeProvider TimeProvider
+@inject ILogger<SettingsDiagnosticsTab> Logger
 
 <div class="settings-section-content">
     <div class="diagnostics-header">
@@ -45,11 +47,11 @@
 
     @if (!string.IsNullOrEmpty(_syncMessage))
     {
-        <p class="alert-success" data-testid="diagnostics-sync-message">@_syncMessage</p>
+        <p class="alert alert-success" data-testid="diagnostics-sync-message">@_syncMessage</p>
     }
     @if (!string.IsNullOrEmpty(_syncError))
     {
-        <p class="alert-error" data-testid="diagnostics-sync-error">@_syncError</p>
+        <p class="alert alert-error" data-testid="diagnostics-sync-error">@_syncError</p>
     }
 
     @if (_loadFailed)
@@ -253,10 +255,11 @@
             await LoadAsync();
             _syncMessage = "Sync completed.";
         }
-        catch
+        catch (Exception ex)
         {
             // TriggerSyncAsync surfaces 409 (re-auth) / 502 as a failed status code; the
             // connection-status section above shows the re-auth detail, so a concise message suffices.
+            Logger.LogWarning(ex, "Manual Sync All from diagnostics tab failed");
             _syncError = "Sync failed. Please try again.";
         }
         finally
