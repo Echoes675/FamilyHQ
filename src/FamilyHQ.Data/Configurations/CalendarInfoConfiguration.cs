@@ -31,6 +31,10 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
             .IsRequired()
             .HasDefaultValue(false);
 
+        builder.Property(c => c.WebhooksSupported)
+            .IsRequired()
+            .HasDefaultValue(true);
+
         builder.Property(c => c.DisplayOrder)
             .IsRequired()
             .HasDefaultValue(0);
