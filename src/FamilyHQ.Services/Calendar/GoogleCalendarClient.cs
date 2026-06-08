@@ -69,10 +69,44 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 truncated);
         }
 
+        // FHQ-61: allowlist the one benign, permanent rejection — a read-only/subscribed calendar that
+        // can't have push notifications. Surface it as a typed, non-error signal so callers skip the
+        // calendar quietly. Every other reason still raises GoogleApiException.
+        var reason = ParseGoogleErrorReason(truncated);
+        if (reason == "pushNotSupportedForRequestedResource")
+        {
+            _logger.LogInformation(
+                "Google {Operation} returned {Status} ({Reason}); resource does not support push notifications.",
+                operation, (int)response.StatusCode, reason);
+            throw new WebhookNotSupportedException(operation, reason, truncated);
+        }
+
         _logger.LogWarning(
             "Google {Operation} returned {Status}. Body: {Body}",
             operation, (int)response.StatusCode, truncated);
         throw new GoogleApiException(response.StatusCode, operation, truncated);
+    }
+
+    private static string? ParseGoogleErrorReason(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("error", out var error)
+                && error.TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Array
+                && errors.GetArrayLength() > 0
+                && errors[0].TryGetProperty("reason", out var reasonEl))
+            {
+                return reasonEl.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+            // Non-JSON / unexpected shape → no reason; falls through to GoogleApiException.
+        }
+        return null;
     }
 
     private async Task<string> GetBearerTokenAsync(CancellationToken ct)

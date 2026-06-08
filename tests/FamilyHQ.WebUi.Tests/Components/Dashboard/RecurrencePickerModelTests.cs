@@ -283,4 +283,34 @@ public class RecurrencePickerModelTests
         model.Mode.Should().Be(RecurrenceMode.Weekly);
         model.EndMode.Should().Be(RecurrenceEndMode.Until);
     }
+
+    // --- Unset (repeats toggled on, no frequency chosen yet) -------------------------------
+
+    [Fact]
+    public void ToRecurrenceRule_Unset_ReturnsNull()
+    {
+        var model = new RecurrencePickerModel(Start) { Mode = RecurrenceMode.Unset };
+
+        model.ToRecurrenceRule().Should().BeNull();
+    }
+
+    [Fact]
+    public void IsSelectionComplete_Unset_IsFalse()
+    {
+        var model = new RecurrencePickerModel(Start) { Mode = RecurrenceMode.Unset };
+
+        model.IsSelectionComplete.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(RecurrenceMode.DoesNotRepeat)]
+    [InlineData(RecurrenceMode.Daily)]
+    [InlineData(RecurrenceMode.Weekly)]
+    [InlineData(RecurrenceMode.Custom)]
+    public void IsSelectionComplete_NonUnset_IsTrue(RecurrenceMode mode)
+    {
+        var model = new RecurrencePickerModel(Start) { Mode = mode };
+
+        model.IsSelectionComplete.Should().BeTrue();
+    }
 }

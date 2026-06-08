@@ -4,20 +4,23 @@ using Microsoft.Playwright;
 namespace FamilyHQ.E2E.Common.Pages;
 
 /// <summary>
-/// Page object for the /diagnostics page. Exposes the data-testid hooks declared
-/// on the Diagnostics.razor template so step definitions never depend on
+/// Page object for the Diagnostics tab on the Settings page (FHQ-62 moved
+/// diagnostics from the standalone /diagnostics route into a lazy-loaded
+/// Settings tab). Exposes the data-testid hooks declared on the
+/// SettingsDiagnosticsTab.razor component so step definitions never depend on
 /// markup details.
 /// </summary>
 public class DiagnosticsPage : BasePage
 {
     private readonly TestConfiguration _config;
-    public override string PageUrl => _config.BaseUrl + "/diagnostics";
+    public override string PageUrl => _config.BaseUrl + "/settings";
 
     public DiagnosticsPage(IPage page) : base(page)
     {
         _config = ConfigurationLoader.Load();
     }
 
+    public ILocator DiagnosticsTab      => Page.GetByTestId("tab-diagnostics");
     public ILocator RefreshBtn          => Page.GetByTestId("diagnostics-refresh-btn");
     public ILocator LoadError           => Page.GetByTestId("diagnostics-load-error");
     public ILocator ConnectionLoading   => Page.GetByTestId("diagnostics-connection-loading");
@@ -32,12 +35,16 @@ public class DiagnosticsPage : BasePage
     public ILocator RunsTable           => Page.GetByTestId("diagnostics-runs-table");
 
     /// <summary>
-    /// Navigates to /diagnostics and waits for the connection status section to render.
+    /// Navigates to the Settings page, opens the Diagnostics tab, and waits for the
+    /// connection status section to render. Diagnostics is now a lazy-loaded Settings
+    /// tab (FHQ-62) whose data fetch only fires once the tab is activated.
     /// </summary>
     public async Task GotoAsync()
     {
         // FHQ-28: wait for network-idle so Blazor WASM bootstrap + SignalR connect both complete before the locator wait begins.
         await Page.GotoAsync(PageUrl, new() { WaitUntil = WaitUntilState.NetworkIdle });
+        await DiagnosticsTab.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await DiagnosticsTab.ClickAsync();
         await WaitForLoadedAsync();
     }
 

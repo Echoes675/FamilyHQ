@@ -23,3 +23,19 @@ Feature: Recurring Event Create and Toggle
     And I switch to the Day View tab
     And I turn off recurrence for the event "Book club"
     Then only a single non-recurring "Book club" event remains
+
+  Scenario: A new event must have a frequency chosen before it can be saved as repeating
+    When I begin creating an event in "Appointments"
+    Then the event is set to not repeat and no repeat frequencies are offered
+    When I turn on repeat for the event
+    Then a repeat frequency must be chosen and the event cannot yet be saved
+    When I choose the weekly repeat frequency
+    Then the event can be saved
+
+  Scenario: Stepper pills adjust the custom repeat interval
+    When I begin creating a custom repeating event in "Appointments"
+    Then the repeat interval is "1" and cannot be lowered
+    When I step the repeat interval up
+    Then the repeat interval is "2"
+    When I step the repeat interval down
+    Then the repeat interval is "1" and cannot be lowered

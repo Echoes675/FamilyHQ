@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -66,6 +67,13 @@ public class WebhookRegistrationService(
                 "Registered webhook for calendar {CalendarInfoId} with channel {ChannelId}, expires at {ExpiresAt}",
                 calendarInfoId, response.ChannelId, registration.ExpiresAt);
         }
+        catch (WebhookNotSupportedException ex)
+        {
+            logger.LogInformation(
+                "Calendar {CalendarInfoId} does not support push notifications ({Reason}); skipping webhook.",
+                calendarInfoId, ex.Reason);
+            await calendarRepository.MarkWebhooksUnsupportedAsync(calendarInfoId, ct);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to register webhook for calendar {CalendarInfoId}", calendarInfoId);
@@ -80,10 +88,26 @@ public class WebhookRegistrationService(
             return;
         }
 
+        // FHQ-58: guard direct callers — a NeedsReauth account can't refresh its token, so registering
+        // its webhooks just produces invalid_grant noise. (Null-safe: GetAuthStatusAsync returns Active
+        // for unknown users in production; treat any non-NeedsReauth result as eligible.)
+        var authStatus = await tokenStore.GetAuthStatusAsync(userId, ct);
+        if (authStatus is { Status: TokenAuthStatus.NeedsReauth })
+        {
+            logger.LogInformation("Skipping webhook registration for {UserId}: account needs re-authentication.", userId);
+            return;
+        }
+
         var calendars = await calendarRepository.GetCalendarsByUserIdAsync(userId, ct);
 
         foreach (var calendar in calendars)
         {
+            if (!calendar.WebhooksSupported)
+            {
+                logger.LogDebug("Calendar {CalendarInfoId} marked as not supporting webhooks; skipping.", calendar.Id);
+                continue;
+            }
+
             await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, force, ct);
         }
     }
@@ -96,11 +120,23 @@ public class WebhookRegistrationService(
             return;
         }
 
-        var userIds = await tokenStore.GetAllUserIdsAsync(ct);
+        var userStates = await tokenStore.GetAllUserAuthStatesAsync(ct);
 
-        foreach (var userId in userIds)
+        foreach (var state in userStates)
         {
-            await RegisterAllAsync(userId, ct: ct);
+            if (string.IsNullOrEmpty(state.UserId))
+                continue;
+
+            // FHQ-58: a NeedsReauth account fails every token refresh, so attempting webhook
+            // registration is pure invalid_grant noise; the user is already prompted to reconnect.
+            // Skip until re-consent flips AuthStatus back to Active (picked up next renewal cycle).
+            if (state.AuthStatus == TokenAuthStatus.NeedsReauth)
+            {
+                logger.LogInformation("Skipping webhook registration for {UserId}: account needs re-authentication.", state.UserId);
+                continue;
+            }
+
+            await RegisterAllAsync(state.UserId, ct: ct);
         }
     }
 }

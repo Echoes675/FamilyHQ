@@ -1,26 +1,38 @@
-@page "/diagnostics"
+@namespace FamilyHQ.WebUi.Components.Settings
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Components.Diagnostics
 @using FamilyHQ.WebUi.Services
-@using FamilyHQ.WebUi.Services.Auth
+@using Microsoft.Extensions.Logging
 @inject IDiagnosticsApiService DiagnosticsApi
-@inject IAuthenticationService AuthService
+@inject ICalendarApiService CalendarApi
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject TimeProvider TimeProvider
+@inject ILogger<SettingsDiagnosticsTab> Logger
 
-<PageTitle>Diagnostics</PageTitle>
-
-<DashboardHeader BackUrl="/settings" />
-
-<div class="diagnostics-page">
+<div class="settings-section-content">
     <div class="diagnostics-header">
-        <h1 class="diagnostics-page__title">Diagnostics</h1>
+        <h2 class="settings-section__title">Diagnostics</h2>
+        <button type="button"
+                class="btn btn-primary diagnostics-sync-all-btn"
+                data-testid="diagnostics-sync-all-btn"
+                @onclick="SyncAllAsync"
+                disabled="@(_isSyncing || _isLoading)">
+            @if (_isSyncing)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Syncing…</span>
+            }
+            else
+            {
+                <span>Sync All</span>
+            }
+        </button>
         <button type="button"
                 class="btn btn-secondary diagnostics-refresh-btn"
                 data-testid="diagnostics-refresh-btn"
                 @onclick="RefreshAsync"
-                disabled="@_isLoading">
+                disabled="@(_isLoading || _isSyncing)">
             @if (_isLoading)
             {
                 <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
@@ -33,6 +45,15 @@
         </button>
     </div>
 
+    @if (!string.IsNullOrEmpty(_syncMessage))
+    {
+        <p class="alert alert-success" data-testid="diagnostics-sync-message">@_syncMessage</p>
+    }
+    @if (!string.IsNullOrEmpty(_syncError))
+    {
+        <p class="alert alert-error" data-testid="diagnostics-sync-error">@_syncError</p>
+    }
+
     @if (_loadFailed)
     {
         <div class="alert alert-warning" data-testid="diagnostics-load-error">
@@ -41,7 +62,7 @@
     }
 
     <section class="diagnostics-section" aria-labelledby="diagnostics-connection-heading">
-        <h2 id="diagnostics-connection-heading" class="diagnostics-section__title">Connection status</h2>
+        <h2 id="diagnostics-connection-heading" data-testid="diagnostics-connection-heading" class="diagnostics-section__title">Connection status</h2>
 
         @if (_connectionStatus is null && !_loadFailed)
         {
@@ -208,6 +229,9 @@
     private IReadOnlyList<SyncFailureDto>? _failures;
     private IReadOnlyList<FailedSyncRunDto>? _failedRuns;
     private bool _isLoading;
+    private bool _isSyncing;
+    private string? _syncMessage;
+    private string? _syncError;
     private bool _connectionStatusFailed;
     private bool _failuresFailed;
     private bool _failedRunsFailed;
@@ -215,18 +239,34 @@
 
     private bool _loadFailed => _connectionStatusFailed || _failuresFailed || _failedRunsFailed;
 
-    protected override async Task OnInitializedAsync()
-    {
-        if (!await AuthService.IsAuthenticatedAsync())
-        {
-            Navigation.NavigateTo("/");
-            return;
-        }
-
-        await LoadAsync();
-    }
+    protected override async Task OnInitializedAsync() => await LoadAsync();
 
     private async Task RefreshAsync() => await LoadAsync();
+
+    private async Task SyncAllAsync()
+    {
+        _isSyncing = true;
+        _syncMessage = null;
+        _syncError = null;
+        StateHasChanged();
+        try
+        {
+            await CalendarApi.TriggerSyncAsync();
+            await LoadAsync();
+            _syncMessage = "Sync completed.";
+        }
+        catch (Exception ex)
+        {
+            // TriggerSyncAsync surfaces 409 (re-auth) / 502 as a failed status code; the
+            // connection-status section above shows the re-auth detail, so a concise message suffices.
+            Logger.LogWarning(ex, "Manual Sync All from diagnostics tab failed");
+            _syncError = "Sync failed. Please try again.";
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+    }
 
     private async Task LoadAsync()
     {

@@ -44,7 +44,7 @@
                 </button>
             </div>
         }
-        <WeatherStrip ActiveView="@(_currentView == DashboardView.Day ? "Day" : _currentView == DashboardView.MonthAgenda ? "Agenda" : "Month")" />
+        <WeatherStrip />
 
         <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
 

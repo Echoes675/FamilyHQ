@@ -30,7 +30,7 @@ public class WeatherRefreshService(
 
         if (location is null)
         {
-            logger.LogWarning("No location configured for user {UserId}. Skipping weather refresh.", userId);
+            logger.LogDebug("No location configured for user {UserId}. Skipping weather refresh.", userId);
             return new WeatherRefreshResult(WeatherRefreshOutcome.SkippedNoLocation, LocationSettingId: null, DataPointsWritten: 0);
         }
 

@@ -40,6 +40,12 @@
             <span class="settings-tab__icon" aria-hidden="true">🖥</span>
             <span class="settings-tab__label">Display</span>
         </button>
+        <button class="settings-tab @(_activeTab == "diagnostics" ? "settings-tab--active" : "")"
+                data-testid="tab-diagnostics"
+                @onclick='() => SetTab("diagnostics")'>
+            <span class="settings-tab__icon" aria-hidden="true">🩺</span>
+            <span class="settings-tab__label">Diagnostics</span>
+        </button>
         @if (FeatureFlags.WeatherOverrideEnabled)
         {
             <button class="settings-tab @(_activeTab == "weather-override" ? "settings-tab--active" : "")"
@@ -68,6 +74,9 @@
                 break;
             case "calendars":
                 <SettingsCalendarsTab />
+                break;
+            case "diagnostics":
+                <SettingsDiagnosticsTab />
                 break;
             case "weather-override" when FeatureFlags.WeatherOverrideEnabled:
                 <SettingsWeatherOverrideTab />
