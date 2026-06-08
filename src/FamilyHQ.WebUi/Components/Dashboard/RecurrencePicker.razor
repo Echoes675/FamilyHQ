@@ -3,15 +3,25 @@
 @using MonthlyModeEnum = FamilyHQ.Core.Calendar.Recurrence.MonthlyMode
 
 <div class="recurrence-picker" data-testid="recurrence-picker">
-    <PillSegmentGroup TValue="RecurrenceMode"
-                      Options="ModeOptions"
-                      Value="_model.Mode"
-                      ValueChanged="OnModeChanged"
-                      AriaLabel="Repeat" />
+    <button type="button"
+            class="@($"pill-toggle recurrence-repeat-toggle {(Repeats ? "pill-toggle--on" : "pill-toggle--off")}")"
+            data-testid="recurrence-repeat-toggle"
+            aria-pressed="@(Repeats ? "true" : "false")"
+            @onclick="ToggleRepeatsAsync">
+        @(Repeats ? "Repeats" : "Does not repeat")
+    </button>
 
-    @if (_model.Mode == RecurrenceMode.Custom)
+    @if (Repeats)
     {
-        <div class="recurrence-drawer" data-testid="recurrence-drawer">
+        <PillSegmentGroup TValue="RecurrenceMode"
+                          Options="RepeatModeOptions"
+                          Value="_model.Mode"
+                          ValueChanged="OnModeChanged"
+                          AriaLabel="Repeat frequency" />
+
+        @if (_model.Mode == RecurrenceMode.Custom)
+        {
+            <div class="recurrence-drawer" data-testid="recurrence-drawer">
             <div class="recurrence-field">
                 <label class="form-label">Frequency</label>
                 <PillSegmentGroup TValue="RecurrenceFrequency"
@@ -96,8 +106,9 @@
                            value="@_model.Until.ToString("yyyy-MM-dd")"
                            @onchange="OnUntilChanged" />
                 }
+                </div>
             </div>
-        </div>
+        }
     }
 </div>
 
@@ -111,6 +122,10 @@
     /// <summary>The event start the picker anchors its defaults to (weekday, day-of-month, …).</summary>
     [Parameter] public DateTimeOffset Start { get; set; }
 
+    /// <summary>Raised with whether the current selection is complete enough to save (false only
+    /// when the user has toggled repeat on but not yet chosen a frequency).</summary>
+    [Parameter] public EventCallback<bool> SelectionCompleteChanged { get; set; }
+
     private RecurrencePickerModel _model = null!;
     private string? _syncedValue;
     private DateTimeOffset _syncedStart;
@@ -118,9 +133,8 @@
 
     // FHQ-18.11 Pass 2: per-option data-testids so E2E can drive the picker without depending on
     // pill label text (which is user-facing copy and may be reworded).
-    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceMode>> ModeOptions =
+    private static readonly IReadOnlyList<PillSegmentOption<RecurrenceMode>> RepeatModeOptions =
     [
-        new(RecurrenceMode.DoesNotRepeat, "Does not repeat", "recurrence-mode-none"),
         new(RecurrenceMode.Daily, "Daily", "recurrence-mode-daily"),
         new(RecurrenceMode.Weekly, "Weekly", "recurrence-mode-weekly"),
         new(RecurrenceMode.Monthly, "Monthly", "recurrence-mode-monthly"),
@@ -171,7 +185,7 @@
         _ => ""
     };
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         // Rebuild from the incoming Value/Start only when they actually change, so local edits
         // (which flow out via ValueChanged) are not clobbered by the re-render they trigger.
@@ -183,7 +197,19 @@
             _syncedValue = Value;
             _syncedStart = Start;
             _initialised = true;
+            await SelectionCompleteChanged.InvokeAsync(_model.IsSelectionComplete);
         }
+    }
+
+    // Repeats is "on" whenever the mode is anything other than the explicit not-repeating state.
+    // Unset (toggle on, nothing picked) still counts as repeating so the frequency pills stay visible.
+    private bool Repeats => _model.Mode != RecurrenceMode.DoesNotRepeat;
+
+    private async Task ToggleRepeatsAsync()
+    {
+        // On → Unset (frequency pills shown, none selected, Save gated). Off → DoesNotRepeat.
+        _model.Mode = Repeats ? RecurrenceMode.DoesNotRepeat : RecurrenceMode.Unset;
+        await EmitAsync();
     }
 
     private async Task OnModeChanged(RecurrenceMode mode)
@@ -269,6 +295,7 @@
         _syncedValue = rrule;
         Value = rrule;
         await ValueChanged.InvokeAsync(rrule);
+        await SelectionCompleteChanged.InvokeAsync(_model.IsSelectionComplete);
     }
 }
 

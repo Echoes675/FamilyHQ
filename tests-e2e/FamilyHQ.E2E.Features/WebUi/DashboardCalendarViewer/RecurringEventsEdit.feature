@@ -26,3 +26,7 @@ Feature: Recurring Event Edit Scope
     When I change occurrence 1 of "Soccer practice" to "Training camp" applying to "all" scope
     Then the event "Training camp" appears on occurrence 3
     And the event "Dentist" still appears on occurrence 2
+
+  Scenario: Opening a weekly recurring event shows it as repeating weekly
+    When I open occurrence 1 of "Soccer practice" for editing
+    Then the event is shown as repeating with the weekly frequency selected

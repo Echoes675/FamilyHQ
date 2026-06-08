@@ -1073,12 +1073,123 @@ public class DashboardPage : BasePage
     // declared on RecurrenceScopePrompt's PillSegmentGroup options.
     private ILocator ScopePromptPill(string scope) => Page.GetByTestId($"recurrence-scope-{scope}");
 
-    /// <summary>Selects a recurrence mode pill (e.g. "weekly", "custom", "none").</summary>
+    // FHQ-62: the recurrence picker now leads with a single Does-not-repeat ↔ Repeats toggle.
+    // The frequency pills (Daily/Weekly/…/Custom) only render once Repeat is toggled on, and the
+    // explicit "none" mode pill has been replaced by toggling the pill off.
+    private ILocator RepeatToggle => RecurrenceSection.GetByTestId("recurrence-repeat-toggle");
+
+    /// <summary>Toggles Repeat ON if it is not already, so the frequency pills are revealed.</summary>
+    private async Task EnsureRepeatOnAsync()
+    {
+        var pressed = await RepeatToggle.GetAttributeAsync("aria-pressed");
+        if (pressed != "true")
+        {
+            await RepeatToggle.ClickAsync();
+            await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>Toggles Repeat OFF if it is not already (the new "Does not repeat" affordance).</summary>
+    private async Task EnsureRepeatOffAsync()
+    {
+        var pressed = await RepeatToggle.GetAttributeAsync("aria-pressed");
+        if (pressed != "false")
+        {
+            await RepeatToggle.ClickAsync();
+            await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "false", new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>
+    /// Selects a recurrence frequency pill (e.g. "weekly", "custom"). Ensures Repeat is toggled on
+    /// first so the frequency pills are visible.
+    /// </summary>
     private async Task SelectRecurrenceModeAsync(string mode)
     {
+        await EnsureRepeatOnAsync();
         var pill = RecurrenceSection.GetByTestId($"recurrence-mode-{mode}");
+        await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         await pill.ClickAsync();
         await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    // FHQ-62: the Save button now carries a stable testid and is gated while Repeat is on with no
+    // frequency chosen. The toggle-driven scenarios inspect its disabled state directly rather than
+    // relying on the visible "Save" label, which the spinner state can momentarily replace.
+    private ILocator SaveEventBtnByTestId => EventModal.GetByTestId("event-save-btn");
+
+    /// <summary>Opens the create-event modal and activates the named calendar chip.</summary>
+    public async Task BeginCreatingEventAsync(string calendarName)
+    {
+        await OpenCreateEventModalAsync();
+        await EnsureCalendarChipActiveAsync(calendarName);
+    }
+
+    /// <summary>
+    /// Asserts the recurrence picker opens in the not-repeating state: the toggle reads
+    /// "Does not repeat" (aria-pressed=false) and no frequency pills are rendered.
+    /// </summary>
+    public async Task AssertRecurrenceOffAndNoFrequenciesAsync()
+    {
+        await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "false", new() { Timeout = 5000 });
+        await Assertions.Expect(RepeatToggle).ToContainTextAsync("Does not repeat", new() { Timeout = 5000 });
+        await Assertions.Expect(RecurrenceSection.GetByTestId("recurrence-mode-weekly"))
+            .ToHaveCountAsync(0, new() { Timeout = 5000 });
+    }
+
+    /// <summary>Toggles Repeat on via the does-not-repeat ↔ repeats toggle.</summary>
+    public async Task TurnOnRepeatAsync() => await EnsureRepeatOnAsync();
+
+    /// <summary>
+    /// Asserts that with Repeat toggled on but no frequency chosen, the toggle reads "Repeats", the
+    /// frequency pills are shown with none selected, and Save is disabled.
+    /// </summary>
+    public async Task AssertRepeatOnNoFrequencySelectedAndSaveDisabledAsync()
+    {
+        await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(RepeatToggle).ToContainTextAsync("Repeats", new() { Timeout = 5000 });
+
+        // The frequency pills are revealed but none is highlighted (no .pill-toggle--on among them).
+        await Assertions.Expect(RecurrenceSection.GetByTestId("recurrence-mode-weekly"))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+        await Assertions.Expect(RecurrenceSection.Locator(".pill-segment-group .pill-toggle--on"))
+            .ToHaveCountAsync(0, new() { Timeout = 5000 });
+
+        await Assertions.Expect(SaveEventBtnByTestId).ToBeDisabledAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>Chooses the weekly repeat frequency pill (Repeat must already be on).</summary>
+    public async Task ChooseWeeklyFrequencyAsync() => await SelectRecurrenceModeAsync("weekly");
+
+    /// <summary>Asserts the Save button is enabled.</summary>
+    public async Task AssertSaveEnabledAsync()
+        => await Assertions.Expect(SaveEventBtnByTestId).ToBeEnabledAsync(new() { Timeout = 5000 });
+
+    /// <summary>
+    /// Opens the occurrence tile of <paramref name="seriesName"/> on <paramref name="occurrenceDate"/>
+    /// for editing (Day view), leaving the event modal open for inspection.
+    /// </summary>
+    public async Task OpenOccurrenceForEditingAsync(string seriesName, DateTime occurrenceDate)
+    {
+        await OpenDayPickerAndGoAsync(
+            occurrenceDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{seriesName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await tile.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+    }
+
+    /// <summary>
+    /// Asserts the open event modal shows the picker as repeating with the weekly frequency pill
+    /// selected: toggle reads "Repeats" and the weekly pill is pressed.
+    /// </summary>
+    public async Task AssertRepeatingWeeklySelectedAsync()
+    {
+        await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(RepeatToggle).ToContainTextAsync("Repeats", new() { Timeout = 5000 });
+        await Assertions.Expect(RecurrenceSection.GetByTestId("recurrence-mode-weekly"))
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
     }
 
     /// <summary>Selects a custom-drawer frequency pill (e.g. "weekly"). Requires Custom mode.</summary>
@@ -1171,7 +1282,7 @@ public class DashboardPage : BasePage
     public async Task TurnOffRecurrenceForEventAsync(string eventName)
     {
         await OpenEventForEditingAsync(eventName);
-        await SelectRecurrenceModeAsync("none");
+        await EnsureRepeatOffAsync();
 
         var eventsResponseTask = Page.WaitForResponseAsync(
             r => r.Url.Contains("api/calendars/events"),
