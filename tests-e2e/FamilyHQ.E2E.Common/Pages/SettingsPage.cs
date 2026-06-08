@@ -22,6 +22,7 @@ public class SettingsPage : BasePage
     public ILocator WeatherTab          => Page.GetByTestId("tab-weather");
     public ILocator DisplayTab          => Page.GetByTestId("tab-display");
     public ILocator WeatherOverrideTab  => Page.GetByTestId("tab-weather-override");
+    public ILocator DiagnosticsTab      => Page.GetByTestId("tab-diagnostics");
 
     // General tab
     public ILocator AccountName => Page.GetByTestId("account-name");
@@ -196,8 +197,11 @@ public class SettingsPage : BasePage
     public ILocator SyncNowBtn => Page.GetByTestId("sync-now-btn");
     public ILocator RegisterWebhooksBtn => Page.GetByTestId("register-webhooks-btn");
 
-    // General tab — diagnostics link
+    // General tab — diagnostics link (removed in FHQ-62; kept for absence assertions)
     public ILocator DiagnosticsLink => Page.GetByTestId("settings-diagnostics-link");
+
+    // Diagnostics tab
+    public ILocator DiagnosticsConnectionHeading => Page.GetByTestId("diagnostics-connection-heading");
 
     // Calendars tab — reauth banner (mirrors the dashboard banner)
     public ILocator ReauthBannerSettings    => Page.GetByTestId("reauth-banner-settings");

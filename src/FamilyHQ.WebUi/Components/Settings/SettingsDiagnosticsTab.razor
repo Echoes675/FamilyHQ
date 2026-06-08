@@ -1,21 +1,15 @@
-@page "/diagnostics"
+@namespace FamilyHQ.WebUi.Components.Settings
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Components.Diagnostics
 @using FamilyHQ.WebUi.Services
-@using FamilyHQ.WebUi.Services.Auth
 @inject IDiagnosticsApiService DiagnosticsApi
-@inject IAuthenticationService AuthService
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject TimeProvider TimeProvider
 
-<PageTitle>Diagnostics</PageTitle>
-
-<DashboardHeader BackUrl="/settings" />
-
-<div class="diagnostics-page">
+<div class="settings-section-content">
     <div class="diagnostics-header">
-        <h1 class="diagnostics-page__title">Diagnostics</h1>
+        <h2 class="settings-section__title">Diagnostics</h2>
         <button type="button"
                 class="btn btn-secondary diagnostics-refresh-btn"
                 data-testid="diagnostics-refresh-btn"
@@ -41,7 +35,7 @@
     }
 
     <section class="diagnostics-section" aria-labelledby="diagnostics-connection-heading">
-        <h2 id="diagnostics-connection-heading" class="diagnostics-section__title">Connection status</h2>
+        <h2 id="diagnostics-connection-heading" data-testid="diagnostics-connection-heading" class="diagnostics-section__title">Connection status</h2>
 
         @if (_connectionStatus is null && !_loadFailed)
         {
@@ -215,16 +209,7 @@
 
     private bool _loadFailed => _connectionStatusFailed || _failuresFailed || _failedRunsFailed;
 
-    protected override async Task OnInitializedAsync()
-    {
-        if (!await AuthService.IsAuthenticatedAsync())
-        {
-            Navigation.NavigateTo("/");
-            return;
-        }
-
-        await LoadAsync();
-    }
+    protected override async Task OnInitializedAsync() => await LoadAsync();
 
     private async Task RefreshAsync() => await LoadAsync();
 

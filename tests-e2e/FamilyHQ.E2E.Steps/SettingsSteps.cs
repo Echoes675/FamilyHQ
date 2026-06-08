@@ -68,6 +68,35 @@ public class SettingsSteps
             new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
     }
 
+    [When(@"I navigate to the diagnostics tab")]
+    public async Task WhenINavigateToTheDiagnosticsTab()
+    {
+        await _settingsPage.DiagnosticsTab.ClickAsync();
+        await _settingsPage.DiagnosticsConnectionHeading.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+    }
+
+    [Then(@"I see the diagnostics connection status")]
+    public async Task ThenISeeTheDiagnosticsConnectionStatus()
+    {
+        await Assertions.Expect(_settingsPage.DiagnosticsConnectionHeading)
+            .ToBeVisibleAsync(new() { Timeout = 10000 });
+    }
+
+    [Then(@"I do not see the diagnostics connection status")]
+    public async Task ThenIDoNotSeeTheDiagnosticsConnectionStatus()
+    {
+        await Assertions.Expect(_settingsPage.DiagnosticsConnectionHeading)
+            .ToHaveCountAsync(0);
+    }
+
+    [Then(@"I do not see the diagnostics link on the general tab")]
+    public async Task ThenIDoNotSeeTheDiagnosticsLinkOnTheGeneralTab()
+    {
+        await Assertions.Expect(_settingsPage.DiagnosticsLink)
+            .ToHaveCountAsync(0);
+    }
+
     [When(@"I click the back button")]
     public async Task WhenIClickTheBackButton()
     {
