@@ -19,23 +19,23 @@ Feature: Sync resilience and diagnostics
     Then I see the reauth banner on the dashboard
     And the banner shows the reason "Forbidden"
 
-  Scenario: Diagnostics page shows needs-reauth status with reconnect button
+  Scenario: Diagnostics tab shows needs-reauth status with reconnect button
     Given the user's Google refresh token has been revoked
     When I trigger a manual sync from the Settings page
-    And I view the diagnostics page
+    And I view the diagnostics tab
     Then the connection status badge reads "Needs Reauth"
-    And I see a reconnect button on the diagnostics page
+    And I see a reconnect button on the diagnostics tab
 
-  Scenario: Diagnostics page lists a sync event failure when one event in a sync throws
+  Scenario: Diagnostics tab lists a sync event failure when one event in a sync throws
     Given the user has an all-day event "Soccer practice" tomorrow
     And a sync event failure has been recorded
-    When I view the diagnostics page
+    When I view the diagnostics tab
     Then I see the failure in the recent sync failures table
     And my other events still appear on the dashboard
 
-  Scenario: Diagnostics page lists a failed sync run when a webhook-driven sync fails terminally
+  Scenario: Diagnostics tab lists a failed sync run when a webhook-driven sync fails terminally
     Given the user's Google refresh token has been revoked
     When Google Calendar sends a webhook notification
     And I wait for the failed sync run to be recorded
-    And I view the diagnostics page
+    And I view the diagnostics tab
     Then I see the failed run in the recent failed sync runs table

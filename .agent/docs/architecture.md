@@ -87,7 +87,7 @@ The periodic safety-net timer feeds the same queue (**FHQ-38**): `SyncOrchestrat
 
 ### Run-level failure diagnostics
 
-Distinct from the per-event `SyncEventFailure` subsystem (individual events that could not be saved), the queue records whole-run failures. `GET /api/diagnostics/failed-sync-runs` returns the current user's recent terminally-failed runs (`FailedSyncRunDto`), surfaced on the Diagnostics page in a third "Recent failed sync runs" section (`data-testid="diagnostics-runs-table"`). These re-run automatically on the next change, so they are informational, not action items.
+Distinct from the per-event `SyncEventFailure` subsystem (individual events that could not be saved), the queue records whole-run failures. `GET /api/diagnostics/failed-sync-runs` returns the current user's recent terminally-failed runs (`FailedSyncRunDto`), surfaced on the Diagnostics tab of the Settings page in a third "Recent failed sync runs" section (`data-testid="diagnostics-runs-table"`). These re-run automatically on the next change, so they are informational, not action items.
 
 ## API Endpoints
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)

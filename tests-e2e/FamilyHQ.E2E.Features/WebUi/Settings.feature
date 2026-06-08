@@ -51,7 +51,7 @@ Feature: Settings Page
     And I select the "Night" theme tile
     Then the "Night" theme tile is selected
 
-  Scenario: Diagnostics is not loaded until its tab is opened
+  Scenario: Diagnostics data is not loaded on the default settings view
     Then I do not see the diagnostics connection status
 
   Scenario: Opening the diagnostics tab shows the connection status
