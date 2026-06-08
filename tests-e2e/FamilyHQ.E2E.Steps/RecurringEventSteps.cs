@@ -265,6 +265,38 @@ public class RecurringEventSteps
         await _dashboardPage.AssertSaveEnabledAsync();
     }
 
+    // ── FHQ-62: Custom-drawer interval stepper pills ────────────────────────────────────────────
+
+    [When(@"I begin creating a custom repeating event in ""([^""]*)""")]
+    public async Task WhenIBeginCreatingACustomRepeatingEvent(string calendarName)
+    {
+        await _dashboardPage.BeginCreatingCustomRepeatingEventAsync(calendarName);
+    }
+
+    [Then(@"the repeat interval is ""([^""]*)"" and cannot be lowered")]
+    public async Task ThenTheRepeatIntervalIsAndCannotBeLowered(string expected)
+    {
+        await _dashboardPage.AssertIntervalAtFloorWithDecrementDisabledAsync(expected);
+    }
+
+    [When(@"I step the repeat interval up")]
+    public async Task WhenIStepTheRepeatIntervalUp()
+    {
+        await _dashboardPage.IncrementIntervalAndAssertValueAsync("2");
+    }
+
+    [When(@"I step the repeat interval down")]
+    public async Task WhenIStepTheRepeatIntervalDown()
+    {
+        await _dashboardPage.DecrementIntervalAndAssertValueAsync("1");
+    }
+
+    [Then(@"the repeat interval is ""([^""]*)""")]
+    public async Task ThenTheRepeatIntervalIs(string expected)
+    {
+        await _dashboardPage.AssertIntervalValueAsync(expected);
+    }
+
     [When(@"I open occurrence (\d+) of ""([^""]*)"" for editing")]
     public async Task WhenIOpenOccurrenceForEditing(int occurrence, string seriesName)
     {

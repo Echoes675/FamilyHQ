@@ -1165,6 +1165,53 @@ public class DashboardPage : BasePage
     public async Task AssertSaveEnabledAsync()
         => await Assertions.Expect(SaveEventBtnByTestId).ToBeEnabledAsync(new() { Timeout = 5000 });
 
+    // FHQ-62: stepper pills around the Custom-drawer interval input.
+    private ILocator IntervalInput => RecurrenceSection.GetByTestId("recurrence-interval");
+    private ILocator IntervalIncrement => RecurrenceSection.GetByTestId("recurrence-interval-increment");
+    private ILocator IntervalDecrement => RecurrenceSection.GetByTestId("recurrence-interval-decrement");
+
+    /// <summary>Opens the Custom recurrence drawer (Repeat is toggled on first if needed).</summary>
+    public async Task ChooseCustomFrequencyAsync() => await SelectRecurrenceModeAsync("custom");
+
+    /// <summary>
+    /// Opens the create-event modal on the named calendar, turns Repeat on, and opens the Custom
+    /// recurrence drawer — the precondition for exercising the interval stepper pills.
+    /// </summary>
+    public async Task BeginCreatingCustomRepeatingEventAsync(string calendarName)
+    {
+        await BeginCreatingEventAsync(calendarName);
+        await EnsureRepeatOnAsync();
+        await SelectRecurrenceModeAsync("custom");
+    }
+
+    /// <summary>Asserts the Custom drawer interval input holds the given value.</summary>
+    public async Task AssertIntervalValueAsync(string expected)
+        => await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+
+    /// <summary>
+    /// Asserts the Custom drawer interval input holds <paramref name="expected"/> (the floor, "1")
+    /// with its decrement stepper disabled, so the interval cannot be lowered further.
+    /// </summary>
+    public async Task AssertIntervalAtFloorWithDecrementDisabledAsync(string expected)
+    {
+        await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+        await Assertions.Expect(IntervalDecrement).ToBeDisabledAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>Taps the interval increment stepper and asserts the input rises to the given value.</summary>
+    public async Task IncrementIntervalAndAssertValueAsync(string expected)
+    {
+        await IntervalIncrement.ClickAsync();
+        await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+    }
+
+    /// <summary>Taps the interval decrement stepper and asserts the input falls to the given value.</summary>
+    public async Task DecrementIntervalAndAssertValueAsync(string expected)
+    {
+        await IntervalDecrement.ClickAsync();
+        await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+    }
+
     /// <summary>
     /// Opens the occurrence tile of <paramref name="seriesName"/> on <paramref name="occurrenceDate"/>
     /// for editing (Day view), leaving the event modal open for inspection.

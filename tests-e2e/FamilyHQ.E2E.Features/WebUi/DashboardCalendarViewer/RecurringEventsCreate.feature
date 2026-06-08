@@ -31,3 +31,11 @@ Feature: Recurring Event Create and Toggle
     Then a repeat frequency must be chosen and the event cannot yet be saved
     When I choose the weekly repeat frequency
     Then the event can be saved
+
+  Scenario: Stepper pills adjust the custom repeat interval
+    When I begin creating a custom repeating event in "Appointments"
+    Then the repeat interval is "1" and cannot be lowered
+    When I step the repeat interval up
+    Then the repeat interval is "2"
+    When I step the repeat interval down
+    Then the repeat interval is "1" and cannot be lowered
