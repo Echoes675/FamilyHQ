@@ -202,6 +202,8 @@ public class SettingsPage : BasePage
 
     // Diagnostics tab
     public ILocator DiagnosticsConnectionHeading => Page.GetByTestId("diagnostics-connection-heading");
+    public ILocator DiagnosticsSyncAllBtn => Page.GetByTestId("diagnostics-sync-all-btn");
+    public ILocator DiagnosticsSyncMessage => Page.GetByTestId("diagnostics-sync-message");
 
     // Calendars tab — reauth banner (mirrors the dashboard banner)
     public ILocator ReauthBannerSettings    => Page.GetByTestId("reauth-banner-settings");
@@ -218,6 +220,19 @@ public class SettingsPage : BasePage
             new() { Timeout = 30000 });
 
         await SyncNowBtn.ClickAsync();
+        var response = await responseTask;
+        return response.Status;
+    }
+
+    public async Task<int> ClickSyncAllAsync()
+    {
+        // Mirrors ClickSyncNowAsync: the Sync All button hits POST /api/sync/trigger.
+        // Wait for the response before returning so callers don't race Blazor's state update.
+        var responseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/sync/trigger"),
+            new() { Timeout = 30000 });
+
+        await DiagnosticsSyncAllBtn.ClickAsync();
         var response = await responseTask;
         return response.Status;
     }

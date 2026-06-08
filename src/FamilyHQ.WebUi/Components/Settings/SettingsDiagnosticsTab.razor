@@ -3,6 +3,7 @@
 @using FamilyHQ.WebUi.Components.Diagnostics
 @using FamilyHQ.WebUi.Services
 @inject IDiagnosticsApiService DiagnosticsApi
+@inject ICalendarApiService CalendarApi
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject TimeProvider TimeProvider
@@ -11,10 +12,25 @@
     <div class="diagnostics-header">
         <h2 class="settings-section__title">Diagnostics</h2>
         <button type="button"
+                class="btn btn-primary diagnostics-sync-all-btn"
+                data-testid="diagnostics-sync-all-btn"
+                @onclick="SyncAllAsync"
+                disabled="@(_isSyncing || _isLoading)">
+            @if (_isSyncing)
+            {
+                <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
+                <span>Syncing…</span>
+            }
+            else
+            {
+                <span>Sync All</span>
+            }
+        </button>
+        <button type="button"
                 class="btn btn-secondary diagnostics-refresh-btn"
                 data-testid="diagnostics-refresh-btn"
                 @onclick="RefreshAsync"
-                disabled="@_isLoading">
+                disabled="@(_isLoading || _isSyncing)">
             @if (_isLoading)
             {
                 <span class="spinner spinner-sm" role="status" aria-hidden="true"></span>
@@ -26,6 +42,15 @@
             }
         </button>
     </div>
+
+    @if (!string.IsNullOrEmpty(_syncMessage))
+    {
+        <p class="alert-success" data-testid="diagnostics-sync-message">@_syncMessage</p>
+    }
+    @if (!string.IsNullOrEmpty(_syncError))
+    {
+        <p class="alert-error" data-testid="diagnostics-sync-error">@_syncError</p>
+    }
 
     @if (_loadFailed)
     {
@@ -202,6 +227,9 @@
     private IReadOnlyList<SyncFailureDto>? _failures;
     private IReadOnlyList<FailedSyncRunDto>? _failedRuns;
     private bool _isLoading;
+    private bool _isSyncing;
+    private string? _syncMessage;
+    private string? _syncError;
     private bool _connectionStatusFailed;
     private bool _failuresFailed;
     private bool _failedRunsFailed;
@@ -212,6 +240,30 @@
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
     private async Task RefreshAsync() => await LoadAsync();
+
+    private async Task SyncAllAsync()
+    {
+        _isSyncing = true;
+        _syncMessage = null;
+        _syncError = null;
+        StateHasChanged();
+        try
+        {
+            await CalendarApi.TriggerSyncAsync();
+            await LoadAsync();
+            _syncMessage = "Sync completed.";
+        }
+        catch
+        {
+            // TriggerSyncAsync surfaces 409 (re-auth) / 502 as a failed status code; the
+            // connection-status section above shows the re-auth detail, so a concise message suffices.
+            _syncError = "Sync failed. Please try again.";
+        }
+        finally
+        {
+            _isSyncing = false;
+        }
+    }
 
     private async Task LoadAsync()
     {

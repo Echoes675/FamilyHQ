@@ -60,3 +60,8 @@ Feature: Settings Page
 
   Scenario: General tab no longer links to a standalone diagnostics page
     Then I do not see the diagnostics link on the general tab
+
+  Scenario: Sync All on the diagnostics tab triggers a full calendar sync
+    When I navigate to the diagnostics tab
+    And I click the Sync All button
+    Then I see the diagnostics sync completed message

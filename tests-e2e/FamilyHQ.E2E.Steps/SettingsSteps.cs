@@ -90,6 +90,19 @@ public class SettingsSteps
             .ToHaveCountAsync(0);
     }
 
+    [When(@"I click the Sync All button")]
+    public async Task WhenIClickTheSyncAllButton()
+    {
+        await _settingsPage.ClickSyncAllAsync();
+    }
+
+    [Then(@"I see the diagnostics sync completed message")]
+    public async Task ThenISeeTheDiagnosticsSyncCompletedMessage()
+    {
+        await Assertions.Expect(_settingsPage.DiagnosticsSyncMessage)
+            .ToHaveTextAsync("Sync completed.", new() { Timeout = 30000 });
+    }
+
     [Then(@"I do not see the diagnostics link on the general tab")]
     public async Task ThenIDoNotSeeTheDiagnosticsLinkOnTheGeneralTab()
     {
