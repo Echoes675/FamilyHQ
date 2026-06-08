@@ -41,6 +41,30 @@ Feature: Weather Integration
     Then the weather overlay has class "weather-lightrain"
     And the weather overlay has class "weather-windy"
 
+  Scenario: Weather banner shows the 5-day forecast in Day view
+    Given daily forecast data is seeded for the location:
+      | Date      | Code | High | Low | WindMax |
+      | today     | 61   | 14   | 8   | 20      |
+      | tomorrow  | 3    | 16   | 9   | 10      |
+      | in 2 days | 0    | 18   | 11  | 5       |
+      | in 3 days | 3    | 17   | 10  | 8       |
+      | in 4 days | 61   | 15   | 9   | 12      |
+    When I wait for weather data to load
+    And I switch to the Day View tab
+    Then the weather banner forecast shows 5 days
+
+  Scenario: Weather banner shows the 5-day forecast in Agenda view
+    Given daily forecast data is seeded for the location:
+      | Date      | Code | High | Low | WindMax |
+      | today     | 61   | 14   | 8   | 20      |
+      | tomorrow  | 3    | 16   | 9   | 10      |
+      | in 2 days | 0    | 18   | 11  | 5       |
+      | in 3 days | 3    | 17   | 10  | 8       |
+      | in 4 days | 61   | 15   | 9   | 12      |
+    When I wait for weather data to load
+    And I switch to the Agenda View tab
+    Then the weather banner forecast shows 5 days
+
   Scenario: Agenda view shows temperatures per day
     When I wait for weather data to load
     And I switch to the Agenda View tab

@@ -452,6 +452,17 @@ public class WeatherSteps
             .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
 
+    [Then(@"the weather banner forecast shows (\d+) days")]
+    public async Task ThenTheWeatherBannerForecastShowsDays(int expectedDays)
+    {
+        // Web-first: the forecast renders after the weather fetch resolves and the view
+        // re-renders on the tab switch. ToHaveCountAsync auto-retries against the live DOM
+        // rather than counting once (FHQ-41). The banner is view-independent (FHQ-62), so
+        // the same five forecast days must be present regardless of the active dashboard view.
+        await Assertions.Expect(_dashboardPage.WeatherStripForecastContainerDays)
+            .ToHaveCountAsync(expectedDays, new() { Timeout = 30000 });
+    }
+
     [Then(@"the weather overlay has class ""([^""]*)""")]
     public async Task ThenTheWeatherOverlayHasClass(string className)
     {

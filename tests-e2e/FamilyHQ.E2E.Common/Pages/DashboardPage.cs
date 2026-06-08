@@ -62,6 +62,9 @@ public class DashboardPage : BasePage
     public ILocator WeatherStripTemp => Page.Locator(".weather-strip__temp");
     public ILocator WeatherStripCondition => Page.Locator(".weather-strip__condition");
     public ILocator WeatherStripForecastDays => Page.Locator(".weather-strip__forecast-day");
+    public ILocator WeatherStripForecast => Page.GetByTestId("weather-strip-forecast");
+    public ILocator WeatherStripForecastContainerDays =>
+        WeatherStripForecast.Locator(".weather-strip__forecast-day");
     public ILocator WeatherOverlay => Page.Locator("#weather-overlay");
 
     public ILocator AgendaWeatherForDate(string dateKey) =>
