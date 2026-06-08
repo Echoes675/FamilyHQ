@@ -80,6 +80,16 @@ public class WebhookRegistrationService(
             return;
         }
 
+        // FHQ-58: guard direct callers — a NeedsReauth account can't refresh its token, so registering
+        // its webhooks just produces invalid_grant noise. (Null-safe: GetAuthStatusAsync returns Active
+        // for unknown users in production; treat any non-NeedsReauth result as eligible.)
+        var authStatus = await tokenStore.GetAuthStatusAsync(userId, ct);
+        if (authStatus is { Status: TokenAuthStatus.NeedsReauth })
+        {
+            logger.LogInformation("Skipping webhook registration for {UserId}: account needs re-authentication.", userId);
+            return;
+        }
+
         var calendars = await calendarRepository.GetCalendarsByUserIdAsync(userId, ct);
 
         foreach (var calendar in calendars)

@@ -153,6 +153,23 @@ public class WebhookRegistrationServiceTests
     }
 
     [Fact]
+    public async Task RegisterAllAsync_SkipsUserNeedingReauth()
+    {
+        // Arrange
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        tokenStore.Setup(t => t.GetAuthStatusAsync("reauth-user", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.NeedsReauth, "invalid_grant", DateTimeOffset.UtcNow));
+
+        // Act
+        await sut.RegisterAllAsync("reauth-user");
+
+        // Assert — no calendar enumeration, no Google call
+        calendarRepo.Verify(r => r.GetCalendarsByUserIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        client.Verify(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task RenewAllAsync_RegistersForAllUsersAndCalendars()
     {
         // Arrange
