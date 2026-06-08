@@ -799,6 +799,52 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task WatchEventsAsync_WhenPushNotSupported_ThrowsWebhookNotSupportedException()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" })) });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 400, message = "Push notifications are not supported by this resource.",
+            errors = new[] { new { domain = "calendar", reason = "pushNotSupportedForRequestedResource", message = "Push notifications are not supported by this resource." } } } });
+        http.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events/watch")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(body) });
+
+        var ex = await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook"))
+            .Should().ThrowAsync<WebhookNotSupportedException>();
+        ex.Which.Reason.Should().Be("pushNotSupportedForRequestedResource");
+    }
+
+    [Fact]
+    public async Task WatchEventsAsync_When400OtherReason_ThrowsGoogleApiException()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" })) });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 400, errors = new[] { new { reason = "badRequest" } } } });
+        http.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events/watch")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(body) });
+
+        await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook"))
+            .Should().ThrowAsync<GoogleApiException>();
+    }
+
+    [Fact]
     public async Task GetEventsAsync_WhenUnauthorized_ThrowsGoogleReauthRequiredException()
     {
         // Arrange — 401 from the events endpoint is also a reauth signal.
