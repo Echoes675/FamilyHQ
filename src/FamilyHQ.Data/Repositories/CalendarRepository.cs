@@ -179,6 +179,11 @@ public class CalendarRepository : ICalendarRepository
         return Task.CompletedTask;
     }
 
+    public Task MarkWebhooksUnsupportedAsync(Guid calendarInfoId, CancellationToken ct = default)
+        => _context.Calendars
+            .Where(c => c.Id == calendarInfoId)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.WebhooksSupported, false), ct);
+
     public async Task MarkCalendarAsSharedAsync(Guid calendarInfoId, CancellationToken ct = default)
     {
         // FindAsync hits the identity map first — if the calendar is already tracked

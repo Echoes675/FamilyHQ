@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -66,6 +67,13 @@ public class WebhookRegistrationService(
                 "Registered webhook for calendar {CalendarInfoId} with channel {ChannelId}, expires at {ExpiresAt}",
                 calendarInfoId, response.ChannelId, registration.ExpiresAt);
         }
+        catch (WebhookNotSupportedException ex)
+        {
+            logger.LogInformation(
+                "Calendar {CalendarInfoId} does not support push notifications ({Reason}); skipping webhook.",
+                calendarInfoId, ex.Reason);
+            await calendarRepository.MarkWebhooksUnsupportedAsync(calendarInfoId, ct);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to register webhook for calendar {CalendarInfoId}", calendarInfoId);
@@ -94,6 +102,12 @@ public class WebhookRegistrationService(
 
         foreach (var calendar in calendars)
         {
+            if (!calendar.WebhooksSupported)
+            {
+                logger.LogDebug("Calendar {CalendarInfoId} marked as not supporting webhooks; skipping.", calendar.Id);
+                continue;
+            }
+
             await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, force, ct);
         }
     }

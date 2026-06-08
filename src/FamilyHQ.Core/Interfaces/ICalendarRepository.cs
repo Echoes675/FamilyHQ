@@ -39,6 +39,9 @@ public interface ICalendarRepository
     Task RemoveCalendarAsync(Guid calendarInfoId, CancellationToken ct = default);
     Task UpdateCalendarAsync(CalendarInfo calendarInfo, CancellationToken ct = default);
 
+    /// <summary>Marks a calendar as not supporting webhooks so it is skipped by future registration cycles.</summary>
+    Task MarkWebhooksUnsupportedAsync(Guid calendarInfoId, CancellationToken ct = default);
+
     /// <summary>
     /// Marks the calendar with the given id as shared in-place on the tracked entity.
     /// Intended for callers that may have other CalendarInfo instances already tracked
