@@ -96,11 +96,23 @@ public class WebhookRegistrationService(
             return;
         }
 
-        var userIds = await tokenStore.GetAllUserIdsAsync(ct);
+        var userStates = await tokenStore.GetAllUserAuthStatesAsync(ct);
 
-        foreach (var userId in userIds)
+        foreach (var state in userStates)
         {
-            await RegisterAllAsync(userId, ct: ct);
+            if (string.IsNullOrEmpty(state.UserId))
+                continue;
+
+            // FHQ-58: a NeedsReauth account fails every token refresh, so attempting webhook
+            // registration is pure invalid_grant noise; the user is already prompted to reconnect.
+            // Skip until re-consent flips AuthStatus back to Active (picked up next renewal cycle).
+            if (state.AuthStatus == TokenAuthStatus.NeedsReauth)
+            {
+                logger.LogInformation("Skipping webhook registration for {UserId}: account needs re-authentication.", state.UserId);
+                continue;
+            }
+
+            await RegisterAllAsync(state.UserId, ct: ct);
         }
     }
 }

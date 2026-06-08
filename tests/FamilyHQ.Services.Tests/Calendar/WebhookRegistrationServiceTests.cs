@@ -158,9 +158,15 @@ public class WebhookRegistrationServiceTests
         // Arrange
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
 
-        var userIds = new[] { "user-1", "user-2" };
-        tokenStore.Setup(t => t.GetAllUserIdsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(userIds);
+        var states = new List<UserAuthState>
+        {
+            new("user-1", TokenAuthStatus.Active),
+            new("user-2", TokenAuthStatus.Active)
+        };
+        tokenStore.Setup(t => t.GetAllUserAuthStatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(states);
+        tokenStore.Setup(t => t.GetAuthStatusAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
 
         var user1Calendar = new CalendarInfo
         {
@@ -193,7 +199,7 @@ public class WebhookRegistrationServiceTests
         await sut.RenewAllAsync();
 
         // Assert
-        tokenStore.Verify(t => t.GetAllUserIdsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        tokenStore.Verify(t => t.GetAllUserAuthStatesAsync(It.IsAny<CancellationToken>()), Times.Once);
 
         client.Verify(c => c.WatchEventsAsync(
             "u1-cal@google.com",
@@ -206,6 +212,42 @@ public class WebhookRegistrationServiceTests
             It.IsAny<string>(),
             ExpectedWebhookUrl,
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RenewAllAsync_SkipsUsersNeedingReauth()
+    {
+        // Arrange
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var states = new List<UserAuthState>
+        {
+            new("active-user", TokenAuthStatus.Active),
+            new("reauth-user", TokenAuthStatus.NeedsReauth)
+        };
+        tokenStore.Setup(t => t.GetAllUserAuthStatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(states);
+        tokenStore.Setup(t => t.GetAuthStatusAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+
+        var activeCalendar = new CalendarInfo
+        {
+            Id = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            GoogleCalendarId = "active@google.com",
+            UserId = "active-user",
+            DisplayName = "Active Cal"
+        };
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("active-user", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { activeCalendar });
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("ch", "res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        // Act
+        await sut.RenewAllAsync();
+
+        // Assert
+        client.Verify(c => c.WatchEventsAsync("active@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()), Times.Once);
+        calendarRepo.Verify(r => r.GetCalendarsByUserIdAsync("reauth-user", It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
