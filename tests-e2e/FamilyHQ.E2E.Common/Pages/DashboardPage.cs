@@ -1170,9 +1170,6 @@ public class DashboardPage : BasePage
     private ILocator IntervalIncrement => RecurrenceSection.GetByTestId("recurrence-interval-increment");
     private ILocator IntervalDecrement => RecurrenceSection.GetByTestId("recurrence-interval-decrement");
 
-    /// <summary>Opens the Custom recurrence drawer (Repeat is toggled on first if needed).</summary>
-    public async Task ChooseCustomFrequencyAsync() => await SelectRecurrenceModeAsync("custom");
-
     /// <summary>
     /// Opens the create-event modal on the named calendar, turns Repeat on, and opens the Custom
     /// recurrence drawer — the precondition for exercising the interval stepper pills.
@@ -1180,7 +1177,6 @@ public class DashboardPage : BasePage
     public async Task BeginCreatingCustomRepeatingEventAsync(string calendarName)
     {
         await BeginCreatingEventAsync(calendarName);
-        await EnsureRepeatOnAsync();
         await SelectRecurrenceModeAsync("custom");
     }
 
