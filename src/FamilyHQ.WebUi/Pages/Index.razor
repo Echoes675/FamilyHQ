@@ -4,6 +4,7 @@
 @using FamilyHQ.WebUi.Components.Reauth
 @using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.Core.DTOs
+@using Microsoft.Extensions.Logging
 @implements IAsyncDisposable
 @inject ICalendarApiService CalendarApi
 @inject SignalRService SignalR
@@ -11,6 +12,8 @@
 @inject IConfiguration Configuration
 @inject IAuthenticationService AuthService
 @inject IJSRuntime JSRuntime
+@inject FamilyHQ.WebUi.Services.KioskTimeProvider Clock
+@inject ILogger<Index> Logger
 
 <PageTitle>FamilyHQ Dashboard</PageTitle>
 
@@ -119,7 +122,7 @@
                 OnClose="CloseQuickJumpModal" />
 
 <DayPickerModal IsVisible="_showDayPickerModal"
-                InitialDate="@(_selectedDate == default ? DateTime.Today : _selectedDate)"
+                InitialDate="_selectedDate"
                 OnDatePicked="JumpToPickedDay"
                 OnJumpToday="JumpToTodayDayView"
                 OnClose="CloseDayPickerModal" />
@@ -131,14 +134,14 @@
 
 @code {
     private DashboardView _currentView = DashboardView.Month;
-    private DateTime _selectedDate = DateTime.Today;
+    private DateTime _selectedDate;
 
     // Authentication State
     private bool _isAuthenticated;
     private string? _username;
     private string? _userId;
 
-    private DateTime CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime CurrentMonth;
     private bool IsLoading = true;
     private MonthViewModel? _monthView;
     private List<List<DayItem>> _weeks = new();
@@ -155,13 +158,24 @@
     private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
     private ConnectionStatusDto? _connectionStatus;
 
+    // FHQ-63: kiosk day-rollover.
+    private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
+    private System.Threading.Timer? _idleTimer;
+    private IJSObjectReference? _idleModule;
+    private DotNetObjectReference<Index>? _devClockRef;
+
     protected override async Task OnInitializedAsync()
     {
+        var today = Clock.GetLocalNow().Date;
+        _selectedDate = today;
+        CurrentMonth = new DateTime(today.Year, today.Month, 1);
+
         // Check authentication state
         _isAuthenticated = await AuthService.IsAuthenticatedAsync();
         _username = await AuthService.GetUsernameAsync();
         _userId = await AuthService.GetUserIdAsync();
-        
+
         if (!_isAuthenticated)
         {
             // Not authenticated - show login prompt only
@@ -183,13 +197,31 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (!firstRender) return;
+
+        try
         {
-            try
+            await JSRuntime.InvokeVoidAsync("pixelOrbit.init", "dashboard-container");
+        }
+        catch { /* JS interop not available on pre-render */ }
+
+        try
+        {
+            _idleModule = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/idle.js");
+            await _idleModule.InvokeVoidAsync("init");
+
+            if (Clock.OverrideEnabled)
             {
-                await JSRuntime.InvokeVoidAsync("pixelOrbit.init", "dashboard-container");
+                _devClockRef = DotNetObjectReference.Create(this);
+                await _idleModule.InvokeVoidAsync("attachDevBridge", _devClockRef);
             }
-            catch { /* JS interop not available on pre-render */ }
+
+            _idleTimer = new System.Threading.Timer(
+                _ => _ = InvokeAsync(CheckIdleSnapAsync), null, PollInterval, PollInterval);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogDebug(ex, "Idle day-rollover init skipped: JS interop unavailable.");
         }
     }
 
@@ -236,13 +268,13 @@
     private void BuildCalendarGrid()
     {
         _weeks.Clear();
-        
+
         // Get start of the first week (could be late previous month)
         var firstDayOfMonth = new DateTime(CurrentMonth.Year, CurrentMonth.Month, 1);
         var startDay = firstDayOfMonth.AddDays(-(int)firstDayOfMonth.DayOfWeek);
-        
+
         var currentDay = startDay;
-        
+
         // Build 6 weeks to ensure we cover all days cleanly formatted
         for (int row = 0; row < 6; row++)
         {
@@ -251,7 +283,7 @@
             {
                 var dateKey = currentDay.ToString("yyyy-MM-dd");
                 var eventsForDay = new List<CalendarEventViewModel>();
-                
+
                 if (_monthView != null && _monthView.Days.ContainsKey(dateKey))
                 {
                     eventsForDay = _monthView.Days[dateKey]
@@ -264,9 +296,9 @@
                 currentDay = currentDay.AddDays(1);
             }
             _weeks.Add(week);
-            
+
             // If we've passed the end of the month and completed the row, stop
-            if (currentDay.Month > CurrentMonth.Month || 
+            if (currentDay.Month > CurrentMonth.Month ||
                (currentDay.Year > CurrentMonth.Year && currentDay.Month == 1))
             {
                 break;
@@ -285,7 +317,7 @@
         CurrentMonth = CurrentMonth.AddMonths(1);
         await LoadMonthDataAsync();
     }
-    
+
     private Task OnMonthDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
     private void OnMonthAddEvent(DateTime date) => OpenAddEventModal(date);
@@ -339,7 +371,7 @@
         {
             // Clicking the Day View tab without a specific date (i.e. not via a drill-down)
             // always returns to today — don't preserve a previously drilled-into date.
-            _selectedDate = DateTime.Today;
+            _selectedDate = Clock.GetLocalNow().Date;
             if (_selectedDate.Month != CurrentMonth.Month || _selectedDate.Year != CurrentMonth.Year)
             {
                 CurrentMonth = new DateTime(_selectedDate.Year, _selectedDate.Month, 1);
@@ -348,7 +380,7 @@
         }
         StateHasChanged();
     }
-    
+
     // Quick Jump Modal Logic
     private void OpenQuickJumpModal() => _showQuickJumpModal = true;
     private void CloseQuickJumpModal() => _showQuickJumpModal = false;
@@ -362,7 +394,8 @@
 
     private async Task JumpToToday()
     {
-        CurrentMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        var today = Clock.GetLocalNow().Date;
+        CurrentMonth = new DateTime(today.Year, today.Month, 1);
         _showQuickJumpModal = false;
         await LoadMonthDataAsync();
     }
@@ -380,7 +413,7 @@
     private async Task JumpToTodayDayView()
     {
         _showDayPickerModal = false;
-        await SwitchToView(DashboardView.Day, DateTime.Today);
+        await SwitchToView(DashboardView.Day, Clock.GetLocalNow().Date);
     }
 
     private void OnLoginClicked()
@@ -418,11 +451,76 @@
     private void OpenEditEventModal(CalendarEventViewModel evt) =>
         _eventModal.OpenForEdit(evt);
 
-    public ValueTask DisposeAsync()
+    private async Task CheckIdleSnapAsync()
+    {
+        if (_idleModule is null) return;
+
+        var modalOpen = _eventModal.IsOpen || _showQuickJumpModal || _showDayPickerModal;
+
+        double idleMs;
+        try
+        {
+            idleMs = await _idleModule.InvokeAsync<double>("getIdleMs");
+        }
+        catch (JSException ex)
+        {
+            Logger.LogDebug(ex, "Idle day-rollover check skipped: getIdleMs unavailable.");
+            return;
+        }
+
+        var today = Clock.GetLocalNow().Date;
+        var isDayView = _currentView == DashboardView.Day;
+        var anchor = isDayView
+            ? DateOnly.FromDateTime(_selectedDate.Date)
+            : DateOnly.FromDateTime(CurrentMonth);
+
+        if (!IdleSnapDecision.ShouldSnap(
+                modalOpen, idleMs, IdleSnapThreshold.TotalMilliseconds,
+                anchor, DateOnly.FromDateTime(today), isDayView))
+        {
+            return;
+        }
+
+        await SnapToTodayAsync(today);
+    }
+
+    private async Task SnapToTodayAsync(DateTime today)
+    {
+        _selectedDate = today;
+        var todayMonth = new DateTime(today.Year, today.Month, 1);
+        if (CurrentMonth != todayMonth)
+        {
+            CurrentMonth = todayMonth;
+            await LoadMonthDataAsync();
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public Task DevAdvanceClockDays(int days)
+    {
+        Clock.AdvanceDays(days);
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task DevRunIdleCheck() => CheckIdleSnapAsync();
+
+    public async ValueTask DisposeAsync()
     {
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
         SignalR.OnConnectionStatusUpdated -= RefreshConnectionStatusFromSignalR;
-        return ValueTask.CompletedTask;
+
+        if (_idleTimer is not null)
+            await _idleTimer.DisposeAsync();
+
+        _devClockRef?.Dispose();
+
+        if (_idleModule is not null)
+        {
+            try { await _idleModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { /* circuit already gone — nothing to release */ }
+        }
     }
 
 }
