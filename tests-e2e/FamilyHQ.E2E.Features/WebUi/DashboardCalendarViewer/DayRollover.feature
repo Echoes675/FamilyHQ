@@ -43,6 +43,7 @@ Feature: Kiosk auto-advances to the current day after idle
     And the idle check runs
     Then the Day view still shows the previous day
     When I cancel the event modal
+    And the kiosk has been idle for 16 minutes
     And the idle check runs
     Then the Day view shows the new current day
 
