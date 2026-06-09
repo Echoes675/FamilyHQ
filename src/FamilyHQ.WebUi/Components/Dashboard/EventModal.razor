@@ -149,6 +149,9 @@
         Calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
 
     private bool _showEventModal;
+    /// <summary>FHQ-63: lets the dashboard defer the idle day-rollover while an event is being edited.</summary>
+    public bool IsOpen => _showEventModal;
+
     private bool _isEditingEvent;
     private EventFormModel _eventModel = new();
     private HashSet<Guid> _selectedCalendarIds = new();
