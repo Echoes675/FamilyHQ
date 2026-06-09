@@ -826,6 +826,41 @@ public class DashboardPage : BasePage
         await WaitForSyncSettledAsync();
     }
 
+    // FHQ-63: kiosk day-rollover dev hooks. window.familyHqKiosk is attached by Index only
+    // when FeatureClockOverride is on. setIdle forces the idle path; advanceDays moves the
+    // displayed "today"; runIdleCheck forces an immediate evaluation (no 30s poll wait).
+
+    /// <summary>Forces the idle stamp back by <paramref name="minutes"/> so the next check sees an idle kiosk.</summary>
+    public Task ForceIdleMinutesAsync(int minutes) =>
+        Page.EvaluateAsync("ms => window.familyHqKiosk.setIdle(ms)", minutes * 60_000);
+
+    /// <summary>Advances the displayed clock by whole days.</summary>
+    public Task AdvanceClockDaysAsync(int days) =>
+        Page.EvaluateAsync("n => window.familyHqKiosk.advanceDays(n)", days);
+
+    /// <summary>Forces an immediate idle-snap evaluation and lets Blazor re-render.</summary>
+    public async Task RunIdleCheckAsync()
+    {
+        await Page.EvaluateAsync("() => window.familyHqKiosk.runIdleCheck()");
+        await Page.WaitForTimeoutAsync(250);
+    }
+
+    /// <summary>The Day-view centre header text (the day-picker button), e.g. "Tue, 9 Jun".</summary>
+    public Task<string> GetDayHeaderTextAsync() => GetDayPickerButtonTextAsync();
+
+    /// <summary>
+    /// The Month-view current month-year label text, e.g. "June 2026". Reads the btn-glass
+    /// centre button in the month navigation bar (the only .btn-glass rendered in Month view).
+    /// Mirrors <see cref="GetAgendaMonthYearTextAsync"/> which reads the equivalent testid on the
+    /// Agenda view.
+    /// </summary>
+    public async Task<string> GetMonthHeaderTextAsync()
+    {
+        var btn = Page.Locator(".btn-group .btn-glass").First;
+        await btn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
+        return (await btn.InnerTextAsync()).Trim();
+    }
+
     /// <summary>
     /// Returns whether any event capsule for <paramref name="eventName"/> is rendered
     /// in the background colour of <paramref name="calendarName"/>.

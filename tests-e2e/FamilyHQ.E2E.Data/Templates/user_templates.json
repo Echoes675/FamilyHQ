@@ -171,6 +171,16 @@
         ],
         "Events": []
     },
+    "KioskRolloverUser": {
+        "Calendars": [
+            {
+                "Id": "template_kiosk_rollover",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4"
+            }
+        ],
+        "Events": []
+    },
     "SixCalUser": {
         "Calendars": [
             {
