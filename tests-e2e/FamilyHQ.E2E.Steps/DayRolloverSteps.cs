@@ -1,5 +1,4 @@
 using FamilyHQ.E2E.Common.Pages;
-using FluentAssertions;
 using Microsoft.Playwright;
 using Reqnroll;
 
@@ -31,7 +30,7 @@ public class DayRolloverSteps
     {
         await _dashboard.NavigateAndWaitAsync();
         await _dashboard.SwitchToDayViewAsync();
-        _dayHeaderBeforeRollover = await _dashboard.GetDayHeaderTextAsync();
+        _dayHeaderBeforeRollover = (await _dashboard.GetDayHeaderTextAsync()).Trim();
     }
 
     [Given("I am on the Month view showing the current month")]
@@ -39,7 +38,7 @@ public class DayRolloverSteps
     {
         await _dashboard.NavigateAndWaitAsync();
         await _dashboard.SwitchToMonthViewAsync();
-        _monthLabelBeforeRollover = await _dashboard.GetMonthHeaderTextAsync();
+        _monthLabelBeforeRollover = (await _dashboard.GetMonthHeaderTextAsync()).Trim();
     }
 
     [Given("I am on the Agenda view showing the current month")]
@@ -47,7 +46,7 @@ public class DayRolloverSteps
     {
         await _dashboard.NavigateAndWaitAsync();
         await _dashboard.SwitchToAgendaViewAsync();
-        _monthLabelBeforeRollover = await _dashboard.GetAgendaMonthYearTextAsync();
+        _monthLabelBeforeRollover = (await _dashboard.GetAgendaMonthYearTextAsync()).Trim();
     }
 
     [Given(@"I am on the Day view navigated {int} days into the future")]
@@ -57,7 +56,7 @@ public class DayRolloverSteps
         await _dashboard.SwitchToDayViewAsync();
         // Capture today's header before navigating forward so the snap-back assertion can
         // compare against it.
-        _dayHeaderBeforeRollover = await _dashboard.GetDayHeaderTextAsync();
+        _dayHeaderBeforeRollover = (await _dashboard.GetDayHeaderTextAsync()).Trim();
         var target = DateTime.Today.AddDays(days).ToString(
             "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         await _dashboard.OpenDayPickerAndGoAsync(target);
@@ -94,40 +93,35 @@ public class DayRolloverSteps
     [Then("the Day view shows the new current day")]
     public async Task DayShowsNewDay()
     {
-        var header = await _dashboard.GetDayHeaderTextAsync();
-        header.Should().NotBe(_dayHeaderBeforeRollover,
-            "the Day view should have advanced to the new current day after idle rollover");
+        await Assertions.Expect(_dashboard.DayHeaderButton).Not.ToHaveTextAsync(
+            _dayHeaderBeforeRollover, new() { Timeout = 10000 });
     }
 
     [Then("the Day view shows today")]
     public async Task DayShowsToday()
     {
-        var header = await _dashboard.GetDayHeaderTextAsync();
-        header.Should().Be(_dayHeaderBeforeRollover,
-            "the Day view should have snapped back to today after idle");
+        await Assertions.Expect(_dashboard.DayHeaderButton).ToHaveTextAsync(
+            _dayHeaderBeforeRollover, new() { Timeout = 10000 });
     }
 
     [Then("the Day view still shows the previous day")]
     public async Task DayShowsPrevious()
     {
-        var header = await _dashboard.GetDayHeaderTextAsync();
-        header.Should().Be(_dayHeaderBeforeRollover,
-            "the Day view should not have advanced while the rollover was deferred");
+        await Assertions.Expect(_dashboard.DayHeaderButton).ToHaveTextAsync(
+            _dayHeaderBeforeRollover, new() { Timeout = 10000 });
     }
 
     [Then("the Month view shows the new current month")]
     public async Task MonthShowsNew()
     {
-        var label = await _dashboard.GetMonthHeaderTextAsync();
-        label.Should().NotBe(_monthLabelBeforeRollover,
-            "the Month view should have advanced to the new current month after idle rollover");
+        await Assertions.Expect(_dashboard.MonthHeaderButton).Not.ToHaveTextAsync(
+            _monthLabelBeforeRollover, new() { Timeout = 10000 });
     }
 
     [Then("the Agenda view shows the new current month")]
     public async Task AgendaShowsNew()
     {
-        var label = await _dashboard.GetAgendaMonthYearTextAsync();
-        label.Should().NotBe(_monthLabelBeforeRollover,
-            "the Agenda view should have advanced to the new current month after idle rollover");
+        await Assertions.Expect(_dashboard.AgendaMonthYearLabel).Not.ToHaveTextAsync(
+            _monthLabelBeforeRollover, new() { Timeout = 10000 });
     }
 }

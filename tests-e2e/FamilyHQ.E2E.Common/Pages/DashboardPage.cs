@@ -57,6 +57,13 @@ public class DashboardPage : BasePage
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
     private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
+    /// <summary>FHQ-63: Day-view centre header button (the day-picker), for web-first assertions.</summary>
+    public ILocator DayHeaderButton => DayPickerBtn;
+    /// <summary>FHQ-63: Month-view centre header button (month-year label), for web-first assertions.</summary>
+    public ILocator MonthHeaderButton => Page.GetByTestId("month-header-btn");
+    /// <summary>FHQ-63: Agenda-view month-year label, for web-first assertions.</summary>
+    public ILocator AgendaMonthYearLabel => Page.GetByTestId("agenda-month-year-label");
+
     // Weather Locators
     public ILocator WeatherStrip => Page.Locator(".weather-strip");
     public ILocator WeatherStripTemp => Page.Locator(".weather-strip__temp");
@@ -838,11 +845,12 @@ public class DashboardPage : BasePage
     public Task AdvanceClockDaysAsync(int days) =>
         Page.EvaluateAsync("n => window.familyHqKiosk.advanceDays(n)", days);
 
-    /// <summary>Forces an immediate idle-snap evaluation and lets Blazor re-render.</summary>
+    /// <summary>Forces an immediate idle-snap evaluation. The JS bridge Promise resolves only
+    /// after the .NET snap (incl. any month reload) completes; callers then assert with
+    /// web-first expectations so the DOM-render flush is awaited, not slept on.</summary>
     public async Task RunIdleCheckAsync()
     {
         await Page.EvaluateAsync("() => window.familyHqKiosk.runIdleCheck()");
-        await Page.WaitForTimeoutAsync(250);
     }
 
     /// <summary>The Day-view centre header text (the day-picker button), e.g. "Tue, 9 Jun".</summary>
@@ -854,12 +862,8 @@ public class DashboardPage : BasePage
     /// Mirrors <see cref="GetAgendaMonthYearTextAsync"/> which reads the equivalent testid on the
     /// Agenda view.
     /// </summary>
-    public async Task<string> GetMonthHeaderTextAsync()
-    {
-        var btn = Page.Locator(".btn-group .btn-glass").First;
-        await btn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10000 });
-        return (await btn.InnerTextAsync()).Trim();
-    }
+    public async Task<string> GetMonthHeaderTextAsync() =>
+        (await MonthHeaderButton.InnerTextAsync()).Trim();
 
     /// <summary>
     /// Returns whether any event capsule for <paramref name="eventName"/> is rendered
