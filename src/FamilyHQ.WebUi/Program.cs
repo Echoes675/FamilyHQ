@@ -20,7 +20,8 @@ public class Program
 
         var featureFlags = new FeatureFlags
         {
-            WeatherOverrideEnabled = builder.Configuration.GetValue<bool>("FeatureWeatherOverride")
+            WeatherOverrideEnabled = builder.Configuration.GetValue<bool>("FeatureWeatherOverride"),
+            ClockOverrideEnabled = builder.Configuration.GetValue<bool>("FeatureClockOverride")
         };
         builder.Services.AddSingleton(featureFlags);
 
@@ -74,7 +75,12 @@ public class Program
         })
         .AddHttpMessageHandler<CorrelationIdMessageHandler>();
 
-        builder.Services.AddSingleton(TimeProvider.System);
+        // FHQ-63: wrap the system clock so lower environments can advance the displayed day.
+        // Registered as both TimeProvider (for existing consumers like VersionService) and the
+        // concrete type (so Index can drive the dev bridge). In production the override is off.
+        var kioskClock = new KioskTimeProvider(TimeProvider.System, featureFlags.ClockOverrideEnabled);
+        builder.Services.AddSingleton<TimeProvider>(kioskClock);
+        builder.Services.AddSingleton(kioskClock);
 
         builder.Services.AddSingleton<IVersionService>(sp => new VersionService(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("Version"),
