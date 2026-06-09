@@ -10,6 +10,8 @@ public sealed class KioskTimeProvider : TimeProvider
 {
     private readonly TimeProvider _inner;
     private readonly bool _overrideEnabled;
+    // Accessed only on the Blazor WASM sync context (timer callback + JS-invokable bridge),
+    // so no volatile/Interlocked is needed. Revisit if ever ported to server-side Blazor.
     private int _dayOffset;
 
     public KioskTimeProvider(TimeProvider inner, bool overrideEnabled)

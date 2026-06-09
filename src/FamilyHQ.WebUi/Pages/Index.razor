@@ -121,6 +121,7 @@
                 OnJumpToday="JumpToToday"
                 OnClose="CloseQuickJumpModal" />
 
+@* _selectedDate is always initialised in OnInitializedAsync before first render, so no default-guard is needed here. *@
 <DayPickerModal IsVisible="_showDayPickerModal"
                 InitialDate="_selectedDate"
                 OnDatePicked="JumpToPickedDay"
@@ -217,7 +218,7 @@
             }
 
             _idleTimer = new System.Threading.Timer(
-                _ => _ = InvokeAsync(CheckIdleSnapAsync), null, PollInterval, PollInterval);
+                _ => InvokeAsync(CheckIdleSnapAsync), null, PollInterval, PollInterval);
         }
         catch (JSException ex)
         {
@@ -481,7 +482,14 @@
             return;
         }
 
-        await SnapToTodayAsync(today);
+        try
+        {
+            await SnapToTodayAsync(today);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Idle snap to today failed; will retry on next poll.");
+        }
     }
 
     private async Task SnapToTodayAsync(DateTime today)
