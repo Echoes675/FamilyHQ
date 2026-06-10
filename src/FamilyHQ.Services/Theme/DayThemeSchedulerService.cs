@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -26,49 +27,57 @@ public class DayThemeSchedulerService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Startup wrapped in try/catch so a TriggerRecalculationAsync race or
-        // transient failure does not crash the hosted service.
-        try
+        // FHQ-65: correlate the one-time startup broadcast.
+        using (logger.BeginCorrelationScope())
         {
-            using var scope = serviceProvider.CreateScope();
-            var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
-            await dayThemeService.EnsureTodayAsync(stoppingToken);
-            var dto = await dayThemeService.GetTodayAsync(stoppingToken);
-            await themeBroadcaster.BroadcastThemeAsync(dto.CurrentPeriod, stoppingToken);
-            logger.LogInformation("Startup theme broadcast: {Period}", dto.CurrentPeriod);
-        }
-        catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
-        {
-            // Recalculation triggered during startup — loop will re-read boundaries
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Startup theme initialization failed");
+            // Startup wrapped in try/catch so a TriggerRecalculationAsync race or
+            // transient failure does not crash the hosted service.
+            try
+            {
+                using var scope = serviceProvider.CreateScope();
+                var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
+                await dayThemeService.EnsureTodayAsync(stoppingToken);
+                var dto = await dayThemeService.GetTodayAsync(stoppingToken);
+                await themeBroadcaster.BroadcastThemeAsync(dto.CurrentPeriod, stoppingToken);
+                logger.LogInformation("Startup theme broadcast: {Period}", dto.CurrentPeriod);
+            }
+            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+            {
+                // Recalculation triggered during startup — loop will re-read boundaries
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Startup theme initialization failed");
+            }
         }
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            // FHQ-65: fresh CorrelationId per scheduling iteration.
+            using (logger.BeginCorrelationScope())
             {
-                await RunLoopIterationAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
-            {
-                // Recalculation was triggered — loop restarts to re-read boundaries
-            }
-            catch (OperationCanceledException)
-            {
-                // Host is shutting down — exit the loop cleanly
-                break;
-            }
-            catch (Exception ex)
-            {
-                // FHQ-55: never let a loop-iteration failure (e.g. a missing DayTheme record at a day
-                // boundary, or a transient DB/location/sun-calc error) propagate to the host, which runs
-                // with BackgroundServiceExceptionBehavior.StopHost and would otherwise stop the whole app.
-                // Log the failure and continue after a backoff so we don't hot-loop on a persistent fault.
-                logger.LogError(ex, "DayThemeScheduler loop iteration failed; continuing after {Backoff}", _options.LoopErrorBackoff);
-                await DelayQuietlyAsync(_options.LoopErrorBackoff, stoppingToken);
+                try
+                {
+                    await RunLoopIterationAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+                {
+                    // Recalculation was triggered — loop restarts to re-read boundaries
+                }
+                catch (OperationCanceledException)
+                {
+                    // Host is shutting down — exit the loop cleanly
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // FHQ-55: never let a loop-iteration failure (e.g. a missing DayTheme record at a day
+                    // boundary, or a transient DB/location/sun-calc error) propagate to the host, which runs
+                    // with BackgroundServiceExceptionBehavior.StopHost and would otherwise stop the whole app.
+                    // Log the failure and continue after a backoff so we don't hot-loop on a persistent fault.
+                    logger.LogError(ex, "DayThemeScheduler loop iteration failed; continuing after {Backoff}", _options.LoopErrorBackoff);
+                    await DelayQuietlyAsync(_options.LoopErrorBackoff, stoppingToken);
+                }
             }
         }
     }
