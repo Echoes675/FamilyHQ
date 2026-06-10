@@ -121,7 +121,7 @@ Deploys to prod cause the WebApi to restart, dropping the SignalR `CalendarHub` 
 
 Jenkins' global **SCM checkout retry count** is set to **4** (Manage Jenkins → System → "SCM checkout retry count"; `<scmCheckoutRetryCount>` in `$JENKINS_HOME/config.xml`). Previous value was `0` (no retry).
 
-This makes the Git plugin retry the whole SCM checkout — the implicit Jenkinsfile-load fetch *and* every explicit `checkout scm` (build, all deploys, cleanup) — up to 4 times, so a transient GitHub-egress blip self-heals instead of reding the build or deploy. It addresses the 2026-06-10 incident (FHQ-64), where intermittent ~130 s connect-timeout blackholes to GitHub's IP failed `dev` #86, `master` #43/#44, and `Deploy-Staging` #163/#164/#165 + `Deploy-PreProd` #52 at checkout (`"Maximum checkout retry attempts reached"`).
+This makes the Git plugin retry the whole SCM checkout — the implicit Jenkinsfile-load fetch *and* every explicit `checkout scm` (build, all deploys, cleanup) — up to 4 times, so a transient GitHub-egress blip self-heals instead of failing the build or deploy. It addresses the 2026-06-10 incident (FHQ-64), where intermittent ~130 s connect-timeout blackholes to GitHub's IP failed `dev` #86, `master` #43/#44, and `Deploy-Staging` #163/#164/#165 + `Deploy-PreProd` #52 at checkout (`"Maximum checkout retry attempts reached"`).
 
 - **Controller config, NOT version-controlled** — re-apply it if the controller is rebuilt/restored.
 - **Bounded at 4** so a genuine GitHub outage still fails in finite time (~4 × the connect timeout), rather than hanging indefinitely.
