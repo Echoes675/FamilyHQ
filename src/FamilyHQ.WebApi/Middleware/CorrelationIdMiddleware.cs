@@ -36,12 +36,12 @@ public class CorrelationIdMiddleware
         
         var scopeState = new Dictionary<string, object>
         {
-            { "CorrelationId", correlationId }
+            { CorrelationConstants.CorrelationIdLogProperty, correlationId }
         };
 
         if (!string.IsNullOrEmpty(sessionCorrelationId))
         {
-            scopeState["SessionCorrelationId"] = sessionCorrelationId;
+            scopeState[CorrelationConstants.SessionCorrelationIdLogProperty] = sessionCorrelationId;
         }
 
         using (_logger.BeginScope(scopeState))

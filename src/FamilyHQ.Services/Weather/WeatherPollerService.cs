@@ -1,6 +1,7 @@
 namespace FamilyHQ.Services.Weather;
 
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -20,18 +21,22 @@ public class WeatherPollerService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            // FHQ-65: fresh CorrelationId per poll cycle.
+            using (logger.BeginCorrelationScope())
             {
-                await RunPollIterationAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Weather poll iteration failed. Retrying in {Delay}.", RetryDelay);
-                await Task.Delay(RetryDelay, stoppingToken);
+                try
+                {
+                    await RunPollIterationAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Weather poll iteration failed. Retrying in {Delay}.", RetryDelay);
+                    await Task.Delay(RetryDelay, stoppingToken);
+                }
             }
         }
     }

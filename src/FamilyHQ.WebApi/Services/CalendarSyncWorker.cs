@@ -1,6 +1,7 @@
 namespace FamilyHQ.WebApi.Services;
 
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
@@ -62,7 +63,12 @@ public class CalendarSyncWorker(
             var job = await queue.ClaimNextAsync(stoppingToken);
             if (job is null) break;
 
-            await ProcessJobAsync(scope, queue, job, opts, stoppingToken);
+            // FHQ-65: each job gets a fresh CorrelationId so all its logs (sync, broadcast,
+            // retry/reauth) group together in Seq.
+            using (logger.BeginCorrelationScope())
+            {
+                await ProcessJobAsync(scope, queue, job, opts, stoppingToken);
+            }
         }
     }
 
