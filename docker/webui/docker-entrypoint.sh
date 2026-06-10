@@ -15,6 +15,13 @@ if [ "$FEATURE_WEATHER_OVERRIDE_ENABLED" = "true" ]; then
     sed -i 's|"FeatureWeatherOverride": false|"FeatureWeatherOverride": true|' "$CONFIG_FILE"
 fi
 
+# Dev only: flip the clock override feature flag on (required for day-rollover E2E scenarios).
+# Only an explicit "true" flips it; any other value leaves the default (false),
+# so preprod and production are safe even if the env var is missing.
+if [ "$FEATURE_CLOCK_OVERRIDE_ENABLED" = "true" ]; then
+    sed -i 's|"FeatureClockOverride": false|"FeatureClockOverride": true|' "$CONFIG_FILE"
+fi
+
 printf '{"status":"healthy","service":"webui","startedAt":"%s"}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$HEALTH_FILE"
 chmod 644 "$HEALTH_FILE"
 

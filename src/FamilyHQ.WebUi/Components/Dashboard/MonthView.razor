@@ -2,7 +2,7 @@
 <div class="flex justify-between items-center mb-4">
     <div class="btn-group">
         <button class="btn btn-ghost" @onclick="OnPreviousMonth">&#8249; Prev</button>
-        <button class="btn btn-glass" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenQuickJump">
+        <button class="btn btn-glass" style="min-width: 150px; font-weight: 600;" @onclick="OnOpenQuickJump" data-testid="month-header-btn">
             @CurrentMonth.ToString("MMMM yyyy")
         </button>
         <button class="btn btn-ghost" @onclick="OnNextMonth">Next &#8250;</button>

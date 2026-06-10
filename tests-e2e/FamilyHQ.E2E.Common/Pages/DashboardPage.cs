@@ -57,6 +57,13 @@ public class DashboardPage : BasePage
     private ILocator DayPickerGoBtn => Page.GetByTestId("day-picker-go-btn");
     private ILocator DayPickerModal => Page.Locator(".modal-backdrop").Filter(new() { HasText = "Select Date" });
 
+    /// <summary>FHQ-63: Day-view centre header button (the day-picker), for web-first assertions.</summary>
+    public ILocator DayHeaderButton => DayPickerBtn;
+    /// <summary>FHQ-63: Month-view centre header button (month-year label), for web-first assertions.</summary>
+    public ILocator MonthHeaderButton => Page.GetByTestId("month-header-btn");
+    /// <summary>FHQ-63: Agenda-view month-year label, for web-first assertions.</summary>
+    public ILocator AgendaMonthYearLabel => Page.GetByTestId("agenda-month-year-label");
+
     // Weather Locators
     public ILocator WeatherStrip => Page.Locator(".weather-strip");
     public ILocator WeatherStripTemp => Page.Locator(".weather-strip__temp");
@@ -825,6 +832,38 @@ public class DashboardPage : BasePage
         await WaitForCalendarVisibleAsync();
         await WaitForSyncSettledAsync();
     }
+
+    // FHQ-63: kiosk day-rollover dev hooks. window.familyHqKiosk is attached by Index only
+    // when FeatureClockOverride is on. setIdle forces the idle path; advanceDays moves the
+    // displayed "today"; runIdleCheck forces an immediate evaluation (no 30s poll wait).
+
+    /// <summary>Forces the idle stamp back by <paramref name="minutes"/> so the next check sees an idle kiosk.</summary>
+    public Task ForceIdleMinutesAsync(int minutes) =>
+        Page.EvaluateAsync("ms => window.familyHqKiosk.setIdle(ms)", minutes * 60_000);
+
+    /// <summary>Advances the displayed clock by whole days.</summary>
+    public Task AdvanceClockDaysAsync(int days) =>
+        Page.EvaluateAsync("n => window.familyHqKiosk.advanceDays(n)", days);
+
+    /// <summary>Forces an immediate idle-snap evaluation. The JS bridge Promise resolves only
+    /// after the .NET snap (incl. any month reload) completes; callers then assert with
+    /// web-first expectations so the DOM-render flush is awaited, not slept on.</summary>
+    public async Task RunIdleCheckAsync()
+    {
+        await Page.EvaluateAsync("() => window.familyHqKiosk.runIdleCheck()");
+    }
+
+    /// <summary>The Day-view centre header text (the day-picker button), e.g. "Tue, 9 Jun".</summary>
+    public Task<string> GetDayHeaderTextAsync() => GetDayPickerButtonTextAsync();
+
+    /// <summary>
+    /// The Month-view current month-year label text, e.g. "June 2026". Reads the btn-glass
+    /// centre button in the month navigation bar (the only .btn-glass rendered in Month view).
+    /// Mirrors <see cref="GetAgendaMonthYearTextAsync"/> which reads the equivalent testid on the
+    /// Agenda view.
+    /// </summary>
+    public async Task<string> GetMonthHeaderTextAsync() =>
+        (await MonthHeaderButton.InnerTextAsync()).Trim();
 
     /// <summary>
     /// Returns whether any event capsule for <paramref name="eventName"/> is rendered
