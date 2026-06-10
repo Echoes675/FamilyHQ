@@ -104,7 +104,10 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
             refresh_token = $"{refreshTokenPrefix}{userId}",
             expires_in = 3600,
             token_type = "Bearer",
-            id_token = CreateIdToken(userId, username)
+            id_token = CreateIdToken(userId, username),
+            // FHQ-60: emulate Google's token response, which always returns the granted scope.
+            // The Simulator grants everything that was requested (openid email + full calendar).
+            scope = "openid email https://www.googleapis.com/auth/calendar"
         });
     }
 
