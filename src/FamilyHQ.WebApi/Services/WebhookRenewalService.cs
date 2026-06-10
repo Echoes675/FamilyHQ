@@ -1,6 +1,7 @@
 namespace FamilyHQ.WebApi.Services;
 
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,13 +26,17 @@ public class WebhookRenewalService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            // FHQ-65: fresh CorrelationId per renewal cycle.
+            using (logger.BeginCorrelationScope())
             {
-                await RegisterAllWebhooksAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Webhook renewal cycle failed.");
+                try
+                {
+                    await RegisterAllWebhooksAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Webhook renewal cycle failed.");
+                }
             }
 
             await Task.Delay(options.Value.WebhookRenewalInterval, stoppingToken);
