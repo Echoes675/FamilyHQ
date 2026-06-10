@@ -28,13 +28,13 @@ public class GoogleAuthService
         var query = "?client_id=" + Uri.EscapeDataString(_options.ClientId)
             + "&redirect_uri=" + Uri.EscapeDataString(redirectUri)
             + "&response_type=code"
-            + "&scope=" + Uri.EscapeDataString("openid email https://www.googleapis.com/auth/calendar")
+            + "&scope=" + Uri.EscapeDataString("openid email " + GoogleScopes.Calendar)
             + "&access_type=offline"
             + "&prompt=consent";
         return _options.AuthPromptUrl + query;
     }
 
-    public async Task<(string AccessToken, string? RefreshToken, string? UserId, string? Email)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
+    public async Task<(string AccessToken, string? RefreshToken, string? UserId, string? Email, string? GrantedScope)> ExchangeCodeForTokenAsync(string code, string redirectUri, CancellationToken ct = default)
     {
         var request = new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -64,7 +64,8 @@ public class GoogleAuthService
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
         var (userId, email) = ExtractClaimsFromIdToken(result!.IdToken);
-        return (result.AccessToken, result.RefreshToken, userId, email);
+        _logger.LogInformation("Google granted scopes on code exchange: {GrantedScope}", result.Scope ?? "(none)");
+        return (result.AccessToken, result.RefreshToken, userId, email, result.Scope);
     }
 
     private static (string? sub, string? email) ExtractClaimsFromIdToken(string? idToken)
@@ -119,7 +120,8 @@ public class GoogleAuthService
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
-        return result!.AccessToken;
+        _logger.LogInformation("Google granted scopes on token refresh: {GrantedScope}", result!.Scope ?? "(none)");
+        return result.AccessToken;
     }
 
     private static (string? Error, string? Description) ParseOAuthError(string body)

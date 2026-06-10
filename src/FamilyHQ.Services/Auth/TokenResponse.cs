@@ -18,4 +18,7 @@ internal class TokenResponse
 
     [JsonPropertyName("id_token")]
     public string? IdToken { get; set; }
+
+    [JsonPropertyName("scope")]
+    public string? Scope { get; set; }
 }

@@ -290,6 +290,68 @@ public class GoogleAuthServiceTests
         result.Should().StartWith("https://accounts.test.com/o/oauth2/auth");
     }
 
+    [Fact]
+    public async Task ExchangeCodeForTokenAsync_ReturnsGrantedScopeFromResponse()
+    {
+        var (httpMock, sut) = CreateSut();
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            access_token = "a", refresh_token = "r", expires_in = 3600, token_type = "Bearer",
+            id_token = CreateTestIdToken("u"),
+            scope = "openid email https://www.googleapis.com/auth/calendar"
+        });
+        httpMock.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new StringContent(responseJson) });
+
+        var result = await sut.ExchangeCodeForTokenAsync("code", "https://localhost/callback");
+
+        result.GrantedScope.Should().Be("openid email https://www.googleapis.com/auth/calendar");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeForTokenAsync_LogsGrantedScopeAtInformation()
+    {
+        var (httpMock, sut, loggerMock) = CreateSutWithLogger();
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            access_token = "a", refresh_token = "r", expires_in = 3600, token_type = "Bearer",
+            id_token = CreateTestIdToken("u"),
+            scope = "openid email https://www.googleapis.com/auth/calendar"
+        });
+        httpMock.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new StringContent(responseJson) });
+
+        await sut.ExchangeCodeForTokenAsync("code", "https://localhost/callback");
+
+        loggerMock.Verify(l => l.Log(
+            LogLevel.Information, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("https://www.googleapis.com/auth/calendar")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_LogsGrantedScopeAtInformation()
+    {
+        var (httpMock, sut, loggerMock) = CreateSutWithLogger();
+        var responseJson = JsonSerializer.Serialize(new
+        {
+            access_token = "new", expires_in = 3600, token_type = "Bearer",
+            scope = "openid email https://www.googleapis.com/auth/calendar"
+        });
+        httpMock.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new StringContent(responseJson) });
+
+        await sut.RefreshAccessTokenAsync("rt");
+
+        loggerMock.Verify(l => l.Log(
+            LogLevel.Information, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("https://www.googleapis.com/auth/calendar")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
     private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
