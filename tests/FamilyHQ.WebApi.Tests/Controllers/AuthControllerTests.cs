@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Controllers;
@@ -143,6 +144,31 @@ public class AuthControllerTests
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Callback_WhenGrantMissingCalendarScope_MarksNeedsReauthWithMessage()
+    {
+        var tokenStoreMock = new Mock<ITokenStore>();
+        var queueMock = new Mock<ICalendarSyncJobQueue>();
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object, grantedScope: "openid email", syncJobQueue: queueMock.Object);
+
+        var result = await sut.Callback("dummy_code_for_user1");
+
+        tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync("user1", AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()), Times.Once);
+        queueMock.Verify(q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        result.Should().BeOfType<RedirectResult>().Which.Url.Should().StartWith("https://frontend.test/login-success?token=");
+    }
+
+    [Fact]
+    public async Task Callback_WhenGrantHasCalendarScope_DoesNotMarkReauth()
+    {
+        var tokenStoreMock = new Mock<ITokenStore>();
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object); // default scope grants calendar
+
+        await sut.Callback("dummy_code_for_user1");
+
+        tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
@@ -162,7 +188,9 @@ public class AuthControllerTests
         bool includeRefreshToken = true,
         DefaultHttpContext? httpContext = null,
         bool webhookRegistrationEnabled = false,
-        IWebhookRegistrationService? webhookRegistrationService = null)
+        IWebhookRegistrationService? webhookRegistrationService = null,
+        string? grantedScope = "openid email https://www.googleapis.com/auth/calendar",
+        ICalendarSyncJobQueue? syncJobQueue = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -171,7 +199,8 @@ public class AuthControllerTests
             ["refresh_token"] = includeRefreshToken ? (object?)"simulated_refresh_token" : null,
             ["expires_in"] = 3600,
             ["token_type"] = "Bearer",
-            ["id_token"] = CreateTestIdToken("user1", "user1@example.com")
+            ["id_token"] = CreateTestIdToken("user1", "user1@example.com"),
+            ["scope"] = grantedScope
         };
         var responseJson = JsonSerializer.Serialize(responsePayload);
 
@@ -228,6 +257,9 @@ public class AuthControllerTests
         providerMock.Setup(p => p.GetService(typeof(ICalendarSyncService))).Returns(syncServiceMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IHubContext<CalendarHub>))).Returns(hubContextMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IWebhookRegistrationService))).Returns(webhookServiceObj);
+        var syncJobQueueObj = syncJobQueue ?? new Mock<ICalendarSyncJobQueue>().Object;
+        providerMock.Setup(p => p.GetService(typeof(ICalendarSyncJobQueue))).Returns(syncJobQueueObj);
+        providerMock.Setup(p => p.GetService(typeof(ISyncJobSignal))).Returns(new Mock<ISyncJobSignal>().Object);
         scopeMock.Setup(s => s.ServiceProvider).Returns(providerMock.Object);
 
         var scopeFactoryMock = new Mock<IServiceScopeFactory>();

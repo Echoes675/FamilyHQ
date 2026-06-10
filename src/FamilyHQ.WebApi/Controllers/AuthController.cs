@@ -25,6 +25,9 @@ public class AuthController : ControllerBase
     private readonly IOptions<SyncOptions> _syncOptions;
     private readonly ILogger<AuthController> _logger;
 
+    internal const string MissingCalendarScopeMessage =
+        "Google did not grant calendar access — reconnect and allow the calendar permission.";
+
     public AuthController(
         GoogleAuthService authService,
         ITokenStore tokenStore,
@@ -63,15 +66,26 @@ public class AuthController : ControllerBase
             ?? throw new InvalidOperationException("FrontendBaseUrl is not configured.");
 
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
-        var (accessToken, refreshToken, userId, email) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
-
-        if (!string.IsNullOrEmpty(refreshToken) && !string.IsNullOrEmpty(userId))
-            await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
+        var (_, refreshToken, userId, email, grantedScope) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
 
         if (string.IsNullOrEmpty(userId))
             return BadRequest("Authentication failed: user identity could not be determined.");
 
+        if (!string.IsNullOrEmpty(refreshToken))
+            await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
+
         var apiToken = GenerateJwt(userId, email);
+
+        // FHQ-60: Google granted identity but not the calendar scope — saving + syncing would only
+        // 403. Flag the account with a specific, actionable reason (surfaces in the re-auth banner
+        // AND the diagnostics tab via connection-status) instead of failing silently, and skip the
+        // doomed initial sync/webhook registration.
+        if (!GoogleScopes.GrantsCalendar(grantedScope))
+        {
+            await _tokenStore.MarkNeedsReauthAsync(userId, MissingCalendarScopeMessage);
+            _logger.LogWarning("Login for user {UserId} returned a grant without calendar access; flagged for re-auth.", userId);
+            return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
+        }
 
         // Propagate userId into the ExecutionContext so ICurrentUserService can
         // resolve it without an active HttpContext during the sync.
