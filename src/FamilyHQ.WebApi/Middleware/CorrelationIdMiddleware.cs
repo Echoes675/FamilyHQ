@@ -41,7 +41,7 @@ public class CorrelationIdMiddleware
 
         if (!string.IsNullOrEmpty(sessionCorrelationId))
         {
-            scopeState["SessionCorrelationId"] = sessionCorrelationId;
+            scopeState[CorrelationConstants.SessionCorrelationIdLogProperty] = sessionCorrelationId;
         }
 
         using (_logger.BeginScope(scopeState))
