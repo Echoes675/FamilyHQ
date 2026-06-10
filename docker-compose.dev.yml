@@ -5,6 +5,7 @@ services:
     environment:
       - BACKEND_URL=${BACKEND_URL}
       - FEATURE_WEATHER_OVERRIDE_ENABLED=${FEATURE_WEATHER_OVERRIDE_ENABLED}
+      - FEATURE_CLOCK_OVERRIDE_ENABLED=${FEATURE_CLOCK_OVERRIDE_ENABLED}
     labels:
       - "traefik.enable=true"
       - "traefik.constraint-label=familyhq-dev"
