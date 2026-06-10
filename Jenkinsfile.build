@@ -54,7 +54,11 @@ pipeline {
                         error 'MinVerMinimumMajorMinor not found in Directory.Build.props'
                     }
 
-                    sh 'git fetch --tags --force'
+                    // FHQ-64: a transient GitHub blip on this raw fetch must not abort the release.
+                    // retry re-runs the body on failure; the ~130s connect timeout spaces attempts.
+                    retry(3) {
+                        sh 'git fetch --tags --force'
+                    }
                     def tagListRaw = sh(
                         script: "git tag -l 'v${majorMinor}.*'",
                         returnStdout: true
@@ -250,7 +254,7 @@ pipeline {
 
     post {
         success {
-            echo "Build successful: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (' + env.SEMVER_TAG + ')' : ''}"
+            echo "Build successful: ${env.IMAGE_TAG ?: '(unset)'}${env.SEMVER_TAG ? ' (' + env.SEMVER_TAG + ')' : ''}"
             script {
                 // Master release chain entry point. Only fire on master, and only
                 // when SemVer computation succeeded (env.SEMVER_TAG is set). Dev
@@ -278,7 +282,7 @@ pipeline {
                     sh "git tag -d ${env.SEMVER_TAG} >/dev/null 2>&1 || true"
                 }
             }
-            echo "Build failed: ${IMAGE_TAG}${env.SEMVER_TAG ? ' (attempted ' + env.SEMVER_TAG + ')' : ''}"
+            echo "Build failed: ${env.IMAGE_TAG ?: '(unset)'}${env.SEMVER_TAG ? ' (attempted ' + env.SEMVER_TAG + ')' : ''}"
         }
     }
 }
