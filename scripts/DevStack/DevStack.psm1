@@ -272,4 +272,17 @@ function Invoke-DevStackReconcile {
     }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile
+function Install-DevStackPlaywright {
+    param([Parameter(Mandatory)]$Config)
+    # The Features project is the test runner and copies all transitive deps (including
+    # Microsoft.Playwright.dll) to its bin. playwright.ps1 uses $PSScriptRoot to locate
+    # the DLL, so point to the Features bin — not E2E.Common which omits transitive deps.
+    $script = Join-Path $Config.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1'
+    if (Test-Path $script) {
+        & $script install chromium | Out-Null
+    } else {
+        Write-Warning "playwright.ps1 not found yet; building E2E project first so 'dotnet test' can install browsers."
+    }
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright

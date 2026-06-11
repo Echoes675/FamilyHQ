@@ -76,6 +76,24 @@ function Invoke-Down {
     Write-Host "Stack down."
 }
 
+function Invoke-E2E {
+    # Ensure the stack is up (reuse if already healthy).
+    if (($cfg.Services | ForEach-Object { Test-DevStackServiceHealthy -Service $_ }) -contains $false) {
+        Invoke-Up
+    }
+    if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
+
+    Install-DevStackPlaywright -Config $cfg
+    $testArgs = ConvertTo-DotnetTestArgs -Filter $Filter -TrxName 'e2e.trx' -ExtraArgs $ExtraArgs
+    $featuresProj = Join-Path $cfg.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features'
+
+    Write-Host "Running E2E: dotnet test $($testArgs -join ' ')"
+    & dotnet test $featuresProj @testArgs
+    $code = $LASTEXITCODE
+    Write-Host "E2E exit code: $code (TRX: TestResults/e2e.trx)"
+    exit $code
+}
+
 switch ($Command) {
     'up'     { Invoke-Up }
     'down'   { Invoke-Down }
