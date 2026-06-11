@@ -73,7 +73,7 @@ function Test-IsFamilyHqProcess {
     # process given a sub-path of this repo as an explicit argument could still match;
     # acceptable risk for a local dev tool — the reconciler refuses unidentified holders.
     $anchor = $RepoRoot.ToLowerInvariant().TrimEnd('\') + '\'
-    $isDotnet = $path -match '(?i)dotnet(\.exe)?$'
+    $isDotnet = $path -match '(?i)[\\/]dotnet(\.exe)?$'
     # Also accept self-contained FamilyHQ executables whose process image lives inside the
     # repo tree (e.g. bin/Debug output of dotnet run for a native/self-contained project).
     $isOwnExe = (-not [string]::IsNullOrWhiteSpace($path)) -and $path.ToLowerInvariant().StartsWith($anchor)

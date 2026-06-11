@@ -84,13 +84,15 @@ function Invoke-E2E {
     if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
 
     Install-DevStackPlaywright -Config $cfg
-    $testArgs = ConvertTo-DotnetTestArgs -Filter $Filter -TrxName 'e2e.trx' -ExtraArgs $ExtraArgs
+    $resultsDir = Join-Path $cfg.RepoRoot 'TestResults'
+    $trxPath = Join-Path $resultsDir 'e2e.trx'
+    $testArgs = ConvertTo-DotnetTestArgs -Filter $Filter -TrxName 'e2e.trx' -ExtraArgs (@('--results-directory', $resultsDir) + $ExtraArgs)
     $featuresProj = Join-Path $cfg.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features'
 
     Write-Host "Running E2E: dotnet test $($testArgs -join ' ')"
     & dotnet test $featuresProj @testArgs
     $code = $LASTEXITCODE
-    Write-Host "E2E exit code: $code (TRX: TestResults/e2e.trx)"
+    Write-Host "E2E exit code: $code (TRX: $trxPath)"
     exit $code
 }
 
