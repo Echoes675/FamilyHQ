@@ -189,6 +189,9 @@ function Start-DevStackService {
     if ($Service.ConnKey) {
         $env:ConnectionStrings__DefaultConnection = $Config.ConnectionStrings.$($Service.ConnKey)
     } else {
+        # ConnKey is null (e.g. webui). This also clears any connection string left over
+        # from a previous call so a no-DB service inherits a clean env. Invariant: services
+        # without a ConnKey should be launched after any that set one (webui runs last).
         Remove-Item Env:\ConnectionStrings__DefaultConnection -ErrorAction SilentlyContinue
     }
 
@@ -197,6 +200,7 @@ function Start-DevStackService {
         -WorkingDirectory $Config.RepoRoot `
         -RedirectStandardOutput $outLog `
         -RedirectStandardError $errLog `
+        -NoNewWindow `
         -PassThru
     return $proc.Id
 }
@@ -204,7 +208,7 @@ function Start-DevStackService {
 function Save-DevStackState {
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][hashtable]$Pids)
     $statePath = Join-Path $Config.StateDir 'state.json'
-    $Pids | ConvertTo-Json | Set-Content -Path $statePath
+    $Pids | ConvertTo-Json | Set-Content -Path $statePath -Encoding utf8
 }
 
 Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState

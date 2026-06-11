@@ -20,7 +20,8 @@ Flags: `-KeepData` (persist DB volume), `-Reuse` (attach if already healthy), `-
 - WebUi: https://localhost:7154
 - WebApi: https://localhost:7196 (health `/api/health`)
 - Simulator: https://localhost:7199 (health `/health`)
-- Postgres: localhost:5432 (databases `familyhq`, `familyhq_sim`)
+- Postgres: localhost:5433 (databases `familyhq`, `familyhq_sim`) — host port 5433 by
+  default to avoid clashing with a local Postgres on 5432; override with `POSTGRES_HOST_PORT`
 
 ## Selective E2E runs
 
