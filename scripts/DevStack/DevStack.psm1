@@ -121,8 +121,9 @@ function Start-DevStackPostgres {
         [switch]$KeepData
     )
     $name = $Config.ContainerName
-    $existing = (docker ps -a --filter "name=^/$name$" --format '{{.Names}}') 2>$null
-    if ($existing -eq $name) {
+    $existing = docker ps -a --filter "name=$name" --format '{{.Names}}' 2>$null |
+                Where-Object { $_ -eq $name }
+    if ($existing) {
         Write-Host "Removing existing container $name"
         docker rm -f $name | Out-Null
     }
@@ -153,7 +154,7 @@ function Start-DevStackPostgres {
     $simDb = $Config.Postgres.SimDb
     $exists = docker exec $name psql -U $Config.Postgres.User -tAc "SELECT 1 FROM pg_database WHERE datname='$simDb'"
     if ("$exists".Trim() -ne '1') {
-        docker exec $name psql -U $Config.Postgres.User -c "CREATE DATABASE $simDb" | Out-Null
+        docker exec $name psql -U $Config.Postgres.User -c "CREATE DATABASE ""$simDb""" | Out-Null
     }
     Write-Host "Postgres ready: $($Config.Postgres.Db) + $simDb"
 }
@@ -162,6 +163,7 @@ function Stop-DevStackPostgres {
     param([Parameter(Mandatory)]$Config, [switch]$KeepData)
     docker rm -f $Config.ContainerName 2>$null | Out-Null
     if (-not $KeepData) { docker volume rm $Config.VolumeName 2>$null | Out-Null }
+    Write-Host "Postgres container $($Config.ContainerName) stopped."
 }
 
 Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres
