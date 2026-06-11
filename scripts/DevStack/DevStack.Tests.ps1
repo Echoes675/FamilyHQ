@@ -93,19 +93,28 @@ Describe 'Test-IsFamilyHqProcess' {
 }
 
 Describe 'ConvertTo-DotnetTestArgs' {
-    It 'excludes @ignore by default and adds a TRX logger' {
-        $args = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx'
-        ($args -join ' ') | Should Match 'Category!=ignore'
-        ($args -join ' ') | Should Match 'trx;LogFileName=e2e.trx'
+    It 'returns the exact arg array for a null filter' {
+        $result = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx'
+        $result | Should Be @('--filter', 'Category!=ignore', '--logger', 'trx;LogFileName=e2e.trx', '--logger', 'console;verbosity=normal')
     }
 
     It 'combines a user filter with the ignore exclusion' {
-        $args = ConvertTo-DotnetTestArgs -Filter 'Category=dashboard' -TrxName 'e2e.trx'
-        ($args -join ' ') | Should Match 'Category=dashboard&Category!=ignore'
+        $result = ConvertTo-DotnetTestArgs -Filter 'Category=dashboard' -TrxName 'e2e.trx'
+        ($result -join ' ') | Should Match 'Category=dashboard&Category!=ignore'
+    }
+
+    It 'parenthesises a bare OR filter before applying the ignore exclusion' {
+        $result = ConvertTo-DotnetTestArgs -Filter 'Category=smoke|Category=dashboard' -TrxName 'e2e.trx'
+        $result[1] | Should Be '(Category=smoke|Category=dashboard)&Category!=ignore'
+    }
+
+    It 'does not double-wrap an already-parenthesised OR filter' {
+        $result = ConvertTo-DotnetTestArgs -Filter '(Category=smoke|Category=dashboard)' -TrxName 'e2e.trx'
+        $result[1] | Should Be '(Category=smoke|Category=dashboard)&Category!=ignore'
     }
 
     It 'passes raw extra args through verbatim' {
-        $args = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx' -ExtraArgs @('--no-build')
-        ($args -contains '--no-build') | Should Be $true
+        $result = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx' -ExtraArgs @('--no-build')
+        ($result -contains '--no-build') | Should Be $true
     }
 }

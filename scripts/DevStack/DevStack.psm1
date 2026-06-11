@@ -101,7 +101,15 @@ function ConvertTo-DotnetTestArgs {
         [string[]]$ExtraArgs = @()
     )
     $ignore = 'Category!=ignore'
-    $effective = if ([string]::IsNullOrWhiteSpace($Filter)) { $ignore } else { "$Filter&$ignore" }
+    if ([string]::IsNullOrWhiteSpace($Filter)) {
+        $effective = $ignore
+    } else {
+        # dotnet test filter '&' binds tighter than '|', so a bare OR filter would leave
+        # the ignore-exclusion applied to only the last branch. Wrap when an OR is present
+        # and the filter is not already fully parenthesised.
+        $safeFilter = if ($Filter -match '\|' -and $Filter -notmatch '^\(.*\)$') { "($Filter)" } else { $Filter }
+        $effective = "$safeFilter&$ignore"
+    }
     $testArgs = @('--filter', $effective, '--logger', "trx;LogFileName=$TrxName", '--logger', 'console;verbosity=normal')
     if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $testArgs += $ExtraArgs }
     return $testArgs
