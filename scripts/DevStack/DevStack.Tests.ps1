@@ -91,3 +91,21 @@ Describe 'Test-IsFamilyHqProcess' {
         Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
     }
 }
+
+Describe 'ConvertTo-DotnetTestArgs' {
+    It 'excludes @ignore by default and adds a TRX logger' {
+        $args = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx'
+        ($args -join ' ') | Should Match 'Category!=ignore'
+        ($args -join ' ') | Should Match 'trx;LogFileName=e2e.trx'
+    }
+
+    It 'combines a user filter with the ignore exclusion' {
+        $args = ConvertTo-DotnetTestArgs -Filter 'Category=dashboard' -TrxName 'e2e.trx'
+        ($args -join ' ') | Should Match 'Category=dashboard&Category!=ignore'
+    }
+
+    It 'passes raw extra args through verbatim' {
+        $args = ConvertTo-DotnetTestArgs -Filter $null -TrxName 'e2e.trx' -ExtraArgs @('--no-build')
+        ($args -contains '--no-build') | Should Be $true
+    }
+}

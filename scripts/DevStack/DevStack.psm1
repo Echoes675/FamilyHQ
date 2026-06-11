@@ -94,4 +94,17 @@ function Get-DevStackListenerProcess {
     }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess
+function ConvertTo-DotnetTestArgs {
+    param(
+        [string]$Filter,
+        [string]$TrxName = 'e2e.trx',
+        [string[]]$ExtraArgs = @()
+    )
+    $ignore = 'Category!=ignore'
+    $effective = if ([string]::IsNullOrWhiteSpace($Filter)) { $ignore } else { "$Filter&$ignore" }
+    $testArgs = @('--filter', $effective, '--logger', "trx;LogFileName=$TrxName", '--logger', 'console;verbosity=normal')
+    if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $testArgs += $ExtraArgs }
+    return $testArgs
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs
