@@ -82,4 +82,12 @@ Describe 'Test-IsFamilyHqProcess' {
         $p = [pscustomobject]@{ Path = 'C:\Program Files\dotnet\dotnet.exe'; CommandLine = $null }
         Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
     }
+
+    It 'rejects a dotnet process for a repo whose name shares our prefix (FamilyHQExtra)' {
+        $p = [pscustomobject]@{
+            Path        = 'C:\Program Files\dotnet\dotnet.exe'
+            CommandLine = "dotnet run --project D:\Git\Echoes675\FamilyHQExtra\src\SomeApp.csproj"
+        }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
+    }
 }

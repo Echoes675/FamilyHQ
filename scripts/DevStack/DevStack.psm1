@@ -69,12 +69,18 @@ function Test-IsFamilyHqProcess {
     if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
     $isDotnet = $path -match '(?i)dotnet(\.exe)?$'
     if (-not $isDotnet) { return $false }
-    return $cmd.ToLowerInvariant().Contains($RepoRoot.ToLowerInvariant())
+    # Anchor on a trailing separator so a sibling repo whose name merely shares our prefix
+    # (e.g. FamilyHQExtra) is NOT treated as ours. Known limitation: a separate dotnet
+    # process given a sub-path of this repo as an explicit argument could still match;
+    # acceptable risk for a local dev tool — the reconciler refuses unidentified holders.
+    $anchor = $RepoRoot.ToLowerInvariant().TrimEnd('\') + '\'
+    return $cmd.ToLowerInvariant().Contains($anchor)
 }
 
 function Get-DevStackListenerProcess {
     # Returns $null, or an object { Pid; Path; CommandLine } for the process listening on $Port.
     param([Parameter(Mandatory)][int]$Port)
+    # Take the first entry; Kestrel binds IPv4+IPv6 under the same PID so all entries agree.
     $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -First 1
     if (-not $conn) { return $null }
