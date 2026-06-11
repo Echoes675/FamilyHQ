@@ -58,4 +58,34 @@ function Resolve-DevStackConfig {
     }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig
+function Test-IsFamilyHqProcess {
+    param(
+        [Parameter(Mandatory)]$Process,
+        [Parameter(Mandatory)][string]$RepoRoot
+    )
+    if (-not $Process) { return $false }
+    $path = [string]$Process.Path
+    $cmd  = [string]$Process.CommandLine
+    if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+    $isDotnet = $path -match '(?i)dotnet(\.exe)?$'
+    if (-not $isDotnet) { return $false }
+    return $cmd.ToLowerInvariant().Contains($RepoRoot.ToLowerInvariant())
+}
+
+function Get-DevStackListenerProcess {
+    # Returns $null, or an object { Pid; Path; CommandLine } for the process listening on $Port.
+    param([Parameter(Mandatory)][int]$Port)
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    if (-not $conn) { return $null }
+    $procId = [int]$conn.OwningProcess
+    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    $cim  = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+    return [pscustomobject]@{
+        Pid         = $procId
+        Path        = if ($proc) { $proc.Path } else { $null }
+        CommandLine = if ($cim) { $cim.CommandLine } else { $null }
+    }
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess

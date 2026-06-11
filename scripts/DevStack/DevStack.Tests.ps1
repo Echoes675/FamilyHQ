@@ -59,3 +59,27 @@ Describe 'Resolve-DevStackConfig' {
         }
     }
 }
+
+Describe 'Test-IsFamilyHqProcess' {
+    $repo = 'D:\Git\Echoes675\FamilyHQ'
+
+    It 'accepts a dotnet process whose command line references the repo' {
+        $p = [pscustomobject]@{ Path = 'C:\Program Files\dotnet\dotnet.exe'; CommandLine = "dotnet run --project $repo\src\FamilyHQ.WebApi" }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $true
+    }
+
+    It 'rejects a non-dotnet process even on our port' {
+        $p = [pscustomobject]@{ Path = 'C:\Windows\System32\svchost.exe'; CommandLine = 'svchost -k netsvcs' }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
+    }
+
+    It 'rejects a dotnet process for an unrelated repo' {
+        $p = [pscustomobject]@{ Path = 'C:\Program Files\dotnet\dotnet.exe'; CommandLine = 'dotnet run --project C:\Other\App.csproj' }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
+    }
+
+    It 'returns false when command line is missing (cannot prove ownership)' {
+        $p = [pscustomobject]@{ Path = 'C:\Program Files\dotnet\dotnet.exe'; CommandLine = $null }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
+    }
+}
