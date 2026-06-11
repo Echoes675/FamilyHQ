@@ -34,7 +34,8 @@ function Show-DevStackStatus {
         $state = if ($healthy) { 'UP  ' } else { 'down' }
         Write-Host ("  [{0}] {1,-10} https://localhost:{2}{3}" -f $state, $svc.Name, $svc.Port, $svc.HealthPath)
     }
-    $db = (docker ps --filter "name=^/$($cfg.ContainerName)$" --format '{{.Names}}') 2>$null
+    $db = docker ps --filter "name=$($cfg.ContainerName)" --format '{{.Names}}' 2>$null |
+          Where-Object { $_ -eq $cfg.ContainerName }
     $dbState = if ($db) { 'UP  ' } else { 'down' }
     Write-Host ("  [{0}] postgres   {1} (host port {2})" -f $dbState, $cfg.PostgresImage, $cfg.Postgres.HostPort)
 }
