@@ -211,4 +211,28 @@ function Save-DevStackState {
     $Pids | ConvertTo-Json | Set-Content -Path $statePath -Encoding utf8
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState
+function Test-DevStackServiceHealthy {
+    param([Parameter(Mandatory)]$Service)
+    $url = "https://localhost:$($Service.Port)$($Service.HealthPath)"
+    try {
+        $resp = Invoke-WebRequest -Uri $url -SkipCertificateCheck -TimeoutSec 5 -UseBasicParsing
+        return $resp.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Wait-DevStackHealthy {
+    param(
+        [Parameter(Mandatory)]$Service,
+        [int]$TimeoutSeconds = 90
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-DevStackServiceHealthy -Service $Service) { return $true }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy
