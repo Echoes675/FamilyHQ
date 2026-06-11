@@ -104,6 +104,20 @@ Describe 'Test-IsFamilyHqProcess' {
         }
         Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
     }
+
+    It 'accepts the compiled service exe launched under the repo (the dotnet run child process)' {
+        # dotnet run spawns the real listener as a child .exe under bin/, not dotnet.exe.
+        # Get-NetTCPConnection returns that child PID, so the guard must recognise it.
+        $exe = "$repo\tools\FamilyHQ.Simulator\bin\Debug\net10.0\FamilyHQ.Simulator.exe"
+        $p = [pscustomobject]@{ Path = $exe; CommandLine = $exe }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $true
+    }
+
+    It 'rejects a compiled exe living under a sibling repo that shares our prefix' {
+        $exe = 'D:\Git\Echoes675\FamilyHQExtra\bin\Debug\net10.0\SomeApp.exe'
+        $p = [pscustomobject]@{ Path = $exe; CommandLine = $exe }
+        Test-IsFamilyHqProcess -Process $p -RepoRoot $repo | Should Be $false
+    }
 }
 
 Describe 'ConvertTo-DotnetTestArgs' {
