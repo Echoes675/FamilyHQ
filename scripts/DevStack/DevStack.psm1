@@ -115,4 +115,53 @@ function ConvertTo-DotnetTestArgs {
     return $testArgs
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs
+function Start-DevStackPostgres {
+    param(
+        [Parameter(Mandatory)]$Config,
+        [switch]$KeepData
+    )
+    $name = $Config.ContainerName
+    $existing = (docker ps -a --filter "name=^/$name$" --format '{{.Names}}') 2>$null
+    if ($existing -eq $name) {
+        Write-Host "Removing existing container $name"
+        docker rm -f $name | Out-Null
+    }
+    if (-not $KeepData) {
+        docker volume rm $Config.VolumeName 2>$null | Out-Null
+    }
+
+    Write-Host "Starting Postgres ($($Config.PostgresImage))"
+    docker run -d --name $name `
+        -e "POSTGRES_USER=$($Config.Postgres.User)" `
+        -e "POSTGRES_PASSWORD=$($Config.Postgres.Password)" `
+        -e "POSTGRES_DB=$($Config.Postgres.Db)" `
+        -p 5432:5432 `
+        -v "$($Config.VolumeName):/var/lib/postgresql/data" `
+        $Config.PostgresImage | Out-Null
+
+    # Wait for readiness.
+    $deadline = (Get-Date).AddSeconds(60)
+    $pgReady = $false
+    do {
+        Start-Sleep -Seconds 1
+        docker exec $name pg_isready -U $Config.Postgres.User 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { $pgReady = $true }
+    } while (-not $pgReady -and (Get-Date) -lt $deadline)
+    if (-not $pgReady) { throw "Postgres did not become ready within 60s" }
+
+    # Create the second database idempotently.
+    $simDb = $Config.Postgres.SimDb
+    $exists = docker exec $name psql -U $Config.Postgres.User -tAc "SELECT 1 FROM pg_database WHERE datname='$simDb'"
+    if ("$exists".Trim() -ne '1') {
+        docker exec $name psql -U $Config.Postgres.User -c "CREATE DATABASE $simDb" | Out-Null
+    }
+    Write-Host "Postgres ready: $($Config.Postgres.Db) + $simDb"
+}
+
+function Stop-DevStackPostgres {
+    param([Parameter(Mandatory)]$Config, [switch]$KeepData)
+    docker rm -f $Config.ContainerName 2>$null | Out-Null
+    if (-not $KeepData) { docker volume rm $Config.VolumeName 2>$null | Out-Null }
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres
