@@ -53,6 +53,7 @@ Read the relevant skill file before starting any task of that type:
 - **Any CSS, component, layout, or page changes**: Read `.agent/skills/ui-theming/SKILL.md` (project-specific theme rules — takes precedence over frontend-design for colour and animation decisions)
 - **Pushing a branch and verifying CI (before raising a PR)**: Read `.agent/skills/ci-gate/SKILL.md`
 - **Investigating an error / failing test / incident — reading the lower-env logs in Seq**: Read `.agent/skills/seq-log-investigation/SKILL.md`
+- **Standing up / driving the full stack locally (boot, run E2E, seed Simulator, verify a change before pushing)**: Read `.agent/skills/local-stack/SKILL.md`
 - **Obsidian ticket workflow (any session, any task)**: Read `.agent/skills/obsidian-tickets/SKILL.md`
 
 ## Ticket workflow (Obsidian vault)

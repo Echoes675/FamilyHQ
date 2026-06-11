@@ -29,6 +29,10 @@ dotnet playwright install chromium
 
 ### Required Services
 
+> **Fastest path:** `pwsh scripts/dev-stack.ps1 up` stands up all three services plus the
+> database, and `pwsh scripts/dev-stack.ps1 e2e` runs this suite against them. See
+> `.agent/docs/local-stack.md`. The manual three-terminal steps below remain valid.
+
 The E2E tests require three services to be running simultaneously:
 
 | Service | Port | Description |
