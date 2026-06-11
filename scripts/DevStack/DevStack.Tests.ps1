@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 Import-Module "$PSScriptRoot/DevStack.psm1" -Force
 
 Describe 'Resolve-DevStackConfig' {
@@ -18,12 +19,15 @@ Describe 'Resolve-DevStackConfig' {
     }
 
     It 'lets a .env override the Postgres credentials' {
-        $tmp = New-TemporaryFile
-        Set-Content -Path $tmp -Value @('POSTGRES_USER=devuser','POSTGRES_PASSWORD=devpass')
-        $cfg = Resolve-DevStackConfig -RepoRoot 'C:\repo' -EnvFile $tmp
-        $cfg.Postgres.User     | Should Be 'devuser'
-        $cfg.Postgres.Password | Should Be 'devpass'
-        Remove-Item $tmp
+        $tmp = (New-TemporaryFile).FullName
+        try {
+            Set-Content -Path $tmp -Value @('POSTGRES_USER=devuser','POSTGRES_PASSWORD=devpass')
+            $cfg = Resolve-DevStackConfig -RepoRoot 'C:\repo' -EnvFile $tmp
+            $cfg.Postgres.User     | Should Be 'devuser'
+            $cfg.Postgres.Password | Should Be 'devpass'
+        } finally {
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+        }
     }
 
     It 'builds per-app connection strings against the two databases' {
@@ -31,5 +35,27 @@ Describe 'Resolve-DevStackConfig' {
         $cfg.ConnectionStrings.WebApi    | Should Match 'Database=familyhq;'
         $cfg.ConnectionStrings.Simulator | Should Match 'Database=familyhq_sim;'
         $cfg.ConnectionStrings.WebApi    | Should Match 'Password=postgres'
+    }
+
+    It 'returns three services in the expected order' {
+        $cfg = Resolve-DevStackConfig -RepoRoot 'C:\repo'
+        $cfg.Services.Count             | Should Be 3
+        $cfg.Services[0].Name           | Should Be 'simulator'
+        $cfg.Services[1].Name           | Should Be 'webapi'
+        $cfg.Services[2].Name           | Should Be 'webui'
+        $cfg.Services[1].ConnKey        | Should Be 'WebApi'
+        ($cfg.Services[2].ConnKey -eq $null) | Should Be $true
+    }
+
+    It 'strips surrounding quotes and inline comments from .env values' {
+        $tmp = (New-TemporaryFile).FullName
+        try {
+            Set-Content -Path $tmp -Value @('POSTGRES_USER=plainuser # the user','POSTGRES_PASSWORD="pa ss"')
+            $cfg = Resolve-DevStackConfig -RepoRoot 'C:\repo' -EnvFile $tmp
+            $cfg.Postgres.User     | Should Be 'plainuser'
+            $cfg.Postgres.Password | Should Be 'pa ss'
+        } finally {
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+        }
     }
 }

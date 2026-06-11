@@ -10,7 +10,16 @@ function Read-DotEnv {
         $idx = $trimmed.IndexOf('=')
         if ($idx -lt 1) { continue }
         $key = $trimmed.Substring(0, $idx).Trim()
-        $val = $trimmed.Substring($idx + 1).Trim()
+        $rawVal = $trimmed.Substring($idx + 1).Trim()
+        $wasQuoted = $rawVal.StartsWith('"') -or $rawVal.StartsWith("'")
+        $val = $rawVal
+        if (($val.StartsWith('"') -and $val.EndsWith('"')) -or
+            ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+            $val = $val.Substring(1, $val.Length - 2)
+        } elseif (-not $wasQuoted) {
+            $commentIdx = $val.IndexOf(' #')
+            if ($commentIdx -ge 0) { $val = $val.Substring(0, $commentIdx).TrimEnd() }
+        }
         $result[$key] = $val
     }
     return $result
@@ -49,4 +58,4 @@ function Resolve-DevStackConfig {
     }
 }
 
-Export-ModuleMember -Function *
+Export-ModuleMember -Function Resolve-DevStackConfig
