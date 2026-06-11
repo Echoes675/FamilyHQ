@@ -32,10 +32,11 @@ function Resolve-DevStackConfig {
     )
 
     $envVars = Read-DotEnv -Path $EnvFile
-    $pgUser = if ($envVars.ContainsKey('POSTGRES_USER')) { $envVars['POSTGRES_USER'] } else { 'postgres' }
-    $pgPass = if ($envVars.ContainsKey('POSTGRES_PASSWORD')) { $envVars['POSTGRES_PASSWORD'] } else { 'postgres' }
+    $pgUser     = if ($envVars.ContainsKey('POSTGRES_USER'))      { $envVars['POSTGRES_USER'] }      else { 'postgres' }
+    $pgPass     = if ($envVars.ContainsKey('POSTGRES_PASSWORD'))  { $envVars['POSTGRES_PASSWORD'] }  else { 'postgres' }
+    $pgHostPort = if ($envVars.ContainsKey('POSTGRES_HOST_PORT')) { [int]$envVars['POSTGRES_HOST_PORT'] } else { 5433 }
 
-    $baseConn = "Host=localhost;Port=5432;Username=$pgUser;Password=$pgPass"
+    $baseConn = "Host=localhost;Port=$pgHostPort;Username=$pgUser;Password=$pgPass"
 
     return [pscustomobject]@{
         RepoRoot       = $RepoRoot
@@ -45,7 +46,7 @@ function Resolve-DevStackConfig {
         StateDir       = Join-Path $RepoRoot 'scripts/.dev-stack'
         LogDir         = Join-Path $RepoRoot 'scripts/.dev-stack/logs'
         Ports          = [pscustomobject]@{ WebUi = 7154; WebApi = 7196; Simulator = 7199 }
-        Postgres       = [pscustomobject]@{ User = $pgUser; Password = $pgPass; Db = 'familyhq'; SimDb = 'familyhq_sim' }
+        Postgres       = [pscustomobject]@{ User = $pgUser; Password = $pgPass; Db = 'familyhq'; SimDb = 'familyhq_sim'; HostPort = $pgHostPort }
         ConnectionStrings = [pscustomobject]@{
             WebApi    = "$baseConn;Database=familyhq;"
             Simulator = "$baseConn;Database=familyhq_sim;"
@@ -136,7 +137,7 @@ function Start-DevStackPostgres {
         -e "POSTGRES_USER=$($Config.Postgres.User)" `
         -e "POSTGRES_PASSWORD=$($Config.Postgres.Password)" `
         -e "POSTGRES_DB=$($Config.Postgres.Db)" `
-        -p 5432:5432 `
+        -p "$($Config.Postgres.HostPort):5432" `
         -v "$($Config.VolumeName):/var/lib/postgresql/data" `
         $Config.PostgresImage | Out-Null
 
@@ -166,4 +167,44 @@ function Stop-DevStackPostgres {
     Write-Host "Postgres container $($Config.ContainerName) stopped."
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres
+function Initialize-DevStackState {
+    param([Parameter(Mandatory)]$Config)
+    New-Item -ItemType Directory -Force -Path $Config.LogDir | Out-Null
+}
+
+function Start-DevStackService {
+    # Launches one service via dotnet run with its launch profile, redirecting logs and
+    # injecting the connection string (when the service needs one). Returns the PID.
+    param(
+        [Parameter(Mandatory)]$Config,
+        [Parameter(Mandatory)]$Service
+    )
+    $project = Join-Path $Config.RepoRoot $Service.Project
+    $outLog  = Join-Path $Config.LogDir "$($Service.Name).out.log"
+    $errLog  = Join-Path $Config.LogDir "$($Service.Name).err.log"
+    Set-Content -Path $outLog -Value '' ; Set-Content -Path $errLog -Value ''
+
+    # Child inherits the parent env snapshot at spawn time; set the per-service connection
+    # string immediately before launch so webapi/simulator get their own database.
+    if ($Service.ConnKey) {
+        $env:ConnectionStrings__DefaultConnection = $Config.ConnectionStrings.$($Service.ConnKey)
+    } else {
+        Remove-Item Env:\ConnectionStrings__DefaultConnection -ErrorAction SilentlyContinue
+    }
+
+    $proc = Start-Process -FilePath 'dotnet' `
+        -ArgumentList @('run', '--project', $project, '--launch-profile', $Service.Profile) `
+        -WorkingDirectory $Config.RepoRoot `
+        -RedirectStandardOutput $outLog `
+        -RedirectStandardError $errLog `
+        -PassThru
+    return $proc.Id
+}
+
+function Save-DevStackState {
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)][hashtable]$Pids)
+    $statePath = Join-Path $Config.StateDir 'state.json'
+    $Pids | ConvertTo-Json | Set-Content -Path $statePath
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState

@@ -35,6 +35,20 @@ Describe 'Resolve-DevStackConfig' {
         $cfg.ConnectionStrings.WebApi    | Should Match 'Database=familyhq;'
         $cfg.ConnectionStrings.Simulator | Should Match 'Database=familyhq_sim;'
         $cfg.ConnectionStrings.WebApi    | Should Match 'Password=postgres'
+        $cfg.ConnectionStrings.WebApi    | Should Match 'Port=5433;'
+        $cfg.Postgres.HostPort           | Should Be 5433
+    }
+
+    It 'lets a .env override the Postgres host port' {
+        $tmp = (New-TemporaryFile).FullName
+        try {
+            Set-Content -Path $tmp -Value @('POSTGRES_HOST_PORT=5544')
+            $cfg = Resolve-DevStackConfig -RepoRoot 'C:\repo' -EnvFile $tmp
+            $cfg.Postgres.HostPort        | Should Be 5544
+            $cfg.ConnectionStrings.WebApi | Should Match 'Port=5544;'
+        } finally {
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+        }
     }
 
     It 'returns three services in the expected order' {
