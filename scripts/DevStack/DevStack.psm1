@@ -68,13 +68,16 @@ function Test-IsFamilyHqProcess {
     $path = [string]$Process.Path
     $cmd  = [string]$Process.CommandLine
     if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
-    $isDotnet = $path -match '(?i)dotnet(\.exe)?$'
-    if (-not $isDotnet) { return $false }
     # Anchor on a trailing separator so a sibling repo whose name merely shares our prefix
     # (e.g. FamilyHQExtra) is NOT treated as ours. Known limitation: a separate dotnet
     # process given a sub-path of this repo as an explicit argument could still match;
     # acceptable risk for a local dev tool — the reconciler refuses unidentified holders.
     $anchor = $RepoRoot.ToLowerInvariant().TrimEnd('\') + '\'
+    $isDotnet = $path -match '(?i)dotnet(\.exe)?$'
+    # Also accept self-contained FamilyHQ executables whose process image lives inside the
+    # repo tree (e.g. bin/Debug output of dotnet run for a native/self-contained project).
+    $isOwnExe = (-not [string]::IsNullOrWhiteSpace($path)) -and $path.ToLowerInvariant().StartsWith($anchor)
+    if (-not ($isDotnet -or $isOwnExe)) { return $false }
     return $cmd.ToLowerInvariant().Contains($anchor)
 }
 
@@ -235,4 +238,38 @@ function Wait-DevStackHealthy {
     return $false
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy
+function Stop-DevStackListenerOnPort {
+    # Stops whatever is listening on $Port IF it is provably ours. Returns one of:
+    # 'none' (nothing listening), 'stopped', or 'refused' (held by an unidentified process).
+    param(
+        [Parameter(Mandatory)]$Config,
+        [Parameter(Mandatory)][int]$Port,
+        [switch]$Force
+    )
+    $listener = Get-DevStackListenerProcess -Port $Port
+    if (-not $listener) { return 'none' }
+
+    if ($Force -or (Test-IsFamilyHqProcess -Process $listener -RepoRoot $Config.RepoRoot)) {
+        Stop-Process -Id $listener.Pid -Force -ErrorAction SilentlyContinue
+        return 'stopped'
+    }
+
+    Write-Warning ("Port {0} is held by PID {1} ({2}) which is not a recognised FamilyHQ process. Refusing to kill it. Re-run with -Force to override." -f `
+        $Port, $listener.Pid, ($listener.Path ?? 'unknown'))
+    return 'refused'
+}
+
+function Invoke-DevStackReconcile {
+    # Clears any FamilyHQ services left listening on our ports. Throws if a port is held
+    # by an unidentified process (unless -Force).
+    param([Parameter(Mandatory)]$Config, [switch]$Force)
+    foreach ($svc in $Config.Services) {
+        $result = Stop-DevStackListenerOnPort -Config $Config -Port $svc.Port -Force:$Force
+        if ($result -eq 'refused') {
+            throw "Cannot reconcile port $($svc.Port): held by an unidentified process. Resolve it or pass -Force."
+        }
+        if ($result -eq 'stopped') { Write-Host "Reconciled stale $($svc.Name) on port $($svc.Port)" }
+    }
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile
