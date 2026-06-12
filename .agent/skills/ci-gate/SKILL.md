@@ -18,6 +18,7 @@ If in doubt, use **pre-PR** (3 runs).
 
 Confirm:
 - Local unit tests have been run and all pass
+- **Any E2E scenarios you added or changed — or that exercise the code you touched — have been run locally and pass.** Stand up the stack and run them with the `local-stack` skill (`pwsh scripts/dev-stack.ps1 e2e -Filter "<scope>"`) *before* pushing. Don't spend a Deploy-Dev cycle to discover an E2E failure you could have caught locally. If you can't pin the exact in-scope scenarios, run the whole affected feature(s). When the change fixes a flaky/intermittent E2E, run the scenario repeatedly (loop it) until you've seen it pass consistently — a single green run doesn't clear a flake.
 - `jk` is available: `jk --version` (if missing, see the `jk` skill for install instructions)
 - You are on a feature or fix branch — never on `dev` or `master`
 

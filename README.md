@@ -86,6 +86,12 @@ tools/
 
 ## Running the Application
 
+> **Local one-command stack (recommended for development):**
+> `pwsh scripts/dev-stack.ps1 up` boots the Simulator, WebApi, WebUi, and a Postgres
+> container together; `pwsh scripts/dev-stack.ps1 e2e` runs the E2E suite against them;
+> `pwsh scripts/dev-stack.ps1 down` tears it all down. See `.agent/docs/local-stack.md`.
+> The manual three-terminal instructions below still work.
+
 ### 1. Start the WebApi
 
 ```bash

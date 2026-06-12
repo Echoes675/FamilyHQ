@@ -3,6 +3,7 @@
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Services
 @inject ICalendarApiService CalendarApi
+@inject Microsoft.Extensions.Logging.ILogger<EventModal> Logger
 
 @if (_showEventModal)
 {
@@ -421,8 +422,8 @@
         }
         catch (Exception ex)
         {
-            _modalError = "An error occurred while saving.";
-            Console.WriteLine(ex.ToString());
+            _modalError = "Couldn't save your event — please try again.";
+            Logger.LogError(ex, "Failed to save the event from the modal.");
         }
         finally
         {
@@ -452,8 +453,8 @@
         }
         catch (Exception ex)
         {
-            _modalError = "An error occurred while deleting.";
-            Console.WriteLine(ex.ToString());
+            _modalError = "Couldn't delete this event — please try again.";
+            Logger.LogError(ex, "Failed to delete event {EventId} from the modal.", _eventModel.Id);
         }
         finally
         {
@@ -506,8 +507,8 @@
         }
         catch (Exception ex)
         {
-            _modalError = "An error occurred while saving.";
-            Console.WriteLine(ex.ToString());
+            _modalError = "Couldn't save your event — please try again.";
+            Logger.LogError(ex, "Failed to save the event from the modal.");
         }
         finally
         {

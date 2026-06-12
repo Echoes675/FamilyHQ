@@ -372,6 +372,9 @@ FodyWeavers.xsd
 **/.env.*
 !**/.env.example
 
+# FHQ-35 local dev-stack runtime state
+scripts/.dev-stack/
+
 *.err
 
 TestResults/

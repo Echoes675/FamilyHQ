@@ -4,6 +4,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -568,6 +569,67 @@ public class CalendarEventServiceRecurringTests
 
         f.Cache.Verify(c => c.Record("inst-1", MasterHash), Times.Once);
         f.Cache.Verify(c => c.Record("inst-2", MasterHash), Times.Once);
+    }
+
+    // ── FHQ-66: concurrent-sync write race on the recurring-create reconcile ──────
+
+    [Fact]
+    public async Task CreateAsync_RecurringSeries_WhenConcurrentSyncInsertsSameInstances_ReResolvesAndDoesNotThrow()
+    {
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master"),
+            f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master")
+        ]);
+
+        // The reconcile's first SaveChanges hits the GoogleEventId unique index because a concurrent
+        // CalendarSyncWorker inserted the same instances first (FHQ-66). The reconcile must re-resolve
+        // its inserts against the now-stored rows (first-writer-wins) and retry — NOT surface the
+        // DbUpdateException as an HTTP 500.
+        f.Repo.SetupSequence(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException(
+                "23505: duplicate key value violates unique constraint \"IX_Events_GoogleEventId\""))
+            .ReturnsAsync(2);
+
+        // After the conflict, the rows the concurrent sync inserted are now found by GoogleEventId
+        // (null on the first pass through the reconcile loop, present on the re-resolve pass).
+        var stored1 = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart);
+        var stored2 = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart.AddDays(7));
+        f.Repo.SetupSequence(r => r.GetEventByGoogleEventIdAsync("inst-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null).ReturnsAsync(stored1);
+        f.Repo.SetupSequence(r => r.GetEventByGoogleEventIdAsync("inst-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null).ReturnsAsync(stored2);
+
+        var request = CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU");
+
+        var act = async () => await f.Sut.CreateAsync(request);
+
+        await act.Should().NotThrowAsync();
+        // initial save (threw) + one retry after re-resolving the conflicting inserts.
+        f.Repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        // The conflicting inserts are detached and converted to updates of the concurrently-stored rows.
+        f.Repo.Verify(r => r.DetachEventAsync(It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"), It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.UpdateEventAsync(It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RecurringSeries_WhenReconcileFailsTwice_PropagatesTheError()
+    {
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+        f.ArrangeReconcileWindow([f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master")]);
+
+        // A genuine, non-transient save failure must not be swallowed: the retry also fails, so the
+        // exception propagates rather than being masked by the FHQ-66 race handling.
+        f.Repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("persistent failure"));
+
+        var request = CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU");
+
+        await f.Sut.Invoking(s => s.CreateAsync(request)).Should().ThrowAsync<DbUpdateException>();
     }
 
     [Fact]

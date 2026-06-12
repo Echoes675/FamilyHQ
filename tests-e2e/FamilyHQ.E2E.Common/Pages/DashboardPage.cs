@@ -1316,15 +1316,33 @@ public class DashboardPage : BasePage
         await EnsureCalendarChipActiveAsync(calendarName);
         await SelectRecurrenceModeAsync("weekly");
 
-        var eventsResponseTask = Page.WaitForResponseAsync(
-            r => r.Url.Contains("api/calendars/events"),
+        // Await the create itself (POST api/events), NOT the dashboard's GET api/calendars/events poll.
+        // Asserting the create's status makes a server-side failure (e.g. the FHQ-66 recurring-create
+        // reconcile race that returns a 500) surface as a clear failure here, rather than as an opaque
+        // 30s "modal never closed" timeout.
+        var createResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("/api/events") && r.Request.Method == "POST",
             new() { Timeout = 30000 });
 
         await SaveEventBtn.ClickAsync();
+        await AssertCreateSucceededAsync(createResponseTask);
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
-        await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
         await WaitForSyncSettledAsync();
+    }
+
+    /// <summary>
+    /// Awaits the create POST and fails loudly on a non-success status. A failed create leaves the
+    /// modal open, so without this the only symptom would be a 30s modal-hidden timeout that hides the
+    /// real cause (the FHQ-66 reconcile-race 500).
+    /// </summary>
+    private static async Task AssertCreateSucceededAsync(Task<IResponse> createResponseTask)
+    {
+        var createResponse = await createResponseTask;
+        if (createResponse.Status >= 400)
+            throw new PlaywrightException(
+                $"Recurring-event create POST returned HTTP {createResponse.Status}; the modal will not " +
+                "close on an error. A duplicate-key 500 here is the FHQ-66 reconcile-race signature.");
     }
 
     /// <summary>
@@ -1345,13 +1363,13 @@ public class DashboardPage : BasePage
             await ToggleRecurrenceWeekdayAsync(weekday);
         }
 
-        var eventsResponseTask = Page.WaitForResponseAsync(
-            r => r.Url.Contains("api/calendars/events"),
+        var createResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("/api/events") && r.Request.Method == "POST",
             new() { Timeout = 30000 });
 
         await SaveEventBtn.ClickAsync();
+        await AssertCreateSucceededAsync(createResponseTask);
         await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
-        await eventsResponseTask;
         await WaitForCalendarVisibleAsync();
         await WaitForSyncSettledAsync();
     }
