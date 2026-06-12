@@ -14,7 +14,28 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
-_None currently._
+### 8. Recurring-event create 500s on a `GoogleEventId` unique-constraint race with the sync worker (FHQ-66)
+
+**Status:** root cause confirmed (local repro + real #505); fix implemented on branch `fix/FHQ-66-recurring-create-duplicate-key`, **pending the Deploy-Dev recurrence gate** (do not mark resolved off local runs alone — see issue #3-legacy).
+**Component:** **Production** — `src/FamilyHQ.Services/Calendar/CalendarEventService.cs` (`ReconcileWindowAsync`). Surfaced as an E2E flake but the defect is in the create path, not the tests.
+**First seen:** Deploy-Dev **#505** (2026-06-11), `RecurringEventTimeZoneFeature` → *"Creating a recurring event sends the configured IANA timezone to Google"* (30 s timeout waiting for `.modal-content` to be hidden). PASSED on #506–#508 — classic flake.
+**Occurrences:** Deploy-Dev #505. (Reproduced on demand locally on the FHQ-35 stack with `Sync:PeriodicSyncInterval` temporarily set to `00:00:01` — fails on the first run.)
+
+**Misleading symptom:** the failing step is the create act-step (modal never closes), NOT the timezone `Then` (which is *skipped*). The create itself is fast (~0.6 s); latency is not involved.
+
+**Root cause (confirmed by local browser console + server stack, and the same `IX_Events_GoogleEventId` / `23505` errors in the real #505 dev Seq window):**
+- `ReconcileWindowAsync` decides insert-vs-update with a **check-then-insert**: `GetEventByGoogleEventIdAsync` returns null → `AddEventAsync` → one batch `SaveChangesAsync`.
+- The single-consumer `CalendarSyncWorker`, syncing the same calendar concurrently, inserts the **same `GoogleEventId`** rows first. The create's batch save then violates the unique index `IX_Events_GoogleEventId` → `Npgsql.PostgresException 23505` → unhandled `DbUpdateException` → **HTTP 500** on `POST /api/events`.
+- The WebUI's `EventModal.SaveEvent` catches the 500 (`CalendarApiService.CreateEventAsync` → `EnsureSuccessStatusCode()`), shows *"An error occurred while saving."* and leaves the modal open → Playwright's `WaitFor(Hidden)` times out at 30 s.
+- Stack: `EventsController.CreateEvent` → `CalendarEventService.CreateAsync` → `CreateRecurringSeriesAsync` → `ReconcileWindowAsync` → `CalendarRepository.SaveChangesAsync`.
+
+**Why intermittent:** only when a login/periodic sync of the same window overlaps the recurring-create's reconcile. The sync side already survives this (per-event save + detach-on-conflict in `CalendarSyncService.SyncCoreAsync`); the create's batch save did not.
+
+**Fix:** `ReconcileWindowAsync` now persists via `SaveReconciledWithConcurrencyRetryAsync` — on a `DbUpdateException` it re-resolves its inserts against the now-stored rows (first-writer-wins: detach the duplicate insert, fold the reconciled fields onto the concurrently-stored row, update) and retries (bounded to 3 attempts), so the recurring write is idempotent instead of 500-ing. A failure surviving the retries is not this race and propagates. Echo-guard hashes are recorded before the save, so suppression is unaffected. Regression tests: `CalendarEventServiceRecurringTests.CreateAsync_RecurringSeries_WhenConcurrentSyncInsertsSameInstances_ReResolvesAndDoesNotThrow` + `_WhenReconcileFailsTwice_PropagatesTheError`. E2E hardening: `DashboardPage.CreateWeeklyRecurringEventAsync` now awaits the `POST /api/events` create and asserts 2xx, so a future 500 fails loudly instead of as a 30 s modal-hidden timeout.
+
+**Known twin to check:** `CalendarMigrationService` recurring-series reconcile and the `UpdateRecurringAsync` scopes share `ReconcileWindowAsync`, so they inherit the fix; any *other* check-then-insert on `GoogleEventId` outside it would need the same guard.
+
+**If the symptom returns:** confirm the create POST is returning a 5xx (browser console / `RequestTimingMiddleware`), then check for `23505` / `IX_Events_GoogleEventId` in the WebApi log around the create — a recurrence means a concurrent writer is hitting the index outside the retried path. The Deploy-Dev recurrence gate is the bar to move this to Resolved.
 
 ---
 

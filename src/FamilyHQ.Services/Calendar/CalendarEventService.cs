@@ -3,6 +3,7 @@ using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Core.Calendar.Recurrence;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Services.Calendar;
@@ -655,6 +656,7 @@ public class CalendarEventService(
         CalendarInfo owner, IReadOnlyDictionary<string, string> seriesRules, CancellationToken ct)
     {
         var persisted = new List<CalendarEvent>();
+        var inserted = new List<CalendarEvent>();
         var syncState = await calendarRepository.GetSyncStateAsync(owner.Id, ct);
         if (syncState?.SyncWindowStart is not { } windowStart || syncState.SyncWindowEnd is not { } windowEnd)
             throw new InvalidOperationException(
@@ -723,6 +725,7 @@ public class CalendarEventService(
                 fetchedEvent.Members = members;
                 await calendarRepository.AddEventAsync(fetchedEvent, ct);
                 persisted.Add(fetchedEvent);
+                inserted.Add(fetchedEvent);
             }
 
             // Record the hash Google will echo for this instance so its webhook is suppressed.
@@ -733,8 +736,63 @@ public class CalendarEventService(
                 RecordOutbound(fetchedEvent.GoogleEventId, fetchedEvent.ContentHash);
         }
 
-        await calendarRepository.SaveChangesAsync(ct);
+        await SaveReconciledWithConcurrencyRetryAsync(inserted, ct);
         return persisted;
+    }
+
+    // The reconcile decides insert-vs-update with a check-then-insert (GetEventByGoogleEventIdAsync →
+    // AddEventAsync) that races the single-consumer CalendarSyncWorker: when a sync of the same window
+    // inserts the same GoogleEventId rows first, the batch SaveChanges trips the unique index
+    // IX_Events_GoogleEventId (Postgres 23505) and the whole recurring write would 500 (FHQ-66). That
+    // collision is benign convergence — both writers are persisting the same Google instances. Re-resolve
+    // our inserts against the now-stored rows (first-writer-wins) and retry so the write is idempotent.
+    // A failure that survives the retries is not this race and propagates.
+    private const int MaxReconcileSaveAttempts = 5;
+
+    private async Task SaveReconciledWithConcurrencyRetryAsync(IReadOnlyList<CalendarEvent> inserted, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await calendarRepository.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateException ex) when (attempt < MaxReconcileSaveAttempts)
+            {
+                logger.LogWarning(ex,
+                    "Recurring reconcile write conflicted with a concurrent sync (attempt {Attempt}/{Max}); " +
+                    "re-resolving {Count} inserted instance(s) against the stored rows and retrying.",
+                    attempt, MaxReconcileSaveAttempts, inserted.Count);
+
+                // Small linear backoff so the retries span past a concurrent sync's in-flight insert
+                // burst (the conflict window is the sync's initial window population) rather than
+                // hammering inside it.
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct);
+
+                foreach (var insert in inserted)
+                {
+                    var stored = await calendarRepository.GetEventByGoogleEventIdAsync(insert.GoogleEventId, ct);
+                    if (stored is null)
+                        continue; // our insert is still the only writer for this id — leave it to the retry.
+
+                    // The concurrent sync already created this row; drop our duplicate insert and fold our
+                    // reconciled fields onto the stored row instead.
+                    await calendarRepository.DetachEventAsync(insert, ct);
+                    stored.Title = insert.Title;
+                    stored.Start = insert.Start;
+                    stored.End = insert.End;
+                    stored.IsAllDay = insert.IsAllDay;
+                    stored.Location = insert.Location;
+                    stored.Description = insert.Description;
+                    stored.GoogleRecurringEventId = insert.GoogleRecurringEventId;
+                    stored.OriginalStartTime = insert.OriginalStartTime;
+                    stored.RecurrenceRule = insert.RecurrenceRule ?? stored.RecurrenceRule;
+                    stored.Members = insert.Members;
+                    await calendarRepository.UpdateEventAsync(stored, ct);
+                }
+            }
+        }
     }
 
     private static void ApplyRequestFields(CalendarEvent target, UpdateEventRequest request, string normalisedDescription)
