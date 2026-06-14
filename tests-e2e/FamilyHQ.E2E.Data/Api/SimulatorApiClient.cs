@@ -44,7 +44,7 @@ public class SimulatorApiClient : IDisposable
     /// </summary>
     public async Task<string> AddEventAsync(
         string userId, string calendarId, string summary,
-        DateTime start, DateTime end, bool isAllDay, string? description = null)
+        DateTime start, DateTime end, bool isAllDay, string? description = null, string? recurrenceRule = null)
     {
         var body = new
         {
@@ -54,7 +54,8 @@ public class SimulatorApiClient : IDisposable
             Description = description,
             Start = start,
             End = end,
-            IsAllDay = isAllDay
+            IsAllDay = isAllDay,
+            RecurrenceRule = recurrenceRule
         };
         var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/events", body);
         response.EnsureSuccessStatusCode();

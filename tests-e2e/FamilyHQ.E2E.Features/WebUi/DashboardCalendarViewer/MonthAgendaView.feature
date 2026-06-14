@@ -167,6 +167,35 @@ Feature: Month Agenda View
     Then the event "Solo Synced" is on the "Work Calendar" calendar
     And the event "Solo Synced" is not on the "Family Calendar" calendar
 
+  # FHQ-68: a multi-attendee RECURRING series created directly in Google on a personal calendar migrates
+  # to the shared calendar, the same as a single event.
+  @fhq68
+  Scenario: A Google-created multi-attendee recurring series on a personal calendar is migrated to the shared calendar
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new recurring event "Recurring Multi" is added to Google Calendar on "tomorrow" in "Work Calendar" with description "Sync with Personal Calendar"
+    And Google Calendar sends a webhook notification
+    Then the event "Recurring Multi" is on the "Family Calendar" calendar
+    And the event "Recurring Multi" is not on the "Work Calendar" calendar
+
+  # FHQ-68: after migration, a subsequent sync must leave the event in place (the migration's Google
+  # writes are self-echo-suppressed) — no oscillation back to the personal calendar, no duplication.
+  @fhq68
+  Scenario: A migrated multi-attendee event stays on the shared calendar across a second sync
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new event "Stable Multi" is added to Google Calendar on "tomorrow" in "Work Calendar" with description "Sync with Personal Calendar"
+    And Google Calendar sends a webhook notification
+    And Google Calendar sends a webhook notification
+    Then the event "Stable Multi" is on the "Family Calendar" calendar
+    And the event "Stable Multi" is not on the "Work Calendar" calendar
+
   Scenario: All six calendar column headers are visible in the agenda view
     Given I have a user like "SixCalUser"
     And the "Work Calendar" calendar is the active calendar
