@@ -24,7 +24,13 @@ public class PlacementReconciler(
         {
             try
             {
-                changed |= await migrationService.EnsureCorrectCalendarAsync(e, e.Members.ToList(), ct);
+                // Re-load the event TRACKED before migrating (the enumeration above is AsNoTracking).
+                // CalendarMigrationService.EnsureCorrectCalendarAsync calls UpdateEventAsync, which only
+                // diffs the EventMembers junction correctly for a tracked entity; a detached one re-INSERTs
+                // the already-persisted junction rows (duplicate-key). FHQ-68.
+                var tracked = await calendarRepository.GetEventAsync(e.Id, ct);
+                if (tracked is not null)
+                    changed |= await migrationService.EnsureCorrectCalendarAsync(tracked, tracked.Members.ToList(), ct);
             }
             catch (Exception ex)
             {
