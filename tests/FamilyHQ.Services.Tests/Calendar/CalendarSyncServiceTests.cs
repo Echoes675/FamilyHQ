@@ -448,10 +448,12 @@ public class CalendarSyncServiceTests
         // Act
         await systemUnderTest.SyncAsync(familyId, start, end);
 
-        // Assert — the transiently-shared Work calendar is retained, not silently dropped.
+        // Assert — the transiently-shared Work calendar is retained, not silently dropped (FHQ-46).
+        // FHQ-68: the owning personal calendar (Family Calendar, non-shared here) is also an attendee
+        // of its own events, so it is additionally included — the tagged members are still retained.
         updated.Should().NotBeNull();
         updated!.Members.Select(m => m.DisplayName)
-            .Should().BeEquivalentTo(new[] { "Work Calendar", "Personal Calendar" });
+            .Should().BeEquivalentTo(new[] { "Work Calendar", "Personal Calendar", "Family Calendar" });
     }
 
     [Fact]
