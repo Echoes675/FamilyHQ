@@ -136,6 +136,66 @@ Feature: Month Agenda View
     Then I see the event "Planning Session" in the "Work Calendar" column for "today"
     And I see the event "Planning Session" in the "Personal Calendar" column for "today"
 
+  # FHQ-68: an event created directly in Google with multiple attendees on a PERSONAL calendar must be
+  # migrated to the shared calendar (and written back to Google). The shared calendar is designated
+  # explicitly (the system otherwise auto-designates the first calendar) so the event is added to a
+  # known-personal calendar. Placement is asserted via the Simulator backdoor (which Google calendar the
+  # event is stored on) — a date-independent proof of the migration + write-back; the owner-included
+  # membership is covered by the CalendarSyncService unit tests.
+  @fhq68
+  Scenario: A Google-created multi-attendee event on a personal calendar is migrated to the shared calendar
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new event "Synced Multi" is added to Google Calendar on "tomorrow" in "Work Calendar" with description "Sync with Personal Calendar"
+    And Google Calendar sends a webhook notification
+    Then the event "Synced Multi" is on the "Family Calendar" calendar
+    And the event "Synced Multi" is not on the "Work Calendar" calendar
+
+  # FHQ-68: a single-attendee event created in Google is left on its personal calendar (not migrated).
+  @fhq68
+  Scenario: A Google-created single-attendee event stays on its personal calendar
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new event "Solo Synced" is added to Google Calendar on "tomorrow" in "Work Calendar"
+    And Google Calendar sends a webhook notification
+    Then the event "Solo Synced" is on the "Work Calendar" calendar
+    And the event "Solo Synced" is not on the "Family Calendar" calendar
+
+  # FHQ-68: a multi-attendee RECURRING series created directly in Google on a personal calendar migrates
+  # to the shared calendar, the same as a single event.
+  @fhq68
+  Scenario: A Google-created multi-attendee recurring series on a personal calendar is migrated to the shared calendar
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new recurring event "Recurring Multi" is added to Google Calendar on "tomorrow" in "Work Calendar" with description "Sync with Personal Calendar"
+    And Google Calendar sends a webhook notification
+    Then the event "Recurring Multi" is on the "Family Calendar" calendar
+    And the event "Recurring Multi" is not on the "Work Calendar" calendar
+
+  # FHQ-68: after migration, a subsequent sync must leave the event in place (the migration's Google
+  # writes are self-echo-suppressed) — no oscillation back to the personal calendar, no duplication.
+  @fhq68
+  Scenario: A migrated multi-attendee event stays on the shared calendar across a second sync
+    Given I have a user like "MultiCalUser"
+    And the "Work Calendar" calendar is the active calendar
+    And I login as the user "MultiCalUser"
+    When I navigate to the calendar settings tab
+    And I designate "Family Calendar" as the shared calendar
+    And a new event "Stable Multi" is added to Google Calendar on "tomorrow" in "Work Calendar" with description "Sync with Personal Calendar"
+    And Google Calendar sends a webhook notification
+    And Google Calendar sends a webhook notification
+    Then the event "Stable Multi" is on the "Family Calendar" calendar
+    And the event "Stable Multi" is not on the "Work Calendar" calendar
+
   Scenario: All six calendar column headers are visible in the agenda view
     Given I have a user like "SixCalUser"
     And the "Work Calendar" calendar is the active calendar

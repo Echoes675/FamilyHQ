@@ -45,6 +45,8 @@ public class PlacementReconcilerTests
 
         repo.Setup(r => r.GetEventsAsync(Start, End, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { evt });
+        // The reconciler re-loads each event tracked (via GetEventAsync) before migrating (FHQ-68).
+        repo.Setup(r => r.GetEventAsync(evt.Id, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(evt, It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -127,6 +129,8 @@ public class PlacementReconcilerTests
 
         repo.Setup(r => r.GetEventsAsync(Start, End, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { failing, moving });
+        repo.Setup(r => r.GetEventAsync(failing.Id, It.IsAny<CancellationToken>())).ReturnsAsync(failing);
+        repo.Setup(r => r.GetEventAsync(moving.Id, It.IsAny<CancellationToken>())).ReturnsAsync(moving);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(failing, It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
         migration.Setup(m => m.EnsureCorrectCalendarAsync(moving, It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))

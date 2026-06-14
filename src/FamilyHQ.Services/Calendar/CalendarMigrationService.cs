@@ -44,6 +44,13 @@ public class CalendarMigrationService(
             "Migrating event {GoogleEventId} from {Source} to {Target}.",
             calendarEvent.GoogleEventId, currentOwner.DisplayName, targetCalendar.DisplayName);
 
+        // FHQ-68: stamp an explicit [members: ...] tag (non-shared member display names) so a
+        // Google-originated event's free-form description does not re-resolve to different members on the
+        // next sync from the target calendar (which would oscillate). Idempotent for already-tagged events.
+        var memberNames = assignedMembers.Where(m => !m.IsShared).Select(m => m.DisplayName).ToList();
+        calendarEvent.Description = memberTagParser.NormaliseDescription(
+            memberTagParser.StripMemberTag(calendarEvent.Description), memberNames);
+
         var hash = EventContentHash.Compute(
             calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
             calendarEvent.IsAllDay, calendarEvent.Description);

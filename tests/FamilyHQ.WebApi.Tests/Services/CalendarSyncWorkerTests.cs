@@ -15,7 +15,7 @@ namespace FamilyHQ.WebApi.Tests.Services;
 public class CalendarSyncWorkerTests
 {
     private static (CalendarSyncWorker worker, Mock<ICalendarSyncJobQueue> queue, Mock<ICalendarSyncService> sync, Mock<IClientProxy> proxy, Mock<ITokenStore> tokenStore)
-        CreateSut(CalendarSyncJob? firstJob)
+        CreateSut(CalendarSyncJob? firstJob, Mock<IPlacementReconciler>? reconciler = null)
     {
         var queue = new Mock<ICalendarSyncJobQueue>();
         queue.SetupSequence(q => q.ClaimNextAsync(It.IsAny<CancellationToken>()))
@@ -32,10 +32,13 @@ public class CalendarSyncWorkerTests
         var hub = new Mock<IHubContext<CalendarHub>>();
         hub.Setup(h => h.Clients).Returns(clients.Object);
 
+        var placementReconciler = reconciler ?? new Mock<IPlacementReconciler>();
+
         var services = new ServiceCollection();
         services.AddScoped(_ => queue.Object);
         services.AddScoped(_ => sync.Object);
         services.AddScoped(_ => tokenStore.Object);
+        services.AddScoped(_ => placementReconciler.Object);
         var provider = services.BuildServiceProvider();
 
         var signal = new Mock<ISyncJobSignal>();
@@ -145,5 +148,36 @@ public class CalendarSyncWorkerTests
         await worker.DrainAsync(CancellationToken.None);
 
         proxy.Verify(c => c.SendCoreAsync("EventsUpdated", Array.Empty<object>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_NormalSyncWithChanges_RunsPlacementReconciler()
+    {
+        var reconciler = new Mock<IPlacementReconciler>();
+        reconciler.Setup(r => r.ReconcileForUserAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(true);
+
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = null, Source = SyncJobSource.Periodic, Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, _, sync, _, _) = CreateSut(job, reconciler: reconciler);
+        sync.Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(1));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        reconciler.Verify(r => r.ReconcileForUserAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessJob_NormalSyncWithNoChanges_DoesNotRunPlacementReconciler()
+    {
+        var reconciler = new Mock<IPlacementReconciler>();
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = null, Source = SyncJobSource.Periodic, Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, _, sync, _, _) = CreateSut(job, reconciler: reconciler);
+        sync.Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncResult(0));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        reconciler.Verify(r => r.ReconcileForUserAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
