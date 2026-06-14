@@ -104,7 +104,14 @@ public class CalendarSyncWorker(
             var placementChanged = false;
             if (result.HadChanges)
             {
-                var reconciler = scope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
+                // Run placement in a FRESH scope (new DbContext). The sync above inserts the events it
+                // brought in via AddEventAsync, leaving them tracked in THIS scope's DbContext; the
+                // reconciler re-loads each event (AsNoTracking) and Updates it during a migration, which
+                // collides with the still-tracked inserted instance (an EF identity conflict that silently
+                // fails the migration). A clean DbContext avoids the conflict. The background user context
+                // (set above) flows to the new scope, so the reconciler resolves the same user (FHQ-68).
+                using var placementScope = scopeFactory.CreateScope();
+                var reconciler = placementScope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
                 placementChanged = await reconciler.ReconcileForUserAsync(start, end, CancellationToken.None);
             }
 
