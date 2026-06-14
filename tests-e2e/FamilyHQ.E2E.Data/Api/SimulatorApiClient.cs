@@ -44,13 +44,14 @@ public class SimulatorApiClient : IDisposable
     /// </summary>
     public async Task<string> AddEventAsync(
         string userId, string calendarId, string summary,
-        DateTime start, DateTime end, bool isAllDay)
+        DateTime start, DateTime end, bool isAllDay, string? description = null)
     {
         var body = new
         {
             UserId = userId,
             CalendarId = calendarId,
             Summary = summary,
+            Description = description,
             Start = start,
             End = end,
             IsAllDay = isAllDay
@@ -99,6 +100,24 @@ public class SimulatorApiClient : IDisposable
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<BackdoorEventResponse>();
         return result?.StartTimeZone;
+    }
+
+    /// <summary>
+    /// True when an event with the given summary is stored on the given calendar for the user
+    /// (the backdoor 404s when no match exists yet, so callers can poll). Used to assert event
+    /// placement after a sync — e.g. that a multi-attendee event migrated to the shared calendar.
+    /// </summary>
+    public async Task<bool> EventExistsOnCalendarAsync(string userId, string calendarId, string summary)
+    {
+        var url = $"api/simulator/backdoor/events" +
+                  $"?userId={Uri.EscapeDataString(userId)}" +
+                  $"&calendarId={Uri.EscapeDataString(calendarId)}" +
+                  $"&summary={Uri.EscapeDataString(summary)}";
+        var response = await _httpClient.GetAsync(url);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return false;
+        response.EnsureSuccessStatusCode();
+        return true;
     }
 
     private sealed class BackdoorEventResponse
