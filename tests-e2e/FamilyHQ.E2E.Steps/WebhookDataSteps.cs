@@ -122,4 +122,55 @@ public class WebhookDataSteps
         _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
     }
 
+    // FHQ-68: adds a Google-side event on a named calendar WITH a free-form description (e.g. naming
+    // another member), so placement of a multi-attendee event created directly in Google can be
+    // exercised after a deterministic shared-calendar designation.
+    [When(@"a new event ""([^""]*)"" is added to Google Calendar on ""([^""]*)"" in ""([^""]*)"" with description ""([^""]*)""")]
+    public async Task WhenANewEventIsAddedOnDateInCalendarWithDescription(string eventName, string dateExpr, string calendarName, string description)
+    {
+        var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = template.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        var eventId = await _simulatorApi.AddEventAsync(
+            userId: template.UserName,
+            calendarId: calendar.Id,
+            summary: eventName,
+            start: date,
+            end: date.AddDays(1),
+            isAllDay: true,
+            description: description);
+
+        eventId = eventId.Trim('"');
+        _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
+    }
+
+    // FHQ-68: adds a Google-side weekly RECURRING series (master + RRULE) on a named calendar with a
+    // free-form description, to exercise placement of a multi-attendee recurring event created directly
+    // in Google on a personal calendar.
+    [When(@"a new recurring event ""([^""]*)"" is added to Google Calendar on ""([^""]*)"" in ""([^""]*)"" with description ""([^""]*)""")]
+    public async Task WhenANewRecurringEventIsAddedOnDateInCalendarWithDescription(string eventName, string dateExpr, string calendarName, string description)
+    {
+        var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
+        var calendar = template.Calendars.Find(c => c.Summary == calendarName)
+                       ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
+
+        var date = DateTime.ParseExact(DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        var eventId = await _simulatorApi.AddEventAsync(
+            userId: template.UserName,
+            calendarId: calendar.Id,
+            summary: eventName,
+            start: date,
+            end: date.AddDays(1),
+            isAllDay: true,
+            description: description,
+            recurrenceRule: "RRULE:FREQ=WEEKLY;COUNT=3");
+
+        eventId = eventId.Trim('"');
+        _scenarioContext[$"CreatedEventId:{eventName}"] = eventId;
+    }
+
 }

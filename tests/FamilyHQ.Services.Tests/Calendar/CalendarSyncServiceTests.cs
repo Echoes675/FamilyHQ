@@ -448,10 +448,12 @@ public class CalendarSyncServiceTests
         // Act
         await systemUnderTest.SyncAsync(familyId, start, end);
 
-        // Assert — the transiently-shared Work calendar is retained, not silently dropped.
+        // Assert — the transiently-shared Work calendar is retained, not silently dropped (FHQ-46).
+        // FHQ-68: the owning personal calendar (Family Calendar, non-shared here) is also an attendee
+        // of its own events, so it is additionally included — the tagged members are still retained.
         updated.Should().NotBeNull();
         updated!.Members.Select(m => m.DisplayName)
-            .Should().BeEquivalentTo(new[] { "Work Calendar", "Personal Calendar" });
+            .Should().BeEquivalentTo(new[] { "Work Calendar", "Personal Calendar", "Family Calendar" });
     }
 
     [Fact]
@@ -962,6 +964,62 @@ public class CalendarSyncServiceTests
 
         // Assert — SaveSyncStateAsync called twice: once to clear the token, once to persist the fresh token
         calendarRepository.Verify(r => r.SaveSyncStateAsync(It.IsAny<SyncState>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    // ── FHQ-68: owner-calendar always included as a member ───────────────────
+
+    [Fact]
+    public async Task SyncAsync_GoogleEventOnPersonalCalendarNamingAnotherMember_IncludesOwnerAndNamedMember()
+    {
+        // Arrange
+        var (client, calendarRepository, tagParser, sut) = CreateSut();
+        var start      = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var end        = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+        var workId     = Guid.NewGuid();
+        var personalId = Guid.NewGuid();
+        var familyId   = Guid.NewGuid();
+
+        var work     = new CalendarInfo { Id = workId,     GoogleCalendarId = "work@g",     DisplayName = "Work Calendar",     IsShared = false };
+        var personal = new CalendarInfo { Id = personalId, GoogleCalendarId = "personal@g", DisplayName = "Personal Calendar", IsShared = false };
+        var family   = new CalendarInfo { Id = familyId,   GoogleCalendarId = "family@g",   DisplayName = "Family Calendar",   IsShared = true };
+
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { work, personal, family });
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(work);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(workId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        // tagParser returns "Personal Calendar" — only the named member, NOT the owning work calendar.
+        // After FHQ-68 the service must add the owning calendar itself; before the fix it doesn't.
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns(new List<string> { "Personal Calendar" });
+
+        var googleEvt = new CalendarEvent
+        {
+            GoogleEventId = "g1",
+            Title         = "Synced Multi",
+            Description   = "Sync with Personal Calendar",
+            Start         = start.AddDays(31),
+            End           = start.AddDays(31).AddHours(1)
+        };
+        client.Setup(c => c.GetEventsAsync("work@g", start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { googleEvt }, "tok"));
+
+        // Act
+        await sut.SyncAsync(workId, start, end);
+
+        // Assert — event must have BOTH the owning work calendar AND the named personal calendar as members.
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e =>
+                e.GoogleEventId == "g1"
+                && e.Members.Any(m => m.Id == workId)
+                && e.Members.Any(m => m.Id == personalId)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,

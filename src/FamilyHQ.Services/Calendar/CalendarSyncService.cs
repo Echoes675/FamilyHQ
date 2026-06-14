@@ -267,8 +267,10 @@ public class CalendarSyncService(
                         .Select(n => calendarByName[n])
                         .ToList();
 
-                    // If no members parsed and this is an individual calendar, default to owning calendar's member
-                    if (parsedMembers.Count == 0 && !calendar.IsShared)
+                    // FHQ-68: the owning (source) calendar is always an attendee of its own events when it is a
+                    // personal (non-shared) calendar, in addition to any members named in the description. The
+                    // designated shared calendar is the container, never an attendee. Dedup against parsed members.
+                    if (!calendar.IsShared && parsedMembers.All(m => m.Id != calendar.Id))
                         parsedMembers.Add(calendar);
 
                     var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);

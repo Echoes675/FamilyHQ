@@ -97,11 +97,29 @@ public class CalendarSyncWorker(
                 ? await sync.SyncAsync(calendarId, start, end, CancellationToken.None)
                 : await sync.SyncAllAsync(start, end, CancellationToken.None);
 
+            // FHQ-68: a sync that changed events may have brought in a multi-attendee event created directly in
+            // Google on a personal calendar. Re-evaluate placement so such events migrate to the shared calendar
+            // (and are written back to Google), exactly as the DesignationChange path does. Only when the sync
+            // changed something, so unchanged periodic syncs stay cheap.
+            var placementChanged = false;
+            if (result.HadChanges)
+            {
+                // Run placement in a FRESH scope (new DbContext). The sync above inserts the events it
+                // brought in via AddEventAsync, leaving them tracked in THIS scope's DbContext; the
+                // reconciler re-loads each event (AsNoTracking) and Updates it during a migration, which
+                // collides with the still-tracked inserted instance (an EF identity conflict that silently
+                // fails the migration). A clean DbContext avoids the conflict. The background user context
+                // (set above) flows to the new scope, so the reconciler resolves the same user (FHQ-68).
+                using var placementScope = scopeFactory.CreateScope();
+                var reconciler = placementScope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
+                placementChanged = await reconciler.ReconcileForUserAsync(start, end, CancellationToken.None);
+            }
+
             await queue.CompleteAsync(job.Id, stoppingToken);
 
             // Broadcast only when the sync actually changed data, so no-op/echo syncs
             // don't trigger a kiosk refresh (FHQ-44).
-            if (result.HadChanges)
+            if (result.HadChanges || placementChanged)
                 await hubContext.Clients.All.SendAsync("EventsUpdated", CancellationToken.None);
         }
         catch (GoogleReauthRequiredException ex)
