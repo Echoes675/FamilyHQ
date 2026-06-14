@@ -104,6 +104,27 @@ public class CalendarMigrationServiceTests
     }
 
     [Fact]
+    public async Task EnsureCorrectCalendarAsync_MigratingToShared_WritesNormalisedMemberTagOnGoogleEvent()
+    {
+        var (google, repo, _, sut) = CreateSut();
+        var evt = new CalendarEvent { Id = Guid.NewGuid(), GoogleEventId = "gid1", Title = "Synced Multi",
+            Description = "Sync with Sarah", OwnerCalendarInfoId = IndividualCalId };
+        repo.Setup(r => r.GetCalendarByIdAsync(IndividualCalId, It.IsAny<CancellationToken>())).ReturnsAsync(IndividualCal);
+        repo.Setup(r => r.GetSharedCalendarAsync(default)).ReturnsAsync(SharedCal);
+        google.Setup(g => g.CreateEventAsync("shared@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), default))
+              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => { e.GoogleEventId = "gid2"; return e; });
+        repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), default)).Returns(Task.CompletedTask);
+        repo.Setup(r => r.SaveChangesAsync(default)).ReturnsAsync(0);
+        google.Setup(g => g.DeleteEventAsync("eoin@", "gid1", default)).Returns(Task.CompletedTask);
+
+        await sut.EnsureCorrectCalendarAsync(evt, [IndividualCal, MemberBCal]);
+
+        google.Verify(g => g.CreateEventAsync("shared@",
+            It.Is<CalendarEvent>(e => (e.Description ?? "").Contains("[members:") && (e.Description ?? "").Contains("Eoin") && (e.Description ?? "").Contains("Sarah")),
+            It.IsAny<string>(), default), Times.Once);
+    }
+
+    [Fact]
     public async Task EnsureCorrectCalendar_MultiMemberOnSharedCalendar_NoMigration()
     {
         var (google, repo, _, sut) = CreateSut();
