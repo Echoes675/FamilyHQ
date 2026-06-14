@@ -97,11 +97,22 @@ public class CalendarSyncWorker(
                 ? await sync.SyncAsync(calendarId, start, end, CancellationToken.None)
                 : await sync.SyncAllAsync(start, end, CancellationToken.None);
 
+            // FHQ-68: a sync that changed events may have brought in a multi-attendee event created directly in
+            // Google on a personal calendar. Re-evaluate placement so such events migrate to the shared calendar
+            // (and are written back to Google), exactly as the DesignationChange path does. Only when the sync
+            // changed something, so unchanged periodic syncs stay cheap.
+            var placementChanged = false;
+            if (result.HadChanges)
+            {
+                var reconciler = scope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
+                placementChanged = await reconciler.ReconcileForUserAsync(start, end, CancellationToken.None);
+            }
+
             await queue.CompleteAsync(job.Id, stoppingToken);
 
             // Broadcast only when the sync actually changed data, so no-op/echo syncs
             // don't trigger a kiosk refresh (FHQ-44).
-            if (result.HadChanges)
+            if (result.HadChanges || placementChanged)
                 await hubContext.Clients.All.SendAsync("EventsUpdated", CancellationToken.None);
         }
         catch (GoogleReauthRequiredException ex)
