@@ -25,6 +25,8 @@ services:
       - GoogleCalendar__ClientSecret=${GoogleCalendar__ClientSecret}
       - GoogleCalendar__AuthBaseUrl=${GoogleCalendar__AuthBaseUrl}
       - GoogleCalendar__CalendarApiBaseUrl=${GoogleCalendar__CalendarApiBaseUrl}
+      - GoogleCalendar__JwksUri=http://simulator:8080/.well-known/jwks.json
+      - GoogleCalendar__ValidIssuer=https://localhost:7199
       - FrontendBaseUrl=${FrontendBaseUrl}
       - Weather__BaseUrl=${Weather__BaseUrl}
       - Geocoding__BaseUrl=${Geocoding__BaseUrl}

@@ -66,7 +66,17 @@ public class AuthController : ControllerBase
             ?? throw new InvalidOperationException("FrontendBaseUrl is not configured.");
 
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
-        var (_, refreshToken, userId, email, grantedScope) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
+
+        string? refreshToken, userId, email, grantedScope;
+        try
+        {
+            (_, refreshToken, userId, email, grantedScope) = await _authService.ExchangeCodeForTokenAsync(code, callbackUrl);
+        }
+        catch (IdTokenValidationException ex)
+        {
+            _logger.LogWarning("id_token validation failed during OAuth callback: {Reason}", ex.Message);
+            return Unauthorized("Authentication failed: id_token validation failed.");
+        }
 
         if (string.IsNullOrEmpty(userId))
             return BadRequest("Authentication failed: user identity could not be determined.");
