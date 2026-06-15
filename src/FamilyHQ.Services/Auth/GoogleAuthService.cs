@@ -1,6 +1,5 @@
 using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,15 +11,18 @@ public class GoogleAuthService
     private readonly HttpClient _httpClient;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleAuthService> _logger;
+    private readonly IIdTokenValidator _idTokenValidator;
 
     public GoogleAuthService(
-        HttpClient httpClient, 
+        HttpClient httpClient,
         IOptions<GoogleCalendarOptions> options,
-        ILogger<GoogleAuthService> logger)
+        ILogger<GoogleAuthService> logger,
+        IIdTokenValidator idTokenValidator)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
+        _idTokenValidator = idTokenValidator;
     }
 
     public string GetAuthorizationUrl(string redirectUri)
@@ -63,24 +65,9 @@ public class GoogleAuthService
         }
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
-        var (userId, email) = ExtractClaimsFromIdToken(result!.IdToken);
+        var claims = await _idTokenValidator.ValidateAsync(result!.IdToken ?? string.Empty, ct);
         _logger.LogInformation("Google granted scopes on code exchange: {GrantedScope}", result.Scope ?? "(none)");
-        return (result.AccessToken, result.RefreshToken, userId, email, result.Scope);
-    }
-
-    private static (string? sub, string? email) ExtractClaimsFromIdToken(string? idToken)
-    {
-        if (string.IsNullOrEmpty(idToken)) return (null, null);
-        var parts = idToken.Split('.');
-        if (parts.Length < 2) return (null, null);
-        var payload = parts[1].Replace('-', '+').Replace('_', '/');
-        payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-        var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var sub = root.TryGetProperty("sub", out var subEl) ? subEl.GetString() : null;
-        var email = root.TryGetProperty("email", out var emailEl) ? emailEl.GetString() : null;
-        return (sub, email);
+        return (result.AccessToken, result.RefreshToken, claims.Sub, claims.Email, result.Scope);
     }
 
     public async Task<string> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)

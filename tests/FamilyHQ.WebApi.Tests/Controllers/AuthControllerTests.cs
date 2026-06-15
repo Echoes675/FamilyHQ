@@ -224,10 +224,15 @@ public class AuthControllerTests
             AuthBaseUrl = "https://sim.test"
         });
 
+        var idTokenValidatorMock = new Mock<IIdTokenValidator>();
+        idTokenValidatorMock
+            .Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IdTokenClaims("user1", "user1@example.com"));
         var authService = new GoogleAuthService(
             new HttpClient(httpHandlerMock.Object),
             options,
-            new Mock<ILogger<GoogleAuthService>>().Object);
+            new Mock<ILogger<GoogleAuthService>>().Object,
+            idTokenValidatorMock.Object);
 
         // IConfiguration
         var configPairs = new List<KeyValuePair<string, string?>>();
