@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using FamilyHQ.Simulator.Auth;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
@@ -9,11 +12,8 @@ namespace FamilyHQ.Simulator.Controllers;
 public class OAuthController(SimContext db, IConfiguration configuration, SyncFailureModeStore failureStore) : ControllerBase
 {
     private readonly string _pathBase = (configuration["PathBase"] ?? string.Empty).TrimEnd('/');
+    private readonly string _issuer = configuration["Simulator:Issuer"] ?? "https://localhost:7199";
 
-    /// <summary>
-    /// Renders an HTML consent screen listing all SimulatedUsers.
-    /// Mimics the Google OAuth2 authorization endpoint.
-    /// </summary>
     [HttpGet("/oauth2/auth")]
     public async Task<IActionResult> AuthPrompt([FromQuery] string redirect_uri, [FromQuery] string client_id)
     {
@@ -41,9 +41,6 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
         return Content(html, "text/html");
     }
 
-    /// <summary>
-    /// Handles the consent form submission and redirects back to the WebApi callback with an auth code.
-    /// </summary>
     [HttpPost("/oauth2/auth/consent")]
     public async Task<IActionResult> Consent([FromForm] string selectedUserId, [FromForm] string redirect_uri)
     {
@@ -54,12 +51,6 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
         return Redirect($"{redirect_uri}?code=dummy_code_for_{selectedUserId}");
     }
 
-    /// <summary>
-    /// Token exchange endpoint. Access token embeds userId so downstream controllers
-    /// can extract it without a DB lookup.
-    /// Token format: simulated_{userId}_{nonce}
-    /// Refresh token format: simulated_refresh_{userId}
-    /// </summary>
     [HttpPost("/token")]
     public async Task<IActionResult> Token()
     {
@@ -67,6 +58,7 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
         var grantType = form["grant_type"].ToString();
         var code = form["code"].ToString();
         var refreshToken = form["refresh_token"].ToString();
+        var clientId = form["client_id"].ToString();
 
         const string refreshTokenPrefix = "simulated_refresh_user_";
         string userId;
@@ -81,9 +73,7 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
                 userId = code["dummy_code_for_".Length..];
         }
 
-        // Test back-door: simulate Google revoking the refresh token. This is the
-        // exact response shape Google returns when a user revokes app access from
-        // their account security page (https://myaccount.google.com/permissions).
+        // Test back-door: simulate Google revoking the refresh token.
         if (grantType == "refresh_token" && failureStore.Get(userId) == SyncFailureMode.RefreshTokenInvalidGrant)
         {
             return BadRequest(new
@@ -104,21 +94,32 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
             refresh_token = $"{refreshTokenPrefix}{userId}",
             expires_in = 3600,
             token_type = "Bearer",
-            id_token = CreateIdToken(userId, username),
-            // FHQ-60: emulate Google's token response, which always returns the granted scope.
-            // The Simulator grants everything that was requested (openid email + full calendar).
+            id_token = CreateIdToken(userId, username, clientId, _issuer),
+            // FHQ-60: emulate Google's token response — always return the granted scope.
             scope = "openid email https://www.googleapis.com/auth/calendar"
         });
     }
 
-    private static string CreateIdToken(string sub, string email)
+    private static string CreateIdToken(string sub, string email, string audience, string issuer)
     {
-        var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
-        var payload = Base64UrlEncode($"{{\"sub\":\"{sub}\",\"email\":\"{email}\"}}");
-        return $"{header}.{payload}.";
+        var now = DateTimeOffset.UtcNow;
+        var header = Base64UrlEncode("{\"alg\":\"RS256\",\"typ\":\"JWT\"}");
+        var payload = Base64UrlEncode(
+            $"{{\"sub\":\"{sub}\",\"email\":\"{email}\"," +
+            $"\"iss\":\"{issuer}\",\"aud\":\"{audience}\"," +
+            $"\"iat\":{now.ToUnixTimeSeconds()}," +
+            $"\"exp\":{now.AddHours(1).ToUnixTimeSeconds()}}}");
+        var toSign = $"{header}.{payload}";
+        var signature = Base64UrlEncode(SimulatorRsaKey.Instance.SignData(
+            Encoding.UTF8.GetBytes(toSign),
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1));
+        return $"{toSign}.{signature}";
     }
 
-    private static string Base64UrlEncode(string input)
-        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
-            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    private static string Base64UrlEncode(byte[] data)
+        => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static string Base64UrlEncode(string text)
+        => Base64UrlEncode(Encoding.UTF8.GetBytes(text));
 }
