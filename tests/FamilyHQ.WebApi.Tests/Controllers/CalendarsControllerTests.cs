@@ -194,6 +194,23 @@ public class CalendarsControllerTests
     // ── UpdateCalendarSettings ───────────────────────────────────────────────
 
     [Fact]
+    public async Task UpdateCalendarSettings_WithOtherUsersCalendarId_ReturnsNotFound()
+    {
+        var (calendarRepository, _, currentUser, _, _, systemUnderTest) = CreateFullSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+
+        // Scoped fetch returns null — calendar exists but belongs to a different user
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarInfo?)null);
+
+        var request = new CalendarSettingsRequest(IsVisible: true, IsShared: false);
+
+        var result = await systemUnderTest.UpdateCalendarSettings(CalAId, request, CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
     public async Task UpdateCalendarSettings_WhenSharedDesignationChanges_EnqueuesReconcileAndWakesWorker()
     {
         // Arrange
@@ -201,7 +218,7 @@ public class CalendarsControllerTests
         currentUser.SetupGet(c => c.UserId).Returns("u-1");
 
         var cal = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsShared = false, IsVisible = true };
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, "u-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(cal);
 
         var request = new CalendarSettingsRequest(IsVisible: true, IsShared: true);
@@ -224,7 +241,7 @@ public class CalendarsControllerTests
         currentUser.SetupGet(c => c.UserId).Returns("u-1");
 
         var cal = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsShared = false, IsVisible = false };
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, "u-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(cal);
 
         var request = new CalendarSettingsRequest(IsVisible: true, IsShared: false);
