@@ -419,6 +419,34 @@ public class WebhookRegistrationServiceTests
         client.Verify(c => c.WatchEventsAsync("holidays@google.com", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task RegisterForCalendarAsync_StoresChannelTokenInRegistration()
+    {
+        // Verify that the token sent to Google is persisted on the registration.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+
+        var expiration = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds();
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("ch-x", "res-x", expiration));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg =>
+                reg.CalendarInfoId == CalendarInfoId &&
+                !string.IsNullOrEmpty(reg.ChannelToken)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static (
         Mock<IGoogleCalendarClient> client,
         Mock<IWebhookRegistrationRepository> webhookRepo,
