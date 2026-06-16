@@ -69,7 +69,7 @@ public class CalendarEventServiceEchoGuardTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt = Event(EventId, "google-evt-id-456", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.UpdateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
@@ -91,7 +91,7 @@ public class CalendarEventServiceEchoGuardTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt = Event(EventId, "google-evt-id-456", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.UpdateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("boom"));
@@ -112,7 +112,7 @@ public class CalendarEventServiceEchoGuardTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt = Event(EventId, "google-evt-id-789", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
@@ -135,7 +135,7 @@ public class CalendarEventServiceEchoGuardTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt = Event(EventId, "google-evt-id-789", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
@@ -170,12 +170,15 @@ public class CalendarEventServiceEchoGuardTests
         Mock<IOutboundWriteHashCache> cache,
         CalendarEventService sut) CreateSut()
     {
-        var google    = new Mock<IGoogleCalendarClient>();
-        var repo      = new Mock<ICalendarRepository>();
-        var migration = new Mock<ICalendarMigrationService>();
-        var tagParser = new Mock<IMemberTagParser>();
-        var cache     = new Mock<IOutboundWriteHashCache>();
-        var logger    = new Mock<ILogger<CalendarEventService>>();
+        var google      = new Mock<IGoogleCalendarClient>();
+        var repo        = new Mock<ICalendarRepository>();
+        var migration   = new Mock<ICalendarMigrationService>();
+        var tagParser   = new Mock<IMemberTagParser>();
+        var cache       = new Mock<IOutboundWriteHashCache>();
+        var currentUser = new Mock<ICurrentUserService>();
+        var logger      = new Mock<ILogger<CalendarEventService>>();
+
+        currentUser.SetupGet(u => u.UserId).Returns("u-1");
 
         tagParser.Setup(p => p.NormaliseDescription(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
                  .Returns((string d, IReadOnlyList<string> _) => d ?? string.Empty);
@@ -183,7 +186,7 @@ public class CalendarEventServiceEchoGuardTests
                  .Returns((string d) => d ?? string.Empty);
 
         var sut = new CalendarEventService(
-            google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, logger.Object);
+            google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object, logger.Object);
         return (google, repo, migration, tagParser, cache, sut);
     }
 }
