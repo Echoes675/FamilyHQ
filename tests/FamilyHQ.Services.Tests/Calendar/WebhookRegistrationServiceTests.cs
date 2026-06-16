@@ -54,7 +54,8 @@ public class WebhookRegistrationServiceTests
                 reg.CalendarInfoId == CalendarInfoId &&
                 reg.ChannelId == channelId &&
                 reg.ResourceId == resourceId &&
-                reg.ExpiresAt == DateTimeOffset.FromUnixTimeMilliseconds(expiration)),
+                reg.ExpiresAt == DateTimeOffset.FromUnixTimeMilliseconds(expiration) &&
+                !string.IsNullOrEmpty(reg.ChannelToken)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -437,13 +438,14 @@ public class WebhookRegistrationServiceTests
     [Fact]
     public async Task RegisterForCalendarAsync_StoresChannelTokenInRegistration()
     {
-        // Verify that the token sent to Google is persisted on the registration.
+        // Verify that the token generated locally is both sent to Google and persisted on the registration.
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
 
         webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((WebhookRegistration?)null);
 
         var expiration = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds();
+        string? capturedToken = null;
 
         client.Setup(c => c.WatchEventsAsync(
                 GoogleCalendarId,
@@ -451,14 +453,16 @@ public class WebhookRegistrationServiceTests
                 ExpectedWebhookUrl,
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string, CancellationToken>((_, _, _, token, _) => capturedToken = token)
             .ReturnsAsync(new WatchChannelResponse("ch-x", "res-x", expiration));
 
         await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
 
+        capturedToken.Should().NotBeNullOrEmpty();
         webhookRepo.Verify(r => r.UpsertAsync(
             It.Is<WebhookRegistration>(reg =>
                 reg.CalendarInfoId == CalendarInfoId &&
-                !string.IsNullOrEmpty(reg.ChannelToken)),
+                reg.ChannelToken == capturedToken),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
