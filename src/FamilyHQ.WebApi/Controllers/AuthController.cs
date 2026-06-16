@@ -51,7 +51,7 @@ public class AuthController : ControllerBase
     public IActionResult Login()
     {
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
-        var url = _authService.GetAuthorizationUrl(callbackUrl);
+        var url = _authService.GetAuthorizationUrl(callbackUrl, string.Empty);
         return Redirect(url);
     }
 
