@@ -7,6 +7,8 @@ public interface ICalendarRepository
     Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<CalendarInfo>> GetCalendarsByUserIdAsync(string userId, CancellationToken ct = default);
     Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, CancellationToken ct = default);
+    // User-scoped: returns null when calendar exists but belongs to a different user.
+    Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, string userId, CancellationToken ct = default);
     Task<CalendarInfo?> GetSharedCalendarAsync(CancellationToken ct = default);
 
     /// <summary>Returns events owned by calendarInfoId (used by sync service per-calendar).</summary>
@@ -16,6 +18,8 @@ public interface ICalendarRepository
     Task<IReadOnlyList<CalendarEvent>> GetEventsAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default);
 
     Task<CalendarEvent?> GetEventAsync(Guid id, CancellationToken ct = default);
+    // User-scoped: returns null when event exists but belongs to a different user.
+    Task<CalendarEvent?> GetEventAsync(Guid id, string userId, CancellationToken ct = default);
     Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default);
 
     /// <summary>

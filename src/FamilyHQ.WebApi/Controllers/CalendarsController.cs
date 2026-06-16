@@ -158,7 +158,7 @@ public class CalendarsController : ControllerBase
         if (string.IsNullOrEmpty(userId))
             return Unauthorized();
 
-        var calendar = await _calendarRepository.GetCalendarByIdAsync(id, ct);
+        var calendar = await _calendarRepository.GetCalendarByIdAsync(id, userId, ct);
         if (calendar == null) return NotFound();
 
         var sharedDesignationChanged = calendar.IsShared != request.IsShared;
