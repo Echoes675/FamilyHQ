@@ -56,6 +56,14 @@ public class CalendarRepository : ICalendarRepository
             .FirstOrDefaultAsync(c => c.Id == id, ct);
     }
 
+    public async Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, string userId, CancellationToken ct = default)
+    {
+        return await _context.Calendars
+            .AsNoTracking()
+            .Include(c => c.SyncState)
+            .FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId, ct);
+    }
+
     public async Task<CalendarInfo?> GetSharedCalendarAsync(CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(CurrentUserId))
@@ -97,6 +105,14 @@ public class CalendarRepository : ICalendarRepository
         return await _context.Events
             .Include(e => e.Members)
             .FirstOrDefaultAsync(e => e.Id == id, ct);
+    }
+
+    public async Task<CalendarEvent?> GetEventAsync(Guid id, string userId, CancellationToken ct = default)
+    {
+        return await _context.Events
+            .Include(e => e.Members)
+            .FirstOrDefaultAsync(e => e.Id == id &&
+                _context.Calendars.Any(c => c.Id == e.OwnerCalendarInfoId && c.UserId == userId), ct);
     }
 
     public async Task<CalendarEvent?> GetEventByGoogleEventIdAsync(string googleEventId, CancellationToken ct = default)
