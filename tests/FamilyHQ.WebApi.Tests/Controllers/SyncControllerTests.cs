@@ -312,6 +312,46 @@ public class SyncControllerTests
     }
 
     [Fact]
+    public async Task GooglePushWebhook_WithEmptyStoredChannelToken_DoesNotEnqueue()
+    {
+        // Registrations migrated before FHQ-81 have an empty ChannelToken.
+        // Even if the caller sends a matching empty token header, the request must be rejected.
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var channelId = "test-channel-123";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = "user1",
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo,
+            ChannelToken = string.Empty
+        };
+
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
+
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-token", string.Empty);
+
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        result.Should().BeOfType<OkResult>();
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
     public async Task TriggerSync_WhenSyncThrowsGoogleReauthRequired_Returns409Conflict()
     {
         // Arrange
@@ -372,6 +412,7 @@ public class SyncControllerTests
 
         // Assert
         result.Should().BeOfType<OkResult>();
+        harness.Signal.Verify(s => s.Release(), Times.Once);
     }
 
     // Sentinel that distinguishes "default: a valid test user" from "explicitly null".

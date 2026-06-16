@@ -224,14 +224,16 @@ public class SyncController : ControllerBase
                     await _syncJobQueue.EnqueueAsync(userId, null, SyncJobSource.Periodic, null, ct);
                 }
             }
-
-            // Wake the worker so the job is drained immediately rather than at the next poll.
-            _syncJobSignal.Release();
         }
         catch (Exception ex)
         {
             // Never fail the ack: a 200 stops Google's retries and the periodic safety net reconciles.
             _logger.LogError(ex, "Error enqueuing webhook sync job(s).");
+        }
+        finally
+        {
+            // Wake the worker so the job is drained immediately rather than at the next poll.
+            _syncJobSignal.Release();
         }
 
         return Ok();
