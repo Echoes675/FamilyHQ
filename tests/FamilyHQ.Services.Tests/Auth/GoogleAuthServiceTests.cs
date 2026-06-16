@@ -252,7 +252,7 @@ public class GoogleAuthServiceTests
         var (_, systemUnderTest) = CreateSut();
         var redirectUri = "https://myapp.com/api/auth/callback";
 
-        var result = systemUnderTest.GetAuthorizationUrl(redirectUri);
+        var result = systemUnderTest.GetAuthorizationUrl(redirectUri, "test-state");
 
         var uri = new Uri(result);
         var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
@@ -269,9 +269,19 @@ public class GoogleAuthServiceTests
     {
         var (_, systemUnderTest) = CreateSut();
 
-        var result = systemUnderTest.GetAuthorizationUrl("https://myapp.com/callback");
+        var result = systemUnderTest.GetAuthorizationUrl("https://myapp.com/callback", "test-state");
 
         result.Should().StartWith("https://accounts.test.com/o/oauth2/auth");
+    }
+
+    [Fact]
+    public void GetAuthorizationUrl_IncludesStateParam()
+    {
+        var (_, systemUnderTest) = CreateSut();
+
+        var url = systemUnderTest.GetAuthorizationUrl("https://localhost/callback", "csrf-test-state");
+
+        url.Should().Contain("&state=csrf-test-state");
     }
 
     [Fact]

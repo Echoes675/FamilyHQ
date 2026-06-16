@@ -87,6 +87,72 @@ public class OAuthControllerTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    [Fact]
+    public async Task AuthPrompt_WithState_EmbedsStateAsHiddenField()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id", "csrf-state-abc");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("name=\"state\"");
+        content.Content.Should().Contain("value=\"csrf-state-abc\"");
+    }
+
+    [Fact]
+    public async Task AuthPrompt_WithoutState_DoesNotEmitStateField()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().NotContain("name=\"state\"");
+    }
+
+    [Fact]
+    public async Task AuthPrompt_WithSpecialCharsInState_HtmlEncodesStateValue()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id", "state&with=special<chars>");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("value=\"state&amp;with=special&lt;chars&gt;\"");
+        content.Content.Should().NotContain("value=\"state&with=special<chars>\"");
+    }
+
+    [Fact]
+    public async Task Consent_WithState_AppendsStateToRedirectUrl()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db);
+
+        var result = await sut.Consent("user-a", "https://api/callback", "csrf-state-xyz");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Be("https://api/callback?code=dummy_code_for_user-a&state=csrf-state-xyz");
+    }
+
+    [Fact]
+    public async Task Consent_WithoutState_OmitsStateFromRedirectUrl()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db);
+
+        var result = await sut.Consent("user-a", "https://api/callback");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Be("https://api/callback?code=dummy_code_for_user-a");
+    }
+
     // ── POST /token ─────────────────────────────────────────────────────────
 
     [Fact]

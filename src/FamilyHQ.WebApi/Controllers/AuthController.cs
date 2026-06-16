@@ -3,6 +3,7 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Services;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 
 namespace FamilyHQ.WebApi.Controllers;
@@ -24,6 +26,7 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IOptions<SyncOptions> _syncOptions;
     private readonly ILogger<AuthController> _logger;
+    private readonly IDataProtector _stateProtector;
 
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
@@ -34,7 +37,8 @@ public class AuthController : ControllerBase
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
         IOptions<SyncOptions> syncOptions,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        IDataProtectionProvider dataProtectionProvider)
     {
         _authService = authService;
         _tokenStore = tokenStore;
@@ -42,6 +46,7 @@ public class AuthController : ControllerBase
         _configuration = configuration;
         _syncOptions = syncOptions;
         _logger = logger;
+        _stateProtector = dataProtectionProvider.CreateProtector("FamilyHQ.OAuthState");
     }
 
     /// <summary>
@@ -51,7 +56,17 @@ public class AuthController : ControllerBase
     public IActionResult Login()
     {
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
-        var url = _authService.GetAuthorizationUrl(callbackUrl);
+        var rawState = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var protectedState = _stateProtector.Protect(rawState);
+        Response.Cookies.Append("oauth_state", protectedState, new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Lax,
+            Secure = Request.IsHttps,
+            MaxAge = TimeSpan.FromMinutes(10),
+            Path = "/"
+        });
+        var url = _authService.GetAuthorizationUrl(callbackUrl, rawState);
         return Redirect(url);
     }
 
@@ -60,8 +75,36 @@ public class AuthController : ControllerBase
     /// and redirects the browser to the frontend /login-success page.
     /// </summary>
     [HttpGet("callback")]
-    public async Task<IActionResult> Callback([FromQuery] string code)
+    public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string? state)
     {
+        var stateCookie = Request.Cookies["oauth_state"];
+        if (string.IsNullOrEmpty(stateCookie))
+        {
+            _logger.LogWarning("OAuth callback — state cookie missing.");
+            return BadRequest("Authentication failed: invalid state.");
+        }
+        if (string.IsNullOrEmpty(state))
+        {
+            _logger.LogWarning("OAuth callback — state parameter missing.");
+            return BadRequest("Authentication failed: invalid state.");
+        }
+        string expectedState;
+        try
+        {
+            expectedState = _stateProtector.Unprotect(stateCookie);
+        }
+        catch (Exception)
+        {
+            _logger.LogWarning("OAuth callback — state cookie unprotect failed.");
+            return BadRequest("Authentication failed: invalid state.");
+        }
+        if (!string.Equals(expectedState, state, StringComparison.Ordinal))
+        {
+            _logger.LogWarning("OAuth callback — state mismatch.");
+            return BadRequest("Authentication failed: invalid state.");
+        }
+        Response.Cookies.Delete("oauth_state");
+
         var frontendBaseUrl = _configuration["FrontendBaseUrl"]
             ?? throw new InvalidOperationException("FrontendBaseUrl is not configured.");
 

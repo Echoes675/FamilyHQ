@@ -25,14 +25,15 @@ public class GoogleAuthService
         _idTokenValidator = idTokenValidator;
     }
 
-    public string GetAuthorizationUrl(string redirectUri)
+    public string GetAuthorizationUrl(string redirectUri, string state)
     {
         var query = "?client_id=" + Uri.EscapeDataString(_options.ClientId)
             + "&redirect_uri=" + Uri.EscapeDataString(redirectUri)
             + "&response_type=code"
             + "&scope=" + Uri.EscapeDataString("openid email " + GoogleScopes.Calendar)
             + "&access_type=offline"
-            + "&prompt=consent";
+            + "&prompt=consent"
+            + "&state=" + Uri.EscapeDataString(state);
         return _options.AuthPromptUrl + query;
     }
 

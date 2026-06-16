@@ -15,11 +15,17 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
     private readonly string _issuer = configuration["Simulator:Issuer"] ?? "https://localhost:7199";
 
     [HttpGet("/oauth2/auth")]
-    public async Task<IActionResult> AuthPrompt([FromQuery] string redirect_uri, [FromQuery] string client_id)
+    public async Task<IActionResult> AuthPrompt(
+        [FromQuery] string redirect_uri,
+        [FromQuery] string client_id,
+        [FromQuery] string? state = null)
     {
         var users = await db.Users.OrderBy(u => u.Username).ToListAsync();
         var options = string.Join("", users.Select(u => $"<option value=\"{u.Id}\">{u.Username}</option>"));
         var consentUrl = $"{_pathBase}/oauth2/auth/consent";
+        var stateField = state is not null
+            ? $"<input type=\"hidden\" name=\"state\" value=\"{System.Net.WebUtility.HtmlEncode(state)}\" />"
+            : string.Empty;
         var html = $"""
             <!DOCTYPE html>
             <html>
@@ -29,6 +35,7 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
                 <p>Choose an account to continue</p>
                 <form method="post" action="{consentUrl}">
                     <input type="hidden" name="redirect_uri" value="{redirect_uri}" />
+                    {stateField}
                     <div style="margin-bottom:16px">
                         <label for="selectedUserId">Account:</label><br/>
                         <select id="selectedUserId" name="selectedUserId" style="width:100%;padding:8px;margin-top:4px">{options}</select>
@@ -42,13 +49,17 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
     }
 
     [HttpPost("/oauth2/auth/consent")]
-    public async Task<IActionResult> Consent([FromForm] string selectedUserId, [FromForm] string redirect_uri)
+    public async Task<IActionResult> Consent(
+        [FromForm] string selectedUserId,
+        [FromForm] string redirect_uri,
+        [FromForm] string? state = null)
     {
         var user = await db.Users.FindAsync(selectedUserId);
         if (user == null)
             return BadRequest("Unknown user.");
 
-        return Redirect($"{redirect_uri}?code=dummy_code_for_{selectedUserId}");
+        var statePart = state is not null ? $"&state={Uri.EscapeDataString(state)}" : string.Empty;
+        return Redirect($"{redirect_uri}?code=dummy_code_for_{selectedUserId}{statePart}");
     }
 
     [HttpPost("/token")]
