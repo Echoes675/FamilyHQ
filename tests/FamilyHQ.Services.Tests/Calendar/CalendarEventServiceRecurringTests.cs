@@ -890,7 +890,7 @@ public class CalendarEventServiceRecurringTests
         }
 
         public void ArrangeEvent(CalendarEvent evt) =>
-            Repo.Setup(r => r.GetEventAsync(evt.Id, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+            Repo.Setup(r => r.GetEventAsync(evt.Id, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
 
         // Make the reconcile's GetEventByGoogleEventIdAsync return an already-stored row so the
         // upsert takes the UPDATE branch rather than ADD.
