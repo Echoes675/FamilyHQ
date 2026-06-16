@@ -160,41 +160,61 @@ public class SyncController : ControllerBase
         try
         {
             var enqueuedAny = false;
+            var channelIdPresent = false;
 
             // Attempt a targeted enqueue via channel-id lookup.
             if (Request.Headers.TryGetValue("x-goog-channel-id", out var channelIdHeader))
             {
+                channelIdPresent = true;
                 var channelId = channelIdHeader.ToString();
                 _logger.LogInformation("Webhook contains channel ID: {ChannelId}", channelId);
 
                 var registration = await _webhookRegistrationRepo.GetByChannelIdAsync(channelId, ct);
-                if (registration is not null)
+                if (registration is null)
                 {
-                    var calendarInfo = await _calendarRepo.GetCalendarByIdAsync(registration.CalendarInfoId, ct);
-                    if (calendarInfo is not null)
-                    {
-                        await _syncJobQueue.EnqueueAsync(
-                            calendarInfo.UserId, registration.CalendarInfoId, SyncJobSource.Webhook, channelId, ct);
-                        _logger.LogInformation(
-                            "Enqueued targeted sync job for calendar {CalendarInfoId} (user {UserId}) via channel {ChannelId}.",
-                            registration.CalendarInfoId, calendarInfo.UserId, channelId);
-                        enqueuedAny = true;
-                    }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "Webhook channel {ChannelId} maps to calendar {CalendarInfoId} but calendar not found. Falling back to sync-all.",
-                            channelId, registration.CalendarInfoId);
-                    }
+                    // FHQ-81: unknown channel — do not fall back to sync-all.
+                    // Could be a stale or spoofed channel ID; log and ack silently.
+                    _logger.LogWarning("No webhook registration found for channel {ChannelId}. Ignoring.", channelId);
                 }
                 else
                 {
-                    _logger.LogWarning("No webhook registration found for channel {ChannelId}. Falling back to sync-all.", channelId);
+                    // FHQ-81: validate the per-channel token Google echoes back via x-goog-channel-token.
+                    var incomingToken = Request.Headers.TryGetValue("x-goog-channel-token", out var tokenHeader)
+                        ? tokenHeader.ToString()
+                        : string.Empty;
+
+                    if (string.IsNullOrEmpty(registration.ChannelToken) ||
+                        !incomingToken.Equals(registration.ChannelToken, StringComparison.Ordinal))
+                    {
+                        _logger.LogWarning(
+                            "Webhook channel {ChannelId} token mismatch — request ignored.", channelId);
+                    }
+                    else
+                    {
+                        var calendarInfo = await _calendarRepo.GetCalendarByIdAsync(registration.CalendarInfoId, ct);
+                        if (calendarInfo is not null)
+                        {
+                            await _syncJobQueue.EnqueueAsync(
+                                calendarInfo.UserId, registration.CalendarInfoId, SyncJobSource.Webhook, channelId, ct);
+                            _logger.LogInformation(
+                                "Enqueued targeted sync job for calendar {CalendarInfoId} (user {UserId}) via channel {ChannelId}.",
+                                registration.CalendarInfoId, calendarInfo.UserId, channelId);
+                            enqueuedAny = true;
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "Webhook channel {ChannelId} maps to calendar {CalendarInfoId} but calendar not found.",
+                                channelId, registration.CalendarInfoId);
+                        }
+                    }
                 }
             }
 
-            // Fall back to a periodic sync-all enqueue per user if no targeted job was enqueued.
-            if (!enqueuedAny)
+            // Fall back to a periodic sync-all ONLY when no channel ID was supplied
+            // (e.g. the Simulator or a manual test trigger). Never fall back for unknown
+            // or token-mismatched channel IDs — that is the DoS vector (FHQ-81).
+            if (!enqueuedAny && !channelIdPresent)
             {
                 var userIds = (await _tokenStore.GetAllUserIdsAsync(ct)).ToList();
                 _logger.LogInformation("Webhook fallback: enqueuing sync-all for {Count} user(s).", userIds.Count);
