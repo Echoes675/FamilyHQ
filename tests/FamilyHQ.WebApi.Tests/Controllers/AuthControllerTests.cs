@@ -308,7 +308,6 @@ public class AuthControllerTests
         // giving a deterministic roundtrip in tests.
         protectorMock.Setup(p => p.Protect(It.IsAny<byte[]>())).Returns((byte[] b) => b);
         protectorMock.Setup(p => p.Unprotect(It.IsAny<byte[]>())).Returns((byte[] b) => b);
-        protectorMock.Setup(p => p.CreateProtector(It.IsAny<string>())).Returns(protectorMock.Object);
         return protectorMock;
     }
 
