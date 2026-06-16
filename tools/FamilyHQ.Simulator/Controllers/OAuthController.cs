@@ -24,7 +24,7 @@ public class OAuthController(SimContext db, IConfiguration configuration, SyncFa
         var options = string.Join("", users.Select(u => $"<option value=\"{u.Id}\">{u.Username}</option>"));
         var consentUrl = $"{_pathBase}/oauth2/auth/consent";
         var stateField = state is not null
-            ? $"<input type=\"hidden\" name=\"state\" value=\"{state}\" />"
+            ? $"<input type=\"hidden\" name=\"state\" value=\"{System.Net.WebUtility.HtmlEncode(state)}\" />"
             : string.Empty;
         var html = $"""
             <!DOCTYPE html>

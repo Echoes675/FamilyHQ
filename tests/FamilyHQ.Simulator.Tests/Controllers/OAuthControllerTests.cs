@@ -113,6 +113,19 @@ public class OAuthControllerTests
     }
 
     [Fact]
+    public async Task AuthPrompt_WithSpecialCharsInState_HtmlEncodesStateValue()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id", "state&with=special<chars>");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("value=\"state&amp;with=special&lt;chars&gt;\"");
+        content.Content.Should().NotContain("value=\"state&with=special<chars>\"");
+    }
+
+    [Fact]
     public async Task Consent_WithState_AppendsStateToRedirectUrl()
     {
         using var db = CreateDb();
