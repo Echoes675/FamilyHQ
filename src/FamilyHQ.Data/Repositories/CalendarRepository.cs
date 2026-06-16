@@ -58,6 +58,9 @@ public class CalendarRepository : ICalendarRepository
 
     public async Task<CalendarInfo?> GetCalendarByIdAsync(Guid id, string userId, CancellationToken ct = default)
     {
+        if (string.IsNullOrEmpty(userId))
+            return null;
+
         return await _context.Calendars
             .AsNoTracking()
             .Include(c => c.SyncState)
@@ -109,6 +112,9 @@ public class CalendarRepository : ICalendarRepository
 
     public async Task<CalendarEvent?> GetEventAsync(Guid id, string userId, CancellationToken ct = default)
     {
+        if (string.IsNullOrEmpty(userId))
+            return null;
+
         return await _context.Events
             .Include(e => e.Members)
             .FirstOrDefaultAsync(e => e.Id == id &&
