@@ -14,6 +14,7 @@ public class CalendarEventService(
     ICalendarMigrationService migrationService,
     IMemberTagParser memberTagParser,
     IOutboundWriteHashCache outboundCache,
+    ICurrentUserService currentUserService,
     ILogger<CalendarEventService> logger) : ICalendarEventService
 {
     public async Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct = default)
@@ -105,7 +106,8 @@ public class CalendarEventService(
 
     public async Task<CalendarEvent> UpdateAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct = default)
     {
-        var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
+        var userId = currentUserService.UserId ?? string.Empty;
+        var calendarEvent = await calendarRepository.GetEventAsync(eventId, userId, ct)
             ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
@@ -264,7 +266,8 @@ public class CalendarEventService(
         if (memberCalendarInfoIds.Count == 0)
             throw new NoMembersException();
 
-        var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
+        var userId = currentUserService.UserId ?? string.Empty;
+        var calendarEvent = await calendarRepository.GetEventAsync(eventId, userId, ct)
             ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
@@ -316,7 +319,8 @@ public class CalendarEventService(
 
     public async Task DeleteAsync(Guid eventId, CancellationToken ct = default)
     {
-        var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
+        var userId = currentUserService.UserId ?? string.Empty;
+        var calendarEvent = await calendarRepository.GetEventAsync(eventId, userId, ct)
             ?? throw new EventNotFoundException(eventId);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
@@ -419,7 +423,8 @@ public class CalendarEventService(
 
     private async Task<(CalendarEvent Event, CalendarInfo Owner)> LoadRecurringEventAsync(Guid eventId, CancellationToken ct)
     {
-        var calendarEvent = await calendarRepository.GetEventAsync(eventId, ct)
+        var userId = currentUserService.UserId ?? string.Empty;
+        var calendarEvent = await calendarRepository.GetEventAsync(eventId, userId, ct)
             ?? throw new EventNotFoundException(eventId);
 
         if (!calendarEvent.IsRecurring)

@@ -771,6 +771,31 @@ public class CalendarEventServiceRecurringTests
         f.Google.Verify(g => g.ClearSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── IDOR guard (recurring) ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_WithOtherUsersEventId_ThrowsEventNotFoundException()
+    {
+        var f = new Fixture();
+        f.Repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        var request = Req("T", InstanceStart, "Body");
+        await f.Sut.Invoking(s => s.UpdateRecurringAsync(EventId, request, RecurrenceScope.ThisOnly))
+                   .Should().ThrowAsync<EventNotFoundException>();
+    }
+
+    [Fact]
+    public async Task DeleteRecurringAsync_WithOtherUsersEventId_ThrowsEventNotFoundException()
+    {
+        var f = new Fixture();
+        f.Repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.ThisOnly))
+                   .Should().ThrowAsync<EventNotFoundException>();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description) =>
@@ -789,6 +814,7 @@ public class CalendarEventServiceRecurringTests
         public readonly Mock<ICalendarMigrationService> Migration = new();
         public readonly Mock<IMemberTagParser> TagParser = new();
         public readonly Mock<IOutboundWriteHashCache> Cache = new();
+        public readonly Mock<ICurrentUserService> CurrentUser = new();
         public readonly CalendarEventService Sut;
 
         public readonly CalendarInfo Alice = new() { Id = AliceCalId, GoogleCalendarId = GoogleCalId, DisplayName = "Alice" };
@@ -797,6 +823,8 @@ public class CalendarEventServiceRecurringTests
 
         public Fixture()
         {
+            CurrentUser.SetupGet(u => u.UserId).Returns("u-1");
+
             // Real parser: exercises the actual members-tag normalise/parse logic (no behaviour to mock).
             var realParser = new MemberTagParser();
             TagParser.Setup(p => p.NormaliseDescription(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
@@ -824,7 +852,7 @@ public class CalendarEventServiceRecurringTests
                 .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
 
             Sut = new CalendarEventService(Google.Object, Repo.Object, Migration.Object, TagParser.Object, Cache.Object,
-                new Mock<ILogger<CalendarEventService>>().Object);
+                CurrentUser.Object, new Mock<ILogger<CalendarEventService>>().Object);
         }
 
         public CalendarEvent RecurringInstance(Guid id, string googleEventId, DateTimeOffset start) => new()
@@ -862,7 +890,7 @@ public class CalendarEventServiceRecurringTests
         }
 
         public void ArrangeEvent(CalendarEvent evt) =>
-            Repo.Setup(r => r.GetEventAsync(evt.Id, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+            Repo.Setup(r => r.GetEventAsync(evt.Id, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
 
         // Make the reconcile's GetEventByGoogleEventIdAsync return an already-stored row so the
         // upsert takes the UPDATE branch rather than ADD.

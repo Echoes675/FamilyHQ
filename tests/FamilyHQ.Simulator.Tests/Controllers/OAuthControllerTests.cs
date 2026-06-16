@@ -12,24 +12,20 @@ namespace FamilyHQ.Simulator.Tests.Controllers;
 
 public class OAuthControllerTests
 {
-    // ── GET /oauth2/auth ──────────────────────────────────────────────────────
+    // ── GET /oauth2/auth ────────────────────────────────────────────────────
 
     [Fact]
     public async Task AuthPrompt_WithUsersInDb_ReturnsHtmlContainingUserOptions()
     {
-        // Arrange
         using var db = CreateDb();
         db.Users.AddRange(
             new SimulatedUser { Id = "user-a", Username = "Alice" },
             new SimulatedUser { Id = "user-b", Username = "Bob" });
         await db.SaveChangesAsync();
-
         var sut = CreateSut(db);
 
-        // Act
         var result = await sut.AuthPrompt("https://api/callback", "client-id");
 
-        // Assert
         var content = result.Should().BeOfType<ContentResult>().Subject;
         content.ContentType.Should().Be("text/html");
         content.Content.Should().Contain("Alice");
@@ -40,14 +36,11 @@ public class OAuthControllerTests
     [Fact]
     public async Task AuthPrompt_WithNoUsers_ReturnsHtmlWithEmptyDropdown()
     {
-        // Arrange
         using var db = CreateDb();
         var sut = CreateSut(db);
 
-        // Act
         var result = await sut.AuthPrompt("https://api/callback", "client-id");
 
-        // Assert
         var content = result.Should().BeOfType<ContentResult>().Subject;
         content.ContentType.Should().Be("text/html");
         content.Content.Should().Contain("<select");
@@ -56,37 +49,29 @@ public class OAuthControllerTests
     [Fact]
     public async Task AuthPrompt_WithPathBase_IncludesPathBaseInFormAction()
     {
-        // Arrange
         using var db = CreateDb();
         db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
         await db.SaveChangesAsync();
-
         var sut = CreateSut(db, pathBase: "/simulator");
 
-        // Act
         var result = await sut.AuthPrompt("https://api/callback", "client-id");
 
-        // Assert
         var content = result.Should().BeOfType<ContentResult>().Subject;
         content.Content.Should().Contain("action=\"/simulator/oauth2/auth/consent\"");
     }
 
-    // ── POST /oauth2/auth/consent ─────────────────────────────────────────────
+    // ── POST /oauth2/auth/consent ───────────────────────────────────────────
 
     [Fact]
     public async Task Consent_WithKnownUser_RedirectsWithDummyCode()
     {
-        // Arrange
         using var db = CreateDb();
         db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
         await db.SaveChangesAsync();
-
         var sut = CreateSut(db);
 
-        // Act
         var result = await sut.Consent("user-a", "https://api/callback");
 
-        // Assert
         var redirect = result.Should().BeOfType<RedirectResult>().Subject;
         redirect.Url.Should().Be("https://api/callback?code=dummy_code_for_user-a");
     }
@@ -94,74 +79,179 @@ public class OAuthControllerTests
     [Fact]
     public async Task Consent_WithUnknownUser_ReturnsBadRequest()
     {
-        // Arrange
         using var db = CreateDb();
         var sut = CreateSut(db);
 
-        // Act
         var result = await sut.Consent("nonexistent-user", "https://api/callback");
 
-        // Assert
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
-    // ── POST /token ───────────────────────────────────────────────────────────
+    [Fact]
+    public async Task AuthPrompt_WithState_EmbedsStateAsHiddenField()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id", "csrf-state-abc");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("name=\"state\"");
+        content.Content.Should().Contain("value=\"csrf-state-abc\"");
+    }
+
+    [Fact]
+    public async Task AuthPrompt_WithoutState_DoesNotEmitStateField()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().NotContain("name=\"state\"");
+    }
+
+    [Fact]
+    public async Task AuthPrompt_WithSpecialCharsInState_HtmlEncodesStateValue()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db);
+
+        var result = await sut.AuthPrompt("https://api/callback", "client-id", "state&with=special<chars>");
+
+        var content = result.Should().BeOfType<ContentResult>().Subject;
+        content.Content.Should().Contain("value=\"state&amp;with=special&lt;chars&gt;\"");
+        content.Content.Should().NotContain("value=\"state&with=special<chars>\"");
+    }
+
+    [Fact]
+    public async Task Consent_WithState_AppendsStateToRedirectUrl()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db);
+
+        var result = await sut.Consent("user-a", "https://api/callback", "csrf-state-xyz");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Be("https://api/callback?code=dummy_code_for_user-a&state=csrf-state-xyz");
+    }
+
+    [Fact]
+    public async Task Consent_WithoutState_OmitsStateFromRedirectUrl()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "user-a", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db);
+
+        var result = await sut.Consent("user-a", "https://api/callback");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Be("https://api/callback?code=dummy_code_for_user-a");
+    }
+
+    // ── POST /token ─────────────────────────────────────────────────────────
 
     [Fact]
     public async Task Token_WithUserSpecificCode_EmbeddsUserIdInAccessToken()
     {
-        // Arrange
         using var db = CreateDb();
         var sut = CreateSutWithFormData(db, formData: new Dictionary<string, string>
         {
-            ["code"] = "dummy_code_for_alice"
+            ["code"] = "dummy_code_for_alice",
+            ["client_id"] = "test-client-id"
         });
 
-        // Act
         var result = await sut.Token();
 
-        // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         json.Should().Contain("simulated_alice_");
-        json.Should().NotContain("user_id");
-        var idToken = ExtractIdTokenSub(json);
-        idToken.Should().Be("alice");
-        ExtractIdTokenEmail(json).Should().Be("alice");
+        ExtractIdTokenClaim(json, "sub").Should().Be("alice");
+        ExtractIdTokenClaim(json, "email").Should().Be("alice");
     }
 
     [Fact]
     public async Task Token_WithUnrecognizedCode_UsesDefaultUserId()
     {
-        // Arrange
         using var db = CreateDb();
         var sut = CreateSutWithFormData(db, formData: new Dictionary<string, string>
         {
-            ["code"] = "some_other_code"
+            ["code"] = "some_other_code",
+            ["client_id"] = "test-client-id"
         });
 
-        // Act
         var result = await sut.Token();
 
-        // Assert
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
         var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
         json.Should().Contain("simulated_default_simulator_user_");
-        json.Should().NotContain("user_id");
-        var idToken = ExtractIdTokenSub(json);
-        idToken.Should().Be("default_simulator_user");
-        ExtractIdTokenEmail(json).Should().Be("default_simulator_user");
+        ExtractIdTokenClaim(json, "sub").Should().Be("default_simulator_user");
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    [Fact]
+    public async Task Token_IdTokenContainsIssuerAudienceAndExpiry()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "alice", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSutWithFormData(db,
+            formData: new Dictionary<string, string>
+            {
+                ["code"] = "dummy_code_for_alice",
+                ["client_id"] = "my-client-id"
+            },
+            issuer: "https://sim.example");
 
-    /// <summary>Decodes the id_token from a serialised token response and returns the sub claim.</summary>
-    private static string? ExtractIdTokenSub(string responseJson)
-        => ExtractIdTokenClaim(responseJson, "sub");
+        var result = await sut.Token();
 
-    /// <summary>Decodes the id_token from a serialised token response and returns the email claim.</summary>
-    private static string? ExtractIdTokenEmail(string responseJson)
-        => ExtractIdTokenClaim(responseJson, "email");
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        ExtractIdTokenClaim(json, "iss").Should().Be("https://sim.example");
+        ExtractIdTokenClaim(json, "aud").Should().Be("my-client-id");
+        ExtractIdTokenClaim(json, "exp").Should().NotBeNullOrEmpty();
+        ExtractIdTokenClaim(json, "iat").Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Token_IdTokenSignatureCanBeVerifiedWithSimulatorPublicKey()
+    {
+        using var db = CreateDb();
+        db.Users.Add(new SimulatedUser { Id = "alice", Username = "Alice" });
+        await db.SaveChangesAsync();
+        var sut = CreateSutWithFormData(db,
+            formData: new Dictionary<string, string>
+            {
+                ["code"] = "dummy_code_for_alice",
+                ["client_id"] = "test-client-id"
+            },
+            issuer: "https://sim.example");
+
+        var result = await sut.Token();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var idToken = doc.RootElement.GetProperty("id_token").GetString()!;
+
+        // Verify the RS256 signature using the Simulator's own public key
+        var parts = idToken.Split('.');
+        parts.Length.Should().Be(3, "id_token must be a three-part JWT");
+        var toVerify = System.Text.Encoding.UTF8.GetBytes($"{parts[0]}.{parts[1]}");
+        var sig = Convert.FromBase64String(parts[2].Replace('-', '+').Replace('_', '/') +
+            new string('=', (4 - parts[2].Length % 4) % 4));
+        var valid = FamilyHQ.Simulator.Auth.SimulatorRsaKey.Instance.VerifyData(
+            toVerify,
+            sig,
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        valid.Should().BeTrue("signature must be valid RS256 from the Simulator's RSA key");
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static string? ExtractIdTokenClaim(string responseJson, string claimName)
     {
@@ -173,7 +263,7 @@ public class OAuthControllerTests
         payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
         var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
         using var payloadDoc = System.Text.Json.JsonDocument.Parse(json);
-        return payloadDoc.RootElement.TryGetProperty(claimName, out var claim) ? claim.GetString() : null;
+        return payloadDoc.RootElement.TryGetProperty(claimName, out var claim) ? claim.ToString() : null;
     }
 
     private static SimContext CreateDb()
@@ -184,38 +274,33 @@ public class OAuthControllerTests
         return new SimContext(options);
     }
 
-    private static IConfiguration CreateConfiguration(string pathBase = "")
+    private static IConfiguration CreateConfiguration(string pathBase = "", string issuer = "https://sim.test")
     {
-        var settings = new Dictionary<string, string?>();
+        var settings = new Dictionary<string, string?>
+        {
+            ["Simulator:Issuer"] = issuer
+        };
         if (!string.IsNullOrEmpty(pathBase))
             settings["PathBase"] = pathBase;
-
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(settings)
-            .Build();
+        return new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
     }
 
-    private static OAuthController CreateSut(SimContext db, string pathBase = "")
+    private static OAuthController CreateSut(SimContext db, string pathBase = "", string issuer = "https://sim.test")
     {
-        var controller = new OAuthController(db, CreateConfiguration(pathBase), new FamilyHQ.Simulator.State.SyncFailureModeStore());
-        controller.ControllerContext = new ControllerContext
-        {
-            HttpContext = new DefaultHttpContext()
-        };
+        var controller = new OAuthController(db, CreateConfiguration(pathBase, issuer), new FamilyHQ.Simulator.State.SyncFailureModeStore());
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
 
-    private static OAuthController CreateSutWithFormData(SimContext db, Dictionary<string, string> formData, string pathBase = "")
+    private static OAuthController CreateSutWithFormData(SimContext db, Dictionary<string, string> formData,
+        string pathBase = "", string issuer = "https://sim.test")
     {
-        var controller = new OAuthController(db, CreateConfiguration(pathBase), new FamilyHQ.Simulator.State.SyncFailureModeStore());
-
+        var controller = new OAuthController(db, CreateConfiguration(pathBase, issuer), new FamilyHQ.Simulator.State.SyncFailureModeStore());
         var formCollection = new FormCollection(
             formData.ToDictionary(kv => kv.Key, kv => new Microsoft.Extensions.Primitives.StringValues(kv.Value)));
-
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Form = formCollection;
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
-
         return controller;
     }
 }

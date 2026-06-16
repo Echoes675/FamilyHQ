@@ -5,6 +5,7 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -59,27 +60,29 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenCodeExchangeSucceeds_SavesRefreshToken()
     {
-        // Arrange
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var tokenStoreMock = new Mock<ITokenStore>();
-        var sut = CreateSut(tokenStore: tokenStoreMock.Object);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        await sut.Callback("dummy_code_for_user1");
+        await sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync("simulated_refresh_token", "user1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task Callback_WhenCodeExchangeSucceeds_RedirectsToFrontendLoginSuccess()
     {
-        // Arrange
-        var sut = CreateSut();
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        var result = await sut.Callback("dummy_code_for_user1");
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         var redirect = result.Should().BeOfType<RedirectResult>().Subject;
         redirect.Url.Should().StartWith("https://frontend.test/login-success?token=");
     }
@@ -87,13 +90,15 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenFrontendBaseUrlIsNotConfigured_ThrowsInvalidOperationException()
     {
-        // Arrange
-        var sut = CreateSut(frontendBaseUrl: null);
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(frontendBaseUrl: null,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        var act = () => sut.Callback("dummy_code_for_user1");
+        var act = () => sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*FrontendBaseUrl*");
     }
@@ -101,14 +106,17 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenWebhookRegistrationEnabled_CallsRegisterAllAsync()
     {
-        // Arrange
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var webhookServiceMock = new Mock<IWebhookRegistrationService>();
-        var sut = CreateSut(webhookRegistrationEnabled: true, webhookRegistrationService: webhookServiceMock.Object);
+        var sut = CreateSut(webhookRegistrationEnabled: true,
+            webhookRegistrationService: webhookServiceMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        await sut.Callback("dummy_code_for_user1");
+        await sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         webhookServiceMock.Verify(
             w => w.RegisterAllAsync("user1", It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Once);
@@ -117,14 +125,17 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenWebhookRegistrationDisabled_DoesNotCallRegisterAllAsync()
     {
-        // Arrange
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var webhookServiceMock = new Mock<IWebhookRegistrationService>();
-        var sut = CreateSut(webhookRegistrationEnabled: false, webhookRegistrationService: webhookServiceMock.Object);
+        var sut = CreateSut(webhookRegistrationEnabled: false,
+            webhookRegistrationService: webhookServiceMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        await sut.Callback("dummy_code_for_user1");
+        await sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         webhookServiceMock.Verify(
             w => w.RegisterAllAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -133,25 +144,35 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenRefreshTokenIsNull_DoesNotSaveToTokenStore()
     {
-        // Arrange
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var tokenStoreMock = new Mock<ITokenStore>();
-        var sut = CreateSut(tokenStore: tokenStoreMock.Object, includeRefreshToken: false);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        // Act
-        await sut.Callback("dummy_code_for_user1");
+        await sut.Callback("dummy_code_for_user1", "test-state");
 
-        // Assert
         tokenStoreMock.Verify(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task Callback_WhenGrantMissingCalendarScope_MarksNeedsReauthWithMessage()
     {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var tokenStoreMock = new Mock<ITokenStore>();
         var queueMock = new Mock<ICalendarSyncJobQueue>();
-        var sut = CreateSut(tokenStore: tokenStoreMock.Object, grantedScope: "openid email", syncJobQueue: queueMock.Object);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            grantedScope: "openid email",
+            syncJobQueue: queueMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        var result = await sut.Callback("dummy_code_for_user1");
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
 
         tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync("user1", AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()), Times.Once);
         queueMock.Verify(q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -161,12 +182,110 @@ public class AuthControllerTests
     [Fact]
     public async Task Callback_WhenGrantHasCalendarScope_DoesNotMarkReauth()
     {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
         var tokenStoreMock = new Mock<ITokenStore>();
-        var sut = CreateSut(tokenStore: tokenStoreMock.Object); // default scope grants calendar
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
 
-        await sut.Callback("dummy_code_for_user1");
+        await sut.Callback("dummy_code_for_user1", "test-state");
 
         tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public void Login_SetsHttpOnlySameSiteLaxOAuthStateCookie()
+    {
+        var httpContext = new DefaultHttpContext();
+        var sut = CreateSut(httpContext: httpContext);
+
+        sut.Login();
+
+        var setCookieHeader = httpContext.Response.Headers["Set-Cookie"].ToString();
+        setCookieHeader.Should().Contain("oauth_state=");
+        setCookieHeader.ToLowerInvariant().Should().Contain("httponly");
+        setCookieHeader.ToLowerInvariant().Should().Contain("samesite=lax");
+    }
+
+    [Fact]
+    public void Login_IncludesStateParamInRedirectUrl()
+    {
+        var httpContext = new DefaultHttpContext();
+        var sut = CreateSut(httpContext: httpContext);
+
+        var result = sut.Login();
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().Contain("&state=");
+    }
+
+    [Fact]
+    public async Task Callback_WhenStateCookieMissing_ReturnsBadRequest()
+    {
+        var sut = CreateSut(); // no cookie set
+
+        var result = await sut.Callback("dummy_code_for_user1", "some-state");
+
+        result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().Be("Authentication failed: invalid state.");
+    }
+
+    [Fact]
+    public async Task Callback_WhenStateParamMissing_ReturnsBadRequest()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", state: null);
+
+        result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().Be("Authentication failed: invalid state.");
+    }
+
+    [Fact]
+    public async Task Callback_WhenStateCookieTampered_ReturnsBadRequest()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["Cookie"] = "oauth_state=tampered!!not-valid-base64@@";
+        var sut = CreateSut(httpContext: httpContext);
+
+        var result = await sut.Callback("dummy_code_for_user1", "some-state");
+
+        result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().Be("Authentication failed: invalid state.");
+    }
+
+    [Fact]
+    public async Task Callback_WhenStateMismatch_ReturnsBadRequest()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "expected-state");
+        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "wrong-state");
+
+        result.Should().BeOfType<BadRequestObjectResult>()
+            .Which.Value.Should().Be("Authentication failed: invalid state.");
+    }
+
+    [Fact]
+    public async Task Callback_WhenStateValid_DeletesStateCookie()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var setCookieHeaders = httpContext.Response.Headers["Set-Cookie"].ToString();
+        setCookieHeaders.Should().Contain("oauth_state=");
+        setCookieHeaders.Should().Match(h => h.Contains("expires=", StringComparison.OrdinalIgnoreCase) || h.Contains("max-age=0", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string CreateTestIdToken(string sub, string? email = null)
@@ -182,6 +301,29 @@ public class AuthControllerTests
         => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
+    private static Mock<IDataProtector> CreateProtectorMock()
+    {
+        var protectorMock = new Mock<IDataProtector>();
+        // Passthrough: the string extension methods base64-encode/decode around these,
+        // giving a deterministic roundtrip in tests.
+        protectorMock.Setup(p => p.Protect(It.IsAny<byte[]>())).Returns((byte[] b) => b);
+        protectorMock.Setup(p => p.Unprotect(It.IsAny<byte[]>())).Returns((byte[] b) => b);
+        return protectorMock;
+    }
+
+    private static IDataProtectionProvider CreateProviderMock(Mock<IDataProtector> protectorMock)
+    {
+        var providerMock = new Mock<IDataProtectionProvider>();
+        providerMock.Setup(p => p.CreateProtector(It.IsAny<string>())).Returns(protectorMock.Object);
+        return providerMock.Object;
+    }
+
+    private static void SetValidStateCookie(DefaultHttpContext httpContext, IDataProtector protector, string rawState)
+    {
+        var cookieValue = protector.Protect(rawState);
+        httpContext.Request.Headers["Cookie"] = $"oauth_state={cookieValue}";
+    }
+
     private static AuthController CreateSut(
         ITokenStore? tokenStore = null,
         string? frontendBaseUrl = "https://frontend.test",
@@ -190,7 +332,8 @@ public class AuthControllerTests
         bool webhookRegistrationEnabled = false,
         IWebhookRegistrationService? webhookRegistrationService = null,
         string? grantedScope = "openid email https://www.googleapis.com/auth/calendar",
-        ICalendarSyncJobQueue? syncJobQueue = null)
+        ICalendarSyncJobQueue? syncJobQueue = null,
+        IDataProtectionProvider? dataProtectionProvider = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -224,10 +367,15 @@ public class AuthControllerTests
             AuthBaseUrl = "https://sim.test"
         });
 
+        var idTokenValidatorMock = new Mock<IIdTokenValidator>();
+        idTokenValidatorMock
+            .Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IdTokenClaims("user1", "user1@example.com"));
         var authService = new GoogleAuthService(
             new HttpClient(httpHandlerMock.Object),
             options,
-            new Mock<ILogger<GoogleAuthService>>().Object);
+            new Mock<ILogger<GoogleAuthService>>().Object,
+            idTokenValidatorMock.Object);
 
         // IConfiguration
         var configPairs = new List<KeyValuePair<string, string?>>();
@@ -267,13 +415,17 @@ public class AuthControllerTests
 
         var syncOptions = Options.Create(new SyncOptions { WebhookRegistrationEnabled = webhookRegistrationEnabled });
 
+        // DataProtection — default to passthrough mock
+        dataProtectionProvider ??= CreateProviderMock(CreateProtectorMock());
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
             scopeFactoryMock.Object,
             configuration,
             syncOptions,
-            new Mock<ILogger<AuthController>>().Object)
+            new Mock<ILogger<AuthController>>().Object,
+            dataProtectionProvider)
         {
             ControllerContext = new ControllerContext
             {

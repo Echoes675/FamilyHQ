@@ -18,6 +18,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));
 
         services.AddHttpClient<GoogleAuthService>();
+        services.AddSingleton<IIdTokenValidator, JwksIdTokenValidator>();
         services.AddHttpClient<IGoogleCalendarClient, GoogleCalendarClient>();
 
         services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();

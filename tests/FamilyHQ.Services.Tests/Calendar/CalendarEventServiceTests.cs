@@ -92,7 +92,7 @@ public class CalendarEventServiceTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt  = Event(EventId, "old-gid", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.UpdateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
@@ -126,7 +126,7 @@ public class CalendarEventServiceTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt  = Event(EventId, "gid-1", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
@@ -150,7 +150,7 @@ public class CalendarEventServiceTests
         var calB = Cal(CalBId, "cal-b@google.com", "Bob");
         var evt  = Event(EventId, "gid-1", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA, calB]);
         migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -169,7 +169,7 @@ public class CalendarEventServiceTests
         var calA = Cal(CalAId, "cal-a@google.com", "Alice");
         var evt  = Event(EventId, "gid-1", CalAId, calA);
 
-        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -181,6 +181,43 @@ public class CalendarEventServiceTests
         google.Verify(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()), Times.Once);
         repo.Verify(r => r.DeleteEventAsync(EventId, It.IsAny<CancellationToken>()), Times.Once);
         repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── IDOR guard ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateAsync_WithOtherUsersEventId_ThrowsEventNotFoundException()
+    {
+        var (_, repo, _, _, sut) = CreateSut();
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        var request = new UpdateEventRequest("T", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1),
+            false, null, null);
+        await sut.Invoking(s => s.UpdateAsync(EventId, request))
+                 .Should().ThrowAsync<EventNotFoundException>();
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WithOtherUsersEventId_ThrowsEventNotFoundException()
+    {
+        var (_, repo, _, _, sut) = CreateSut();
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        await sut.Invoking(s => s.DeleteAsync(EventId))
+                 .Should().ThrowAsync<EventNotFoundException>();
+    }
+
+    [Fact]
+    public async Task SetMembersAsync_WithOtherUsersEventId_ThrowsEventNotFoundException()
+    {
+        var (_, repo, _, _, sut) = CreateSut();
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        await sut.Invoking(s => s.SetMembersAsync(EventId, [CalAId]))
+                 .Should().ThrowAsync<EventNotFoundException>();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -204,12 +241,15 @@ public class CalendarEventServiceTests
         Mock<ICalendarMigrationService> migration, Mock<IMemberTagParser> tagParser,
         CalendarEventService sut) CreateSut()
     {
-        var google    = new Mock<IGoogleCalendarClient>();
-        var repo      = new Mock<ICalendarRepository>();
-        var migration = new Mock<ICalendarMigrationService>();
-        var tagParser = new Mock<IMemberTagParser>();
-        var cache     = new Mock<IOutboundWriteHashCache>();
-        var logger    = new Mock<ILogger<CalendarEventService>>();
+        var google      = new Mock<IGoogleCalendarClient>();
+        var repo        = new Mock<ICalendarRepository>();
+        var migration   = new Mock<ICalendarMigrationService>();
+        var tagParser   = new Mock<IMemberTagParser>();
+        var cache       = new Mock<IOutboundWriteHashCache>();
+        var currentUser = new Mock<ICurrentUserService>();
+        var logger      = new Mock<ILogger<CalendarEventService>>();
+
+        currentUser.SetupGet(u => u.UserId).Returns("u-1");
 
         // Default: tag parser returns normalised description unchanged
         tagParser.Setup(p => p.NormaliseDescription(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>()))
@@ -217,7 +257,7 @@ public class CalendarEventServiceTests
         tagParser.Setup(p => p.StripMemberTag(It.IsAny<string>()))
                  .Returns((string d) => d ?? string.Empty);
 
-        var sut = new CalendarEventService(google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, logger.Object);
+        var sut = new CalendarEventService(google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object, logger.Object);
         return (google, repo, migration, tagParser, sut);
     }
 }
