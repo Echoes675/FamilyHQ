@@ -50,7 +50,7 @@ public class WebhookRegistrationService(
             var channelId = Guid.NewGuid().ToString();
             var webhookUrl = $"{syncOptions.WebhookBaseUrl.TrimEnd('/')}{WebhookPath}";
 
-            var response = await googleCalendarClient.WatchEventsAsync(googleCalendarId, channelId, webhookUrl, ct);
+            var response = await googleCalendarClient.WatchEventsAsync(googleCalendarId, channelId, webhookUrl, string.Empty, ct);
 
             var registration = new WebhookRegistration
             {

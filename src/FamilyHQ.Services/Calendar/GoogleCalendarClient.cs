@@ -417,10 +417,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string googleCalendarId,
         string channelId,
         string webhookUrl,
+        string channelToken,
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/watch";
-        var body = new { id = channelId, type = "web_hook", address = webhookUrl };
+        var body = new { id = channelId, type = "web_hook", address = webhookUrl, token = channelToken };
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
