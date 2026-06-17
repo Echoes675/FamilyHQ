@@ -118,7 +118,7 @@ public class DayThemeServiceTests
         var fixedUtc = new DateTimeOffset(2024, 6, 21, 4, 50, 0, TimeSpan.Zero);
         var fakeTime = new FakeTimeProvider(fixedUtc);
 
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(fakeTime.GetLocalNow().DateTime);
         var repoMock = new Mock<IDayThemeRepository>();
         repoMock.Setup(x => x.GetByDateAsync(today, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayTheme

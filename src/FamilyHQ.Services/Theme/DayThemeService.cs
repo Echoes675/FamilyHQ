@@ -14,7 +14,7 @@ public class DayThemeService(
 {
     public async Task EnsureTodayAsync(CancellationToken ct = default)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
         var existing = await dayThemeRepo.GetByDateAsync(today, ct);
         if (existing is not null) return;
 
@@ -23,13 +23,13 @@ public class DayThemeService(
 
     public async Task RecalculateForTodayAsync(CancellationToken ct = default)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
         await CalculateAndPersistAsync(today, ct);
     }
 
     public async Task<DayThemeDto> GetTodayAsync(CancellationToken ct = default)
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var today = DateOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
         var record = await dayThemeRepo.GetByDateAsync(today, ct)
             ?? throw new InvalidOperationException("No DayTheme record found for today.");
 
@@ -68,10 +68,13 @@ public class DayThemeService(
     {
         if (!string.IsNullOrWhiteSpace(ianaTimeZone))
         {
-            var zone = DateTimeZoneProviders.Tzdb[ianaTimeZone];
-            var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
-            var local = instant.InZone(zone).LocalDateTime;
-            return new TimeOnly(local.Hour, local.Minute, local.Second);
+            var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone);
+            if (zone is not null)
+            {
+                var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+                var local = instant.InZone(zone).LocalDateTime;
+                return new TimeOnly(local.Hour, local.Minute, local.Second);
+            }
         }
         return TimeOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
     }
