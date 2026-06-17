@@ -49,10 +49,13 @@ public class SunCalculatorService : ISunCalculatorService
     {
         if (!string.IsNullOrWhiteSpace(ianaTimeZone))
         {
-            var zone = DateTimeZoneProviders.Tzdb[ianaTimeZone];
-            var utc = DateTime.SpecifyKind(utcPhaseTime, DateTimeKind.Utc);
-            var local = Instant.FromDateTimeUtc(utc).InZone(zone).LocalDateTime;
-            return new TimeOnly(local.Hour, local.Minute, local.Second);
+            var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone);
+            if (zone is not null)
+            {
+                var utc = DateTime.SpecifyKind(utcPhaseTime, DateTimeKind.Utc);
+                var local = Instant.FromDateTimeUtc(utc).InZone(zone).LocalDateTime;
+                return new TimeOnly(local.Hour, local.Minute, local.Second);
+            }
         }
         return TimeOnly.FromDateTime(utcPhaseTime);
     }
