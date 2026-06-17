@@ -27,7 +27,7 @@ public class DayThemeServiceTests
 
         await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).EnsureTodayAsync();
 
-        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(It.IsAny<double>(), It.IsAny<double>(), It.IsAny<DateOnly>()), Times.Never);
+        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(It.IsAny<double>(), It.IsAny<double>(), It.IsAny<DateOnly>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -43,13 +43,13 @@ public class DayThemeServiceTests
         locationMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false, IanaTimeZone: null));
         var sunCalcMock = new Mock<ISunCalculatorService>();
-        sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today))
+        sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()))
             .ReturnsAsync(new DayThemeBoundaries(
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30)));
 
         await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).EnsureTodayAsync();
 
-        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today), Times.Once);
+        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -98,12 +98,12 @@ public class DayThemeServiceTests
             .ReturnsAsync(new LocationResult("Test", 55.0, -3.0, false, IanaTimeZone: null));
         var sunCalcMock = new Mock<ISunCalculatorService>();
         // Adapt the setup call to match the actual ISunCalculatorService method signature
-        sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today))
+        sunCalcMock.Setup(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()))
             .ReturnsAsync(new DayThemeBoundaries(
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30)));
 
         await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).RecalculateForTodayAsync();
 
-        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today), Times.Once);
+        sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()), Times.Once);
     }
 }

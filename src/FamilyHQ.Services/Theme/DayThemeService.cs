@@ -45,7 +45,7 @@ public class DayThemeService(
     private async Task CalculateAndPersistAsync(DateOnly date, CancellationToken ct)
     {
         var location = await locationService.GetEffectiveLocationAsync(ct);
-        var boundaries = await sunCalculator.CalculateBoundariesAsync(location.Latitude, location.Longitude, date);
+        var boundaries = await sunCalculator.CalculateBoundariesAsync(location.Latitude, location.Longitude, date, null);
 
         await dayThemeRepo.UpsertAsync(new DayTheme
         {
