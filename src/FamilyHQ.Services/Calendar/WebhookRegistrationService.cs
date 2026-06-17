@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
@@ -48,15 +49,17 @@ public class WebhookRegistrationService(
         try
         {
             var channelId = Guid.NewGuid().ToString();
+            var channelToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var webhookUrl = $"{syncOptions.WebhookBaseUrl.TrimEnd('/')}{WebhookPath}";
 
-            var response = await googleCalendarClient.WatchEventsAsync(googleCalendarId, channelId, webhookUrl, ct);
+            var response = await googleCalendarClient.WatchEventsAsync(googleCalendarId, channelId, webhookUrl, channelToken, ct);
 
             var registration = new WebhookRegistration
             {
                 CalendarInfoId = calendarInfoId,
                 ChannelId = response.ChannelId,
                 ResourceId = response.ResourceId,
+                ChannelToken = channelToken,
                 ExpiresAt = DateTimeOffset.FromUnixTimeMilliseconds(response.Expiration),
                 RegisteredAt = DateTimeOffset.UtcNow
             };

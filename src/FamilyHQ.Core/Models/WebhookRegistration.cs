@@ -7,6 +7,7 @@ public class WebhookRegistration
 
     public string ChannelId { get; set; } = string.Empty;
     public string ResourceId { get; set; } = string.Empty;
+    public string ChannelToken { get; set; } = string.Empty;
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset RegisteredAt { get; set; }
 

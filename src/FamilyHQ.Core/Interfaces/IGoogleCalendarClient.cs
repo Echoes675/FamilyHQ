@@ -58,7 +58,7 @@ public interface IGoogleCalendarClient
     /// <summary>
     /// Creates a push-notification channel for calendar events via the Google Calendar watch API.
     /// </summary>
-    Task<WatchChannelResponse> WatchEventsAsync(string googleCalendarId, string channelId, string webhookUrl, CancellationToken ct = default);
+    Task<WatchChannelResponse> WatchEventsAsync(string googleCalendarId, string channelId, string webhookUrl, string channelToken, CancellationToken ct = default);
 
     /// <summary>
     /// Stops an existing push-notification channel.

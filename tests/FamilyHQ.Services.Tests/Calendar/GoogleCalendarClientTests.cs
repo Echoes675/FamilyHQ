@@ -817,7 +817,7 @@ public class GoogleCalendarClientTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(body) });
 
-        var ex = await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook"))
+        var ex = await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook", "any-token"))
             .Should().ThrowAsync<WebhookNotSupportedException>();
         ex.Which.Reason.Should().Be("pushNotSupportedForRequestedResource");
     }
@@ -840,7 +840,7 @@ public class GoogleCalendarClientTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.BadRequest, Content = new StringContent(body) });
 
-        await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook"))
+        await systemUnderTest.Invoking(s => s.WatchEventsAsync("cal@google.com", "chan-1", "https://hook.test/api/sync/webhook", "any-token"))
             .Should().ThrowAsync<GoogleApiException>();
     }
 

@@ -50,7 +50,7 @@ public class GoogleCalendarClientWatchTests
             });
 
         // Act
-        await systemUnderTest.WatchEventsAsync("test-calendar-id", "channel-123", "https://example.com/webhook");
+        await systemUnderTest.WatchEventsAsync("test-calendar-id", "channel-123", "https://example.com/webhook", "test-channel-token");
 
         // Assert
         capturedRequest.Should().NotBeNull();
@@ -62,6 +62,7 @@ public class GoogleCalendarClientWatchTests
         bodyDoc.RootElement.GetProperty("id").GetString().Should().Be("channel-123");
         bodyDoc.RootElement.GetProperty("type").GetString().Should().Be("web_hook");
         bodyDoc.RootElement.GetProperty("address").GetString().Should().Be("https://example.com/webhook");
+        bodyDoc.RootElement.GetProperty("token").GetString().Should().Be("test-channel-token");
     }
 
     [Fact]
@@ -92,7 +93,7 @@ public class GoogleCalendarClientWatchTests
             });
 
         // Act
-        var result = await systemUnderTest.WatchEventsAsync("cal-1", "channel-abc", "https://example.com/hook");
+        var result = await systemUnderTest.WatchEventsAsync("cal-1", "channel-abc", "https://example.com/hook", "any-token");
 
         // Assert
         result.ChannelId.Should().Be("channel-abc");
