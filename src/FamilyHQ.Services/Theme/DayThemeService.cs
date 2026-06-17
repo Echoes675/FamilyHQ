@@ -1,13 +1,16 @@
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using NodaTime;
 
 namespace FamilyHQ.Services.Theme;
 
 public class DayThemeService(
     IDayThemeRepository dayThemeRepo,
     ILocationService locationService,
-    ISunCalculatorService sunCalculator) : IDayThemeService
+    ISunCalculatorService sunCalculator,
+    ITimeZoneLookup timeZoneLookup,
+    TimeProvider timeProvider) : IDayThemeService
 {
     public async Task EnsureTodayAsync(CancellationToken ct = default)
     {
@@ -30,7 +33,8 @@ public class DayThemeService(
         var record = await dayThemeRepo.GetByDateAsync(today, ct)
             ?? throw new InvalidOperationException("No DayTheme record found for today.");
 
-        var currentPeriod = DeriveCurrentPeriod(record);
+        var localNow = ComputeLocalNow(record.IanaTimeZone);
+        var currentPeriod = DeriveCurrentPeriod(record, localNow);
 
         return new DayThemeDto(
             record.Date,
@@ -45,7 +49,9 @@ public class DayThemeService(
     private async Task CalculateAndPersistAsync(DateOnly date, CancellationToken ct)
     {
         var location = await locationService.GetEffectiveLocationAsync(ct);
-        var boundaries = await sunCalculator.CalculateBoundariesAsync(location.Latitude, location.Longitude, date, null);
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var boundaries = await sunCalculator.CalculateBoundariesAsync(
+            location.Latitude, location.Longitude, date, ianaTimeZone);
 
         await dayThemeRepo.UpsertAsync(new DayTheme
         {
@@ -53,17 +59,29 @@ public class DayThemeService(
             MorningStart = boundaries.MorningStart,
             DaytimeStart = boundaries.DaytimeStart,
             EveningStart = boundaries.EveningStart,
-            NightStart = boundaries.NightStart
+            NightStart = boundaries.NightStart,
+            IanaTimeZone = ianaTimeZone
         }, ct);
     }
 
-    private static TimeOfDayPeriod DeriveCurrentPeriod(DayTheme record)
+    private TimeOnly ComputeLocalNow(string? ianaTimeZone)
     {
-        var now = TimeOnly.FromDateTime(DateTime.Now);
-        if (now >= record.NightStart) return TimeOfDayPeriod.Night;
-        if (now >= record.EveningStart) return TimeOfDayPeriod.Evening;
-        if (now >= record.DaytimeStart) return TimeOfDayPeriod.Daytime;
-        if (now >= record.MorningStart) return TimeOfDayPeriod.Morning;
+        if (!string.IsNullOrWhiteSpace(ianaTimeZone))
+        {
+            var zone = DateTimeZoneProviders.Tzdb[ianaTimeZone];
+            var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var local = instant.InZone(zone).LocalDateTime;
+            return new TimeOnly(local.Hour, local.Minute, local.Second);
+        }
+        return TimeOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
+    }
+
+    private static TimeOfDayPeriod DeriveCurrentPeriod(DayTheme record, TimeOnly localNow)
+    {
+        if (localNow >= record.NightStart) return TimeOfDayPeriod.Night;
+        if (localNow >= record.EveningStart) return TimeOfDayPeriod.Evening;
+        if (localNow >= record.DaytimeStart) return TimeOfDayPeriod.Daytime;
+        if (localNow >= record.MorningStart) return TimeOfDayPeriod.Morning;
         return TimeOfDayPeriod.Night;
     }
 }
