@@ -8,4 +8,5 @@ public class DayTheme
     public TimeOnly DaytimeStart { get; set; }
     public TimeOnly EveningStart { get; set; }
     public TimeOnly NightStart { get; set; }
+    public string? IanaTimeZone { get; set; }
 }

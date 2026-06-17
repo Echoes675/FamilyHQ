@@ -38,6 +38,7 @@ public class DayThemeService(
             record.DaytimeStart,
             record.EveningStart,
             record.NightStart,
+            record.IanaTimeZone,
             currentPeriod.ToString());
     }
 
