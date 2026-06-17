@@ -43,6 +43,21 @@ public class TimeZoneServiceTests
     }
 
     [Fact]
+    public async Task ResolveAutoZone_LookupReturnsNull_FallsThroughToIpApi()
+    {
+        var (sut, _, loc, ipapi, tzLookup) = CreateSut();
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>()))
+           .ReturnsAsync(new LocationSetting { Latitude = 0.0, Longitude = 0.0 });
+        tzLookup.Setup(t => t.GetTimeZone(0.0, 0.0)).Returns((string?)null);
+        ipapi.Setup(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
+             .ReturnsAsync(new LocationResult("Berlin", 52.52, 13.405, true, "Europe/Berlin"));
+
+        (await sut.ResolveAutoZoneAsync()).Should().Be("Europe/Berlin");
+
+        ipapi.Verify(i => i.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ResolveAutoZone_NoLocation_UsesIpApi()
     {
         var (sut, _, loc, ipapi, _) = CreateSut();
