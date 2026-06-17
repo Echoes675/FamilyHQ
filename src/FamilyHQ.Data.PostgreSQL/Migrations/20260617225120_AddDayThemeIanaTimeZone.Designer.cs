@@ -227,8 +227,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasColumnType("time without time zone");
 
                     b.Property<string>("IanaTimeZone")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<TimeOnly>("MorningStart")
                         .HasColumnType("time without time zone");

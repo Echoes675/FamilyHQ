@@ -13,8 +13,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "IanaTimeZone",
                 table: "DayThemes",
-                type: "character varying(100)",
-                maxLength: 100,
+                type: "character varying(64)",
+                maxLength: 64,
                 nullable: true);
         }
 
