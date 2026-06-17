@@ -126,62 +126,56 @@ public class DayThemeSchedulerService(
 
     protected TimeSpan GetNextBoundaryDelay(Core.DTOs.DayThemeDto dto)
     {
-        var localNow = ComputeLocalNow(dto.IanaTimeZone);
+        var zone = !string.IsNullOrWhiteSpace(dto.IanaTimeZone)
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(dto.IanaTimeZone)
+            : null;
+
+        var localNow = ComputeLocalNow(zone);
         var boundaries = new[] { dto.MorningStart, dto.DaytimeStart, dto.EveningStart, dto.NightStart };
         var next = boundaries.Cast<TimeOnly?>().Where(b => b > localNow).OrderBy(b => b).FirstOrDefault();
 
         if (next is null)
-            return ComputeDelayToLocalMidnight(dto.IanaTimeZone);
+            return ComputeDelayToLocalMidnight(zone);
 
-        return ComputeDelayToLocalTime(next.Value, dto.IanaTimeZone);
+        return ComputeDelayToLocalTime(next.Value, zone);
     }
 
-    private TimeOnly ComputeLocalNow(string? ianaTimeZone)
+    private TimeOnly ComputeLocalNow(DateTimeZone? zone)
     {
-        if (!string.IsNullOrWhiteSpace(ianaTimeZone))
+        if (zone is not null)
         {
-            var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone);
-            if (zone is not null)
-            {
-                var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
-                var local = instant.InZone(zone).LocalDateTime;
-                return new TimeOnly(local.Hour, local.Minute, local.Second);
-            }
+            var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var local = instant.InZone(zone).LocalDateTime;
+            return new TimeOnly(local.Hour, local.Minute, local.Second);
         }
         return TimeOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
     }
 
-    private TimeSpan ComputeDelayToLocalMidnight(string? ianaTimeZone)
+    private TimeSpan ComputeDelayToLocalMidnight(DateTimeZone? zone)
     {
-        if (!string.IsNullOrWhiteSpace(ianaTimeZone))
+        if (zone is not null)
         {
-            var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone);
-            if (zone is not null)
-            {
-                var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
-                var localDate = nowInstant.InZone(zone).Date;
-                var midnight = zone.AtStartOfDay(localDate.PlusDays(1)).ToInstant();
-                return (midnight - nowInstant).ToTimeSpan();
-            }
+            var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var localDate = nowInstant.InZone(zone).Date;
+            var midnight = zone.AtStartOfDay(localDate.PlusDays(1)).ToInstant();
+            return (midnight - nowInstant).ToTimeSpan();
         }
         var now = timeProvider.GetLocalNow();
         return now.Date.AddDays(1) - now.DateTime;
     }
 
-    private TimeSpan ComputeDelayToLocalTime(TimeOnly localTime, string? ianaTimeZone)
+    private TimeSpan ComputeDelayToLocalTime(TimeOnly localTime, DateTimeZone? zone)
     {
-        if (!string.IsNullOrWhiteSpace(ianaTimeZone))
+        if (zone is not null)
         {
-            var zone = DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone);
-            if (zone is not null)
-            {
-                var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
-                var localDate = nowInstant.InZone(zone).Date;
-                var targetLocal = localDate.At(new LocalTime(localTime.Hour, localTime.Minute, localTime.Second));
-                var targetInstant = zone.AtLeniently(targetLocal).ToInstant();
-                var delay = (targetInstant - nowInstant).ToTimeSpan();
-                return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
-            }
+            var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var localDate = nowInstant.InZone(zone).Date;
+            var targetLocal = localDate.At(new LocalTime(localTime.Hour, localTime.Minute, localTime.Second));
+            // AtLeniently: spring-forward gaps delay wakeup by up to the gap duration; fall-back ambiguity
+            // picks the pre-transition instant. Both are acceptable for a UI theme scheduler.
+            var targetInstant = zone.AtLeniently(targetLocal).ToInstant();
+            var delay = (targetInstant - nowInstant).ToTimeSpan();
+            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
         }
         var now = timeProvider.GetLocalNow();
         var nextDateTime = now.Date.Add(localTime.ToTimeSpan());
