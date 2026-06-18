@@ -48,7 +48,8 @@ public class WeatherService(
             return [];
 
         var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
-        var dataPoints = await weatherDataPointRepository.GetDailyAsync(location.Id, days, ct);
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var dataPoints = await weatherDataPointRepository.GetDailyAsync(location.Id, days, ianaTimeZone, ct);
 
         return dataPoints
             .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit))

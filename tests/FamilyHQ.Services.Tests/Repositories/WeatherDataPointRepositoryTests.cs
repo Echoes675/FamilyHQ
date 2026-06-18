@@ -40,6 +40,56 @@ public class WeatherDataPointRepositoryTests : IDisposable
             IsWindy = false
         };
 
+    private WeatherDataPoint MakeDaily(int locationId, DateTimeOffset timestamp) =>
+        new()
+        {
+            LocationSettingId = locationId,
+            Timestamp = timestamp,
+            DataType = WeatherDataType.Daily,
+            RetrievedAt = _fakeTime.GetUtcNow(),
+            Condition = WeatherCondition.Clear,
+            TemperatureCelsius = 20,
+            WindSpeedKmh = 10,
+            IsWindy = false,
+            HighCelsius = 25,
+            LowCelsius = 15
+        };
+
+    [Fact]
+    public async Task GetDailyAsync_WithIanaZone_ExcludesYesterdayLocalData()
+    {
+        // Fake clock: 2026-06-18T12:00Z. Dublin BST (UTC+1): local today = June 18.
+        // Local midnight June 18 BST = 2026-06-17T23:00Z.
+        // P (UTC 22:30 June 17): BST 23:30 June 17 — yesterday local — EXCLUDED.
+        // Q (UTC 23:10 June 17): BST 00:10 June 18 — today local    — INCLUDED.
+        var p = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 22, 30, 0, TimeSpan.Zero));
+        var q = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 23, 10, 0, TimeSpan.Zero));
+        _db.WeatherDataPoints.AddRange(p, q);
+        await _db.SaveChangesAsync();
+
+        var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: "Europe/Dublin");
+
+        result.Should().ContainSingle("only Q falls in BST today-or-later window");
+        result[0].Timestamp.Should().Be(q.Timestamp);
+    }
+
+    [Fact]
+    public async Task GetDailyAsync_NullZone_UsesUtcTodayAnchor()
+    {
+        // Fake clock: 2026-06-18T12:00Z. Null zone: UTC today = June 18 [00:00Z, ∞).
+        // R (UTC 22:30 June 17): before UTC midnight June 18 — EXCLUDED.
+        // S (UTC 00:30 June 18): after UTC midnight June 18  — INCLUDED.
+        var r = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 22, 30, 0, TimeSpan.Zero));
+        var s = MakeDaily(1, new DateTimeOffset(2026, 6, 18,  0, 30, 0, TimeSpan.Zero));
+        _db.WeatherDataPoints.AddRange(r, s);
+        await _db.SaveChangesAsync();
+
+        var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: null);
+
+        result.Should().ContainSingle("only S falls in UTC June 18 or later");
+        result[0].Timestamp.Should().Be(s.Timestamp);
+    }
+
     [Fact]
     public async Task GetHourlyAsync_WithIanaZone_ReturnsDataInLocalDayWindow()
     {

@@ -34,16 +34,33 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
             .ToListAsync(ct);
     }
 
-    public async Task<List<WeatherDataPoint>> GetDailyAsync(int locationSettingId, int days, CancellationToken ct = default)
+    public async Task<List<WeatherDataPoint>> GetDailyAsync(int locationSettingId, int days,
+        string? ianaTimeZone, CancellationToken ct = default)
     {
-        var today = _timeProvider.GetUtcNow().UtcDateTime.Date;
-        var end = today.AddDays(days);
+        var zone = ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null;
+
+        DateTimeOffset start, end;
+        if (zone is not null)
+        {
+            var instant = Instant.FromDateTimeOffset(_timeProvider.GetUtcNow());
+            var localToday = instant.InZone(zone).Date;
+            start = zone.AtStartOfDay(localToday).ToDateTimeOffset();
+            end   = zone.AtStartOfDay(localToday.PlusDays(days)).ToDateTimeOffset();
+        }
+        else
+        {
+            var utcNow = _timeProvider.GetUtcNow();
+            start = new DateTimeOffset(utcNow.Year, utcNow.Month, utcNow.Day, 0, 0, 0, TimeSpan.Zero);
+            end   = start.AddDays(days);
+        }
 
         return await context.WeatherDataPoints
             .AsNoTracking()
             .Where(x => x.LocationSettingId == locationSettingId
                 && x.DataType == WeatherDataType.Daily
-                && x.Timestamp >= today
+                && x.Timestamp >= start
                 && x.Timestamp < end)
             .OrderBy(x => x.Timestamp)
             .ToListAsync(ct);

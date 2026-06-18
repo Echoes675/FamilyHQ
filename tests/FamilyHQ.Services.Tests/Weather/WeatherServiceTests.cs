@@ -33,6 +33,32 @@ public class WeatherServiceTests
     }
 
     [Fact]
+    public async Task GetDailyForecastAsync_ThreadsIanaZoneFromLocationToRepository()
+    {
+        var location = new LocationSetting { Id = 1, UserId = "user-1", Latitude = 53.35, Longitude = -6.26 };
+
+        var locationRepo = new Mock<ILocationSettingRepository>();
+        locationRepo.Setup(x => x.GetAsync("user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(location);
+
+        var tzLookup = new Mock<ITimeZoneLookup>();
+        tzLookup.Setup(x => x.GetTimeZone(53.35, -6.26)).Returns("Europe/Dublin");
+
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        dataRepo.Setup(x => x.GetDailyAsync(1, It.IsAny<int>(), "Europe/Dublin", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var sut = CreateSut(dataRepo, locationRepo, tzLookup);
+
+        await sut.GetDailyForecastAsync(days: 7);
+
+        dataRepo.Verify(
+            x => x.GetDailyAsync(1, It.IsAny<int>(), "Europe/Dublin", It.IsAny<CancellationToken>()),
+            Times.Once,
+            "timezone from location lat/long must be passed to GetDailyAsync");
+    }
+
+    [Fact]
     public async Task GetHourlyAsync_ThreadsIanaZoneFromLocationToRepository()
     {
         var location = new LocationSetting { Id = 1, UserId = "user-1", Latitude = 53.35, Longitude = -6.26 };
