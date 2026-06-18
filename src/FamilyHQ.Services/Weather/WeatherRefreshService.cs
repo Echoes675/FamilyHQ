@@ -5,6 +5,7 @@ using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 
 public class WeatherRefreshService(
     IWeatherSettingRepository weatherSettingRepo,
@@ -36,6 +37,14 @@ public class WeatherRefreshService(
         }
 
         var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+
+        if (ianaTimeZone is not null &&
+            DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone) is null)
+        {
+            logger.LogWarning(
+                "ITimeZoneLookup returned an unknown IANA zone '{Zone}' for location {LocationId}; timestamps will be treated as UTC.",
+                ianaTimeZone, location.Id);
+        }
 
         var weatherResponse = await weatherProvider.GetWeatherAsync(
             location.Latitude, location.Longitude, ianaTimeZone, ct);

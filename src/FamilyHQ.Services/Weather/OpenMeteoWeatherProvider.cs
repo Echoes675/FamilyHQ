@@ -88,7 +88,11 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
     {
         if (zone is not null)
         {
-            var local = OpenMeteoLocalDateTimePattern.Parse(s).Value;
+            var parseResult = OpenMeteoLocalDateTimePattern.Parse(s);
+            if (!parseResult.Success)
+                throw new InvalidOperationException(
+                    $"Open-Meteo returned an unparseable timestamp '{s}': {parseResult.Exception?.Message}");
+            var local = parseResult.Value;
             // AtLeniently: spring-forward gaps and fall-back ambiguity handled gracefully
             // for a weather display context.
             return zone.AtLeniently(local).ToDateTimeOffset();
