@@ -8,7 +8,6 @@ using NodaTime;
 
 public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider timeProvider) : IWeatherDataPointRepository
 {
-    // timeProvider is used in Task 4 for GetDailyAsync; stored here to avoid CS9113.
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public async Task<WeatherDataPoint?> GetCurrentAsync(int locationSettingId, CancellationToken ct = default)
@@ -37,7 +36,7 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
 
     public async Task<List<WeatherDataPoint>> GetDailyAsync(int locationSettingId, int days, CancellationToken ct = default)
     {
-        var today = DateTimeOffset.UtcNow.Date;
+        var today = _timeProvider.GetUtcNow().UtcDateTime.Date;
         var end = today.AddDays(days);
 
         return await context.WeatherDataPoints
