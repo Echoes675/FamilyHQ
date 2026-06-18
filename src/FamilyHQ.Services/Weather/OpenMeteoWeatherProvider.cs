@@ -5,10 +5,17 @@ using System.Net.Http.Json;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
+using NodaTime;
+using NodaTime.Text;
 
 public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
 {
-    public async Task<WeatherResponse> GetWeatherAsync(double latitude, double longitude, CancellationToken ct = default)
+    // Open-Meteo returns minute-precision timestamps: "2026-06-18T14:00"
+    private static readonly LocalDateTimePattern OpenMeteoLocalDateTimePattern =
+        LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm");
+
+    public async Task<WeatherResponse> GetWeatherAsync(double latitude, double longitude,
+        string? ianaTimeZone, CancellationToken ct = default)
     {
         var lat = latitude.ToString(CultureInfo.InvariantCulture);
         var lon = longitude.ToString(CultureInfo.InvariantCulture);
@@ -22,6 +29,10 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
 
         var apiResponse = await httpClient.GetFromJsonAsync<OpenMeteoApiResponse>(url, ct)
             ?? throw new InvalidOperationException("Weather API returned null response.");
+
+        var zone = ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null;
 
         var currentCondition = WeatherCondition.Clear;
         var currentTemp = 0.0;
@@ -44,7 +55,7 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
                 var wind = apiResponse.Hourly.WindSpeed[i];
                 if (temp is null || code is null || wind is null) continue;
                 hourly.Add(new WeatherHourlyItem(
-                    DateTimeOffset.Parse(apiResponse.Hourly.Time[i], CultureInfo.InvariantCulture),
+                    ToLocalDateTimeOffset(apiResponse.Hourly.Time[i], zone),
                     WmoCodeMapper.ToCondition(code.Value),
                     temp.Value,
                     wind.Value));
@@ -71,5 +82,17 @@ public class OpenMeteoWeatherProvider(HttpClient httpClient) : IWeatherProvider
         }
 
         return new WeatherResponse(currentCondition, currentTemp, currentWind, hourly, daily);
+    }
+
+    private static DateTimeOffset ToLocalDateTimeOffset(string s, DateTimeZone? zone)
+    {
+        if (zone is not null)
+        {
+            var local = OpenMeteoLocalDateTimePattern.Parse(s).Value;
+            // AtLeniently: spring-forward gaps and fall-back ambiguity handled gracefully
+            // for a weather display context.
+            return zone.AtLeniently(local).ToDateTimeOffset();
+        }
+        return DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
     }
 }

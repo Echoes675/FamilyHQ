@@ -4,5 +4,6 @@ using FamilyHQ.Core.DTOs;
 
 public interface IWeatherProvider
 {
-    Task<WeatherResponse> GetWeatherAsync(double latitude, double longitude, CancellationToken ct = default);
+    Task<WeatherResponse> GetWeatherAsync(double latitude, double longitude,
+        string? ianaTimeZone, CancellationToken ct = default);
 }

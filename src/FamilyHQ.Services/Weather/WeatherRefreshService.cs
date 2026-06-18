@@ -12,6 +12,7 @@ public class WeatherRefreshService(
     IWeatherProvider weatherProvider,
     IWeatherDataPointRepository weatherDataPointRepo,
     IWeatherBroadcaster weatherBroadcaster,
+    ITimeZoneLookup timeZoneLookup,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
     public async Task<WeatherRefreshResult> RefreshAsync(string userId, CancellationToken ct = default)
@@ -34,8 +35,10 @@ public class WeatherRefreshService(
             return new WeatherRefreshResult(WeatherRefreshOutcome.SkippedNoLocation, LocationSettingId: null, DataPointsWritten: 0);
         }
 
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+
         var weatherResponse = await weatherProvider.GetWeatherAsync(
-            location.Latitude, location.Longitude, ct);
+            location.Latitude, location.Longitude, ianaTimeZone, ct);
 
         var now = DateTimeOffset.UtcNow;
         var windThreshold = weatherSetting.WindThresholdKmh;
