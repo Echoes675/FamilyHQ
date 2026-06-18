@@ -4,9 +4,13 @@ using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
 
-public class WeatherDataPointRepository(FamilyHqDbContext context) : IWeatherDataPointRepository
+public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider timeProvider) : IWeatherDataPointRepository
 {
+    // timeProvider is used in Task 4 for GetDailyAsync; stored here to avoid CS9113.
+    private readonly TimeProvider _timeProvider = timeProvider;
+
     public async Task<WeatherDataPoint?> GetCurrentAsync(int locationSettingId, CancellationToken ct = default)
         => await context.WeatherDataPoints
             .AsNoTracking()
@@ -14,10 +18,12 @@ public class WeatherDataPointRepository(FamilyHqDbContext context) : IWeatherDat
             .OrderByDescending(x => x.RetrievedAt)
             .FirstOrDefaultAsync(ct);
 
-    public async Task<List<WeatherDataPoint>> GetHourlyAsync(int locationSettingId, DateOnly date, CancellationToken ct = default)
+    public async Task<List<WeatherDataPoint>> GetHourlyAsync(int locationSettingId, DateOnly date,
+        string? ianaTimeZone, CancellationToken ct = default)
     {
-        var start = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-        var end = date.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var (start, end) = ToUtcRange(date, ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null);
 
         return await context.WeatherDataPoints
             .AsNoTracking()
@@ -57,5 +63,18 @@ public class WeatherDataPointRepository(FamilyHqDbContext context) : IWeatherDat
         context.WeatherDataPoints.AddRange(dataPoints);
         await context.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+    }
+
+    private static (DateTimeOffset Start, DateTimeOffset End) ToUtcRange(DateOnly date, DateTimeZone? zone)
+    {
+        if (zone is not null)
+        {
+            var localDate = new LocalDate(date.Year, date.Month, date.Day);
+            var start = zone.AtStartOfDay(localDate).ToDateTimeOffset();
+            var end   = zone.AtStartOfDay(localDate.PlusDays(1)).ToDateTimeOffset();
+            return (start, end);
+        }
+        var utcStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        return (utcStart, utcStart.AddDays(1));
     }
 }
