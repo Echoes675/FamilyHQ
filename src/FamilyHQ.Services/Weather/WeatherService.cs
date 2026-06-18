@@ -4,6 +4,7 @@ using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using NodaTime;
 
 public class WeatherService(
     IWeatherDataPointRepository weatherDataPointRepository,
@@ -49,10 +50,13 @@ public class WeatherService(
 
         var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
         var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var zone = ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null;
         var dataPoints = await weatherDataPointRepository.GetDailyAsync(location.Id, days, ianaTimeZone, ct);
 
         return dataPoints
-            .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit))
+            .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit, zone))
             .ToList();
     }
 
@@ -98,14 +102,19 @@ public class WeatherService(
             IsWindy: dp.IsWindy,
             IconName: WeatherIconMapper.ToIconName(dp.Condition));
 
-    private static DailyForecastItemDto MapToDailyDto(WeatherDataPoint dp, TemperatureUnit unit) =>
-        new(
-            Date: DateOnly.FromDateTime(dp.Timestamp.Date),
+    private static DailyForecastItemDto MapToDailyDto(WeatherDataPoint dp, TemperatureUnit unit, DateTimeZone? zone)
+    {
+        var localDate = zone is not null
+            ? Instant.FromDateTimeOffset(dp.Timestamp).InZone(zone).Date
+            : LocalDate.FromDateTime(dp.Timestamp.UtcDateTime);
+        return new(
+            Date: new DateOnly(localDate.Year, localDate.Month, localDate.Day),
             Condition: dp.Condition,
             High: TemperatureConverter.Convert(dp.HighCelsius ?? dp.TemperatureCelsius, unit),
             Low: TemperatureConverter.Convert(dp.LowCelsius ?? dp.TemperatureCelsius, unit),
             IsWindy: dp.IsWindy,
             IconName: WeatherIconMapper.ToIconName(dp.Condition));
+    }
 
     private static WeatherSettingDto MapToDto(WeatherSetting setting, bool maskApiKey) =>
         new(

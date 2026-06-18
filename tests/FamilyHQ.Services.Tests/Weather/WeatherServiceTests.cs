@@ -86,6 +86,46 @@ public class WeatherServiceTests
     }
 
     [Fact]
+    public async Task GetDailyForecastAsync_BstLocation_MapsLocalDateNotUtcDate()
+    {
+        // Simulate a daily record for Dublin BST June 18.
+        // After EF UTC conversion, stored as 2026-06-17T23:00Z (offset stripped).
+        // MapToDailyDto must recover June 18, not June 17.
+        var location = new LocationSetting { Id = 1, UserId = "user-1", Latitude = 53.35, Longitude = -6.26 };
+        var storedTimestamp = new DateTimeOffset(2026, 6, 17, 23, 0, 0, TimeSpan.Zero); // UTC midnight BST June 18
+
+        var locationRepo = new Mock<ILocationSettingRepository>();
+        locationRepo.Setup(x => x.GetAsync("user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(location);
+
+        var tzLookup = new Mock<ITimeZoneLookup>();
+        tzLookup.Setup(x => x.GetTimeZone(53.35, -6.26)).Returns("Europe/Dublin");
+
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        dataRepo.Setup(x => x.GetDailyAsync(1, It.IsAny<int>(), "Europe/Dublin", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new WeatherDataPoint
+            {
+                LocationSettingId = 1,
+                DataType = WeatherDataType.Daily,
+                Timestamp = storedTimestamp,
+                RetrievedAt = storedTimestamp,
+                Condition = WeatherCondition.Clear,
+                TemperatureCelsius = 20,
+                HighCelsius = 25,
+                LowCelsius = 15,
+                WindSpeedKmh = 10,
+                IsWindy = false
+            }]);
+
+        var sut = CreateSut(dataRepo, locationRepo, tzLookup);
+        var result = await sut.GetDailyForecastAsync(days: 7);
+
+        result.Should().ContainSingle();
+        result[0].Date.Should().Be(new DateOnly(2026, 6, 18),
+            "BST midnight June 18 is stored as 2026-06-17T23:00Z but should map to June 18");
+    }
+
+    [Fact]
     public async Task GetHourlyAsync_NullLocation_ReturnsEmpty()
     {
         var locationRepo = new Mock<ILocationSettingRepository>();
