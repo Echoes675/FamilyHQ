@@ -46,8 +46,9 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
         {
             var instant = Instant.FromDateTimeOffset(_timeProvider.GetUtcNow());
             var localToday = instant.InZone(zone).Date;
-            start = zone.AtStartOfDay(localToday).ToDateTimeOffset();
-            end   = zone.AtStartOfDay(localToday.PlusDays(days)).ToDateTimeOffset();
+            // Npgsql requires UTC-offset DateTimeOffset for timestamptz parameters; ToUniversalTime() preserves the instant.
+            start = zone.AtStartOfDay(localToday).ToDateTimeOffset().ToUniversalTime();
+            end   = zone.AtStartOfDay(localToday.PlusDays(days)).ToDateTimeOffset().ToUniversalTime();
         }
         else
         {
@@ -86,8 +87,9 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
         if (zone is not null)
         {
             var localDate = new LocalDate(date.Year, date.Month, date.Day);
-            var start = zone.AtStartOfDay(localDate).ToDateTimeOffset();
-            var end   = zone.AtStartOfDay(localDate.PlusDays(1)).ToDateTimeOffset();
+            // Npgsql requires UTC-offset DateTimeOffset for timestamptz parameters; ToUniversalTime() preserves the instant.
+            var start = zone.AtStartOfDay(localDate).ToDateTimeOffset().ToUniversalTime();
+            var end   = zone.AtStartOfDay(localDate.PlusDays(1)).ToDateTimeOffset().ToUniversalTime();
             return (start, end);
         }
         var utcStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
