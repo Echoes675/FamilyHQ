@@ -32,7 +32,7 @@ public class WeatherRefreshServiceTests
         var dataPoints = WeatherRefreshService.BuildDataPoints(
             locationSettingId: 1,
             response: response,
-            retrievedAt: DateTimeOffset.UtcNow,
+            retrievedAt: new DateTimeOffset(2026, 6, 18, 8, 0, 0, TimeSpan.Zero),
             windThresholdKmh: 20,
             ianaTimeZone: "Europe/Dublin");
 
@@ -58,13 +58,34 @@ public class WeatherRefreshServiceTests
         var dataPoints = WeatherRefreshService.BuildDataPoints(
             locationSettingId: 1,
             response: response,
-            retrievedAt: DateTimeOffset.UtcNow,
+            retrievedAt: new DateTimeOffset(2026, 6, 18, 8, 0, 0, TimeSpan.Zero),
             windThresholdKmh: 20,
             ianaTimeZone: null);
 
         var daily = dataPoints.Single(p => p.DataType == WeatherDataType.Daily);
         daily.Timestamp.Offset.Should().Be(TimeSpan.Zero,
             "null zone falls back to UTC midnight (offset zero)");
+        daily.Timestamp.UtcDateTime.Should().Be(new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void BuildDataPoints_DailyTimestamp_UnknownZone_FallsBackToUtcMidnight()
+    {
+        var response = BuildMinimalResponse([
+            new WeatherDailyItem(new DateOnly(2026, 6, 18), WeatherCondition.Clear,
+                HighCelsius: 22, LowCelsius: 12, WindSpeedMaxKmh: 15)
+        ]);
+
+        var dataPoints = WeatherRefreshService.BuildDataPoints(
+            locationSettingId: 1,
+            response: response,
+            retrievedAt: new DateTimeOffset(2026, 6, 18, 8, 0, 0, TimeSpan.Zero),
+            windThresholdKmh: 20,
+            ianaTimeZone: "Not/AZone");
+
+        var daily = dataPoints.Single(p => p.DataType == WeatherDataType.Daily);
+        daily.Timestamp.Offset.Should().Be(TimeSpan.Zero,
+            "unrecognised zone falls back to UTC midnight");
         daily.Timestamp.UtcDateTime.Should().Be(new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc));
     }
 }
