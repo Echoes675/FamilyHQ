@@ -6,5 +6,6 @@ public record DayThemeDto(
     TimeOnly DaytimeStart,
     TimeOnly EveningStart,
     TimeOnly NightStart,
+    string? IanaTimeZone,
     string CurrentPeriod
 );

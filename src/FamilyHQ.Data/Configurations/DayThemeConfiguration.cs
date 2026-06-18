@@ -15,5 +15,6 @@ public class DayThemeConfiguration : IEntityTypeConfiguration<DayTheme>
         builder.Property(x => x.DaytimeStart).IsRequired();
         builder.Property(x => x.EveningStart).IsRequired();
         builder.Property(x => x.NightStart).IsRequired();
+        builder.Property(x => x.IanaTimeZone).HasMaxLength(64);
     }
 }

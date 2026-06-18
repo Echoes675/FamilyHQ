@@ -4,5 +4,6 @@ namespace FamilyHQ.Core.Interfaces;
 
 public interface ISunCalculatorService
 {
-    Task<DayThemeBoundaries> CalculateBoundariesAsync(double latitude, double longitude, DateOnly date);
+    Task<DayThemeBoundaries> CalculateBoundariesAsync(
+        double latitude, double longitude, DateOnly date, string? ianaTimeZone);
 }

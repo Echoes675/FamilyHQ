@@ -1,3 +1,4 @@
+using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
@@ -15,8 +16,10 @@ internal sealed class TestableDayThemeSchedulerService(
     IServiceProvider serviceProvider,
     IThemeBroadcaster themeBroadcaster,
     ILogger<DayThemeSchedulerService> logger,
-    IOptions<DayThemeOptions> options)
-    : DayThemeSchedulerService(serviceProvider, themeBroadcaster, logger, options)
+    IOptions<DayThemeOptions> options,
+    TimeProvider timeProvider)
+    : DayThemeSchedulerService(serviceProvider, themeBroadcaster, logger, options, timeProvider)
 {
     public Task RunExecuteAsync(CancellationToken stoppingToken) => ExecuteAsync(stoppingToken);
+    public TimeSpan TestGetNextBoundaryDelay(DayThemeDto dto) => GetNextBoundaryDelay(dto);
 }
