@@ -4,21 +4,23 @@ using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using NodaTime;
 
 public class WeatherService(
     IWeatherDataPointRepository weatherDataPointRepository,
     IWeatherSettingRepository weatherSettingRepository,
     ILocationSettingRepository locationSettingRepository,
-    ICurrentUserService currentUserService) : IWeatherService
+    ICurrentUserService currentUserService,
+    ITimeZoneLookup timeZoneLookup) : IWeatherService
 {
     public async Task<CurrentWeatherDto?> GetCurrentAsync(CancellationToken ct = default)
     {
-        var locationId = await GetLocationSettingIdAsync(ct);
-        if (locationId is null)
+        var location = await GetLocationSettingAsync(ct);
+        if (location is null)
             return null;
 
         var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
-        var dataPoint = await weatherDataPointRepository.GetCurrentAsync(locationId.Value, ct);
+        var dataPoint = await weatherDataPointRepository.GetCurrentAsync(location.Id, ct);
         if (dataPoint is null)
             return null;
 
@@ -27,12 +29,13 @@ public class WeatherService(
 
     public async Task<List<HourlyForecastItemDto>> GetHourlyAsync(DateOnly date, CancellationToken ct = default)
     {
-        var locationId = await GetLocationSettingIdAsync(ct);
-        if (locationId is null)
+        var location = await GetLocationSettingAsync(ct);
+        if (location is null)
             return [];
 
         var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
-        var dataPoints = await weatherDataPointRepository.GetHourlyAsync(locationId.Value, date, ct);
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var dataPoints = await weatherDataPointRepository.GetHourlyAsync(location.Id, date, ianaTimeZone, ct);
 
         return dataPoints
             .Select(dp => MapToHourlyDto(dp, setting.TemperatureUnit))
@@ -41,15 +44,19 @@ public class WeatherService(
 
     public async Task<List<DailyForecastItemDto>> GetDailyForecastAsync(int days, CancellationToken ct = default)
     {
-        var locationId = await GetLocationSettingIdAsync(ct);
-        if (locationId is null)
+        var location = await GetLocationSettingAsync(ct);
+        if (location is null)
             return [];
 
         var setting = await weatherSettingRepository.GetOrCreateAsync(currentUserService.UserId!, ct);
-        var dataPoints = await weatherDataPointRepository.GetDailyAsync(locationId.Value, days, ct);
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var zone = ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null;
+        var dataPoints = await weatherDataPointRepository.GetDailyAsync(location.Id, days, ianaTimeZone, ct);
 
         return dataPoints
-            .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit))
+            .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit, zone))
             .ToList();
     }
 
@@ -76,11 +83,8 @@ public class WeatherService(
         return MapToDto(updated, maskApiKey: true);
     }
 
-    private async Task<int?> GetLocationSettingIdAsync(CancellationToken ct)
-    {
-        var location = await locationSettingRepository.GetAsync(currentUserService.UserId!, ct);
-        return location?.Id;
-    }
+    private async Task<LocationSetting?> GetLocationSettingAsync(CancellationToken ct)
+        => await locationSettingRepository.GetAsync(currentUserService.UserId!, ct);
 
     private static CurrentWeatherDto MapToCurrentDto(WeatherDataPoint dp, TemperatureUnit unit) =>
         new(
@@ -98,14 +102,19 @@ public class WeatherService(
             IsWindy: dp.IsWindy,
             IconName: WeatherIconMapper.ToIconName(dp.Condition));
 
-    private static DailyForecastItemDto MapToDailyDto(WeatherDataPoint dp, TemperatureUnit unit) =>
-        new(
-            Date: DateOnly.FromDateTime(dp.Timestamp.Date),
+    private static DailyForecastItemDto MapToDailyDto(WeatherDataPoint dp, TemperatureUnit unit, DateTimeZone? zone)
+    {
+        var localDate = zone is not null
+            ? Instant.FromDateTimeOffset(dp.Timestamp).InZone(zone).Date
+            : LocalDate.FromDateTime(dp.Timestamp.UtcDateTime);
+        return new(
+            Date: new DateOnly(localDate.Year, localDate.Month, localDate.Day),
             Condition: dp.Condition,
             High: TemperatureConverter.Convert(dp.HighCelsius ?? dp.TemperatureCelsius, unit),
             Low: TemperatureConverter.Convert(dp.LowCelsius ?? dp.TemperatureCelsius, unit),
             IsWindy: dp.IsWindy,
             IconName: WeatherIconMapper.ToIconName(dp.Condition));
+    }
 
     private static WeatherSettingDto MapToDto(WeatherSetting setting, bool maskApiKey) =>
         new(
