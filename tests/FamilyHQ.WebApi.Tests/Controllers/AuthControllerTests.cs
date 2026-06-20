@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -84,7 +85,10 @@ public class AuthControllerTests
         var result = await sut.Callback("dummy_code_for_user1", "test-state");
 
         var redirect = result.Should().BeOfType<RedirectResult>().Subject;
-        redirect.Url.Should().StartWith("https://frontend.test/login-success?token=");
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        Uri.UnescapeDataString(query["code"].ToString()).Should().NotBeEmpty();
     }
 
     [Fact]
@@ -176,7 +180,11 @@ public class AuthControllerTests
 
         tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync("user1", AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()), Times.Once);
         queueMock.Verify(q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
-        result.Should().BeOfType<RedirectResult>().Which.Url.Should().StartWith("https://frontend.test/login-success?token=");
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        Uri.UnescapeDataString(query["code"].ToString()).Should().NotBeEmpty();
     }
 
     [Fact]
@@ -289,24 +297,66 @@ public class AuthControllerTests
     }
 
     [Fact]
-    public async Task Callback_WhenCodeExchangeSucceeds_JwtExpiry_IsApprox365DaysFromUtcNow()
+    public void Exchange_ValidCode_ReturnsToken()
     {
-        var protectorMock = CreateProtectorMock();
-        var httpContext = new DefaultHttpContext();
-        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
-        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
+        // Arrange
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        const string knownCode = "valid-exchange-code";
+        const string knownToken = "a.jwt.token";
+        cache.Set(knownCode, knownToken, TimeSpan.FromSeconds(60));
+        var sut = CreateSut(memoryCache: cache);
 
-        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest(knownCode));
 
-        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
-        var uri = new Uri(redirect.Url);
-        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
-        var rawToken = query["token"].ToString();
-        var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-        var jwt = handler.ReadJwtToken(rawToken);
-        var expiry = jwt.ValidTo; // ValidTo is always UTC
-        var expectedExpiry = DateTime.UtcNow.AddDays(365);
-        expiry.Should().BeCloseTo(expectedExpiry, precision: TimeSpan.FromMinutes(2));
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain(knownToken);
+        json.Should().Contain("\"token\":");
+    }
+
+    [Fact]
+    public void Exchange_InvalidCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest("nonexistent-code"));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public void Exchange_AlreadyRedeemedCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        const string knownCode = "one-time-code";
+        cache.Set(knownCode, "some.jwt.token", TimeSpan.FromSeconds(60));
+        var sut = CreateSut(memoryCache: cache);
+
+        // Act — first call should succeed, second should return BadRequest
+        sut.Exchange(new ExchangeCodeRequest(knownCode));
+        var result = sut.Exchange(new ExchangeCodeRequest(knownCode));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public void Exchange_EmptyCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest(string.Empty));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
     }
 
     private static string CreateTestIdToken(string sub, string? email = null)
@@ -354,7 +404,8 @@ public class AuthControllerTests
         IWebhookRegistrationService? webhookRegistrationService = null,
         string? grantedScope = "openid email https://www.googleapis.com/auth/calendar",
         ICalendarSyncJobQueue? syncJobQueue = null,
-        IDataProtectionProvider? dataProtectionProvider = null)
+        IDataProtectionProvider? dataProtectionProvider = null,
+        IMemoryCache? memoryCache = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -439,6 +490,9 @@ public class AuthControllerTests
         // DataProtection — default to passthrough mock
         dataProtectionProvider ??= CreateProviderMock(CreateProtectorMock());
 
+        // MemoryCache — default to real instance
+        var cache = memoryCache ?? new MemoryCache(new MemoryCacheOptions());
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
@@ -446,7 +500,8 @@ public class AuthControllerTests
             configuration,
             syncOptions,
             new Mock<ILogger<AuthController>>().Object,
-            dataProtectionProvider)
+            dataProtectionProvider,
+            cache)
         {
             ControllerContext = new ControllerContext
             {
