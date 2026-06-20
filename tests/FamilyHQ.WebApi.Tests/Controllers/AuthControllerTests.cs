@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using Moq.Protected;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Text.Json;
 using Xunit;
@@ -357,6 +358,42 @@ public class AuthControllerTests
 
         // Assert
         result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public async Task GenerateJwt_Expiry_IsUtcBased()
+    {
+        // Arrange — share a MemoryCache so Callback can populate it and Exchange can read it
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock),
+            memoryCache: cache);
+
+        // Act 1 — drive Callback so it generates and caches the JWT under a one-time code
+        var callbackResult = await sut.Callback("dummy_code_for_user1", "test-state");
+        var redirect = callbackResult.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+
+        // Extract and decode the one-time code from the redirect URL
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        var decodedCode = Uri.UnescapeDataString(query["code"].ToString());
+
+        // Act 2 — exchange the code for the JWT
+        var exchangeResult = sut.Exchange(new ExchangeCodeRequest(decodedCode));
+        var ok = exchangeResult.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        var doc = JsonSerializer.Deserialize<JsonElement>(json);
+        var token = doc.GetProperty("token").GetString()!;
+
+        // Assert — decode the JWT and verify expiry is ~365 days from now in UTC
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Kind.Should().Be(DateTimeKind.Utc);
+        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
     }
 
     private static string CreateTestIdToken(string sub, string? email = null)

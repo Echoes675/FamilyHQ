@@ -21,6 +21,11 @@
         }
         var jwt = await RedeemCodeAsync(code);
 
+        if (string.IsNullOrEmpty(jwt))
+        {
+            Logger.LogWarning("Exchange returned empty token for code; navigating unauthenticated");
+        }
+
         if (!string.IsNullOrEmpty(jwt))
         {
             await TokenStore.SetTokenAsync(jwt);
