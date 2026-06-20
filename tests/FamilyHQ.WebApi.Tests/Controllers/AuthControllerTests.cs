@@ -288,6 +288,27 @@ public class AuthControllerTests
         setCookieHeaders.Should().Match(h => h.Contains("expires=", StringComparison.OrdinalIgnoreCase) || h.Contains("max-age=0", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Callback_WhenCodeExchangeSucceeds_JwtExpiry_IsApprox365DaysFromUtcNow()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(httpContext: httpContext, dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        var rawToken = query["token"].ToString();
+        var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+        var jwt = handler.ReadJwtToken(rawToken);
+        var expiry = jwt.ValidTo; // ValidTo is always UTC
+        var expectedExpiry = DateTime.UtcNow.AddDays(365);
+        expiry.Should().BeCloseTo(expectedExpiry, precision: TimeSpan.FromMinutes(2));
+    }
+
     private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");

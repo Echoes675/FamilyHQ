@@ -193,7 +193,8 @@ public class AuthController : ControllerBase
             issuer: "FamilyHQ",
             audience: "FamilyHQ",
             claims: claims.ToArray(),
-            expires: DateTime.Now.AddDays(1),
+            notBefore: DateTime.UtcNow,
+            expires: DateTime.UtcNow.AddDays(365),
             signingCredentials: creds
         );
         return new JwtSecurityTokenHandler().WriteToken(token);
