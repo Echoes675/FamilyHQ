@@ -3,8 +3,10 @@ using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.WebApi.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -27,6 +29,7 @@ public class AuthController : ControllerBase
     private readonly IOptions<SyncOptions> _syncOptions;
     private readonly ILogger<AuthController> _logger;
     private readonly IDataProtector _stateProtector;
+    private readonly IMemoryCache _cache;
 
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
@@ -38,7 +41,8 @@ public class AuthController : ControllerBase
         IConfiguration configuration,
         IOptions<SyncOptions> syncOptions,
         ILogger<AuthController> logger,
-        IDataProtectionProvider dataProtectionProvider)
+        IDataProtectionProvider dataProtectionProvider,
+        IMemoryCache cache)
     {
         _authService = authService;
         _tokenStore = tokenStore;
@@ -47,6 +51,7 @@ public class AuthController : ControllerBase
         _syncOptions = syncOptions;
         _logger = logger;
         _stateProtector = dataProtectionProvider.CreateProtector("FamilyHQ.OAuthState");
+        _cache = cache;
     }
 
     /// <summary>
@@ -137,7 +142,9 @@ public class AuthController : ControllerBase
         {
             await _tokenStore.MarkNeedsReauthAsync(userId, MissingCalendarScopeMessage);
             _logger.LogWarning("Login for user {UserId} returned a grant without calendar access; flagged for re-auth.", userId);
-            return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
+            var missingCalendarCode = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            _cache.Set(missingCalendarCode, apiToken, TimeSpan.FromSeconds(60));
+            return Redirect($"{frontendBaseUrl}/login-success?code={Uri.EscapeDataString(missingCalendarCode)}");
         }
 
         // Propagate userId into the ExecutionContext so ICurrentUserService can
@@ -171,7 +178,23 @@ public class AuthController : ControllerBase
             BackgroundUserContext.Current = null;
         }
 
-        return Redirect($"{frontendBaseUrl}/login-success?token={Uri.EscapeDataString(apiToken)}");
+        var successCode = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        _cache.Set(successCode, apiToken, TimeSpan.FromSeconds(60));
+        return Redirect($"{frontendBaseUrl}/login-success?code={Uri.EscapeDataString(successCode)}");
+    }
+
+    [HttpPost("exchange")]
+    [AllowAnonymous]
+    public IActionResult Exchange([FromBody] ExchangeCodeRequest request)
+    {
+        if (string.IsNullOrEmpty(request?.Code))
+            return BadRequest();
+
+        if (!_cache.TryGetValue(request.Code, out string? jwt))
+            return BadRequest();
+
+        _cache.Remove(request.Code);
+        return Ok(new { token = jwt });
     }
 
     private string GenerateJwt(string userId, string? email)
@@ -193,7 +216,8 @@ public class AuthController : ControllerBase
             issuer: "FamilyHQ",
             audience: "FamilyHQ",
             claims: claims.ToArray(),
-            expires: DateTime.Now.AddDays(1),
+            notBefore: DateTime.UtcNow,
+            expires: DateTime.UtcNow.AddDays(365),
             signingCredentials: creds
         );
         return new JwtSecurityTokenHandler().WriteToken(token);
