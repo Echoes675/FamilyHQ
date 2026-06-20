@@ -2,39 +2,81 @@
 @inject FamilyHQ.WebUi.Services.Auth.IAuthTokenStore TokenStore
 @inject FamilyHQ.WebUi.Services.Correlation.ICorrelationIdTokenStore CorrelationStore
 @inject NavigationManager NavigationManager
+@inject IHttpClientFactory HttpClientFactory
+@inject ILogger<LoginSuccess> Logger
+@using System.Text
+@using System.Text.Json
 
 @code {
+    private record ExchangeResponse(string Token);
+
     protected override async Task OnInitializedAsync()
     {
-        var token = ParseTokenFromQuery(NavigationManager.Uri);
-        if (!string.IsNullOrEmpty(token))
+        var code = ParseCodeFromQuery(NavigationManager.Uri);
+
+        if (string.IsNullOrEmpty(code))
         {
-            await TokenStore.SetTokenAsync(token);
-            
+            NavigationManager.NavigateTo("/", forceLoad: true);
+            return;
+        }
+        var jwt = await RedeemCodeAsync(code);
+
+        if (!string.IsNullOrEmpty(jwt))
+        {
+            await TokenStore.SetTokenAsync(jwt);
+
             var existingSessionCorrelationId = await CorrelationStore.GetSessionCorrelationIdAsync();
             if (string.IsNullOrEmpty(existingSessionCorrelationId))
             {
                 await CorrelationStore.SetSessionCorrelationIdAsync(Guid.NewGuid().ToString());
             }
 
-            // Small delay to ensure JS interop completes before navigation
-            // This prevents the race condition where the token isn't saved
-            // before the page unloads with forceLoad: true
-            await Task.Delay(100);
         }
 
         NavigationManager.NavigateTo("/", forceLoad: true);
     }
 
-    private static string? ParseTokenFromQuery(string absoluteUri)
+    private static string? ParseCodeFromQuery(string absoluteUri)
     {
         var query = new Uri(absoluteUri).Query.TrimStart('?');
         foreach (var pair in query.Split('&'))
         {
             var parts = pair.Split('=', 2);
-            if (parts.Length == 2 && parts[0] == "token")
+            if (parts.Length == 2 && parts[0] == "code")
                 return Uri.UnescapeDataString(parts[1]);
         }
         return null;
+    }
+
+    private async Task<string?> RedeemCodeAsync(string code)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("Auth");
+            var payload = JsonSerializer.Serialize(new { code });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync("api/auth/exchange", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Exchange code redemption failed: {StatusCode}", (int)response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var result = JsonSerializer.Deserialize<ExchangeResponse>(json, options);
+            return result?.Token;
+        }
+        catch (HttpRequestException ex)
+        {
+            Logger.LogWarning("Exchange code redemption failed: {Error}", ex.Message);
+            return null;
+        }
+        catch (JsonException ex)
+        {
+            Logger.LogWarning("Exchange code redemption failed: {Error}", ex.Message);
+            return null;
+        }
     }
 }
