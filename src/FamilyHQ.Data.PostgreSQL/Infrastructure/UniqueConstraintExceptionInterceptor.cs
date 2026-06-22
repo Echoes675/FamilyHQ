@@ -1,14 +1,11 @@
-using System.Runtime.CompilerServices;
 using FamilyHQ.Data.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 
-[assembly: InternalsVisibleTo("FamilyHQ.Services.Tests")]
-
 namespace FamilyHQ.Data.PostgreSQL.Infrastructure;
 
-public sealed class UniqueConstraintExceptionInterceptor : SaveChangesInterceptor
+internal sealed class UniqueConstraintExceptionInterceptor : SaveChangesInterceptor
 {
     public override void SaveChangesFailed(DbContextErrorEventData eventData)
     {
