@@ -62,6 +62,13 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        // Anonymous client used before a JWT is available (e.g. the exchange-code flow).
+        // No auth or correlation handlers — the token has not been issued yet.
+        builder.Services.AddHttpClient("Auth", client =>
+        {
+            client.BaseAddress = new Uri(backendUrl);
+        });
+
         builder.Services.AddHttpClient("Weather", client =>
         {
             client.BaseAddress = new Uri(backendUrl);

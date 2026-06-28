@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Data.Exceptions;
 using Microsoft.EntityFrameworkCore;
 
 namespace FamilyHQ.Data.Repositories;
@@ -36,9 +37,8 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
         {
             await context.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException)
+        catch (UniqueConstraintException)
         {
-            // Unique-index backstop: a concurrent enqueue created the Pending job first.
             context.ChangeTracker.Clear();
         }
     }

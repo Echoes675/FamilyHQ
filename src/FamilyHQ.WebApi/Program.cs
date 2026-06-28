@@ -88,6 +88,7 @@ builder.Services.AddScoped<ITokenStore, DatabaseTokenStore>();
 
 // Add SignalR Configuration
 builder.Services.AddSignalR();
+builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IThemeBroadcaster, FamilyHQ.WebApi.Hubs.SignalRThemeBroadcaster>();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IWeatherBroadcaster, FamilyHQ.WebApi.Hubs.SignalRWeatherBroadcaster>();
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IConnectionStatusBroadcaster, FamilyHQ.WebApi.Hubs.SignalRConnectionStatusBroadcaster>();
@@ -111,11 +112,15 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer
 
         options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
         {
-            ValidateIssuer = false,
-            ValidateAudience = false,
-            ValidateLifetime = false,
+            ValidateIssuer = true,
+            ValidIssuer = "FamilyHQ",
+            ValidateAudience = true,
+            ValidAudience = "FamilyHQ",
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(5),
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtSigningKey))
+            IssuerSigningKey = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes(jwtSigningKey))
         };
         
         // SignalR Authentication

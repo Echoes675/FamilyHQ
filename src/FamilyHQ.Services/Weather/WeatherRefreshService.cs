@@ -5,6 +5,7 @@ using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 
 public class WeatherRefreshService(
     IWeatherSettingRepository weatherSettingRepo,
@@ -12,6 +13,7 @@ public class WeatherRefreshService(
     IWeatherProvider weatherProvider,
     IWeatherDataPointRepository weatherDataPointRepo,
     IWeatherBroadcaster weatherBroadcaster,
+    ITimeZoneLookup timeZoneLookup,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
     public async Task<WeatherRefreshResult> RefreshAsync(string userId, CancellationToken ct = default)
@@ -34,13 +36,23 @@ public class WeatherRefreshService(
             return new WeatherRefreshResult(WeatherRefreshOutcome.SkippedNoLocation, LocationSettingId: null, DataPointsWritten: 0);
         }
 
+        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+
+        if (ianaTimeZone is not null &&
+            DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone) is null)
+        {
+            logger.LogWarning(
+                "ITimeZoneLookup returned an unknown IANA zone '{Zone}' for location {LocationId}; timestamps will be treated as UTC.",
+                ianaTimeZone, location.Id);
+        }
+
         var weatherResponse = await weatherProvider.GetWeatherAsync(
-            location.Latitude, location.Longitude, ct);
+            location.Latitude, location.Longitude, ianaTimeZone, ct);
 
         var now = DateTimeOffset.UtcNow;
         var windThreshold = weatherSetting.WindThresholdKmh;
 
-        var dataPoints = BuildDataPoints(location.Id, weatherResponse, now, windThreshold);
+        var dataPoints = BuildDataPoints(location.Id, weatherResponse, now, windThreshold, ianaTimeZone);
 
         await weatherDataPointRepo.ReplaceAllAsync(location.Id, dataPoints, ct);
 
@@ -57,7 +69,8 @@ public class WeatherRefreshService(
         int locationSettingId,
         WeatherResponse response,
         DateTimeOffset retrievedAt,
-        double windThresholdKmh)
+        double windThresholdKmh,
+        string? ianaTimeZone = null)
     {
         var dataPoints = new List<WeatherDataPoint>();
 
@@ -93,7 +106,7 @@ public class WeatherRefreshService(
             dataPoints.Add(new WeatherDataPoint
             {
                 LocationSettingId = locationSettingId,
-                Timestamp = new DateTimeOffset(daily.Date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                Timestamp = BuildDailyTimestamp(daily.Date, ianaTimeZone),
                 Condition = daily.Condition,
                 TemperatureCelsius = daily.HighCelsius,
                 HighCelsius = daily.HighCelsius,
@@ -106,5 +119,18 @@ public class WeatherRefreshService(
         }
 
         return dataPoints;
+    }
+
+    private static DateTimeOffset BuildDailyTimestamp(DateOnly date, string? ianaTimeZone)
+    {
+        var zone = ianaTimeZone is not null
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
+            : null;
+        if (zone is not null)
+        {
+            var localDate = new LocalDate(date.Year, date.Month, date.Day);
+            return zone.AtStartOfDay(localDate).ToDateTimeOffset();
+        }
+        return new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
     }
 }

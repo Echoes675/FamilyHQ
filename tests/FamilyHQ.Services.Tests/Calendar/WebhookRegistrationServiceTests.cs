@@ -34,6 +34,7 @@ public class WebhookRegistrationServiceTests
                 GoogleCalendarId,
                 It.IsAny<string>(),
                 ExpectedWebhookUrl,
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse(channelId, resourceId, expiration));
 
@@ -45,6 +46,7 @@ public class WebhookRegistrationServiceTests
             GoogleCalendarId,
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         webhookRepo.Verify(r => r.UpsertAsync(
@@ -52,7 +54,8 @@ public class WebhookRegistrationServiceTests
                 reg.CalendarInfoId == CalendarInfoId &&
                 reg.ChannelId == channelId &&
                 reg.ResourceId == resourceId &&
-                reg.ExpiresAt == DateTimeOffset.FromUnixTimeMilliseconds(expiration)),
+                reg.ExpiresAt == DateTimeOffset.FromUnixTimeMilliseconds(expiration) &&
+                !string.IsNullOrEmpty(reg.ChannelToken)),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -67,6 +70,7 @@ public class WebhookRegistrationServiceTests
 
         // Assert
         client.Verify(c => c.WatchEventsAsync(
+            It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -87,6 +91,7 @@ public class WebhookRegistrationServiceTests
             .ReturnsAsync((WebhookRegistration?)null);
 
         client.Setup(c => c.WatchEventsAsync(
+                It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<string>(),
@@ -133,6 +138,7 @@ public class WebhookRegistrationServiceTests
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 ExpectedWebhookUrl,
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("ch-1", "res-1", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
@@ -144,12 +150,14 @@ public class WebhookRegistrationServiceTests
             "cal1@google.com",
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         client.Verify(c => c.WatchEventsAsync(
             "cal2@google.com",
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -167,7 +175,7 @@ public class WebhookRegistrationServiceTests
 
         // Assert — no calendar enumeration, no Google call
         calendarRepo.Verify(r => r.GetCalendarsByUserIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        client.Verify(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        client.Verify(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -210,6 +218,7 @@ public class WebhookRegistrationServiceTests
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 ExpectedWebhookUrl,
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("ch-x", "res-x", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
@@ -223,12 +232,14 @@ public class WebhookRegistrationServiceTests
             "u1-cal@google.com",
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
 
         client.Verify(c => c.WatchEventsAsync(
             "u2-cal@google.com",
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -257,14 +268,14 @@ public class WebhookRegistrationServiceTests
         };
         calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("active-user", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { activeCalendar });
-        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()))
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("ch", "res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
         // Act
         await sut.RenewAllAsync();
 
         // Assert
-        client.Verify(c => c.WatchEventsAsync("active@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.WatchEventsAsync("active@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         calendarRepo.Verify(r => r.GetCalendarsByUserIdAsync("reauth-user", It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -294,6 +305,7 @@ public class WebhookRegistrationServiceTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -319,6 +331,7 @@ public class WebhookRegistrationServiceTests
                 GoogleCalendarId,
                 It.IsAny<string>(),
                 ExpectedWebhookUrl,
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
@@ -330,6 +343,7 @@ public class WebhookRegistrationServiceTests
             GoogleCalendarId,
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -355,6 +369,7 @@ public class WebhookRegistrationServiceTests
                 GoogleCalendarId,
                 It.IsAny<string>(),
                 ExpectedWebhookUrl,
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("forced-ch", "forced-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
@@ -366,6 +381,7 @@ public class WebhookRegistrationServiceTests
             GoogleCalendarId,
             It.IsAny<string>(),
             ExpectedWebhookUrl,
+            It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -375,7 +391,7 @@ public class WebhookRegistrationServiceTests
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
         webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((WebhookRegistration?)null);
-        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new WebhookNotSupportedException("WatchEvents", "pushNotSupportedForRequestedResource", "{}"));
 
         await sut.Invoking(s => s.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId)).Should().NotThrowAsync();
@@ -390,7 +406,7 @@ public class WebhookRegistrationServiceTests
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
         webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((WebhookRegistration?)null);
-        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("transient"));
 
         await sut.Invoking(s => s.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId)).Should().NotThrowAsync();
@@ -410,13 +426,44 @@ public class WebhookRegistrationServiceTests
         calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { supported, unsupported });
         webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync((WebhookRegistration?)null);
-        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()))
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WatchChannelResponse("ch", "res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
         await sut.RegisterAllAsync("u1");
 
-        client.Verify(c => c.WatchEventsAsync("ok@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<CancellationToken>()), Times.Once);
-        client.Verify(c => c.WatchEventsAsync("holidays@google.com", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        client.Verify(c => c.WatchEventsAsync("ok@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.WatchEventsAsync("holidays@google.com", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_StoresChannelTokenInRegistration()
+    {
+        // Verify that the token generated locally is both sent to Google and persisted on the registration.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+
+        var expiration = DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds();
+        string? capturedToken = null;
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string, CancellationToken>((_, _, _, token, _) => capturedToken = token)
+            .ReturnsAsync(new WatchChannelResponse("ch-x", "res-x", expiration));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        capturedToken.Should().NotBeNullOrEmpty();
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg =>
+                reg.CalendarInfoId == CalendarInfoId &&
+                reg.ChannelToken == capturedToken),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static (

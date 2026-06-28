@@ -139,7 +139,8 @@ public class SyncControllerTests
         {
             ChannelId = channelId,
             CalendarInfoId = calendarInfoId,
-            CalendarInfo = calendarInfo
+            CalendarInfo = calendarInfo,
+            ChannelToken = "test-secret-token"
         };
 
         var harness = CreateSutInternal(userIds: null,
@@ -147,6 +148,7 @@ public class SyncControllerTests
 
         harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
         harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-token", "test-secret-token");
 
         // Act
         var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
@@ -172,7 +174,7 @@ public class SyncControllerTests
     }
 
     [Fact]
-    public async Task GooglePushWebhook_WithUnknownChannelId_FallsBackToPeriodicEnqueue()
+    public async Task GooglePushWebhook_WithUnknownChannelId_DoesNotEnqueue()
     {
         // Arrange
         var harness = CreateSutInternal(userIds: ["user1"],
@@ -188,10 +190,163 @@ public class SyncControllerTests
         result.Should().BeOfType<OkResult>();
 
         harness.JobQueue.Verify(
-            q => q.EnqueueAsync("user1", null, SyncJobSource.Periodic, null, It.IsAny<CancellationToken>()),
-            Times.Once);
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithKnownChannelIdAndValidToken_EnqueuesTargetedJob()
+    {
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var userId = "user1";
+        var channelId = "test-channel-123";
+        const string channelToken = "secret-token-abc";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = userId,
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo,
+            ChannelToken = channelToken
+        };
+
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
+
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-token", channelToken);
+
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        result.Should().BeOfType<OkResult>();
         harness.JobQueue.Verify(
-            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), SyncJobSource.Webhook, It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            q => q.EnqueueAsync(userId, calendarInfoId, SyncJobSource.Webhook, channelId, It.IsAny<CancellationToken>()),
+            Times.Once);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithKnownChannelIdAndMissingToken_DoesNotEnqueue()
+    {
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var channelId = "test-channel-123";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = "user1",
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo,
+            ChannelToken = "secret-token-abc"
+        };
+
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
+
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        // No x-goog-channel-token header
+
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        result.Should().BeOfType<OkResult>();
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithKnownChannelIdAndWrongToken_DoesNotEnqueue()
+    {
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var channelId = "test-channel-123";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = "user1",
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo,
+            ChannelToken = "secret-token-abc"
+        };
+
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
+
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-token", "wrong-token");
+
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        result.Should().BeOfType<OkResult>();
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.Signal.Verify(s => s.Release(), Times.Once);
+    }
+
+    [Fact]
+    public async Task GooglePushWebhook_WithEmptyStoredChannelToken_DoesNotEnqueue()
+    {
+        // Registrations migrated before FHQ-81 have an empty ChannelToken.
+        // Even if the caller sends a matching empty token header, the request must be rejected.
+        var calendarInfoId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        var channelId = "test-channel-123";
+
+        var calendarInfo = new CalendarInfo
+        {
+            Id = calendarInfoId,
+            UserId = "user1",
+            GoogleCalendarId = "google-cal-1",
+            DisplayName = "Test Calendar"
+        };
+
+        var registration = new WebhookRegistration
+        {
+            ChannelId = channelId,
+            CalendarInfoId = calendarInfoId,
+            CalendarInfo = calendarInfo,
+            ChannelToken = string.Empty
+        };
+
+        var harness = CreateSutInternal(userIds: null,
+            webhookRegistration: registration, calendarInfo: calendarInfo, currentUserId: "__default__");
+
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-resource-state", "exists");
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-id", channelId);
+        harness.SystemUnderTest.ControllerContext.HttpContext.Request.Headers.Append("x-goog-channel-token", string.Empty);
+
+        var result = await harness.SystemUnderTest.GooglePushWebhook(CancellationToken.None);
+
+        result.Should().BeOfType<OkResult>();
+        harness.JobQueue.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
         harness.Signal.Verify(s => s.Release(), Times.Once);
     }
@@ -257,6 +412,7 @@ public class SyncControllerTests
 
         // Assert
         result.Should().BeOfType<OkResult>();
+        harness.Signal.Verify(s => s.Release(), Times.Once);
     }
 
     // Sentinel that distinguishes "default: a valid test user" from "explicitly null".

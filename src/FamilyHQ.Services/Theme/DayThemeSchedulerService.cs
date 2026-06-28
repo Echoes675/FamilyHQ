@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using NodaTime;
 
 namespace FamilyHQ.Services.Theme;
 
@@ -12,7 +13,8 @@ public class DayThemeSchedulerService(
     IServiceProvider serviceProvider,
     IThemeBroadcaster themeBroadcaster,
     ILogger<DayThemeSchedulerService> logger,
-    IOptions<DayThemeOptions> options) : BackgroundService, IDayThemeScheduler
+    IOptions<DayThemeOptions> options,
+    TimeProvider timeProvider) : BackgroundService, IDayThemeScheduler
 {
     private readonly DayThemeOptions _options = options.Value;
     private CancellationTokenSource _delayCts = new();
@@ -122,22 +124,62 @@ public class DayThemeSchedulerService(
         logger.LogInformation("Theme broadcast: {Period}", updatedDto.CurrentPeriod);
     }
 
-    private static TimeSpan GetNextBoundaryDelay(Core.DTOs.DayThemeDto dto)
+    protected TimeSpan GetNextBoundaryDelay(Core.DTOs.DayThemeDto dto)
     {
-        var now = TimeOnly.FromDateTime(DateTime.Now);
+        var zone = !string.IsNullOrWhiteSpace(dto.IanaTimeZone)
+            ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(dto.IanaTimeZone)
+            : null;
+
+        var localNow = ComputeLocalNow(zone);
         var boundaries = new[] { dto.MorningStart, dto.DaytimeStart, dto.EveningStart, dto.NightStart };
-        // Use TimeOnly? so default(TimeOnly) midnight is never mistaken for "no boundary"
-        var next = boundaries.Cast<TimeOnly?>().Where(b => b > now).OrderBy(b => b).FirstOrDefault();
+        var next = boundaries.Cast<TimeOnly?>().Where(b => b > localNow).OrderBy(b => b).FirstOrDefault();
 
         if (next is null)
-        {
-            // All boundaries passed — wait until midnight
-            var midnight = DateTime.Today.AddDays(1);
-            return midnight - DateTime.Now;
-        }
+            return ComputeDelayToLocalMidnight(zone);
 
-        var nextDateTime = DateTime.Today.Add(next.Value.ToTimeSpan());
-        var delay = nextDateTime - DateTime.Now;
-        return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+        return ComputeDelayToLocalTime(next.Value, zone);
+    }
+
+    private TimeOnly ComputeLocalNow(DateTimeZone? zone)
+    {
+        if (zone is not null)
+        {
+            var instant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var local = instant.InZone(zone).LocalDateTime;
+            return new TimeOnly(local.Hour, local.Minute, local.Second);
+        }
+        return TimeOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
+    }
+
+    private TimeSpan ComputeDelayToLocalMidnight(DateTimeZone? zone)
+    {
+        if (zone is not null)
+        {
+            var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var localDate = nowInstant.InZone(zone).Date;
+            var midnight = zone.AtStartOfDay(localDate.PlusDays(1)).ToInstant();
+            return (midnight - nowInstant).ToTimeSpan();
+        }
+        var now = timeProvider.GetLocalNow();
+        return now.Date.AddDays(1) - now.DateTime;
+    }
+
+    private TimeSpan ComputeDelayToLocalTime(TimeOnly localTime, DateTimeZone? zone)
+    {
+        if (zone is not null)
+        {
+            var nowInstant = Instant.FromDateTimeOffset(timeProvider.GetUtcNow());
+            var localDate = nowInstant.InZone(zone).Date;
+            var targetLocal = localDate.At(new LocalTime(localTime.Hour, localTime.Minute, localTime.Second));
+            // AtLeniently: spring-forward gaps delay wakeup by up to the gap duration; fall-back ambiguity
+            // picks the pre-transition instant. Both are acceptable for a UI theme scheduler.
+            var targetInstant = zone.AtLeniently(targetLocal).ToInstant();
+            var delay = (targetInstant - nowInstant).ToTimeSpan();
+            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+        }
+        var now = timeProvider.GetLocalNow();
+        var nextDateTime = now.Date.Add(localTime.ToTimeSpan());
+        var delayTs = nextDateTime - now.DateTime;
+        return delayTs < TimeSpan.Zero ? TimeSpan.Zero : delayTs;
     }
 }

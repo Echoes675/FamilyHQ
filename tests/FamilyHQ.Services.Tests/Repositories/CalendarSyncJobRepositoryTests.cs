@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Models;
 using FamilyHQ.Data;
+using FamilyHQ.Data.Exceptions;
 using FamilyHQ.Data.Repositories;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -306,5 +307,49 @@ public class CalendarSyncJobRepositoryTests : IDisposable
     {
         var sut = CreateSut();
         (await sut.GetActiveJobCountAsync("")).Should().Be(0);
+    }
+
+    // --- Helper ---
+
+    private sealed class SaveThrowingFamilyHqDbContext : FamilyHqDbContext
+    {
+        private readonly Exception _exception;
+
+        public SaveThrowingFamilyHqDbContext(DbContextOptions<FamilyHqDbContext> options, Exception exception)
+            : base(options) => _exception = exception;
+
+        public override Task<int> SaveChangesAsync(CancellationToken ct = default) => throw _exception;
+    }
+
+    // --- New tests ---
+
+    [Fact]
+    public async Task EnqueueAsync_UniqueConstraintException_IsSwallowed()
+    {
+        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var original = new DbUpdateException("race", new Exception("inner"));
+        var throwingDb = new SaveThrowingFamilyHqDbContext(options, new UniqueConstraintException("race", original));
+        var sut = new CalendarSyncJobRepository(throwingDb, _time);
+
+        var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_NonUniqueDbUpdateException_Rethrows()
+    {
+        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
+            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+            .Options;
+        var throwingDb = new SaveThrowingFamilyHqDbContext(options,
+            new DbUpdateException("transient DB error", new Exception("connection refused")));
+        var sut = new CalendarSyncJobRepository(throwingDb, _time);
+
+        var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
+
+        await act.Should().ThrowAsync<DbUpdateException>();
     }
 }

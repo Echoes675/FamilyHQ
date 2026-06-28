@@ -1,6 +1,5 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
-using GeoTimeZone;
 using NodaTime;
 using NodaTime.Text;
 
@@ -10,7 +9,8 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ILocationService locationService) : ITimeZoneService
+    ILocationService locationService,
+    ITimeZoneLookup timeZoneLookup) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
@@ -24,7 +24,7 @@ public class TimeZoneService(
         var location = await locationRepo.GetAsync(userId, ct);
         if (location is not null)
         {
-            var derived = TimeZoneLookup.GetTimeZone(location.Latitude, location.Longitude).Result;
+            var derived = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
             if (!string.IsNullOrWhiteSpace(derived) && IsValidZone(derived)) return derived;
         }
 

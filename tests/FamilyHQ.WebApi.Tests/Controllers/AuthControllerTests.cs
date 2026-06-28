@@ -9,12 +9,14 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using Moq.Protected;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Text.Json;
 using Xunit;
@@ -84,7 +86,10 @@ public class AuthControllerTests
         var result = await sut.Callback("dummy_code_for_user1", "test-state");
 
         var redirect = result.Should().BeOfType<RedirectResult>().Subject;
-        redirect.Url.Should().StartWith("https://frontend.test/login-success?token=");
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        Uri.UnescapeDataString(query["code"].ToString()).Should().NotBeEmpty();
     }
 
     [Fact]
@@ -176,7 +181,11 @@ public class AuthControllerTests
 
         tokenStoreMock.Verify(t => t.MarkNeedsReauthAsync("user1", AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()), Times.Once);
         queueMock.Verify(q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
-        result.Should().BeOfType<RedirectResult>().Which.Url.Should().StartWith("https://frontend.test/login-success?token=");
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        Uri.UnescapeDataString(query["code"].ToString()).Should().NotBeEmpty();
     }
 
     [Fact]
@@ -288,6 +297,105 @@ public class AuthControllerTests
         setCookieHeaders.Should().Match(h => h.Contains("expires=", StringComparison.OrdinalIgnoreCase) || h.Contains("max-age=0", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Exchange_ValidCode_ReturnsToken()
+    {
+        // Arrange
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        const string knownCode = "valid-exchange-code";
+        const string knownToken = "a.jwt.token";
+        cache.Set(knownCode, knownToken, TimeSpan.FromSeconds(60));
+        var sut = CreateSut(memoryCache: cache);
+
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest(knownCode));
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = System.Text.Json.JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain(knownToken);
+        json.Should().Contain("\"token\":");
+    }
+
+    [Fact]
+    public void Exchange_InvalidCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest("nonexistent-code"));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public void Exchange_AlreadyRedeemedCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        const string knownCode = "one-time-code";
+        cache.Set(knownCode, "some.jwt.token", TimeSpan.FromSeconds(60));
+        var sut = CreateSut(memoryCache: cache);
+
+        // Act — first call should succeed, second should return BadRequest
+        sut.Exchange(new ExchangeCodeRequest(knownCode));
+        var result = sut.Exchange(new ExchangeCodeRequest(knownCode));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public void Exchange_EmptyCode_ReturnsBadRequest()
+    {
+        // Arrange
+        var sut = CreateSut();
+
+        // Act
+        var result = sut.Exchange(new ExchangeCodeRequest(string.Empty));
+
+        // Assert
+        result.Should().BeOfType<BadRequestResult>();
+    }
+
+    [Fact]
+    public async Task GenerateJwt_Expiry_IsUtcBased()
+    {
+        // Arrange — share a MemoryCache so Callback can populate it and Exchange can read it
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var sut = CreateSut(
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock),
+            memoryCache: cache);
+
+        // Act 1 — drive Callback so it generates and caches the JWT under a one-time code
+        var callbackResult = await sut.Callback("dummy_code_for_user1", "test-state");
+        var redirect = callbackResult.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+
+        // Extract and decode the one-time code from the redirect URL
+        var uri = new Uri(redirect.Url);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        var decodedCode = Uri.UnescapeDataString(query["code"].ToString());
+
+        // Act 2 — exchange the code for the JWT
+        var exchangeResult = sut.Exchange(new ExchangeCodeRequest(decodedCode));
+        var ok = exchangeResult.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        var doc = JsonSerializer.Deserialize<JsonElement>(json);
+        var token = doc.GetProperty("token").GetString()!;
+
+        // Assert — decode the JWT and verify expiry is ~365 days from now in UTC
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Kind.Should().Be(DateTimeKind.Utc);
+        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
+    }
+
     private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
@@ -333,7 +441,8 @@ public class AuthControllerTests
         IWebhookRegistrationService? webhookRegistrationService = null,
         string? grantedScope = "openid email https://www.googleapis.com/auth/calendar",
         ICalendarSyncJobQueue? syncJobQueue = null,
-        IDataProtectionProvider? dataProtectionProvider = null)
+        IDataProtectionProvider? dataProtectionProvider = null,
+        IMemoryCache? memoryCache = null)
     {
         // Build a GoogleAuthService backed by a fake HttpMessageHandler
         var responsePayload = new Dictionary<string, object?>
@@ -418,6 +527,9 @@ public class AuthControllerTests
         // DataProtection — default to passthrough mock
         dataProtectionProvider ??= CreateProviderMock(CreateProtectorMock());
 
+        // MemoryCache — default to real instance
+        var cache = memoryCache ?? new MemoryCache(new MemoryCacheOptions());
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
@@ -425,7 +537,8 @@ public class AuthControllerTests
             configuration,
             syncOptions,
             new Mock<ILogger<AuthController>>().Object,
-            dataProtectionProvider)
+            dataProtectionProvider,
+            cache)
         {
             ControllerContext = new ControllerContext
             {

@@ -22,6 +22,11 @@ public class WebhookRegistrationConfiguration : IEntityTypeConfiguration<Webhook
             .IsRequired()
             .HasMaxLength(256);
 
+        // ChannelToken - required, max length 128
+        builder.Property(w => w.ChannelToken)
+            .IsRequired()
+            .HasMaxLength(128);
+
         // ExpiresAt - required, convert to UTC
         builder.Property(w => w.ExpiresAt)
             .IsRequired()

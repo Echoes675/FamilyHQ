@@ -19,6 +19,7 @@ public class DayThemeControllerTests
         var date = new DateOnly(2026, 6, 15);
         var dto = new DayThemeDto(date,
             new TimeOnly(5, 30), new TimeOnly(6, 45), new TimeOnly(20, 15), new TimeOnly(21, 30),
+            null,
             "Daytime");
         serviceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>())).ReturnsAsync(dto);
 

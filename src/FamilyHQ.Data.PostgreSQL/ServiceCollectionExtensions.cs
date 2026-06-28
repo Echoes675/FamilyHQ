@@ -1,6 +1,7 @@
 using FamilyHQ.Data;
 using FamilyHQ.Data.Repositories;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Data.PostgreSQL.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,8 +17,10 @@ public static class ServiceCollectionExtensions
     {
         var connectionString = configuration.GetConnectionString(connectionStringName);
         
-        services.AddDbContext<FamilyHqDbContext>(options =>
-            options.UseNpgsql(connectionString, x => x.MigrationsAssembly(typeof(ServiceCollectionExtensions).Assembly.FullName)));
+        services.AddSingleton<UniqueConstraintExceptionInterceptor>();
+        services.AddDbContext<FamilyHqDbContext>((sp, options) =>
+            options.UseNpgsql(connectionString, x => x.MigrationsAssembly(typeof(ServiceCollectionExtensions).Assembly.FullName))
+                   .AddInterceptors(sp.GetRequiredService<UniqueConstraintExceptionInterceptor>()));
 
         services.AddScoped<ICalendarRepository, CalendarRepository>();
         services.AddScoped<IDayThemeRepository, DayThemeRepository>();

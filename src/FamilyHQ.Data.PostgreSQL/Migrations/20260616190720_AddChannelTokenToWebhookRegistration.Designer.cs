@@ -3,6 +3,7 @@ using System;
 using FamilyHQ.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyHQ.Data.PostgreSQL.Migrations
 {
     [DbContext(typeof(FamilyHqDbContext))]
-    partial class FamilyHqDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260616190720_AddChannelTokenToWebhookRegistration")]
+    partial class AddChannelTokenToWebhookRegistration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -222,10 +225,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
 
                     b.Property<TimeOnly>("EveningStart")
                         .HasColumnType("time without time zone");
-
-                    b.Property<string>("IanaTimeZone")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
 
                     b.Property<TimeOnly>("MorningStart")
                         .HasColumnType("time without time zone");

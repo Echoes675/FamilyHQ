@@ -68,7 +68,9 @@ public class SettingsControllerTests
         dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
-                new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30), "Daytime"));
+                new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
+                null,
+                "Daytime"));
         schedulerMock.Setup(x => x.TriggerRecalculationAsync()).Returns(Task.CompletedTask);
 
         var clientsMock = new Mock<IHubClients>();
@@ -96,7 +98,9 @@ public class SettingsControllerTests
         dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
-                new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30), "Daytime"));
+                new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
+                null,
+                "Daytime"));
         schedulerMock.Setup(x => x.TriggerRecalculationAsync()).Returns(Task.CompletedTask);
         weatherRefreshServiceMock
             .Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
