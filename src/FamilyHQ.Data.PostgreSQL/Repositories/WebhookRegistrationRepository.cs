@@ -34,6 +34,7 @@ public class WebhookRegistrationRepository(FamilyHqDbContext context) : IWebhook
         {
             existing.ChannelId = registration.ChannelId;
             existing.ResourceId = registration.ResourceId;
+            existing.ChannelToken = registration.ChannelToken;
             existing.ExpiresAt = registration.ExpiresAt;
             existing.RegisteredAt = registration.RegisteredAt;
         }
