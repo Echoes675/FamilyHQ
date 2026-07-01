@@ -1,9 +1,11 @@
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Options;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.WebApi.Controllers;
 
@@ -21,6 +23,7 @@ public class DiagnosticsController : ControllerBase
     private readonly ISyncFailureRepository _syncFailureRepository;
     private readonly ICalendarSyncJobQueue _syncJobQueue;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOptions<SyncOptions> _syncOptions;
     private readonly ILogger<DiagnosticsController> _logger;
 
     public DiagnosticsController(
@@ -29,6 +32,7 @@ public class DiagnosticsController : ControllerBase
         ISyncFailureRepository syncFailureRepository,
         ICalendarSyncJobQueue syncJobQueue,
         ICurrentUserService currentUser,
+        IOptions<SyncOptions> syncOptions,
         ILogger<DiagnosticsController> logger)
     {
         _calendarRepository = calendarRepository;
@@ -36,6 +40,7 @@ public class DiagnosticsController : ControllerBase
         _syncFailureRepository = syncFailureRepository;
         _syncJobQueue = syncJobQueue;
         _currentUser = currentUser;
+        _syncOptions = syncOptions;
         _logger = logger;
     }
 
@@ -94,7 +99,7 @@ public class DiagnosticsController : ControllerBase
             return Unauthorized();
 
         var clamped = Math.Clamp(limit, MinSyncFailureLimit, MaxSyncFailureLimit);
-        var runs = await _syncJobQueue.GetRecentFailuresAsync(userId, clamped, ct);
+        var runs = await _syncJobQueue.GetRecentFailuresAsync(userId, clamped, _syncOptions.Value.TerminalJobRetention, ct);
 
         IReadOnlyList<FailedSyncRunDto> dtos = runs
             .Select(r => new FailedSyncRunDto(

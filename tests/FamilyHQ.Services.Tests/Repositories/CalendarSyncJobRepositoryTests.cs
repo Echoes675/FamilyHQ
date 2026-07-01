@@ -218,10 +218,41 @@ public class CalendarSyncJobRepositoryTests : IDisposable
             new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() });
         await _db.SaveChangesAsync();
 
-        var result = await sut.GetRecentFailuresAsync("u", limit: 10);
+        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
 
         result.Should().HaveCount(2);
         result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddMinutes(-1)); // newest first
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_ExcludesFailuresOlderThanMaxAge()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) });
+        await _db.SaveChangesAsync();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
+
+        result.Should().ContainSingle();
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddDays(-1));
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_CombinesAgeFilterWithLimit_ReturningNewestWithinWindow()
+    {
+        var sut = CreateSut();
+        _db.CalendarSyncJobs.AddRange(
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) },
+            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) });
+        await _db.SaveChangesAsync();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 1, maxAge: TimeSpan.FromDays(14));
+
+        result.Should().ContainSingle();
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow()); // newest of the 2 within-window rows
     }
 
     [Fact]
