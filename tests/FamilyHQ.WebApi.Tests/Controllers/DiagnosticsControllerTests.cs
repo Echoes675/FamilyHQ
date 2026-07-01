@@ -2,9 +2,11 @@ using FluentAssertions;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Options;
 using FamilyHQ.WebApi.Controllers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace FamilyHQ.WebApi.Tests.Controllers;
@@ -233,7 +235,7 @@ public class DiagnosticsControllerTests
         currentUser.SetupGet(c => c.UserId).Returns("u-1");
         var calId = Guid.NewGuid();
         var jobId = Guid.NewGuid();
-        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarSyncJob>
             {
                 new()
@@ -261,13 +263,29 @@ public class DiagnosticsControllerTests
     }
 
     [Fact]
+    public async Task GetFailedSyncRuns_PassesConfiguredTerminalJobRetention_AsMaxAge()
+    {
+        // Arrange
+        var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut(terminalJobRetention: TimeSpan.FromDays(14));
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarSyncJob>());
+
+        // Act
+        await sut.GetFailedSyncRuns(limit: 100, CancellationToken.None);
+
+        // Assert
+        syncJobQueue.Verify(q => q.GetRecentFailuresAsync("u-1", 100, TimeSpan.FromDays(14), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task GetFailedSyncRuns_WhenCompletedAtNull_FallsBackToEnqueuedAt()
     {
         // Arrange
         var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-1");
         var enqueuedAt = new DateTimeOffset(2026, 5, 28, 8, 0, 0, TimeSpan.Zero);
-        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-1", It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarSyncJob>
             {
                 new()
@@ -346,7 +364,7 @@ public class DiagnosticsControllerTests
         // Arrange
         var (_, _, _, syncJobQueue, currentUser, sut) = CreateSut();
         currentUser.SetupGet(c => c.UserId).Returns("u-clamp");
-        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-clamp", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        syncJobQueue.Setup(q => q.GetRecentFailuresAsync("u-clamp", It.IsAny<int>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarSyncJob>());
 
         // Act
@@ -354,7 +372,7 @@ public class DiagnosticsControllerTests
 
         // Assert
         result.Should().BeOfType<OkObjectResult>();
-        syncJobQueue.Verify(q => q.GetRecentFailuresAsync("u-clamp", expectedLimit, It.IsAny<CancellationToken>()), Times.Once);
+        syncJobQueue.Verify(q => q.GetRecentFailuresAsync("u-clamp", expectedLimit, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static (
@@ -363,7 +381,7 @@ public class DiagnosticsControllerTests
         Mock<ISyncFailureRepository> FailureRepo,
         Mock<ICalendarSyncJobQueue> SyncJobQueue,
         Mock<ICurrentUserService> CurrentUser,
-        DiagnosticsController Sut) CreateSut()
+        DiagnosticsController Sut) CreateSut(TimeSpan? terminalJobRetention = null)
     {
         var calendarRepoMock = new Mock<ICalendarRepository>();
         var tokenStoreMock   = new Mock<ITokenStore>();
@@ -371,6 +389,10 @@ public class DiagnosticsControllerTests
         var syncJobQueueMock = new Mock<ICalendarSyncJobQueue>();
         var currentUserMock  = new Mock<ICurrentUserService>();
         var loggerMock       = new Mock<ILogger<DiagnosticsController>>();
+        var options = Options.Create(new SyncOptions
+        {
+            TerminalJobRetention = terminalJobRetention ?? TimeSpan.FromDays(14)
+        });
 
         var sut = new DiagnosticsController(
             calendarRepoMock.Object,
@@ -378,6 +400,7 @@ public class DiagnosticsControllerTests
             failureRepoMock.Object,
             syncJobQueueMock.Object,
             currentUserMock.Object,
+            options,
             loggerMock.Object);
 
         return (calendarRepoMock, tokenStoreMock, failureRepoMock, syncJobQueueMock, currentUserMock, sut);

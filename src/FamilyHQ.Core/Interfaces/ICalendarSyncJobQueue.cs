@@ -27,8 +27,8 @@ public interface ICalendarSyncJobQueue
     /// <summary>Delete terminal jobs older than the retention window.</summary>
     Task<int> PruneTerminalAsync(TimeSpan olderThan, CancellationToken ct = default);
 
-    /// <summary>Recent Failed jobs for a user, newest first (diagnostics).</summary>
-    Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, CancellationToken ct = default);
+    /// <summary>Recent Failed jobs for a user, newest first (diagnostics), excluding failures older than maxAge.</summary>
+    Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, TimeSpan maxAge, CancellationToken ct = default);
 
     /// <summary>Count of not-yet-terminal jobs (Pending or InProgress) for a user — the queue depth.</summary>
     Task<int> GetActiveJobCountAsync(string userId, CancellationToken ct = default);
