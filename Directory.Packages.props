@@ -27,6 +27,8 @@
     <PackageVersion Include="Google.Apis.Auth" Version="1.69.0" />
     <!-- ASP.NET Core / Blazor -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
+    <!-- Pinned above the transitive 2.0.0 pulled in by Microsoft.AspNetCore.OpenApi: GHSA-v5pm-xwqc-g5wc (FHQ-136) -->
+    <PackageVersion Include="Microsoft.OpenApi" Version="2.9.0" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.7" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.7" />
     <PackageVersion Include="Scalar.AspNetCore" Version="2.13.1" />
