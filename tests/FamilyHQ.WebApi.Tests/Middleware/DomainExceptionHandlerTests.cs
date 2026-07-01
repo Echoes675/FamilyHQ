@@ -82,12 +82,59 @@ public class DomainExceptionHandlerTests
         handled.Should().BeFalse();
     }
 
-    private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut()
+    [Fact]
+    public async Task NotFoundException_Title_IsStableNotFoundString()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(context, new EventNotFoundException(EventId), CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.ProblemDetails.Title.Should().Be("Not Found");
+    }
+
+    [Fact]
+    public async Task NotFoundException_Detail_IsNull()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(context, new EventNotFoundException(EventId), CancellationToken.None);
+
+        captured!.ProblemDetails.Detail.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DomainValidationException_Title_IsStableValidationFailedString()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(context, new NoMembersException(), CancellationToken.None);
+
+        captured!.ProblemDetails.Title.Should().Be("Validation Failed");
+    }
+
+    [Fact]
+    public async Task DomainValidationException_Detail_ContainsExceptionMessage()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+        var exception = new InvalidSeriesSplitException("no occurrences left");
+
+        await handler.TryHandleAsync(context, exception, CancellationToken.None);
+
+        captured!.ProblemDetails.Detail.Should().Be(exception.Message);
+    }
+
+    private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut(
+        Action<ProblemDetailsContext>? callback = null)
     {
         var problemDetails = new Mock<IProblemDetailsService>();
-        // Mirror the real service: when asked to write, it succeeds (returns true).
         problemDetails
             .Setup(p => p.TryWriteAsync(It.IsAny<ProblemDetailsContext>()))
+            .Callback<ProblemDetailsContext>(ctx => callback?.Invoke(ctx))
             .ReturnsAsync(true);
 
         var logger  = new Mock<ILogger<DomainExceptionHandler>>();

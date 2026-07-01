@@ -46,8 +46,18 @@ public sealed class DomainExceptionHandler(
             ProblemDetails = new ProblemDetails
             {
                 Status = status,
-                Title = exception.Message,
-                Detail = exception.Message
+                Title = exception switch
+                {
+                    NotFoundException         => "Not Found",
+                    DomainValidationException => "Validation Failed",
+                    _                         => "Error"
+                },
+                Detail = exception switch
+                {
+                    NotFoundException           => null,
+                    DomainValidationException e => e.Message,
+                    _                           => null
+                }
             }
         });
     }

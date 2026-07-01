@@ -2,9 +2,11 @@
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.Components
 @using FamilyHQ.WebUi.Components.Weather
+@using FamilyHQ.WebUi.Services.Auth
 @inject IThemeService ThemeService
 @inject IDisplaySettingService DisplaySettingService
 @inject IWeatherUiService WeatherUiService
+@inject IAuthenticationService AuthService
 
 <div class="page">
     <UpdateBanner />
@@ -33,7 +35,8 @@
     {
         await DisplaySettingService.InitialiseAsync();  // must run first so ThemeService can read ThemeSelection
         await ThemeService.InitialiseAsync();
-        await WeatherUiService.InitialiseAsync();
+        if (await AuthService.IsAuthenticatedAsync())
+            await WeatherUiService.InitialiseAsync();
     }
 
     private void Recover()
