@@ -22,5 +22,5 @@ public class SyncOptions
     public int RetryBackoffBaseSeconds { get; set; } = 2;
 
     /// <summary>Terminal jobs older than this are pruned.</summary>
-    public TimeSpan TerminalJobRetention { get; set; } = TimeSpan.FromDays(7);
+    public TimeSpan TerminalJobRetention { get; set; } = TimeSpan.FromDays(14);
 }

@@ -96,6 +96,10 @@ builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IConnectionStatusBroadcas
 // Add background webhook renewal service
 builder.Services.AddHostedService<FamilyHQ.WebApi.Services.WebhookRenewalService>();
 
+// Add background job that prunes terminal (Completed/Failed) sync jobs older than
+// SyncOptions.TerminalJobRetention, so CalendarSyncJobs doesn't grow unbounded (FHQ-137)
+builder.Services.AddHostedService<FamilyHQ.WebApi.Services.SyncJobPruningService>();
+
 // Add background worker that drains the durable calendar sync queue
 builder.Services.AddHostedService<FamilyHQ.WebApi.Services.CalendarSyncWorker>();
 
