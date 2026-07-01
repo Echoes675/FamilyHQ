@@ -138,7 +138,7 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
 
         return await context.CalendarSyncJobs
             .AsNoTracking()
-            .Where(j => j.UserId == userId && j.Status == SyncJobStatus.Failed && j.CompletedAt >= cutoff)
+            .Where(j => j.UserId == userId && j.Status == SyncJobStatus.Failed && j.CompletedAt != null && j.CompletedAt >= cutoff)
             .OrderByDescending(j => j.CompletedAt)
             .Take(limit)
             .ToListAsync(ct);

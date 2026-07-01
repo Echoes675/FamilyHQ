@@ -1,6 +1,7 @@
 namespace FamilyHQ.WebApi.Services;
 
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,13 +23,17 @@ public class SyncJobPruningService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            try
+            // FHQ-137: fresh CorrelationId per pruning cycle.
+            using (logger.BeginCorrelationScope())
             {
-                await PruneOnceAsync(stoppingToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Sync job pruning cycle failed.");
+                try
+                {
+                    await PruneOnceAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Sync job pruning cycle failed.");
+                }
             }
 
             await Task.Delay(TimeSpan.FromDays(1), stoppingToken);
