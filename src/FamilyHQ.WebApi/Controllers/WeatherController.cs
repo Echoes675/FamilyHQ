@@ -14,7 +14,6 @@ public class WeatherController(
     IWeatherRefreshService weatherRefreshService,
     ICurrentUserService currentUser) : ControllerBase
 {
-    [AllowAnonymous]
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
@@ -57,7 +56,6 @@ public class WeatherController(
         return Ok(new { message = "Weather refreshed", dataPointsWritten = result.DataPointsWritten });
     }
 
-    [AllowAnonymous]
     [HttpGet("current")]
     public async Task<IActionResult> GetCurrent(CancellationToken ct)
     {
@@ -67,7 +65,6 @@ public class WeatherController(
         return Ok(result);
     }
 
-    [AllowAnonymous]
     [HttpGet("hourly")]
     public async Task<IActionResult> GetHourly([FromQuery] string date, CancellationToken ct)
     {
@@ -77,7 +74,6 @@ public class WeatherController(
         return Ok(result);
     }
 
-    [AllowAnonymous]
     [HttpGet("forecast")]
     public async Task<IActionResult> GetForecast([FromQuery] int days = 5, CancellationToken ct = default)
     {

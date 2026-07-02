@@ -126,6 +126,83 @@ public class WeatherControllerTests
         status.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
     }
 
+    [Fact]
+    public async Task GetCurrent_WhenDataExists_ReturnsOkWithDto()
+    {
+        var (sut, weatherServiceMock, _) = CreateSut(TestUserId);
+        var expected = new CurrentWeatherDto(WeatherCondition.Clear, 15.0, IsWindy: false, WindSpeedKmh: 5.0, IconName: "sun");
+        weatherServiceMock
+            .Setup(x => x.GetCurrentAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var result = await sut.GetCurrent(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>().Which.Value.Should().Be(expected);
+        weatherServiceMock.Verify(x => x.GetCurrentAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetCurrent_WhenNoData_ReturnsNoContent()
+    {
+        var (sut, weatherServiceMock, _) = CreateSut(TestUserId);
+        weatherServiceMock
+            .Setup(x => x.GetCurrentAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CurrentWeatherDto?)null);
+
+        var result = await sut.GetCurrent(CancellationToken.None);
+
+        result.Should().BeOfType<NoContentResult>();
+    }
+
+    [Fact]
+    public async Task GetHourly_WithValidDate_CallsServiceAndReturnsOk()
+    {
+        var (sut, weatherServiceMock, _) = CreateSut(TestUserId);
+        var date = new DateOnly(2026, 6, 27);
+        weatherServiceMock
+            .Setup(x => x.GetHourlyAsync(date, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var result = await sut.GetHourly("2026-06-27", CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        weatherServiceMock.Verify(x => x.GetHourlyAsync(date, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetHourly_WithInvalidDate_ReturnsBadRequest()
+    {
+        var (sut, _, _) = CreateSut(TestUserId);
+
+        var result = await sut.GetHourly("not-a-date", CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task GetForecast_WithValidDays_CallsServiceAndReturnsOk()
+    {
+        var (sut, weatherServiceMock, _) = CreateSut(TestUserId);
+        weatherServiceMock
+            .Setup(x => x.GetDailyForecastAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var result = await sut.GetForecast(5, CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
+        weatherServiceMock.Verify(x => x.GetDailyForecastAsync(5, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetForecast_WithDaysOutOfRange_ReturnsBadRequest()
+    {
+        var (sut, _, _) = CreateSut(TestUserId);
+
+        var result = await sut.GetForecast(0, CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
     private static (WeatherController sut, Mock<IWeatherService> weatherServiceMock, Mock<IWeatherRefreshService> weatherRefreshServiceMock) CreateSut(string? userId)
     {
         var weatherServiceMock = new Mock<IWeatherService>();

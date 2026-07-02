@@ -1,3 +1,4 @@
+using System.Net;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
@@ -57,6 +58,10 @@ public class WebhookRegistrationServiceTests
                 reg.ExpiresAt == DateTimeOffset.FromUnixTimeMilliseconds(expiration) &&
                 !string.IsNullOrEmpty(reg.ChannelToken)),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — no prior registration existed, so nothing should be stopped
+        client.Verify(c => c.StopChannelAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -345,6 +350,10 @@ public class WebhookRegistrationServiceTests
             ExpectedWebhookUrl,
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — the old channel is stopped after the new one is registered
+        client.Verify(c => c.StopChannelAsync(
+            "existing-channel", "existing-resource", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -383,6 +392,10 @@ public class WebhookRegistrationServiceTests
             ExpectedWebhookUrl,
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert — the force path also fetches and stops the old channel
+        client.Verify(c => c.StopChannelAsync(
+            "existing-channel", "existing-resource", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -463,6 +476,86 @@ public class WebhookRegistrationServiceTests
             It.Is<WebhookRegistration>(reg =>
                 reg.CalendarInfoId == CalendarInfoId &&
                 reg.ChannelToken == capturedToken),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenStopChannelReturns404_StillReportsSuccess()
+    {
+        // Arrange — old channel already expired on Google's side by the time we try to stop it
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(12),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-6)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        client.Setup(c => c.StopChannelAsync("existing-channel", "existing-resource", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.NotFound, "StopChannel", null));
+
+        // Act
+        var act = () => sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert — does not throw, and the new registration still went through
+        await act.Should().NotThrowAsync();
+
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg => reg.ChannelId == "new-ch"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenStopChannelFailsWithOtherError_StillReportsSuccess()
+    {
+        // Arrange — an unexpected error stopping the old channel must not undo the new registration
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(12),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-6)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId,
+                It.IsAny<string>(),
+                ExpectedWebhookUrl,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        client.Setup(c => c.StopChannelAsync("existing-channel", "existing-resource", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("transient"));
+
+        // Act
+        var act = () => sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert — does not throw, and the new registration still went through
+        await act.Should().NotThrowAsync();
+
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg => reg.ChannelId == "new-ch"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

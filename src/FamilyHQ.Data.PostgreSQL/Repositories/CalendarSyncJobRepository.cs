@@ -129,14 +129,16 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
         return old.Count;
     }
 
-    public async Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<CalendarSyncJob>> GetRecentFailuresAsync(string userId, int limit, TimeSpan maxAge, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(userId))
             return Array.Empty<CalendarSyncJob>();
 
+        var cutoff = timeProvider.GetUtcNow() - maxAge;
+
         return await context.CalendarSyncJobs
             .AsNoTracking()
-            .Where(j => j.UserId == userId && j.Status == SyncJobStatus.Failed)
+            .Where(j => j.UserId == userId && j.Status == SyncJobStatus.Failed && j.CompletedAt != null && j.CompletedAt >= cutoff)
             .OrderByDescending(j => j.CompletedAt)
             .Take(limit)
             .ToListAsync(ct);

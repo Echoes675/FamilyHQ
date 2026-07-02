@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
@@ -34,16 +35,14 @@ public class WebhookRegistrationService(
             return;
         }
 
-        if (!force)
+        var existing = await webhookRegistrationRepository.GetByCalendarIdAsync(calendarInfoId, ct);
+
+        if (!force && existing is not null && existing.ExpiresAt > DateTimeOffset.UtcNow.AddHours(24))
         {
-            var existing = await webhookRegistrationRepository.GetByCalendarIdAsync(calendarInfoId, ct);
-            if (existing is not null && existing.ExpiresAt > DateTimeOffset.UtcNow.AddHours(24))
-            {
-                logger.LogInformation(
-                    "Webhook for calendar {CalendarInfoId} still valid until {ExpiresAt}, skipping registration",
-                    calendarInfoId, existing.ExpiresAt);
-                return;
-            }
+            logger.LogInformation(
+                "Webhook for calendar {CalendarInfoId} still valid until {ExpiresAt}, skipping registration",
+                calendarInfoId, existing.ExpiresAt);
+            return;
         }
 
         try
@@ -69,6 +68,29 @@ public class WebhookRegistrationService(
             logger.LogInformation(
                 "Registered webhook for calendar {CalendarInfoId} with channel {ChannelId}, expires at {ExpiresAt}",
                 calendarInfoId, response.ChannelId, registration.ExpiresAt);
+
+            if (existing is not null)
+            {
+                try
+                {
+                    await googleCalendarClient.StopChannelAsync(existing.ChannelId, existing.ResourceId, ct);
+                    logger.LogInformation(
+                        "Stopped previous webhook channel {ChannelId} for calendar {CalendarInfoId}.",
+                        existing.ChannelId, calendarInfoId);
+                }
+                catch (GoogleApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                {
+                    logger.LogInformation(
+                        "Previous webhook channel {ChannelId} for calendar {CalendarInfoId} already expired; nothing to stop.",
+                        existing.ChannelId, calendarInfoId);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "Failed to stop previous webhook channel {ChannelId} for calendar {CalendarInfoId}; it will expire naturally.",
+                        existing.ChannelId, calendarInfoId);
+                }
+            }
         }
         catch (WebhookNotSupportedException ex)
         {
