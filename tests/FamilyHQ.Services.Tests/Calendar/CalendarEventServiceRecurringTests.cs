@@ -227,14 +227,43 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Series Title", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
 
-        // Patches the series master.
-        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId,
+        // Writes the series master via events.patch — a PUT (UpdateEventAsync) omits the recurrence
+        // array and Google would collapse the series to a one-off event (FHQ-144).
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId,
+            It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // The exception row keeps its overridden title + OriginalStartTime after reconcile.
         f.Repo.Verify(r => r.AddEventAsync(
             It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-2" && e.Title == "Overridden Title" && e.OriginalStartTime != null),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_SendsEditedFieldsOnTheMaster()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", WindowStart.AddDays(7))]);
+
+        var newStart = InstanceStart.AddHours(-1);
+        var newEnd = newStart.AddHours(1);
+
+        // Constructed directly rather than via the Req(...) helper, which pins End to Start + 1h.
+        var request = new UpdateEventRequest("Gymnastics", newStart, newEnd, false, "Loc", "Body");
+
+        await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e =>
+                e.GoogleEventId == SeriesId &&
+                e.Title == "Gymnastics" &&
+                e.Start == newStart &&
+                e.End == newEnd),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

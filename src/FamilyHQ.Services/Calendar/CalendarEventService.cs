@@ -372,7 +372,8 @@ public class CalendarEventService(
                 }
 
                 await PatchSeriesMasterAsync(calendarEvent, ownerCalendar, request, normalisedDescription, ct);
-                // The master patch does not change the RRULE, so the series keeps its stored rule.
+                // The master patch leaves the RRULE untouched, so the series keeps its stored rule and
+                // its instances keep their recurringEventId — which is what the reconcile stamps on.
                 seriesRules = SeriesRuleForExisting(calendarEvent);
                 break;
 
@@ -500,7 +501,9 @@ public class CalendarEventService(
     private async Task PatchSeriesMasterAsync(
         CalendarEvent calendarEvent, CalendarInfo owner, UpdateEventRequest request, string normalisedDescription, CancellationToken ct)
     {
-        // events.patch on the series master — Google preserves existing exceptions server-side.
+        // events.patch on the series master: merge semantics, so Google preserves the master's RRULE
+        // and its existing exceptions. A full-resource PUT here sends no `recurrence` array and
+        // collapses the whole series into a single non-recurring event (FHQ-144).
         var master = new CalendarEvent
         {
             GoogleEventId = calendarEvent.GoogleRecurringEventId!,
@@ -513,7 +516,7 @@ public class CalendarEventService(
         };
 
         var hash = ComputeHash(master);
-        await googleCalendarClient.UpdateEventAsync(owner.GoogleCalendarId, master, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, master, hash, ct);
         RecordOutbound(master.GoogleEventId, hash);
     }
 
