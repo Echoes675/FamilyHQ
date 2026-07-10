@@ -348,46 +348,79 @@ public class EventsController : ControllerBase
     [HttpPatch("{eventId}")]
     public async Task<IActionResult> PatchEvent(string calendarId, string eventId, [FromBody] GoogleEventRequest? body)
     {
-        // FHQ-18.11: events.patch is the series-recurrence toggle channel. The app sends ONLY a
-        // recurrence array here (PatchSeriesRecurrenceAsync / ClearSeriesRecurrenceAsync):
-        //   • ["RRULE:…"] → toggle ON / change the RRULE: set the master's RecurrenceRule so the
-        //     event becomes (or stays) a series and the next list expands it.
-        //   • []          → toggle OFF / collapse: clear RecurrenceRule so the master collapses to
-        //     a single non-recurring event in subsequent lists.
-        // A patch with no recurrence field at all is a no-op (the historical attendee-patch case).
+        // events.patch is a partial MERGE: every field the body carries is applied, every field it
+        // omits is preserved server-side. Two callers use this channel:
+        //   • Recurrence toggles (PatchSeriesRecurrenceAsync / ClearSeriesRecurrenceAsync) send ONLY
+        //     a recurrence array — ["RRULE:…"] sets/replaces the rule, [] clears it (collapse).
+        //   • The "All events" series-master edit (PatchEventFieldsAsync, FHQ-144) sends scalar
+        //     fields (summary/start/end/location/description/content-hash) and NO recurrence key, so
+        //     the master is retimed/renamed while its RRULE and exception instances are preserved.
+        //     This is why the master edit MUST NOT be a PUT: events.update is a full-resource replace
+        //     that drops the omitted recurrence array and collapses the series.
         _logger.LogInformation("[SIM] PATCH event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
-
-        if (body?.Recurrence is null)
-        {
-            // No recurrence field: legacy attendee patch (member-tag model derives members from the
-            // description, so there is nothing to update). Return 200 to avoid 404s.
-            return Ok();
-        }
 
         var userId = ExtractUserId(Request);
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
         if (existing == null)
         {
-            _logger.LogWarning("[SIM] Event {EventId} not found for recurrence patch.", eventId);
-            return NotFound(new
+            // A recurrence-bearing patch to a missing event is a real error (Google returns 404).
+            // A field-less/recurrence-less patch stays lenient (the historical attendee-patch no-op)
+            // so it never manufactures a 404 for a body with nothing to apply.
+            if (body?.Recurrence is not null)
             {
-                error = new
+                _logger.LogWarning("[SIM] Event {EventId} not found for recurrence patch.", eventId);
+                return NotFound(new
                 {
-                    code = 404,
-                    message = "Not Found",
-                    errors = new[]
+                    error = new
                     {
-                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                        code = 404,
+                        message = "Not Found",
+                        errors = new[]
+                        {
+                            new { domain = "calendar", reason = "notFound", message = "Not Found" }
+                        }
                     }
-                }
-            });
+                });
+            }
+
+            return Ok();
         }
 
+        if (body == null)
+        {
+            return Ok();
+        }
+
+        // Merge: apply only the fields present in the body; omitted fields are left untouched (unlike
+        // PUT, which overwrites location/description even when absent).
+        if (body.Summary is not null)
+            existing.Summary = body.Summary;
+        if (body.Location is not null)
+            existing.Location = body.Location;
+        if (body.Description is not null)
+            existing.Description = body.Description;
+        if (body.Start.DateTime != null || body.Start.Date != null)
+        {
+            existing.StartTime = body.Start.DateTime?.ToUniversalTime()
+                ?? DateTime.Parse(body.Start.Date!, null, DateTimeStyles.AdjustToUniversal);
+            existing.IsAllDay = body.Start.Date != null;
+            existing.StartTimeZone = body.Start.TimeZone;
+        }
+        if (body.End.DateTime != null || body.End.Date != null)
+        {
+            existing.EndTime = body.End.DateTime?.ToUniversalTime()
+                ?? DateTime.Parse(body.End.Date!, null, DateTimeStyles.AdjustToUniversal);
+        }
+        if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
+            existing.ContentHash = hash;
+
+        // recurrence: null → preserve the existing rule; ["RRULE:…"] → set; [] → clear.
         ApplyRecurrence(existing, body.Recurrence);
+
         await _db.SaveChangesAsync();
         _logger.LogInformation(
-            "[SIM] Patched recurrence for event: {EventId} → {Rule}",
-            existing.Id, existing.RecurrenceRule ?? "(cleared)");
+            "[SIM] Patched event: {EventId} ({Summary}) → rule {Rule}",
+            existing.Id, existing.Summary, existing.RecurrenceRule ?? "(none)");
 
         _writeCountStore.Increment(userId, existing.Id);
 
