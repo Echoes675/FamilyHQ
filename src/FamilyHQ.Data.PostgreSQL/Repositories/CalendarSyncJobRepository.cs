@@ -2,12 +2,23 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Data.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Data.Repositories;
 
-public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider timeProvider) : ICalendarSyncJobQueue
+public class CalendarSyncJobRepository(
+    FamilyHqDbContext context,
+    TimeProvider timeProvider,
+    ISyncJobClaimStore claimStore,
+    ILogger<CalendarSyncJobRepository> logger) : ICalendarSyncJobQueue
 {
     private const int MaxErrorLength = 1000;
+
+    /// <summary>
+    /// Bound on claim retries. Each retry means a competing worker won the previous row; re-querying
+    /// moves past it. Prevents livelock under heavy contention. Never reached with a single worker.
+    /// </summary>
+    private const int MaxClaimAttempts = 5;
 
     public async Task EnqueueAsync(string userId, Guid? calendarInfoId, SyncJobSource source, string? channelId, CancellationToken ct = default)
     {
@@ -45,21 +56,19 @@ public class CalendarSyncJobRepository(FamilyHqDbContext context, TimeProvider t
 
     public async Task<CalendarSyncJob?> ClaimNextAsync(CancellationToken ct = default)
     {
-        var now = timeProvider.GetUtcNow();
+        for (var attempt = 0; attempt < MaxClaimAttempts; attempt++)
+        {
+            var job = await claimStore.FindNextClaimableAsync(ct);
+            if (job is null) return null;                        // queue empty
 
-        var job = await context.CalendarSyncJobs
-            .Where(j => j.Status == SyncJobStatus.Pending
-                        && (j.NextAttemptAt == null || j.NextAttemptAt <= now))
-            .OrderBy(j => j.EnqueuedAt)
-            .FirstOrDefaultAsync(ct);
+            if (await claimStore.TryClaimAsync(job, ct)) return job;  // claimed
+            // else a competing worker claimed this row first — re-query the next eligible job.
+        }
 
-        if (job is null) return null;
-
-        job.Status = SyncJobStatus.InProgress;
-        job.StartedAt = now;
-        job.AttemptCount += 1;
-        await context.SaveChangesAsync(ct);
-        return job;
+        logger.LogWarning(
+            "ClaimNextAsync exhausted {Attempts} claim attempts under contention; yielding this cycle.",
+            MaxClaimAttempts);
+        return null;
     }
     public async Task CompleteAsync(Guid id, CancellationToken ct = default)
     {
