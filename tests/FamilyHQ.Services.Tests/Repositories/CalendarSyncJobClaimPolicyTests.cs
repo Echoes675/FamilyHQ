@@ -4,6 +4,7 @@ using FamilyHQ.Data.Repositories;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Xunit;
 
@@ -23,8 +24,10 @@ public class CalendarSyncJobClaimPolicyTests
     private readonly Mock<ISyncJobClaimStore> _claimStore = new(MockBehavior.Strict);
     private readonly Mock<ILogger<CalendarSyncJobRepository>> _logger = new();
 
+    // The clock lives behind ISyncJobClaimStore, so ClaimNextAsync never reads it — but a fake keeps the
+    // SUT free of ambient time regardless.
     private CalendarSyncJobRepository CreateSut() =>
-        new(InertContext(), TimeProvider.System, _claimStore.Object, _logger.Object);
+        new(InertContext(), new FakeTimeProvider(), _claimStore.Object, _logger.Object);
 
     private static FamilyHqDbContext InertContext() =>
         new(new DbContextOptionsBuilder<FamilyHqDbContext>().Options);

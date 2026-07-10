@@ -27,7 +27,7 @@ public class CalendarSyncJobRepositoryTests : IDisposable
     public void Dispose() => _db.Dispose();
 
     private CalendarSyncJobRepository CreateSut() =>
-        new(_db, _time, new SyncJobClaimStore(_db, _time), NullLogger<CalendarSyncJobRepository>.Instance);
+        new(_db, _time, new SyncJobClaimStore(_db, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
 
     [Fact]
     public async Task EnqueueAsync_InsertsAPendingJob()
@@ -364,7 +364,7 @@ public class CalendarSyncJobRepositoryTests : IDisposable
             .Options;
         var original = new DbUpdateException("race", new Exception("inner"));
         var throwingDb = new SaveThrowingFamilyHqDbContext(options, new UniqueConstraintException("race", original));
-        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time), NullLogger<CalendarSyncJobRepository>.Instance);
+        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
 
         var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
 
@@ -379,7 +379,7 @@ public class CalendarSyncJobRepositoryTests : IDisposable
             .Options;
         var throwingDb = new SaveThrowingFamilyHqDbContext(options,
             new DbUpdateException("transient DB error", new Exception("connection refused")));
-        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time), NullLogger<CalendarSyncJobRepository>.Instance);
+        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
 
         var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
 

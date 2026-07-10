@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.Data.Repositories;
 
@@ -10,7 +11,10 @@ namespace FamilyHQ.Data.Repositories;
 /// competing worker has already claimed the row. Not unit-tested (would require a real/in-memory
 /// database); exercised against real Postgres on Deploy-Dev.
 /// </summary>
-public class SyncJobClaimStore(FamilyHqDbContext context, TimeProvider timeProvider) : ISyncJobClaimStore
+public class SyncJobClaimStore(
+    FamilyHqDbContext context,
+    TimeProvider timeProvider,
+    ILogger<SyncJobClaimStore> logger) : ISyncJobClaimStore
 {
     public async Task<CalendarSyncJob?> FindNextClaimableAsync(CancellationToken ct = default)
     {
@@ -27,6 +31,8 @@ public class SyncJobClaimStore(FamilyHqDbContext context, TimeProvider timeProvi
     {
         var now = timeProvider.GetUtcNow();
 
+        // Mutating `job` before the save is safe on the losing path: ChangeTracker.Clear() detaches it and
+        // ClaimNextAsync only returns the instance when this method reports success.
         job.Status = SyncJobStatus.InProgress;
         job.StartedAt = now;
         job.AttemptCount += 1;
@@ -38,8 +44,10 @@ public class SyncJobClaimStore(FamilyHqDbContext context, TimeProvider timeProvi
         }
         catch (DbUpdateConcurrencyException)
         {
-            // Another worker claimed this row first (xmin mismatch). Discard our tracked change so
-            // the next FindNextClaimableAsync re-reads fresh state (mirrors EnqueueAsync's clear-on-conflict).
+            // Another worker claimed this row first (xmin mismatch). Benign and expected under contention.
+            // Discard our tracked change so the next FindNextClaimableAsync re-reads fresh state — otherwise
+            // identity resolution would return the stale instance (mirrors EnqueueAsync's clear-on-conflict).
+            logger.LogDebug("Sync job {JobId} was claimed by a competing worker; re-querying the queue.", job.Id);
             context.ChangeTracker.Clear();
             return false;
         }
