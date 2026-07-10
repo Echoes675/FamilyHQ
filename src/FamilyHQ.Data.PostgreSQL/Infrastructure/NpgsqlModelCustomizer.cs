@@ -18,10 +18,13 @@ public sealed class NpgsqlModelCustomizer(ModelCustomizerDependencies dependenci
 
         // FHQ-71: optimistic concurrency for the sync-job claim. A uint / OnAddOrUpdate / concurrency-token
         // property mapped to the `xmin` column is recognised by Npgsql's model-finalizing convention as the
-        // Postgres system column, so it adds no schema/migration. (The removed-in-EFCore-10
-        // `UseXminAsConcurrencyToken()` helper expanded to exactly this.) `ClaimNextAsync` relies on the
-        // resulting DbUpdateConcurrencyException to detect a job claimed by a competing worker.
-        // FHQ-119 should apply the same three lines to UserToken.
+        // Postgres system column, so its migration emits no DDL — the column already exists on every table.
+        // (The removed-in-EFCore-10 `UseXminAsConcurrencyToken()` helper expanded to exactly this.)
+        // It still needs a migration: Database.Migrate() throws PendingModelChangesWarning unless the
+        // migrations snapshot matches this model — hence AddXminConcurrencyTokenToCalendarSyncJob, and hence
+        // DesignTimeDbContextFactory must apply this customizer too.
+        // `ClaimNextAsync` relies on the resulting DbUpdateConcurrencyException to detect a job claimed by a
+        // competing worker. FHQ-119 should apply the same three lines to UserToken (plus a no-DDL migration).
         modelBuilder.Entity<CalendarSyncJob>()
             .Property<uint>("xmin")
             .HasColumnName("xmin")
