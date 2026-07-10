@@ -3,6 +3,7 @@ using FamilyHQ.Data.Repositories;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data.PostgreSQL.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -20,6 +21,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<UniqueConstraintExceptionInterceptor>();
         services.AddDbContext<FamilyHqDbContext>((sp, options) =>
             options.UseNpgsql(connectionString, x => x.MigrationsAssembly(typeof(ServiceCollectionExtensions).Assembly.FullName))
+                   .ReplaceService<IModelCustomizer, NpgsqlModelCustomizer>()
                    .AddInterceptors(sp.GetRequiredService<UniqueConstraintExceptionInterceptor>()));
 
         services.AddScoped<ICalendarRepository, CalendarRepository>();
@@ -30,6 +32,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWeatherSettingRepository, WeatherSettingRepository>();
         services.AddScoped<IWebhookRegistrationRepository, WebhookRegistrationRepository>();
         services.AddScoped<ISyncFailureRepository, SyncFailureRepository>();
+        services.AddScoped<ISyncJobClaimStore, SyncJobClaimStore>();
         services.AddScoped<ICalendarSyncJobQueue, CalendarSyncJobRepository>();
 
         return services;
