@@ -179,6 +179,93 @@ public class GoogleCalendarClientMappingTests
         events.Should().ContainSingle(e => e.Title == "Simple Meeting");
     }
 
+    // ── FHQ-144: series-master writes must be events.patch, not events.update ──
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_IssuesHttpPatch_AndOmitsRecurrenceKey()
+    {
+        // Arrange
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        HttpMethod? capturedMethod = null;
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-1")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedMethod = req.Method;
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            })
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "series-master-1" }))
+            });
+
+        var master = new CalendarEvent
+        {
+            GoogleEventId = "series-master-1",
+            Title = "Gymnastics",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        };
+
+        // Act
+        await sut.PatchEventFieldsAsync("cal-1", master, "hash-1", CancellationToken.None);
+
+        // Assert — events.patch merge semantics: PUT would full-replace and clear the RRULE.
+        capturedMethod.Should().Be(HttpMethod.Patch);
+
+        // The recurrence key must be absent entirely (not null, not []), so Google preserves the RRULE.
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.TryGetProperty("recurrence", out _).Should().BeFalse();
+
+        // The edited fields are still sent.
+        doc.RootElement.GetProperty("summary").GetString().Should().Be("Gymnastics");
+        doc.RootElement.TryGetProperty("start", out _).Should().BeTrue();
+        doc.RootElement.TryGetProperty("end", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateEventAsync_StillIssuesHttpPut()
+    {
+        // Guard: UpdateEventAsync remains a full-resource replace for genuine single-event updates.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        HttpMethod? capturedMethod = null;
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-1")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedMethod = req.Method)
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-1" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-1",
+            Title = "One-off",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        };
+
+        await sut.UpdateEventAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedMethod.Should().Be(HttpMethod.Put);
+    }
+
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
     {
         http.Protected()
