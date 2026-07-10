@@ -339,6 +339,96 @@ public class EventsControllerTests
         attendees.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task PatchEvent_WithoutRecurrenceArray_IsNoOp_DoesNotRecordAWrite()
+    {
+        // The legacy attendee-patch no-op must not be counted as an outbound write, or it would
+        // inflate the echo-guard's per-event write count.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+            { Id = "evt-1", CalendarId = "cal-org", Summary = "Test", UserId = "alice" });
+        await db.SaveChangesAsync();
+
+        var writeCounts = new FamilyHQ.Simulator.State.OutboundWriteCountStore();
+        var sut = CreateSut(db, userId: "alice", writeCounts: writeCounts);
+
+        await sut.PatchEvent("cal-org", "evt-1", new GoogleEventRequest());
+
+        writeCounts.Get("evt-1").Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PatchEvent_OnMasterId_WithScalarFields_UpdatesFieldsAndPreservesRecurrenceAndOverride()
+    {
+        // FHQ-144: the "All events" edit routes through events.patch (NOT events.update), sending the
+        // master's scalar fields with NO recurrence array. events.patch is a merge, so the master's
+        // RRULE and any prior exception override survive while the edited fields are applied. This is
+        // the PATCH sibling of UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields (which covers PUT).
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var writeCounts = new FamilyHQ.Simulator.State.OutboundWriteCountStore();
+        var sut = CreateSut(db, userId: "alice", writeCounts: writeCounts);
+        // All-events edit: app PATCHes the master's id with new field values and NO recurrence array.
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Football training",
+            Start = new GoogleDateTime { DateTime = seriesStart },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) }
+        };
+
+        // Act
+        var patchResult = await sut.PatchEvent("cal-alice", "evt-series", masterEdit);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        // Assert — the master kept its RRULE (merge, not full replace) and its summary changed.
+        patchResult.Should().BeOfType<OkObjectResult>();
+        var master = await db.Events.FindAsync("evt-series");
+        master!.Summary.Should().Be("Football training");
+        master.RecurrenceRule.Should().Be("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3");
+
+        // Exactly one outbound write is recorded for the master (echo-guard instrumentation).
+        writeCounts.Get("evt-series").Should().Be(1);
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3);
+        // Occurrences 1 and 3 reflect the new master title.
+        items[0].GetProperty("summary").GetString().Should().Be("Football training");
+        items[2].GetProperty("summary").GetString().Should().Be("Football training");
+        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
+        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+    }
+
     // ── MoveEvent ─────────────────────────────────────────────────────────────
 
     [Fact]
@@ -1156,10 +1246,13 @@ public class EventsControllerTests
         return new SimContext(options);
     }
 
-    private static EventsController CreateSut(SimContext db, string? userId = null)
+    private static EventsController CreateSut(
+        SimContext db, string? userId = null, FamilyHQ.Simulator.State.OutboundWriteCountStore? writeCounts = null)
     {
         var logger = new Mock<ILogger<EventsController>>().Object;
-        var controller = new EventsController(db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore(), new FamilyHQ.Simulator.State.OutboundWriteCountStore());
+        var controller = new EventsController(
+            db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore(),
+            writeCounts ?? new FamilyHQ.Simulator.State.OutboundWriteCountStore());
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";

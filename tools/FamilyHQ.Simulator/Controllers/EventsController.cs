@@ -359,41 +359,46 @@ public class EventsController : ControllerBase
         //     that drops the omitted recurrence array and collapses the series.
         _logger.LogInformation("[SIM] PATCH event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
 
+        var hasRecurrence = body?.Recurrence is not null;
+        var hasScalarFields = body is not null && (
+            body.Summary is not null ||
+            body.Location is not null ||
+            body.Description is not null ||
+            body.Start.DateTime != null || body.Start.Date != null ||
+            body.End.DateTime != null || body.End.Date != null ||
+            body.ExtendedProperties?.Private is not null);
+
+        if (!hasRecurrence && !hasScalarFields)
+        {
+            // A patch that carries neither a recurrence array nor any scalar field is the historical
+            // attendee-patch no-op (the member-tag model derives members from the description, so
+            // there is nothing to update). Return 200 without touching state — no write is recorded.
+            return Ok();
+        }
+
         var userId = ExtractUserId(Request);
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
         if (existing == null)
         {
-            // A recurrence-bearing patch to a missing event is a real error (Google returns 404).
-            // A field-less/recurrence-less patch stays lenient (the historical attendee-patch no-op)
-            // so it never manufactures a 404 for a body with nothing to apply.
-            if (body?.Recurrence is not null)
+            _logger.LogWarning("[SIM] Event {EventId} not found for patch.", eventId);
+            return NotFound(new
             {
-                _logger.LogWarning("[SIM] Event {EventId} not found for recurrence patch.", eventId);
-                return NotFound(new
+                error = new
                 {
-                    error = new
+                    code = 404,
+                    message = "Not Found",
+                    errors = new[]
                     {
-                        code = 404,
-                        message = "Not Found",
-                        errors = new[]
-                        {
-                            new { domain = "calendar", reason = "notFound", message = "Not Found" }
-                        }
+                        new { domain = "calendar", reason = "notFound", message = "Not Found" }
                     }
-                });
-            }
-
-            return Ok();
-        }
-
-        if (body == null)
-        {
-            return Ok();
+                }
+            });
         }
 
         // Merge: apply only the fields present in the body; omitted fields are left untouched (unlike
-        // PUT, which overwrites location/description even when absent).
-        if (body.Summary is not null)
+        // PUT, which overwrites location/description even when absent). body is non-null here — a null
+        // body has neither scalar fields nor recurrence and returned above.
+        if (body!.Summary is not null)
             existing.Summary = body.Summary;
         if (body.Location is not null)
             existing.Location = body.Location;

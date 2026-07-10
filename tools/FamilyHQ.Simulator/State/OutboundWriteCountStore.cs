@@ -4,7 +4,8 @@ namespace FamilyHQ.Simulator.State;
 
 /// <summary>
 /// In-memory write counter keyed by Google event ID. Incremented by the
-/// EventsController on every PUT (update) call — used by E2E backdoor assertions
+/// EventsController on every outbound write — a PUT (update) and a field-bearing
+/// PATCH (the "All events" series-master edit) — used by E2E backdoor assertions
 /// to verify that exactly one outbound write occurred for a given event.
 /// Reset via the backdoor endpoint between scenarios.
 /// </summary>
