@@ -340,4 +340,36 @@ function Test-PlaywrightChromiumInstalled {
     return [bool]$build
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled
+function Test-IsPlaywrightOrphan {
+    param(
+        [Parameter(Mandatory)]$Process,
+        [Parameter(Mandatory)][datetime]$Since
+    )
+    if (-not $Process) { return $false }
+    if ([string]$Process.Name -notmatch '(?i)^(chrome|msedge|headless_shell)$') { return $false }
+    $cmd = [string]$Process.CommandLine
+    if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+    $lc = $cmd.ToLowerInvariant()
+    $isHeadless   = $lc.Contains('--headless')
+    $isPlaywright = $lc.Contains('ms-playwright') -or $lc.Contains('playwright')
+    if (-not ($isHeadless -and $isPlaywright)) { return $false }
+    if ($Process.StartTime -and $Process.StartTime -lt $Since) { return $false }
+    return $true
+}
+
+function Stop-DevStackPlaywrightOrphans {
+    param([Parameter(Mandatory)][datetime]$Since)
+    $killed = 0
+    foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue
+        $startTime = try { $p.StartTime } catch { $null }
+        $info = [pscustomobject]@{ Name = $p.Name; CommandLine = $cim.CommandLine; StartTime = $startTime }
+        if (Test-IsPlaywrightOrphan -Process $info -Since $Since) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            $killed++
+        }
+    }
+    return $killed
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans

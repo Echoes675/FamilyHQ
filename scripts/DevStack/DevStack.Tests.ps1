@@ -221,3 +221,27 @@ Describe 'Install-DevStackPlaywright' {
         $r.Action | Should Be 'unavailable'
     }
 }
+
+Describe 'Test-IsPlaywrightOrphan' {
+    $since = (Get-Date).AddMinutes(-5)
+    It 'accepts a headless chromium with a playwright profile started after the run began' {
+        $p = [pscustomobject]@{ Name='chrome'; CommandLine='chrome --headless --user-data-dir=C:\Temp\playwright_chromiumdev_profile'; StartTime=(Get-Date) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $true
+    }
+    It 'rejects a non-headless browser (a real user browser)' {
+        $p = [pscustomobject]@{ Name='chrome'; CommandLine='chrome --profile-directory=Default https://example.com'; StartTime=(Get-Date) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $false
+    }
+    It 'rejects a non-browser process' {
+        $p = [pscustomobject]@{ Name='dotnet'; CommandLine='dotnet test'; StartTime=(Get-Date) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $false
+    }
+    It 'rejects a matching browser that started before the run (not ours)' {
+        $p = [pscustomobject]@{ Name='chrome'; CommandLine='chrome --headless --user-data-dir=C:\Temp\ms-playwright'; StartTime=$since.AddMinutes(-1) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $false
+    }
+    It 'returns false when command line is missing' {
+        $p = [pscustomobject]@{ Name='chrome'; CommandLine=$null; StartTime=(Get-Date) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $false
+    }
+}
