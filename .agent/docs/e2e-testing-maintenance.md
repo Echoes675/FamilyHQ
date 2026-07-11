@@ -260,9 +260,40 @@ public async Task FilterByCalendarAsync(string calendarName)
 
 ---
 
+## Parallelism
+
+E2E parallelism is controlled by a single knob — `maxParallelThreads` in
+`tests-e2e/FamilyHQ.E2E.Features/xunit.runner.json`. Granularity is **per feature
+file**: Reqnroll generates one xUnit test collection per `.feature`, and collections
+run in parallel up to this cap; scenarios *within* a file run serially. Each scenario
+launches its own Chromium (no browser reuse), so the thread count is effectively the
+number of concurrent browsers.
+
+**Current value: `6`** (raised from `2` in FHQ-147). The CI/test host runs the
+browsers, the deployed dev app, Postgres and the Simulator together on one
+4-core / 8-thread box, so the ceiling is CPU, not RAM. A sweep on that host measured
+the Deploy-Dev E2E execution wall-clock:
+
+| maxParallelThreads | E2E wall-clock |
+|---|---|
+| 2 (old) | ~14:05 |
+| 4 | 10:13 |
+| **6** | **08:26** |
+| 8 | 09:25 (regressed — CPU oversubscription) |
+
+6 takes ~40% off the baseline; 8 is *slower*, so the optimum is hardware-bound.
+**Do not raise this without re-measuring on the same host.** Metric = xUnit
+`Finished` − `Starting` delta from the Deploy-Dev "E2E Tests" stage log
+(parallelism-aware, excludes fixed build/install overhead). Full data in the FHQ-147 ticket.
+
+---
+
 ## Current Test Coverage
 
-The suite currently contains **27 scenarios** across three feature files.
+The suite currently contains **22 feature files (~166 scenarios / 168 executed tests)**
+under `tests-e2e/FamilyHQ.E2E.Features/WebUi/`. The per-file tables below are a
+historical snapshot of the earliest features and are **not exhaustive** — treat the
+`WebUi/` directory as the source of truth for current coverage.
 
 ### Dashboard.feature (15 scenarios)
 
