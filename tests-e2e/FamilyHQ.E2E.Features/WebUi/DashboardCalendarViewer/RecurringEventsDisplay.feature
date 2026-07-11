@@ -9,11 +9,11 @@ Feature: Recurring Event Display
     And the user has a weekly recurring event "Soccer practice" for 3 occurrences in "Appointments"
     And I login as the user "TimedEventsUser"
 
-  Scenario: A weekly series syncs into one occurrence per week
+  Scenario: A weekly series syncs into exactly one occurrence per week at a uniform time
     When Google Calendar sends a webhook notification
     And I view the dashboard
     And I switch to the Day View tab
-    Then the event "Soccer practice" appears on each of its 3 weekly occurrence dates
+    Then the series "Soccer practice" occupies exactly its 3 weekly occurrence slots
 
   Scenario: A synced recurring instance is marked with a recurrence indicator
     When Google Calendar sends a webhook notification
