@@ -181,3 +181,43 @@ Describe 'Test-PlaywrightChromiumInstalled' {
         finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
+
+Describe 'Install-DevStackPlaywright' {
+    BeforeEach {
+        $script:prev = $env:PLAYWRIGHT_BROWSERS_PATH
+        $script:browsers = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid())
+        $env:PLAYWRIGHT_BROWSERS_PATH = $script:browsers
+        $script:repo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid())
+        $pwDir = Join-Path $script:repo 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0'
+        New-Item -ItemType Directory -Path $pwDir -Force | Out-Null
+        $script:marker = Join-Path $script:repo 'installed.marker'
+        Set-Content -Path (Join-Path $pwDir 'playwright.ps1') -Value "Set-Content -Path '$($script:marker)' -Value 'ran'; exit 0"
+        $script:cfg = [pscustomobject]@{ RepoRoot = $script:repo }
+    }
+    AfterEach {
+        $env:PLAYWRIGHT_BROWSERS_PATH = $script:prev
+        Remove-Item $script:browsers,$script:repo -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    It 'skips install when chromium is already present' {
+        New-Item -ItemType Directory -Path (Join-Path $script:browsers 'chromium-1234') -Force | Out-Null
+        $r = Install-DevStackPlaywright -Config $script:cfg
+        $r.Action | Should Be 'skipped'
+        (Test-Path $script:marker) | Should Be $false
+    }
+    It 'installs (runs playwright.ps1) when chromium is missing' {
+        $r = Install-DevStackPlaywright -Config $script:cfg -TimeoutSeconds 60
+        $r.Action | Should Be 'installed'
+        (Test-Path $script:marker) | Should Be $true
+    }
+    It 'installs even when present if -Force is given' {
+        New-Item -ItemType Directory -Path (Join-Path $script:browsers 'chromium-1234') -Force | Out-Null
+        $r = Install-DevStackPlaywright -Config $script:cfg -TimeoutSeconds 60 -Force
+        $r.Action | Should Be 'installed'
+        (Test-Path $script:marker) | Should Be $true
+    }
+    It 'reports unavailable when playwright.ps1 is not built yet' {
+        Remove-Item (Join-Path $script:repo 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1') -Force
+        $r = Install-DevStackPlaywright -Config $script:cfg
+        $r.Action | Should Be 'unavailable'
+    }
+}

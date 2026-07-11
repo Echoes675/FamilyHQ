@@ -273,16 +273,26 @@ function Invoke-DevStackReconcile {
 }
 
 function Install-DevStackPlaywright {
-    param([Parameter(Mandatory)]$Config)
     # The Features project is the test runner and copies all transitive deps (including
     # Microsoft.Playwright.dll) to its bin. playwright.ps1 uses $PSScriptRoot to locate
     # the DLL, so point to the Features bin — not E2E.Common which omits transitive deps.
-    $script = Join-Path $Config.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1'
-    if (Test-Path $script) {
-        & $script install chromium | Out-Null
-    } else {
-        Write-Warning "playwright.ps1 not found yet; building E2E project first so 'dotnet test' can install browsers."
+    param(
+        [Parameter(Mandatory)]$Config,
+        [int]$TimeoutSeconds = 300,
+        [switch]$Force
+    )
+    if ((Test-PlaywrightChromiumInstalled) -and -not $Force) {
+        Write-Host "chromium already installed; skipping browser install."
+        return [pscustomobject]@{ Action = 'skipped'; Phase = $null }
     }
+    $script = Join-Path $Config.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1'
+    if (-not (Test-Path $script)) {
+        Write-Warning "playwright.ps1 not found yet; 'dotnet test' will install browsers on first run."
+        return [pscustomobject]@{ Action = 'unavailable'; Phase = $null }
+    }
+    $phase = Invoke-DevStackPhase -Name 'playwright-install' -FilePath 'pwsh' `
+        -Arguments @('-NoProfile','-File', $script, 'install', 'chromium') -TimeoutSeconds $TimeoutSeconds
+    return [pscustomobject]@{ Action = 'installed'; Phase = $phase }
 }
 
 function Invoke-DevStackPhase {
