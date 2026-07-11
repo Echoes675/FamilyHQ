@@ -146,3 +146,21 @@ Describe 'ConvertTo-DotnetTestArgs' {
         ($result -contains '--no-build') | Should Be $true
     }
 }
+
+Describe 'Invoke-DevStackPhase' {
+    It 'returns completed with exit code 0 for a fast success' {
+        $r = Invoke-DevStackPhase -Name 'ok' -FilePath 'pwsh' -Arguments @('-NoProfile','-Command','exit 0') -TimeoutSeconds 30
+        $r.Outcome  | Should Be 'completed'
+        $r.ExitCode | Should Be 0
+    }
+    It 'returns failed with the child exit code for a non-zero exit' {
+        $r = Invoke-DevStackPhase -Name 'bad' -FilePath 'pwsh' -Arguments @('-NoProfile','-Command','exit 3') -TimeoutSeconds 30
+        $r.Outcome  | Should Be 'failed'
+        $r.ExitCode | Should Be 3
+    }
+    It 'returns timeout and kills a child that overruns' {
+        $r = Invoke-DevStackPhase -Name 'slow' -FilePath 'pwsh' -Arguments @('-NoProfile','-Command','Start-Sleep 30') -TimeoutSeconds 2
+        $r.Outcome | Should Be 'timeout'
+        ($r.DurationSeconds -lt 10) | Should Be $true
+    }
+}

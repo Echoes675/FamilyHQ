@@ -285,4 +285,37 @@ function Install-DevStackPlaywright {
     }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright
+function Invoke-DevStackPhase {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory)][int]$TimeoutSeconds,
+        [string]$WorkingDirectory
+    )
+    $start = Get-Date
+    Write-Host ("PHASE start: {0} {1:HH:mm:ss}" -f $Name, $start)
+
+    $spArgs = @{ FilePath = $FilePath; NoNewWindow = $true; PassThru = $true }
+    if ($Arguments.Count -gt 0) { $spArgs['ArgumentList'] = $Arguments }
+    if ($WorkingDirectory)      { $spArgs['WorkingDirectory'] = $WorkingDirectory }
+    $proc = Start-Process @spArgs
+
+    $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
+    $elapsed = [math]::Round(((Get-Date) - $start).TotalSeconds, 1)
+
+    if (-not $exited) {
+        Write-Warning ("PHASE TIMEOUT: {0} after {1}s - killing process tree (PID {2})" -f $Name, $elapsed, $proc.Id)
+        & taskkill /T /F /PID $proc.Id *> $null
+        return [pscustomobject]@{ Outcome = 'timeout'; ExitCode = $null; DurationSeconds = $elapsed }
+    }
+    $code = $proc.ExitCode
+    if ($code -eq 0) {
+        Write-Host ("PHASE ok: {0} ({1}s)" -f $Name, $elapsed)
+        return [pscustomobject]@{ Outcome = 'completed'; ExitCode = 0; DurationSeconds = $elapsed }
+    }
+    Write-Warning ("PHASE FAIL: {0} (exit {1}, {2}s)" -f $Name, $code, $elapsed)
+    return [pscustomobject]@{ Outcome = 'failed'; ExitCode = $code; DurationSeconds = $elapsed }
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase
