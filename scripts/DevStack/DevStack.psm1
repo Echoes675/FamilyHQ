@@ -273,9 +273,6 @@ function Invoke-DevStackReconcile {
 }
 
 function Install-DevStackPlaywright {
-    # The Features project is the test runner and copies all transitive deps (including
-    # Microsoft.Playwright.dll) to its bin. playwright.ps1 uses $PSScriptRoot to locate
-    # the DLL, so point to the Features bin — not E2E.Common which omits transitive deps.
     param(
         [Parameter(Mandatory)]$Config,
         [int]$TimeoutSeconds = 300,
@@ -285,6 +282,9 @@ function Install-DevStackPlaywright {
         Write-Host "chromium already installed; skipping browser install."
         return [pscustomobject]@{ Action = 'skipped'; Phase = $null }
     }
+    # The Features project is the test runner and copies all transitive deps (including
+    # Microsoft.Playwright.dll) to its bin. playwright.ps1 uses $PSScriptRoot to locate
+    # the DLL, so point to the Features bin — not E2E.Common which omits transitive deps.
     $script = Join-Path $Config.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1'
     if (-not (Test-Path $script)) {
         Write-Warning "playwright.ps1 not found yet; 'dotnet test' will install browsers on first run."
@@ -350,9 +350,12 @@ function Test-IsPlaywrightOrphan {
     $cmd = [string]$Process.CommandLine
     if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
     $lc = $cmd.ToLowerInvariant()
-    $isHeadless   = $lc.Contains('--headless')
+    # headless_shell.exe is inherently headless and carries no --headless flag.
+    $isHeadless   = $lc.Contains('--headless') -or ([string]$Process.Name -match '(?i)^headless_shell$')
     $isPlaywright = $lc.Contains('ms-playwright') -or $lc.Contains('playwright')
     if (-not ($isHeadless -and $isPlaywright)) { return $false }
+    # A null StartTime (access-denied) proceeds: the ms-playwright path + headless + profile
+    # signature is strong enough to act on even without a start-time confirmation.
     if ($Process.StartTime -and $Process.StartTime -lt $Since) { return $false }
     return $true
 }
@@ -360,10 +363,11 @@ function Test-IsPlaywrightOrphan {
 function Stop-DevStackPlaywrightOrphans {
     param([Parameter(Mandatory)][datetime]$Since)
     $killed = 0
+    $cmdByPid = @{}
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object { $cmdByPid[[int]$_.ProcessId] = $_.CommandLine }
     foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
-        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue
         $startTime = try { $p.StartTime } catch { $null }
-        $info = [pscustomobject]@{ Name = $p.Name; CommandLine = $cim.CommandLine; StartTime = $startTime }
+        $info = [pscustomobject]@{ Name = $p.Name; CommandLine = $cmdByPid[[int]$p.Id]; StartTime = $startTime }
         if (Test-IsPlaywrightOrphan -Process $info -Since $Since) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             $killed++

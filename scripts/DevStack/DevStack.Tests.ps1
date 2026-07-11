@@ -244,4 +244,8 @@ Describe 'Test-IsPlaywrightOrphan' {
         $p = [pscustomobject]@{ Name='chrome'; CommandLine=$null; StartTime=(Get-Date) }
         Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $false
     }
+    It 'accepts headless_shell (no --headless flag) with a playwright profile' {
+        $p = [pscustomobject]@{ Name='headless_shell'; CommandLine='C:\Users\x\AppData\Local\ms-playwright\chromium_headless_shell-1234\headless_shell.exe --user-data-dir=C:\Temp\playwright_chromiumdev_profile'; StartTime=(Get-Date) }
+        Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $true
+    }
 }

@@ -91,9 +91,9 @@ function Invoke-E2E {
     if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
 
     $install = Install-DevStackPlaywright -Config $cfg -TimeoutSeconds ($InstallTimeoutMinutes * 60) -Force:$ForceBrowserInstall
-    if ($install.Action -eq 'installed' -and $install.Phase.Outcome -eq 'timeout') {
+    if ($install.Action -eq 'installed' -and $install.Phase -and $install.Phase.Outcome -ne 'completed') {
         Stop-DevStackPlaywrightOrphans -Since $runStart | Out-Null
-        Write-Warning "playwright-install timed out; aborting. Stack left up; run 'down' to reset."
+        Write-Warning "playwright-install did not complete ($($install.Phase.Outcome)); aborting. Stack left up; run 'down' to reset."
         exit 2
     }
 
