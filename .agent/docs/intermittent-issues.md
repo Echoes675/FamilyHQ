@@ -41,7 +41,11 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ### 9. Local `dev-stack.ps1 e2e` runner wedges — boots the stack but never launches `dotnet test`
 
-**Status:** observed, no root cause yet; **mitigation = fall back to Deploy-Dev as the E2E gate** when the local runner hangs (Deploy-Dev runs the same suite). Not a product defect — local tooling only.
+**Status:** **instrumented (FHQ-148)** — the `e2e` verb now runs as timed phases (`boot → playwright-install → dotnet-test`) with per-phase `PHASE start/ok/TIMEOUT` logging, hard timeouts, and an orphan-browser sweep on abort, so a recurrence **names the stalled phase and aborts** instead of hanging silently. The *underlying* Wedge-A deadlock (below) is still unpinned — left open until the instrumentation captures a live occurrence. Mitigation while open remains: fall back to Deploy-Dev as the E2E gate. Not a product defect — local tooling only.
+
+**Root-cause hypotheses (FHQ-148):**
+- **Wedge B (never launches tests)** → `Install-DevStackPlaywright` ran `& playwright.ps1 install chromium | Out-Null` on *every* invocation with no timeout and swallowed output; a stalled browser download blocks here (stack UP, no testhost, 0 CPU). Addressed: install is now **skipped when Chromium is already cached** and, when it does run, is bounded + streamed.
+- **Wedge A (hangs after the run)** → `& dotnet test` never returned — a Playwright `CloseAsync`/testhost shutdown deadlock keeps the process alive with orphaned browsers. Now survivable: the `dotnet-test` phase has a hard timeout that tree-kills the hung run and the cleanup sweeps orphans. The deadlock's true origin still needs pinning from a captured occurrence.
 **Component:** local tooling — `scripts/dev-stack.ps1` `e2e` verb (Windows host).
 **Occurrences:** twice on 2026-07-11 during FHQ-144. Run A wedged *after* the scenarios executed (Simulator logs showed the writes; runner hung in teardown/reporting for 2h+). Run B wedged *before* the test phase: the four stack services (webui/webapi/simulator/devserver) booted and stayed healthy, but no `dotnet test`/testhost process ever launched and no browser opened; the outer `pwsh` sat at 0 CPU ~15 min in.
 
@@ -49,7 +53,7 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 **How to confirm + recover:** check for a testhost/browser process and the launcher's CPU delta; if wedged, `Stop-Process` the `dev-stack` `pwsh` (and its child), then `dev-stack.ps1 down` to reconcile the stale services. Then push and let **Deploy-Dev** run the E2E (it exercises the same feature files). Per the local-run rule this is an acceptable deviation when the local infra is unavailable — the intent (don't burn Deploy-Dev cycles on failures catchable locally) is moot when the local runner can't run.
 
-**What a real fix needs:** capture where the `e2e` verb blocks (health-gate loop vs. the `dotnet test` invocation) — add per-phase logging/timeout to `dev-stack.ps1` so a hang surfaces which stage stalled instead of hanging silently.
+**What a real fix needs:** the phase logging/timeout is done (FHQ-148). The remaining work is to pin the Wedge-A `dotnet test` shutdown deadlock from the next captured occurrence — the `PHASE dotnet-test` timeout will now abort it and log the boundary, so the next hang should yield a diagnosable trail (orphaned browser command lines, testhost state) rather than 2h of silence.
 
 ---
 
