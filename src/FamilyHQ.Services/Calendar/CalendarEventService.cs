@@ -372,7 +372,8 @@ public class CalendarEventService(
                 }
 
                 await PatchSeriesMasterAsync(calendarEvent, ownerCalendar, request, normalisedDescription, ct);
-                // The master patch does not change the RRULE, so the series keeps its stored rule.
+                // The master patch leaves the RRULE untouched, so the series keeps its stored rule and
+                // its instances keep their recurringEventId — which is what the reconcile stamps on.
                 seriesRules = SeriesRuleForExisting(calendarEvent);
                 break;
 
@@ -500,20 +501,37 @@ public class CalendarEventService(
     private async Task PatchSeriesMasterAsync(
         CalendarEvent calendarEvent, CalendarInfo owner, UpdateEventRequest request, string normalisedDescription, CancellationToken ct)
     {
-        // events.patch on the series master — Google preserves existing exceptions server-side.
+        // events.patch on the series master: merge semantics, so Google preserves the master's RRULE
+        // and its existing exceptions. A full-resource PUT here sends no `recurrence` array and
+        // collapses the whole series into a single non-recurring event (FHQ-144).
+        //
+        // The edit arrives on ONE occurrence (calendarEvent), which may not be the series origin. The
+        // master's DTSTART anchors the whole series, so writing the edited occurrence's absolute start
+        // onto the master would relocate the series to that occurrence's date. Instead shift the
+        // master's DTSTART by the same DELTA the user applied to the edited occurrence: the outcome
+        // then depends on WHAT changed, not WHICH occurrence was edited (a pure time change keeps the
+        // origin date; an unchanged save moves nothing). (FHQ-144 follow-up.)
+        var seriesId = calendarEvent.GoogleRecurringEventId!;
+        var seriesRows = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
+        var masterStart = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, calendarEvent.Start, ct);
+
+        var startShift = request.Start - calendarEvent.Start;
+        var newMasterStart = masterStart + startShift;
+        var newMasterEnd = newMasterStart + (request.End - request.Start);
+
         var master = new CalendarEvent
         {
-            GoogleEventId = calendarEvent.GoogleRecurringEventId!,
+            GoogleEventId = seriesId,
             Title = request.Title,
-            Start = request.Start,
-            End = request.End,
+            Start = newMasterStart,
+            End = newMasterEnd,
             IsAllDay = request.IsAllDay,
             Location = request.Location,
             Description = normalisedDescription
         };
 
         var hash = ComputeHash(master);
-        await googleCalendarClient.UpdateEventAsync(owner.GoogleCalendarId, master, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, master, hash, ct);
         RecordOutbound(master.GoogleEventId, hash);
     }
 

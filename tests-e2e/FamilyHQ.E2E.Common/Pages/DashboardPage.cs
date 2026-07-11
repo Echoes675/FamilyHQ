@@ -1430,6 +1430,41 @@ public class DashboardPage : BasePage
         return await tiles.CountAsync();
     }
 
+    /// <summary>
+    /// Asserts a weekly recurring series occupies EXACTLY its expected occurrence slots: on each of
+    /// <paramref name="occurrences"/> consecutive weekly dates (from <paramref name="firstOccurrenceDate"/>)
+    /// there is exactly one tile bearing <paramref name="eventName"/>, and every occurrence tile shows
+    /// identical content (same title AND same start time). This catches a series that was relocated to
+    /// a later occurrence's date — an expected slot would be empty (count 0) — a series that lost or
+    /// gained occurrences, and occurrences whose time-of-day drifted apart. The day-event tile renders
+    /// the start time (<c>h:mm tt</c>) beneath the title, so identical tile text means a uniform time.
+    /// </summary>
+    public async Task AssertWeeklySeriesOccupiesExactlyItsSlotsAsync(
+        string eventName, DateTime firstOccurrenceDate, int occurrences)
+    {
+        string? firstTileText = null;
+        for (var i = 0; i < occurrences; i++)
+        {
+            var date = firstOccurrenceDate.AddDays(7 * i);
+            await OpenDayPickerAndGoAsync(
+                date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+
+            var tiles = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')");
+            await tiles.First.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+            await Assertions.Expect(tiles).ToHaveCountAsync(1, new() { Timeout = 10000 });
+
+            // The tile renders "<title>\n<h:mm tt>"; identical text across occurrences means the whole
+            // series shares one title and one start time.
+            var tileText = (await tiles.First.InnerTextAsync()).Trim();
+            if (firstTileText is null)
+                firstTileText = tileText;
+            else if (tileText != firstTileText)
+                throw new System.Exception(
+                    $"Occurrence {i + 1} of '{eventName}' shows \"{tileText}\" but the first occurrence shows " +
+                    $"\"{firstTileText}\" — every occurrence of a series must share the same title and start time.");
+        }
+    }
+
     // FHQ-18.11 Pass 3 — edit-scope flow (This event / This and following / All events) ──────────
 
     /// <summary>

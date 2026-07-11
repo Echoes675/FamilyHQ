@@ -44,6 +44,18 @@ public class RecurringEventSteps
             eventName, firstOccurrence, occurrences);
     }
 
+    // Stronger than the "appears on each date" check: asserts the series occupies EXACTLY its
+    // occurrence slots — one tile per expected weekly date, with a uniform title and start time across
+    // all of them. Catches a series relocated to a later occurrence's date (a slot goes empty), a
+    // changed occurrence count, and occurrences whose times drifted apart.
+    [Then(@"the series ""([^""]*)"" occupies exactly its (\d+) weekly occurrence slots")]
+    public async Task ThenTheSeriesOccupiesExactlyItsWeeklyOccurrenceSlots(string eventName, int occurrences)
+    {
+        var firstOccurrence = _scenarioContext.Get<System.DateTime>("RecurringSeriesFirstOccurrenceDate");
+        await _dashboardPage.AssertWeeklySeriesOccupiesExactlyItsSlotsAsync(
+            eventName, firstOccurrence, occurrences);
+    }
+
     [Then(@"the recurring event shows a recurrence indicator")]
     public async Task ThenTheRecurringEventShowsARecurrenceIndicator()
     {
