@@ -10,6 +10,9 @@ param(
     [switch]$Reuse,
     [switch]$Force,
     [switch]$Headed,
+    [switch]$ForceBrowserInstall,
+    [int]$InstallTimeoutMinutes = 5,
+    [int]$TestTimeoutMinutes = 30,
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs = @()
@@ -77,22 +80,40 @@ function Invoke-Down {
 }
 
 function Invoke-E2E {
-    # Ensure the stack is up (reuse if already healthy).
+    $runStart = Get-Date
     if (($cfg.Services | ForEach-Object { Test-DevStackServiceHealthy -Service $_ }) -contains $false) {
+        Write-Host "PHASE start: boot $((Get-Date).ToString('HH:mm:ss'))"
         Invoke-Up
+        Write-Host "PHASE ok: boot"
+    } else {
+        Write-Host "PHASE ok: boot (skipped - stack already healthy)"
     }
     if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
 
-    Install-DevStackPlaywright -Config $cfg
+    $install = Install-DevStackPlaywright -Config $cfg -TimeoutSeconds ($InstallTimeoutMinutes * 60) -Force:$ForceBrowserInstall
+    if ($install.Action -eq 'installed' -and $install.Phase.Outcome -eq 'timeout') {
+        Stop-DevStackPlaywrightOrphans -Since $runStart | Out-Null
+        Write-Warning "playwright-install timed out; aborting. Stack left up; run 'down' to reset."
+        exit 2
+    }
+
     $resultsDir = Join-Path $cfg.RepoRoot 'TestResults'
     $trxPath = Join-Path $resultsDir 'e2e.trx'
     $testArgs = ConvertTo-DotnetTestArgs -Filter $Filter -TrxName 'e2e.trx' -ExtraArgs (@('--results-directory', $resultsDir) + $ExtraArgs)
     $featuresProj = Join-Path $cfg.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features'
 
     Write-Host "Running E2E: dotnet test $($testArgs -join ' ')"
-    & dotnet test $featuresProj @testArgs
-    $code = $LASTEXITCODE
-    Write-Host "E2E exit code: $code (TRX: $trxPath)"
+    $code = 0
+    try {
+        $phase = Invoke-DevStackPhase -Name 'dotnet-test' -FilePath 'dotnet' `
+            -Arguments (@('test', $featuresProj) + $testArgs) `
+            -TimeoutSeconds ($TestTimeoutMinutes * 60) -WorkingDirectory $cfg.RepoRoot
+        $code = if ($phase.Outcome -eq 'timeout') { 2 } else { $phase.ExitCode }
+    } finally {
+        $orphans = Stop-DevStackPlaywrightOrphans -Since $runStart
+        if ($orphans -gt 0) { Write-Host "Cleaned up $orphans orphaned Playwright browser process(es)." }
+    }
+    Write-Host "E2E exit code: $code (TRX: $trxPath). Stack left up; run 'down' to reset."
     exit $code
 }
 
