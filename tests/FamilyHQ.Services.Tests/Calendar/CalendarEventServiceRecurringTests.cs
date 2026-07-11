@@ -267,6 +267,65 @@ public class CalendarEventServiceRecurringTests
     }
 
     [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_EditingLaterOccurrence_KeepsSeriesAnchoredToMasterStart()
+    {
+        // FHQ-144 follow-up: an AllInSeries edit arrives on ONE occurrence, but must not relocate the
+        // series to that occurrence's date. The master patch shifts the master's DTSTART by the DELTA
+        // the user applied to the edited occurrence — so the result depends on WHAT changed, not WHICH
+        // occurrence was edited. Here occurrence 3 (Mar 15) has its time moved 09:00→08:00; the series
+        // must stay anchored on the master's origin date (Mar 1) at the new time, NOT jump to Mar 15.
+        var f = new Fixture();
+        var masterStart = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);       // occurrence 1 (series origin)
+        var editedOccurrenceStart = new DateTimeOffset(2026, 3, 15, 9, 0, 0, TimeSpan.Zero); // occurrence 3
+
+        var instance = f.RecurringInstance(EventId, "inst-3", editedOccurrenceStart);
+        f.ArrangeEvent(instance);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", masterStart));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", masterStart)]);
+
+        // User changes only the TIME on occurrence 3: 09:00 → 08:00 (delta −1h), same date.
+        var newStart = new DateTimeOffset(2026, 3, 15, 8, 0, 0, TimeSpan.Zero);
+        var request = new UpdateEventRequest("Weekly", newStart, newStart.AddHours(1), false, "Loc", "Body");
+
+        await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.AllInSeries);
+
+        // Master patch carries the ORIGIN date (Mar 1) with the new time (08:00), not the edited
+        // occurrence's date (Mar 15).
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e =>
+                e.GoogleEventId == SeriesId &&
+                e.Start == new DateTimeOffset(2026, 3, 1, 8, 0, 0, TimeSpan.Zero) &&
+                e.End == new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero)),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_UnchangedSave_DoesNotMoveTheSeries()
+    {
+        // Saving AllInSeries without changing the time on a later occurrence must be a no-op shift:
+        // the master keeps its origin start exactly (delta = 0).
+        var f = new Fixture();
+        var masterStart = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
+        var editedOccurrenceStart = new DateTimeOffset(2026, 3, 15, 9, 0, 0, TimeSpan.Zero);
+
+        var instance = f.RecurringInstance(EventId, "inst-3", editedOccurrenceStart);
+        f.ArrangeEvent(instance);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", masterStart));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", masterStart)]);
+
+        // Request echoes the edited occurrence's own times unchanged (delta = 0).
+        var request = new UpdateEventRequest("Weekly", editedOccurrenceStart, editedOccurrenceStart.AddHours(1), false, "Loc", "Body");
+
+        await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.Start == masterStart),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task UpdateRecurringAsync_AllInSeries_RecordsEchoedMasterHashForEveryReconciledInstance()
     {
         const string MasterHash = "master-echoed-hash";
