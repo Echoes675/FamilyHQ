@@ -318,4 +318,16 @@ function Invoke-DevStackPhase {
     return [pscustomobject]@{ Outcome = 'failed'; ExitCode = $code; DurationSeconds = $elapsed }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase
+function Test-PlaywrightChromiumInstalled {
+    param([string]$BrowsersPath)
+    if (-not $BrowsersPath) {
+        $BrowsersPath = if ($env:PLAYWRIGHT_BROWSERS_PATH) { $env:PLAYWRIGHT_BROWSERS_PATH }
+                        else { Join-Path $env:LOCALAPPDATA 'ms-playwright' }
+    }
+    if (-not (Test-Path $BrowsersPath)) { return $false }
+    $build = Get-ChildItem -Path $BrowsersPath -Directory -Filter 'chromium-*' -ErrorAction SilentlyContinue |
+             Select-Object -First 1
+    return [bool]$build
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled

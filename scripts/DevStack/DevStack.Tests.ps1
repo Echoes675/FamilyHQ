@@ -164,3 +164,20 @@ Describe 'Invoke-DevStackPhase' {
         ($r.DurationSeconds -lt 10) | Should Be $true
     }
 }
+
+Describe 'Test-PlaywrightChromiumInstalled' {
+    It 'returns false when the browsers dir is absent' {
+        Test-PlaywrightChromiumInstalled -BrowsersPath (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid())) | Should Be $false
+    }
+    It 'returns false when no chromium build is present' {
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid()); New-Item -ItemType Directory -Path $dir | Out-Null
+        try { Test-PlaywrightChromiumInstalled -BrowsersPath $dir | Should Be $false }
+        finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It 'returns true when a chromium build folder exists' {
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid())
+        New-Item -ItemType Directory -Path (Join-Path $dir 'chromium-1234') | Out-Null
+        try { Test-PlaywrightChromiumInstalled -BrowsersPath $dir | Should Be $true }
+        finally { Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
