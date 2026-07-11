@@ -39,6 +39,20 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ---
 
+### 9. Local `dev-stack.ps1 e2e` runner wedges — boots the stack but never launches `dotnet test`
+
+**Status:** observed, no root cause yet; **mitigation = fall back to Deploy-Dev as the E2E gate** when the local runner hangs (Deploy-Dev runs the same suite). Not a product defect — local tooling only.
+**Component:** local tooling — `scripts/dev-stack.ps1` `e2e` verb (Windows host).
+**Occurrences:** twice on 2026-07-11 during FHQ-144. Run A wedged *after* the scenarios executed (Simulator logs showed the writes; runner hung in teardown/reporting for 2h+). Run B wedged *before* the test phase: the four stack services (webui/webapi/simulator/devserver) booted and stayed healthy, but no `dotnet test`/testhost process ever launched and no browser opened; the outer `pwsh` sat at 0 CPU ~15 min in.
+
+**Symptoms to recognise:** `dev-stack.ps1 e2e` never returns; `dev-stack.ps1 status` shows all services `UP`; **no `testhost`/`vstest` process and no `msedge` process**; the launching `pwsh` process shows ~0 CPU growth over a few seconds (wedged, not slow). The redirect/output file stays empty because the pipeline only writes on completion.
+
+**How to confirm + recover:** check for a testhost/browser process and the launcher's CPU delta; if wedged, `Stop-Process` the `dev-stack` `pwsh` (and its child), then `dev-stack.ps1 down` to reconcile the stale services. Then push and let **Deploy-Dev** run the E2E (it exercises the same feature files). Per the local-run rule this is an acceptable deviation when the local infra is unavailable — the intent (don't burn Deploy-Dev cycles on failures catchable locally) is moot when the local runner can't run.
+
+**What a real fix needs:** capture where the `e2e` verb blocks (health-gate loop vs. the `dotnet test` invocation) — add per-phase logging/timeout to `dev-stack.ps1` so a hang surfaces which stage stalled instead of hanging silently.
+
+---
+
 ## Resolved issues
 
 ### 7. Multi-calendar event membership flaps during the first-login auto-designation window (FHQ-46)
