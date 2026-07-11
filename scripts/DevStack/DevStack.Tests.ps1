@@ -249,3 +249,16 @@ Describe 'Test-IsPlaywrightOrphan' {
         Test-IsPlaywrightOrphan -Process $p -Since $since | Should Be $true
     }
 }
+
+Describe 'Set-XunitMaxParallelThreadsContent' {
+    It 'rewrites the maxParallelThreads value and preserves the rest' {
+        $c = "{`n  `"`$schema`": `"https://xunit.net/schema/current/xunit.runner.schema.json`",`n  `"maxParallelThreads`": 6`n}"
+        $out = Set-XunitMaxParallelThreadsContent -Content $c -Value 1
+        ($out -match '"maxParallelThreads":\s*1') | Should Be $true
+        ($out -match '"maxParallelThreads":\s*6') | Should Be $false
+        ($out -match 'xunit\.runner\.schema\.json') | Should Be $true
+    }
+    It 'handles compact spacing' {
+        Set-XunitMaxParallelThreadsContent -Content '{"maxParallelThreads":8}' -Value 2 | Should Be '{"maxParallelThreads":2}'
+    }
+}

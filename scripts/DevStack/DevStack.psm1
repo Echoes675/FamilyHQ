@@ -376,4 +376,15 @@ function Stop-DevStackPlaywrightOrphans {
     return $killed
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans
+function Set-XunitMaxParallelThreadsContent {
+    # Returns the xunit.runner.json content with maxParallelThreads set to $Value, preserving
+    # everything else verbatim. Used to cap parallelism for a local run without disturbing the
+    # committed value that CI relies on (FHQ-150).
+    param(
+        [Parameter(Mandatory)][string]$Content,
+        [Parameter(Mandatory)][int]$Value
+    )
+    return ($Content -replace '("maxParallelThreads"\s*:\s*)\d+', ('${1}' + $Value))
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans, Set-XunitMaxParallelThreadsContent
