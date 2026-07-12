@@ -387,4 +387,38 @@ function Set-XunitMaxParallelThreadsContent {
     return ($Content -replace '("maxParallelThreads"\s*:\s*)\d+', ('${1}' + $Value))
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans, Set-XunitMaxParallelThreadsContent
+function Start-DevStackWebUiStatic {
+    # Publishes the WebUi and serves the published wwwroot via the dev-only static host
+    # (tools/FamilyHQ.LocalWebHost) instead of the Blazor DevServer. The DevServer's on-the-fly
+    # GZip crashes under E2E load on .NET 10.0.9/Windows (ZLibException, FHQ-150); a static host
+    # serves the pre-compressed assets directly and never creates a Deflater. Returns the host PID.
+    param([Parameter(Mandatory)]$Config)
+
+    $webuiProj = Join-Path $Config.RepoRoot 'src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj'
+    $pubDir    = Join-Path $Config.StateDir 'webui-publish'
+    Write-Host "Publishing WebUi (Release) for static serving..."
+    & dotnet publish $webuiProj -c Release -o $pubDir --nologo -v q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "WebUi publish failed (exit $LASTEXITCODE)" }
+
+    $outLog = Join-Path $Config.LogDir 'webui.out.log'
+    $errLog = Join-Path $Config.LogDir 'webui.err.log'
+    Set-Content -Path $outLog -Value '' ; Set-Content -Path $errLog -Value ''
+
+    $hostProj = Join-Path $Config.RepoRoot 'tools/FamilyHQ.LocalWebHost/FamilyHQ.LocalWebHost.csproj'
+    $env:WEBUI_WWWROOT          = Join-Path $pubDir 'wwwroot'
+    $env:ASPNETCORE_URLS        = "https://localhost:$($Config.Ports.WebUi)"
+    $env:ASPNETCORE_ENVIRONMENT = 'Development'
+    try {
+        $proc = Start-Process -FilePath 'dotnet' `
+            -ArgumentList @('run', '--project', $hostProj, '-c', 'Release') `
+            -WorkingDirectory $Config.RepoRoot `
+            -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
+            -NoNewWindow -PassThru
+    } finally {
+        # Clear so these don't leak into the subsequent 'dotnet test' child.
+        Remove-Item Env:\WEBUI_WWWROOT, Env:\ASPNETCORE_URLS, Env:\ASPNETCORE_ENVIRONMENT -ErrorAction SilentlyContinue
+    }
+    return $proc.Id
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans, Set-XunitMaxParallelThreadsContent, Start-DevStackWebUiStatic
