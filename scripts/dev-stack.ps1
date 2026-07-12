@@ -80,16 +80,50 @@ function Invoke-Down {
     Write-Host "Stack down."
 }
 
+function Invoke-UpForE2E {
+    # Bring the stack up for an E2E run. Backend services (postgres/simulator/webapi) start
+    # normally and are reused if already healthy; the WebUi is always served as PUBLISHED STATIC
+    # files rather than via the Blazor DevServer, whose on-the-fly GZip crashes under E2E load on
+    # .NET 10.0.9/Windows (ZLibException, FHQ-150). Interactive `up` keeps the DevServer.
+    Assert-DevCerts
+    Initialize-DevStackState -Config $cfg
+
+    $dbUp = docker ps --filter "name=$($cfg.ContainerName)" --format '{{.Names}}' 2>$null |
+            Where-Object { $_ -eq $cfg.ContainerName }
+    if (-not $dbUp) { Start-DevStackPostgres -Config $cfg -KeepData:$KeepData }
+
+    $pids = @{}
+    foreach ($svc in ($cfg.Services | Where-Object { $_.Name -ne 'webui' })) {
+        if (Test-DevStackServiceHealthy -Service $svc) { Write-Host "$($svc.Name) already healthy."; continue }
+        Stop-DevStackListenerOnPort -Config $cfg -Port $svc.Port -Force:$Force | Out-Null
+        Write-Host "Starting $($svc.Name)..."
+        $pids[$svc.Name] = Start-DevStackService -Config $cfg -Service $svc
+        if (-not (Wait-DevStackHealthy -Service $svc)) {
+            Get-Content (Join-Path $cfg.LogDir "$($svc.Name).out.log") -Tail 20 -ErrorAction SilentlyContinue
+            throw "$($svc.Name) did not become healthy"
+        }
+        Write-Host "$($svc.Name) healthy."
+    }
+
+    # WebUi: always (re)serve as published static — never the DevServer for E2E.
+    Stop-DevStackListenerOnPort -Config $cfg -Port $cfg.Ports.WebUi -Force:$Force | Out-Null
+    $pids['webui'] = Start-DevStackWebUiStatic -Config $cfg
+    $webuiSvc = $cfg.Services | Where-Object { $_.Name -eq 'webui' }
+    if (-not (Wait-DevStackHealthy -Service $webuiSvc -TimeoutSeconds 120)) {
+        Get-Content (Join-Path $cfg.LogDir 'webui.out.log') -Tail 20 -ErrorAction SilentlyContinue
+        throw "webui (static) did not become healthy"
+    }
+    Write-Host "webui healthy (static, published)."
+    Save-DevStackState -Config $cfg -Pids $pids
+}
+
 function Invoke-E2E {
     $runStart = Get-Date
-    if (($cfg.Services | ForEach-Object { Test-DevStackServiceHealthy -Service $_ }) -contains $false) {
-        Write-Host "PHASE start: boot $((Get-Date).ToString('HH:mm:ss'))"
-        Invoke-Up
-        Write-Host "PHASE ok: boot"
-    } else {
-        Write-Host "PHASE ok: boot (skipped - stack already healthy)"
-    }
+    Write-Host "PHASE start: boot $((Get-Date).ToString('HH:mm:ss'))"
+    Invoke-UpForE2E
+    Write-Host "PHASE ok: boot"
     if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
+    $env:DEVSTACK_E2E_WARMUP = '1'   # local-only: warm the app once before scenarios so the first isn't cold (FHQ-150)
 
     $install = Install-DevStackPlaywright -Config $cfg -TimeoutSeconds ($InstallTimeoutMinutes * 60) -Force:$ForceBrowserInstall
     if ($install.Action -eq 'installed' -and $install.Phase -and $install.Phase.Outcome -ne 'completed') {

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- Dev-only local static host for the E2E runner (FHQ-150). Serves the *published* WebUi
+       wwwroot without the Blazor DevServer's on-the-fly GZip, which crashes under E2E load on
+       .NET 10.0.9 / Windows (ZLibException). Not shipped; not part of the deployed image. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" />
+  </ItemGroup>
+
+</Project>
