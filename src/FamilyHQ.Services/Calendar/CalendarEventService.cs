@@ -146,7 +146,7 @@ public class CalendarEventService(
             calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
             calendarEvent.IsAllDay, calendarEvent.Description);
 
-        await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
 
         outboundCache.Record(calendarEvent.GoogleEventId, hash);
         logger.LogDebug(
@@ -178,7 +178,7 @@ public class CalendarEventService(
         // array onto that same id so Google promotes it to the series master in place.
         ApplyRequestFields(calendarEvent, request, normalisedDescription);
         var hash = ComputeHash(calendarEvent);
-        await googleCalendarClient.UpdateEventAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
         RecordOutbound(calendarEvent.GoogleEventId, hash);
 
         // After promotion Google promotes the single event to the series MASTER in place, so the
@@ -302,7 +302,7 @@ public class CalendarEventService(
                 calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
                 calendarEvent.IsAllDay, calendarEvent.Description);
 
-            await googleCalendarClient.UpdateEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+            await googleCalendarClient.PatchEventFieldsAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
 
             outboundCache.Record(calendarEvent.GoogleEventId, hash);
             logger.LogDebug(
@@ -469,7 +469,7 @@ public class CalendarEventService(
         ApplyRequestFields(calendarEvent, request, normalisedDescription);
 
         var hash = ComputeHash(calendarEvent);
-        await googleCalendarClient.UpdateEventAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
         RecordOutbound(calendarEvent.GoogleEventId, hash);
     }
 

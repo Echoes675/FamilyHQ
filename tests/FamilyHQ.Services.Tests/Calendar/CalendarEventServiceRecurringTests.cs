@@ -46,7 +46,7 @@ public class CalendarEventServiceRecurringTests
         await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.ThisOnly);
 
         // Patches this instance's own GoogleEventId (events.patch), not the master.
-        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId,
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-2"), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         // One row upserted from the reconcile; OriginalStartTime populated from the exception response.
@@ -227,13 +227,10 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Series Title", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
 
-        // Writes the series master via events.patch — a PUT (UpdateEventAsync) omits the recurrence
-        // array and Google would collapse the series to a one-off event (FHQ-144).
+        // Writes the series master via events.patch (PATCH, merge semantics) — a full-resource replace
+        // would omit the recurrence array and Google would collapse the series to a one-off event (FHQ-144).
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-
-        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId,
-            It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // The exception row keeps its overridden title + OriginalStartTime after reconcile.
         f.Repo.Verify(r => r.AddEventAsync(
@@ -506,7 +503,7 @@ public class CalendarEventServiceRecurringTests
         // Migration is invoked; the plain master patch is NOT performed.
         f.Migration.Verify(m => m.EnsureCorrectCalendarForSeriesAsync(SeriesId,
             It.Is<IReadOnlyList<CalendarInfo>>(members => members.Count == 2), It.IsAny<CancellationToken>()), Times.Once);
-        f.Google.Verify(g => g.UpdateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Delete scopes ─────────────────────────────────────────────────────────
@@ -853,8 +850,8 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateAsync(EventId, Req("Lunch", InstanceStart, "Body"));
 
-        // Plain field update via UpdateEventAsync; no recurrence calls.
-        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Plain field update via PatchEventFieldsAsync; no recurrence calls.
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         f.Google.Verify(g => g.ClearSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -936,7 +933,7 @@ public class CalendarEventServiceRecurringTests
             Repo.Setup(r => r.GetEventsBySeriesIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
 
-            Google.Setup(g => g.UpdateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            Google.Setup(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
 
             Sut = new CalendarEventService(Google.Object, Repo.Object, Migration.Object, TagParser.Object, Cache.Object,

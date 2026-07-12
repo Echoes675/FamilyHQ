@@ -644,51 +644,6 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
-    public async Task UpdateEventAsync_ReturnsUpdatedEvent()
-    {
-        // Arrange
-        var (http, tokenStore, systemUnderTest) = CreateSut();
-        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
-
-        http.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
-            });
-
-        http.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Put && req.RequestUri!.ToString().Contains("events/existing-id")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(JsonSerializer.Serialize(new { id = "existing-id" }))
-            });
-
-        var updatedEvent = new CalendarEvent
-        {
-            GoogleEventId = "existing-id",
-            Title = "Updated Event",
-            Start = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
-            End = new DateTimeOffset(2026, 3, 1, 1, 0, 0, TimeSpan.Zero)
-        };
-
-        // Act
-        var result = await systemUnderTest.UpdateEventAsync("cal1", updatedEvent, "testhash");
-
-        // Assert
-        result.GoogleEventId.Should().Be("existing-id");
-        result.Title.Should().Be("Updated Event");
-    }
-
-    [Fact]
     public async Task DeleteEventAsync_CompletesSuccessfully()
     {
         // Arrange
