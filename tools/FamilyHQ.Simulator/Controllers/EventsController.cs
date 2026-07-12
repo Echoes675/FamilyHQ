@@ -378,6 +378,20 @@ public class EventsController : ControllerBase
 
         var userId = ExtractUserId(Request);
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
+
+        // FHQ-145: a PATCH to a compound INSTANCE id "{masterId}_{stamp}" with no stored row is the
+        // "This event" (ThisOnly) edit routed through events.patch. Real Google turns it into an EXCEPTION
+        // override exactly as events.update does — store one so the next singleEvents=true list surfaces it.
+        if (existing == null
+            && body != null
+            && TryParseCompoundInstanceId(eventId, out var masterId, out var originalStartUtc))
+        {
+            var master = await _db.Events.FirstOrDefaultAsync(
+                e => e.Id == masterId && e.UserId == userId && e.RecurrenceRule != null);
+            if (master != null)
+                return await UpsertExceptionOverrideAsync(master, eventId, originalStartUtc, body, userId);
+        }
+
         if (existing == null)
         {
             _logger.LogWarning("[SIM] Event {EventId} not found for patch.", eventId);
