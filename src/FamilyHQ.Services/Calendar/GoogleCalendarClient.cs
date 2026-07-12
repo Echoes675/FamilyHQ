@@ -489,7 +489,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             {
                 summary = evt.Title,
                 description = evt.Description,
-                location = evt.Location,
+                location = evt.Location ?? "",
                 start = new { date = evt.Start.ToString("yyyy-MM-dd") },
                 end = new { date = exclusiveEndDate.ToString("yyyy-MM-dd") },
                 recurrence,
@@ -506,7 +506,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             {
                 summary = evt.Title,
                 description = evt.Description,
-                location = evt.Location,
+                location = evt.Location ?? "",
                 start = new { dateTime = _timeZoneService.ToZonedWallClock(evt.Start, ianaZone), timeZone = ianaZone },
                 end = new { dateTime = _timeZoneService.ToZonedWallClock(evt.End, ianaZone), timeZone = ianaZone },
                 recurrence,
@@ -524,7 +524,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         {
             summary = evt.Title,
             description = evt.Description,
-            location = evt.Location,
+            location = evt.Location ?? "",
             start = new { dateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
             end = new { dateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
             recurrence,
