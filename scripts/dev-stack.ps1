@@ -123,6 +123,7 @@ function Invoke-E2E {
     Invoke-UpForE2E
     Write-Host "PHASE ok: boot"
     if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
+    $env:DEVSTACK_E2E_WARMUP = '1'   # local-only: warm the app once before scenarios so the first isn't cold (FHQ-150)
 
     $install = Install-DevStackPlaywright -Config $cfg -TimeoutSeconds ($InstallTimeoutMinutes * 60) -Force:$ForceBrowserInstall
     if ($install.Action -eq 'installed' -and $install.Phase -and $install.Phase.Outcome -ne 'completed') {
