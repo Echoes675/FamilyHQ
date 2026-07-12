@@ -157,7 +157,7 @@ public class CalendarEventServiceTests
 
         await sut.SetMembersAsync(EventId, [CalAId, CalBId]);
 
-        google.Verify(g => g.UpdateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── DeleteAsync ───────────────────────────────────────────────────────────

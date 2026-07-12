@@ -319,25 +319,6 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "ClearSeriesRecurrence", ct);
     }
 
-    // events.update — a FULL-RESOURCE REPLACE. Any field absent from MapToGoogleEvent's body is
-    // cleared server-side. Safe only for single events and expanded instances (neither carries a
-    // `recurrence` array). Never call this on a series master — use PatchEventFieldsAsync (FHQ-144).
-    public async Task<CalendarEvent> UpdateEventAsync(
-        string googleCalendarId,
-        CalendarEvent calendarEvent,
-        string contentHash,
-        CancellationToken ct = default)
-    {
-        var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
-        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
-        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Put, endpoint, ct);
-        request.Content = JsonContent.Create(body, options: _jsonOptions);
-        var response = await _httpClient.SendAsync(request, ct);
-        await ThrowIfFailedAsync(response, "UpdateEvent", ct);
-        return calendarEvent;
-    }
-
     public async Task<CalendarEvent> PatchEventFieldsAsync(
         string googleCalendarId,
         CalendarEvent calendarEvent,

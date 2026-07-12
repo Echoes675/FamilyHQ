@@ -25,13 +25,11 @@ public interface IGoogleCalendarClient
     /// </summary>
     Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default);
 
-    Task<CalendarEvent> UpdateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
-
     /// <summary>
-    /// Updates the supplied fields of an event via events.patch (HTTP PATCH — merge semantics).
-    /// Unlike <see cref="UpdateEventAsync"/> (events.update, a full-resource replace), fields absent
-    /// from the request body are preserved server-side. Required when writing a series master: a PUT
-    /// omits the <c>recurrence</c> array and would collapse the series to a one-off event (FHQ-144).
+    /// Patches only the fields present in the request body (events.patch, HTTP PATCH — a partial
+    /// MERGE). Fields absent from the body are preserved server-side, so Google's attendees,
+    /// reminders, colorId and recurrence survive a kiosk edit. This is the only event-field write
+    /// path; there is deliberately no full-resource-replace (events.update / PUT) sibling.
     /// </summary>
     Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
 

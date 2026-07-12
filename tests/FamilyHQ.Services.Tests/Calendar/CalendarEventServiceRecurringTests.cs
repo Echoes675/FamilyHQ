@@ -227,13 +227,10 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Series Title", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
 
-        // Writes the series master via events.patch — a PUT (UpdateEventAsync) omits the recurrence
-        // array and Google would collapse the series to a one-off event (FHQ-144).
+        // Writes the series master via events.patch (PATCH, merge semantics) — a full-resource replace
+        // would omit the recurrence array and Google would collapse the series to a one-off event (FHQ-144).
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-
-        f.Google.Verify(g => g.UpdateEventAsync(GoogleCalId,
-            It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // The exception row keeps its overridden title + OriginalStartTime after reconcile.
         f.Repo.Verify(r => r.AddEventAsync(
@@ -506,7 +503,7 @@ public class CalendarEventServiceRecurringTests
         // Migration is invoked; the plain master patch is NOT performed.
         f.Migration.Verify(m => m.EnsureCorrectCalendarForSeriesAsync(SeriesId,
             It.Is<IReadOnlyList<CalendarInfo>>(members => members.Count == 2), It.IsAny<CancellationToken>()), Times.Once);
-        f.Google.Verify(g => g.UpdateEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Delete scopes ─────────────────────────────────────────────────────────
