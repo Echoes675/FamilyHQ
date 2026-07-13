@@ -273,16 +273,152 @@ function Invoke-DevStackReconcile {
 }
 
 function Install-DevStackPlaywright {
-    param([Parameter(Mandatory)]$Config)
+    param(
+        [Parameter(Mandatory)]$Config,
+        [int]$TimeoutSeconds = 300,
+        [switch]$Force
+    )
+    if ((Test-PlaywrightChromiumInstalled) -and -not $Force) {
+        Write-Host "chromium already installed; skipping browser install."
+        return [pscustomobject]@{ Action = 'skipped'; Phase = $null }
+    }
     # The Features project is the test runner and copies all transitive deps (including
     # Microsoft.Playwright.dll) to its bin. playwright.ps1 uses $PSScriptRoot to locate
     # the DLL, so point to the Features bin — not E2E.Common which omits transitive deps.
     $script = Join-Path $Config.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/bin/Debug/net10.0/playwright.ps1'
-    if (Test-Path $script) {
-        & $script install chromium | Out-Null
-    } else {
-        Write-Warning "playwright.ps1 not found yet; building E2E project first so 'dotnet test' can install browsers."
+    if (-not (Test-Path $script)) {
+        Write-Warning "playwright.ps1 not found yet; 'dotnet test' will install browsers on first run."
+        return [pscustomobject]@{ Action = 'unavailable'; Phase = $null }
     }
+    $phase = Invoke-DevStackPhase -Name 'playwright-install' -FilePath 'pwsh' `
+        -Arguments @('-NoProfile','-File', $script, 'install', 'chromium') -TimeoutSeconds $TimeoutSeconds
+    return [pscustomobject]@{ Action = 'installed'; Phase = $phase }
 }
 
-Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright
+function Invoke-DevStackPhase {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory)][int]$TimeoutSeconds,
+        [string]$WorkingDirectory
+    )
+    $start = Get-Date
+    Write-Host ("PHASE start: {0} {1:HH:mm:ss}" -f $Name, $start)
+
+    $spArgs = @{ FilePath = $FilePath; NoNewWindow = $true; PassThru = $true }
+    if ($Arguments.Count -gt 0) { $spArgs['ArgumentList'] = $Arguments }
+    if ($WorkingDirectory)      { $spArgs['WorkingDirectory'] = $WorkingDirectory }
+    $proc = Start-Process @spArgs
+
+    $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
+    $elapsed = [math]::Round(((Get-Date) - $start).TotalSeconds, 1)
+
+    if (-not $exited) {
+        Write-Warning ("PHASE TIMEOUT: {0} after {1}s - killing process tree (PID {2})" -f $Name, $elapsed, $proc.Id)
+        & taskkill /T /F /PID $proc.Id *> $null
+        return [pscustomobject]@{ Outcome = 'timeout'; ExitCode = $null; DurationSeconds = $elapsed }
+    }
+    $code = $proc.ExitCode
+    if ($code -eq 0) {
+        Write-Host ("PHASE ok: {0} ({1}s)" -f $Name, $elapsed)
+        return [pscustomobject]@{ Outcome = 'completed'; ExitCode = 0; DurationSeconds = $elapsed }
+    }
+    Write-Warning ("PHASE FAIL: {0} (exit {1}, {2}s)" -f $Name, $code, $elapsed)
+    return [pscustomobject]@{ Outcome = 'failed'; ExitCode = $code; DurationSeconds = $elapsed }
+}
+
+function Test-PlaywrightChromiumInstalled {
+    param([string]$BrowsersPath)
+    if (-not $BrowsersPath) {
+        $BrowsersPath = if ($env:PLAYWRIGHT_BROWSERS_PATH) { $env:PLAYWRIGHT_BROWSERS_PATH }
+                        else { Join-Path $env:LOCALAPPDATA 'ms-playwright' }
+    }
+    if (-not (Test-Path $BrowsersPath)) { return $false }
+    $build = Get-ChildItem -Path $BrowsersPath -Directory -Filter 'chromium-*' -ErrorAction SilentlyContinue |
+             Select-Object -First 1
+    return [bool]$build
+}
+
+function Test-IsPlaywrightOrphan {
+    param(
+        [Parameter(Mandatory)]$Process,
+        [Parameter(Mandatory)][datetime]$Since
+    )
+    if (-not $Process) { return $false }
+    if ([string]$Process.Name -notmatch '(?i)^(chrome|msedge|headless_shell)$') { return $false }
+    $cmd = [string]$Process.CommandLine
+    if ([string]::IsNullOrWhiteSpace($cmd)) { return $false }
+    $lc = $cmd.ToLowerInvariant()
+    # headless_shell.exe is inherently headless and carries no --headless flag.
+    $isHeadless   = $lc.Contains('--headless') -or ([string]$Process.Name -match '(?i)^headless_shell$')
+    $isPlaywright = $lc.Contains('ms-playwright') -or $lc.Contains('playwright')
+    if (-not ($isHeadless -and $isPlaywright)) { return $false }
+    # A null StartTime (access-denied) proceeds: the ms-playwright path + headless + profile
+    # signature is strong enough to act on even without a start-time confirmation.
+    if ($Process.StartTime -and $Process.StartTime -lt $Since) { return $false }
+    return $true
+}
+
+function Stop-DevStackPlaywrightOrphans {
+    param([Parameter(Mandatory)][datetime]$Since)
+    $killed = 0
+    $cmdByPid = @{}
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object { $cmdByPid[[int]$_.ProcessId] = $_.CommandLine }
+    foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+        $startTime = try { $p.StartTime } catch { $null }
+        $info = [pscustomobject]@{ Name = $p.Name; CommandLine = $cmdByPid[[int]$p.Id]; StartTime = $startTime }
+        if (Test-IsPlaywrightOrphan -Process $info -Since $Since) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            $killed++
+        }
+    }
+    return $killed
+}
+
+function Set-XunitMaxParallelThreadsContent {
+    # Returns the xunit.runner.json content with maxParallelThreads set to $Value, preserving
+    # everything else verbatim. Used to cap parallelism for a local run without disturbing the
+    # committed value that CI relies on (FHQ-150).
+    param(
+        [Parameter(Mandatory)][string]$Content,
+        [Parameter(Mandatory)][int]$Value
+    )
+    return ($Content -replace '("maxParallelThreads"\s*:\s*)\d+', ('${1}' + $Value))
+}
+
+function Start-DevStackWebUiStatic {
+    # Publishes the WebUi and serves the published wwwroot via the dev-only static host
+    # (tools/FamilyHQ.LocalWebHost) instead of the Blazor DevServer. The DevServer's on-the-fly
+    # GZip crashes under E2E load on .NET 10.0.9/Windows (ZLibException, FHQ-150); a static host
+    # serves the pre-compressed assets directly and never creates a Deflater. Returns the host PID.
+    param([Parameter(Mandatory)]$Config)
+
+    $webuiProj = Join-Path $Config.RepoRoot 'src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj'
+    $pubDir    = Join-Path $Config.StateDir 'webui-publish'
+    Write-Host "Publishing WebUi (Release) for static serving..."
+    & dotnet publish $webuiProj -c Release -o $pubDir --nologo -v q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "WebUi publish failed (exit $LASTEXITCODE)" }
+
+    $outLog = Join-Path $Config.LogDir 'webui.out.log'
+    $errLog = Join-Path $Config.LogDir 'webui.err.log'
+    Set-Content -Path $outLog -Value '' ; Set-Content -Path $errLog -Value ''
+
+    $hostProj = Join-Path $Config.RepoRoot 'tools/FamilyHQ.LocalWebHost/FamilyHQ.LocalWebHost.csproj'
+    $env:WEBUI_WWWROOT          = Join-Path $pubDir 'wwwroot'
+    $env:ASPNETCORE_URLS        = "https://localhost:$($Config.Ports.WebUi)"
+    $env:ASPNETCORE_ENVIRONMENT = 'Development'
+    try {
+        $proc = Start-Process -FilePath 'dotnet' `
+            -ArgumentList @('run', '--project', $hostProj, '-c', 'Release') `
+            -WorkingDirectory $Config.RepoRoot `
+            -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
+            -NoNewWindow -PassThru
+    } finally {
+        # Clear so these don't leak into the subsequent 'dotnet test' child.
+        Remove-Item Env:\WEBUI_WWWROOT, Env:\ASPNETCORE_URLS, Env:\ASPNETCORE_ENVIRONMENT -ErrorAction SilentlyContinue
+    }
+    return $proc.Id
+}
+
+Export-ModuleMember -Function Resolve-DevStackConfig, Test-IsFamilyHqProcess, Get-DevStackListenerProcess, ConvertTo-DotnetTestArgs, Start-DevStackPostgres, Stop-DevStackPostgres, Initialize-DevStackState, Start-DevStackService, Save-DevStackState, Test-DevStackServiceHealthy, Wait-DevStackHealthy, Stop-DevStackListenerOnPort, Invoke-DevStackReconcile, Install-DevStackPlaywright, Invoke-DevStackPhase, Test-PlaywrightChromiumInstalled, Test-IsPlaywrightOrphan, Stop-DevStackPlaywrightOrphans, Set-XunitMaxParallelThreadsContent, Start-DevStackWebUiStatic

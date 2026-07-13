@@ -233,37 +233,83 @@ public class GoogleCalendarClientMappingTests
     }
 
     [Fact]
-    public async Task UpdateEventAsync_StillIssuesHttpPut()
+    public async Task PatchEventFieldsAsync_NullLocation_SendsEmptyStringToClearIt()
     {
-        // Guard: UpdateEventAsync remains a full-resource replace for genuine single-event updates.
+        // A null Location must be sent as "" (not omitted), so events.patch merge clears it
+        // server-side. Omitting it (WhenWritingNull) would leave a stale location in Google.
         var (http, tokenStore, sut) = CreateSut();
         tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
         SetupAuthResponse(http);
 
-        HttpMethod? capturedMethod = null;
-
+        string? capturedBody = null;
         http.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-1")),
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-loc")),
                 ItExpr.IsAny<CancellationToken>())
-            .Callback<HttpRequestMessage, CancellationToken>((req, _) => capturedMethod = req.Method)
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
             .ReturnsAsync(new HttpResponseMessage
             {
                 StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-1" }))
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-loc" }))
             });
 
         var evt = new CalendarEvent
         {
-            GoogleEventId = "evt-1",
-            Title = "One-off",
+            GoogleEventId = "evt-loc",
+            Title = "No location",
+            Location = null,
             Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
             End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
         };
 
-        await sut.UpdateEventAsync("cal-1", evt, "hash-1", CancellationToken.None);
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
 
-        capturedMethod.Should().Be(HttpMethod.Put);
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.TryGetProperty("location", out var loc).Should().BeTrue("a null location must still be sent, as \"\"");
+        loc.GetString().Should().Be("");
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_OmitsUnmappedGoogleFields()
+    {
+        // FHQ-145: the merge body must never carry fields FamilyHQ does not model, so Google's
+        // existing attendees/colorId/reminders survive a kiosk edit. Guards against a future
+        // MapToGoogleEvent change re-arming the full-replace data loss.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-unmapped")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-unmapped" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-unmapped",
+            Title = "Retimed by kiosk",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.TryGetProperty("attendees", out _).Should().BeFalse();
+        doc.RootElement.TryGetProperty("colorId", out _).Should().BeFalse();
+        doc.RootElement.TryGetProperty("reminders", out _).Should().BeFalse();
+        doc.RootElement.TryGetProperty("visibility", out _).Should().BeFalse();
     }
 
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)

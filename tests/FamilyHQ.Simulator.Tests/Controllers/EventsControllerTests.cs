@@ -957,6 +957,62 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task PatchEvent_OnCompoundInstanceId_StoresExceptionThatExpansionSurfaces_SiblingsUnchanged()
+    {
+        // FHQ-145: a "This event" edit now routes through events.patch. A PATCH to a compound instance
+        // id with no stored row must create an exception override, exactly as the PUT path does.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        var instanceId = "evt-series_20260609T180000Z";
+        var editBody = new GoogleEventRequest
+        {
+            Summary = "Soccer practice (moved)",
+            Start = new GoogleDateTime { DateTime = secondSlot.AddHours(1) },
+            End = new GoogleDateTime { DateTime = secondSlot.AddHours(2) }
+        };
+
+        var patchResult = await sut.PatchEvent("cal-alice", instanceId, editBody);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-06-01T00:00:00Z",
+            timeMax: "2026-08-01T00:00:00Z");
+
+        patchResult.Should().BeOfType<OkObjectResult>();
+        var stored = await db.Events.FindAsync(instanceId);
+        stored!.RecurringEventId.Should().Be("evt-series");
+        stored.OriginalStartTime.Should().Be(secondSlot);
+        stored.RecurrenceRule.Should().BeNull("an override is not itself a series master");
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+        items.GetArrayLength().Should().Be(3);
+
+        items[0].GetProperty("summary").GetString().Should().Be("Soccer practice");
+        var overridden = items[1];
+        overridden.GetProperty("id").GetString().Should().Be(instanceId);
+        overridden.GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+        overridden.GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        overridden.GetProperty("originalStartTime").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T18:00:00");
+        items[2].GetProperty("summary").GetString().Should().Be("Soccer practice");
+    }
+
+    [Fact]
     public async Task ListEvents_SingleEvents_HonoursUntilTruncation_DropsPostSplitOccurrences()
     {
         // Arrange — the "This and following" split truncates the original master's RRULE with an

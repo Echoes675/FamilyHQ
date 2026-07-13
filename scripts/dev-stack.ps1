@@ -10,6 +10,10 @@ param(
     [switch]$Reuse,
     [switch]$Force,
     [switch]$Headed,
+    [switch]$ForceBrowserInstall,
+    [int]$InstallTimeoutMinutes = 5,
+    [int]$TestTimeoutMinutes = 30,
+    [int]$MaxParallelThreads = 1,
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs = @()
@@ -76,23 +80,87 @@ function Invoke-Down {
     Write-Host "Stack down."
 }
 
-function Invoke-E2E {
-    # Ensure the stack is up (reuse if already healthy).
-    if (($cfg.Services | ForEach-Object { Test-DevStackServiceHealthy -Service $_ }) -contains $false) {
-        Invoke-Up
-    }
-    if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
+function Invoke-UpForE2E {
+    # Bring the stack up for an E2E run. Backend services (postgres/simulator/webapi) start
+    # normally and are reused if already healthy; the WebUi is always served as PUBLISHED STATIC
+    # files rather than via the Blazor DevServer, whose on-the-fly GZip crashes under E2E load on
+    # .NET 10.0.9/Windows (ZLibException, FHQ-150). Interactive `up` keeps the DevServer.
+    Assert-DevCerts
+    Initialize-DevStackState -Config $cfg
 
-    Install-DevStackPlaywright -Config $cfg
+    $dbUp = docker ps --filter "name=$($cfg.ContainerName)" --format '{{.Names}}' 2>$null |
+            Where-Object { $_ -eq $cfg.ContainerName }
+    if (-not $dbUp) { Start-DevStackPostgres -Config $cfg -KeepData:$KeepData }
+
+    $pids = @{}
+    foreach ($svc in ($cfg.Services | Where-Object { $_.Name -ne 'webui' })) {
+        if (Test-DevStackServiceHealthy -Service $svc) { Write-Host "$($svc.Name) already healthy."; continue }
+        Stop-DevStackListenerOnPort -Config $cfg -Port $svc.Port -Force:$Force | Out-Null
+        Write-Host "Starting $($svc.Name)..."
+        $pids[$svc.Name] = Start-DevStackService -Config $cfg -Service $svc
+        if (-not (Wait-DevStackHealthy -Service $svc)) {
+            Get-Content (Join-Path $cfg.LogDir "$($svc.Name).out.log") -Tail 20 -ErrorAction SilentlyContinue
+            throw "$($svc.Name) did not become healthy"
+        }
+        Write-Host "$($svc.Name) healthy."
+    }
+
+    # WebUi: always (re)serve as published static — never the DevServer for E2E.
+    Stop-DevStackListenerOnPort -Config $cfg -Port $cfg.Ports.WebUi -Force:$Force | Out-Null
+    $pids['webui'] = Start-DevStackWebUiStatic -Config $cfg
+    $webuiSvc = $cfg.Services | Where-Object { $_.Name -eq 'webui' }
+    if (-not (Wait-DevStackHealthy -Service $webuiSvc -TimeoutSeconds 120)) {
+        Get-Content (Join-Path $cfg.LogDir 'webui.out.log') -Tail 20 -ErrorAction SilentlyContinue
+        throw "webui (static) did not become healthy"
+    }
+    Write-Host "webui healthy (static, published)."
+    Save-DevStackState -Config $cfg -Pids $pids
+}
+
+function Invoke-E2E {
+    $runStart = Get-Date
+    Write-Host "PHASE start: boot $((Get-Date).ToString('HH:mm:ss'))"
+    Invoke-UpForE2E
+    Write-Host "PHASE ok: boot"
+    if ($Headed) { $env:TestConfiguration__Headless = 'false' } else { $env:TestConfiguration__Headless = 'true' }
+    $env:DEVSTACK_E2E_WARMUP = '1'   # local-only: warm the app once before scenarios so the first isn't cold (FHQ-150)
+
+    $install = Install-DevStackPlaywright -Config $cfg -TimeoutSeconds ($InstallTimeoutMinutes * 60) -Force:$ForceBrowserInstall
+    if ($install.Action -eq 'installed' -and $install.Phase -and $install.Phase.Outcome -ne 'completed') {
+        Stop-DevStackPlaywrightOrphans -Since $runStart | Out-Null
+        Write-Warning "playwright-install did not complete ($($install.Phase.Outcome)); aborting. Stack left up; run 'down' to reset."
+        exit 2
+    }
+
     $resultsDir = Join-Path $cfg.RepoRoot 'TestResults'
     $trxPath = Join-Path $resultsDir 'e2e.trx'
     $testArgs = ConvertTo-DotnetTestArgs -Filter $Filter -TrxName 'e2e.trx' -ExtraArgs (@('--results-directory', $resultsDir) + $ExtraArgs)
     $featuresProj = Join-Path $cfg.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features'
 
     Write-Host "Running E2E: dotnet test $($testArgs -join ' ')"
-    & dotnet test $featuresProj @testArgs
-    $code = $LASTEXITCODE
-    Write-Host "E2E exit code: $code (TRX: $trxPath)"
+    $code = 0
+    $runnerJson = Join-Path $cfg.RepoRoot 'tests-e2e/FamilyHQ.E2E.Features/xunit.runner.json'
+    $origRunnerJson = $null
+    try {
+        # FHQ-150: high xUnit parallelism crashes Playwright's transport on local Windows/.NET 10
+        # (CI on Linux is unaffected). Cap parallelism for this run only; the committed value that
+        # CI uses is restored in the finally below.
+        if (Test-Path $runnerJson) {
+            $origRunnerJson = Get-Content -Raw -Path $runnerJson
+            Set-Content -Path $runnerJson -NoNewline -Encoding utf8 `
+                -Value (Set-XunitMaxParallelThreadsContent -Content $origRunnerJson -Value $MaxParallelThreads)
+            Write-Host "Local run: xUnit maxParallelThreads capped to $MaxParallelThreads (FHQ-150; committed value restored after)."
+        }
+        $phase = Invoke-DevStackPhase -Name 'dotnet-test' -FilePath 'dotnet' `
+            -Arguments (@('test', $featuresProj) + $testArgs) `
+            -TimeoutSeconds ($TestTimeoutMinutes * 60) -WorkingDirectory $cfg.RepoRoot
+        $code = if ($phase.Outcome -eq 'timeout') { 2 } else { $phase.ExitCode }
+    } finally {
+        if ($null -ne $origRunnerJson) { Set-Content -Path $runnerJson -Value $origRunnerJson -NoNewline -Encoding utf8 }
+        $orphans = Stop-DevStackPlaywrightOrphans -Since $runStart
+        if ($orphans -gt 0) { Write-Host "Cleaned up $orphans orphaned Playwright browser process(es)." }
+    }
+    Write-Host "E2E exit code: $code (TRX: $trxPath). Stack left up; run 'down' to reset."
     exit $code
 }
 
