@@ -2,28 +2,21 @@ namespace FamilyHQ.Services.Tests.Repositories;
 
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Models;
-using FamilyHQ.Data;
 using FamilyHQ.Data.Repositories;
+using FamilyHQ.Services.Tests.Fakes;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Time.Testing;
 
-public class WeatherDataPointRepositoryTests : IDisposable
+public class WeatherDataPointRepositoryTests
 {
-    private readonly FamilyHqDbContext _db;
+    private readonly FakeFamilyHqDbContext _db = new();
     private readonly FakeTimeProvider _fakeTime;
 
     public WeatherDataPointRepositoryTests()
     {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _db = new FamilyHqDbContext(options);
         // Fixed clock: 2026-06-18T12:00Z (well within UTC June 18)
         _fakeTime = new FakeTimeProvider(new DateTimeOffset(2026, 6, 18, 12, 0, 0, TimeSpan.Zero));
     }
-
-    public void Dispose() => _db.Dispose();
 
     private WeatherDataPointRepository CreateSut() => new(_db, _fakeTime);
 
@@ -64,8 +57,7 @@ public class WeatherDataPointRepositoryTests : IDisposable
         // Q (UTC 23:10 June 17): BST 00:10 June 18 — today local    — INCLUDED.
         var p = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 22, 30, 0, TimeSpan.Zero));
         var q = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 23, 10, 0, TimeSpan.Zero));
-        _db.WeatherDataPoints.AddRange(p, q);
-        await _db.SaveChangesAsync();
+        _db.Setup<WeatherDataPoint>([p, q]);
 
         var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: "Europe/Dublin");
 
@@ -81,8 +73,7 @@ public class WeatherDataPointRepositoryTests : IDisposable
         // S (UTC 00:30 June 18): after UTC midnight June 18  — INCLUDED.
         var r = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 22, 30, 0, TimeSpan.Zero));
         var s = MakeDaily(1, new DateTimeOffset(2026, 6, 18,  0, 30, 0, TimeSpan.Zero));
-        _db.WeatherDataPoints.AddRange(r, s);
-        await _db.SaveChangesAsync();
+        _db.Setup<WeatherDataPoint>([r, s]);
 
         var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: null);
 
@@ -100,8 +91,7 @@ public class WeatherDataPointRepositoryTests : IDisposable
         var a = MakeHourly(1, new DateTimeOffset(2026, 6, 17, 23, 30, 0, TimeSpan.Zero));
         var b = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 22, 30, 0, TimeSpan.Zero));
         var c = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 23, 30, 0, TimeSpan.Zero));
-        _db.WeatherDataPoints.AddRange(a, b, c);
-        await _db.SaveChangesAsync();
+        _db.Setup<WeatherDataPoint>([a, b, c]);
 
         var result = await CreateSut().GetHourlyAsync(1, new DateOnly(2026, 6, 18), "Europe/Dublin");
 
@@ -119,8 +109,7 @@ public class WeatherDataPointRepositoryTests : IDisposable
         // Y: UTC 2026-06-18T12:00 — INSIDE UTC June 18 window.
         var x = MakeHourly(1, new DateTimeOffset(2026, 6, 17, 23, 30, 0, TimeSpan.Zero));
         var y = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 12,  0, 0, TimeSpan.Zero));
-        _db.WeatherDataPoints.AddRange(x, y);
-        await _db.SaveChangesAsync();
+        _db.Setup<WeatherDataPoint>([x, y]);
 
         var result = await CreateSut().GetHourlyAsync(1, new DateOnly(2026, 6, 18), ianaTimeZone: null);
 

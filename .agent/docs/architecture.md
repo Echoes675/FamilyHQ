@@ -4,8 +4,8 @@
 - src/FamilyHQ.WebUi/: Blazor WASM UI.
 - src/FamilyHQ.WebApi/: ASP.NET Core API.
 - src/FamilyHQ.Services/: Business logic and orchestration.
-- src/FamilyHQ.Data/: EF Core context
-- src/FamilyHQ.Data.PostgreSQL/: PostgreSQL specific implementation and migrations.
+- src/FamilyHQ.Data/: EF Core context and all provider-agnostic repositories (pure EF Core, no Npgsql). Includes the shared model convention that fails the build if CalendarSyncJob lacks a concurrency token (FHQ-146).
+- src/FamilyHQ.Data.PostgreSQL/: PostgreSQL-specific only — NpgsqlModelCustomizer (xmin token), migrations, UniqueConstraintExceptionInterceptor, DI wiring, design-time factory.
 - src/FamilyHQ.Core/: Shared Models, DTOs, and FluentValidation logic.
 
 ## Deployment Context
