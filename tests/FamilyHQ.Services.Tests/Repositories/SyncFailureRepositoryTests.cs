@@ -1,27 +1,17 @@
 using FamilyHQ.Core.Models;
-using FamilyHQ.Data;
 using FamilyHQ.Data.Repositories;
+using FamilyHQ.Services.Tests.Fakes;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests.Repositories;
 
-public class SyncFailureRepositoryTests : IDisposable
+public class SyncFailureRepositoryTests
 {
-    private readonly FamilyHqDbContext _dbContext;
+    private readonly FakeFamilyHqDbContext _db = new();
 
-    public SyncFailureRepositoryTests()
-    {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _dbContext = new FamilyHqDbContext(options);
-    }
-
-    public void Dispose() => _dbContext.Dispose();
-
-    private SyncFailureRepository CreateSut() => new(_dbContext);
+    private SyncFailureRepository CreateSut() => new(_db);
 
     private static SyncEventFailure NewFailure(string userId, string googleEventId, DateTimeOffset failedAt) => new()
     {
@@ -37,33 +27,31 @@ public class SyncFailureRepositoryTests : IDisposable
     };
 
     [Fact]
-    public async Task AddAsync_ThenGetRecentAsync_ReturnsTheFailureForThatUser()
+    public async Task AddAsync_CallsAddAndSaveChanges()
     {
         // Arrange
+        var mockSet = _db.Setup<SyncEventFailure>();
         var sut = CreateSut();
         var failure = NewFailure("u-1", "evt-1", DateTimeOffset.UtcNow);
 
         // Act
         await sut.AddAsync(failure);
-        var result = await sut.GetRecentAsync("u-1", limit: 10);
 
         // Assert
-        result.Should().ContainSingle()
-            .Which.GoogleEventId.Should().Be("evt-1");
+        mockSet.Verify(s => s.Add(It.Is<SyncEventFailure>(f =>
+            f.UserId == "u-1" && f.GoogleEventId == "evt-1")), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
     }
 
     [Fact]
     public async Task GetRecentAsync_OrdersByFailedAtDescending()
     {
         // Arrange
-        var sut = CreateSut();
         var older  = NewFailure("u-2", "evt-old", new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero));
         var newer  = NewFailure("u-2", "evt-new", new DateTimeOffset(2026, 5, 5, 0, 0, 0, TimeSpan.Zero));
         var middle = NewFailure("u-2", "evt-mid", new DateTimeOffset(2026, 5, 3, 0, 0, 0, TimeSpan.Zero));
-
-        await sut.AddAsync(older);
-        await sut.AddAsync(newer);
-        await sut.AddAsync(middle);
+        _db.Setup<SyncEventFailure>([older, newer, middle]);
+        var sut = CreateSut();
 
         // Act
         var result = await sut.GetRecentAsync("u-2", limit: 10);
@@ -76,9 +64,11 @@ public class SyncFailureRepositoryTests : IDisposable
     public async Task GetRecentAsync_HonoursLimit()
     {
         // Arrange
+        var failures = Enumerable.Range(0, 5)
+            .Select(i => NewFailure("u-3", $"evt-{i}", new DateTimeOffset(2026, 5, 1, i, 0, 0, TimeSpan.Zero)))
+            .ToList();
+        _db.Setup<SyncEventFailure>(failures);
         var sut = CreateSut();
-        for (int i = 0; i < 5; i++)
-            await sut.AddAsync(NewFailure("u-3", $"evt-{i}", new DateTimeOffset(2026, 5, 1, i, 0, 0, TimeSpan.Zero)));
 
         // Act
         var result = await sut.GetRecentAsync("u-3", limit: 2);
@@ -91,31 +81,31 @@ public class SyncFailureRepositoryTests : IDisposable
     public async Task GetRecentAsync_OnlyReturnsFailuresForGivenUser()
     {
         // Arrange
+        var mine = NewFailure("u-4", "mine", DateTimeOffset.UtcNow);
+        var theirs = NewFailure("u-other", "theirs", DateTimeOffset.UtcNow);
+        _db.Setup<SyncEventFailure>([mine, theirs]);
         var sut = CreateSut();
-        await sut.AddAsync(NewFailure("u-4", "mine", DateTimeOffset.UtcNow));
-        await sut.AddAsync(NewFailure("u-other", "theirs", DateTimeOffset.UtcNow));
 
         // Act
-        var mine = await sut.GetRecentAsync("u-4", limit: 10);
+        var result = await sut.GetRecentAsync("u-4", limit: 10);
 
         // Assert
-        mine.Should().ContainSingle().Which.GoogleEventId.Should().Be("mine");
+        result.Should().ContainSingle().Which.GoogleEventId.Should().Be("mine");
     }
 
     [Fact]
     public async Task MarkResolvedAsync_FlipsResolvedFlag()
     {
         // Arrange
-        var sut = CreateSut();
         var failure = NewFailure("u-5", "evt-resolve", DateTimeOffset.UtcNow);
-        await sut.AddAsync(failure);
+        _db.Setup<SyncEventFailure>([failure]);
+        var sut = CreateSut();
 
         // Act
         await sut.MarkResolvedAsync(failure.Id);
 
         // Assert
-        var refreshed = await _dbContext.SyncEventFailures.FindAsync(failure.Id);
-        refreshed.Should().NotBeNull();
-        refreshed!.Resolved.Should().BeTrue();
+        failure.Resolved.Should().BeTrue();
+        _db.SaveChangesCount.Should().Be(1);
     }
 }
