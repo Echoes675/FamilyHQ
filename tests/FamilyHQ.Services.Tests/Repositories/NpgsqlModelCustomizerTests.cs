@@ -38,4 +38,17 @@ public class NpgsqlModelCustomizerTests
         xmin.IsConcurrencyToken.Should().BeTrue();
         xmin.ValueGenerated.Should().Be(ValueGenerated.OnAddOrUpdate);
     }
+
+    [Fact]
+    public void UserToken_HasXminOptimisticConcurrencyToken()
+    {
+        var xmin = BuildNpgsqlModel()
+            .FindEntityType(typeof(UserToken))!
+            .FindProperty("xmin");
+
+        xmin.Should().NotBeNull();
+        xmin!.ClrType.Should().Be(typeof(uint));
+        xmin.IsConcurrencyToken.Should().BeTrue();
+        xmin.ValueGenerated.Should().Be(ValueGenerated.OnAddOrUpdate);
+    }
 }
