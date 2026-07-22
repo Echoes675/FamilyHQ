@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Models;
+using FamilyHQ.Data.Infrastructure;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +34,12 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(FamilyHqDbContext).Assembly);
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        configurationBuilder.Conventions.Add(_ => new RequireSyncJobConcurrencyTokenConvention());
     }
 
     public override int SaveChanges()
