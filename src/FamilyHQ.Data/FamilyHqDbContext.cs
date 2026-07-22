@@ -39,7 +39,7 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         base.ConfigureConventions(configurationBuilder);
-        configurationBuilder.Conventions.Add(_ => new RequireSyncJobConcurrencyTokenConvention());
+        configurationBuilder.Conventions.Add(_ => new RequireConcurrencyTokenConvention());
     }
 
     public override int SaveChanges()
