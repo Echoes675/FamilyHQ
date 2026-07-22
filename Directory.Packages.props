@@ -1,4 +1,9 @@
 <Project>
+  <PropertyGroup>
+    <!-- Required so the System.Security.Cryptography.Xml PackageVersion pin below actually overrides
+         the vulnerable 10.0.7 transitive dependency pulled in by Microsoft.AspNetCore.DataProtection (FHQ-146) -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
   <ItemGroup>
     <!-- Core -->
     <PackageVersion Include="FluentValidation" Version="11.11.0" />
@@ -6,6 +11,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection" Version="10.0.7" />
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.7" />
+    <!-- Pinned above the transitive 10.0.7 pulled in by Microsoft.AspNetCore.DataProtection: NU1903 GHSA-23rf-6693-g89p, GHSA-8q5v-6pqq-x66h, GHSA-cvvh-rhrc-wg4q, GHSA-g8r8-53c2-pm3f, GHSA-mmjf-rqrv-855v.
+         Patched version per the advisories is 10.0.10 (10.0.8 does not clear the audit) (FHQ-146) -->
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Core" Version="1.2.9" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.7" />
