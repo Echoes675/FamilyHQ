@@ -385,9 +385,11 @@ public class CalendarSyncJobRepositoryTests
         {
             await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
         }
-        catch
+        catch (InvalidOperationException)
         {
-            // Expected on this double: see the KNOWN CONCERN doc comment above.
+            // Expected on this double: see the KNOWN CONCERN doc comment above — provider-less
+            // ChangeTracker access throws InvalidOperationException. A different exception here would
+            // mean the fidelity gap changed shape, so it is intentionally not swallowed.
         }
 
         _db.SaveChangesCount.Should().Be(1);
