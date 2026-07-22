@@ -66,6 +66,14 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
+    /// <summary>
+    /// Detaches all tracked entities so the next query reloads fresh database values. Used by the
+    /// FHQ-119 concurrency-retry loop after a <see cref="DbUpdateConcurrencyException"/>, so the retry
+    /// re-reads the winning row instead of the stale tracked instance. Virtual so the provider-free
+    /// test double can override it to a no-op (it has no change tracker to clear).
+    /// </summary>
+    public virtual void ClearTrackedEntities() => ChangeTracker.Clear();
+
     private void ConvertDateTimeOffsetsToUtc()
     {
         var entries = ChangeTracker.Entries()

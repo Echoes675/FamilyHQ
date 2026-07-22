@@ -4,6 +4,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Tests.Fakes;
 using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -503,5 +504,79 @@ public class DatabaseTokenStoreTests
         states.Should().HaveCount(2);
         states.Should().ContainSingle(s => s.UserId == "u-active" && s.AuthStatus == TokenAuthStatus.Active);
         states.Should().ContainSingle(s => s.UserId == "u-stale" && s.AuthStatus == TokenAuthStatus.NeedsReauth);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_OnTransientConcurrencyConflict_ReloadsRetriesAndPersists()
+    {
+        // Arrange — an existing row; first SaveChanges loses the race, second wins.
+        var userId = "u-retry";
+        var protector = _dataProtectionProvider.CreateProtector(Purpose);
+        var existing = new UserToken
+        {
+            UserId = userId,
+            Provider = "Google",
+            RefreshToken = protector.Protect("old-token"),
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        var calls = 0;
+        _db.OnSaveChanges = () =>
+        {
+            calls++;
+            if (calls == 1) throw new DbUpdateConcurrencyException("simulated lost race");
+            return 1;
+        };
+        var sut = CreateSut(userId);
+
+        // Act
+        await sut.SaveRefreshTokenAsync("new-token", userId);
+
+        // Assert — retried exactly once (2 saves) and the fresh token is persisted in place.
+        _db.SaveChangesCount.Should().Be(2);
+        protector.Unprotect(existing.RefreshToken).Should().Be("new-token");
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_WhenConflictPersistsBeyondCap_Throws()
+    {
+        var userId = "u-retry-exhausted";
+        _db.Setup<UserToken>([new UserToken
+        {
+            UserId = userId, Provider = "Google",
+            RefreshToken = "irrelevant", AuthStatus = TokenAuthStatus.Active
+        }]);
+        _db.OnSaveChanges = () => throw new DbUpdateConcurrencyException("always conflicts");
+        var sut = CreateSut(userId);
+
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(
+            () => sut.SaveRefreshTokenAsync("new-token", userId));
+
+        _db.SaveChangesCount.Should().Be(3); // bounded at 3 attempts
+    }
+
+    [Fact]
+    public async Task MarkNeedsReauthAsync_OnTransientConcurrencyConflict_RetriesAndPersists()
+    {
+        var userId = "u-reauth-retry";
+        var existing = new UserToken
+        {
+            UserId = userId, Provider = "Google",
+            RefreshToken = "irrelevant", AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        var calls = 0;
+        _db.OnSaveChanges = () =>
+        {
+            calls++;
+            if (calls == 1) throw new DbUpdateConcurrencyException("simulated lost race");
+            return 1;
+        };
+        var sut = CreateSut(userId);
+
+        await sut.MarkNeedsReauthAsync(userId, "Token has been expired or revoked.", CancellationToken.None);
+
+        _db.SaveChangesCount.Should().Be(2);
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
     }
 }

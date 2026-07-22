@@ -182,27 +182,32 @@ public class DatabaseTokenStore : ITokenStore
         await _lock.WaitAsync(ct);
         try
         {
-            var existingToken = await _dbContext.UserTokens
-                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
-
-            if (existingToken == null)
+            await ExecuteWithConcurrencyRetryAsync(async token =>
             {
+                broadcast = false; // recompute per attempt
+
+                var existingToken = await _dbContext.UserTokens
+                    .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, token);
+
+                if (existingToken == null)
+                {
+                    _logger.LogWarning(
+                        "MarkNeedsReauthAsync called for user {UserId} but no token exists",
+                        userId);
+                    return;
+                }
+
+                existingToken.AuthStatus = TokenAuthStatus.NeedsReauth;
+                existingToken.LastAuthErrorDescription = Truncate(errorDescription, 512);
+                existingToken.AuthStatusChangedAt = DateTimeOffset.UtcNow;
+                existingToken.UpdatedAt = DateTimeOffset.UtcNow;
+
+                await _dbContext.SaveChangesAsync(token);
                 _logger.LogWarning(
-                    "MarkNeedsReauthAsync called for user {UserId} but no token exists",
-                    userId);
-                return;
-            }
-
-            existingToken.AuthStatus = TokenAuthStatus.NeedsReauth;
-            existingToken.LastAuthErrorDescription = Truncate(errorDescription, 512);
-            existingToken.AuthStatusChangedAt = DateTimeOffset.UtcNow;
-            existingToken.UpdatedAt = DateTimeOffset.UtcNow;
-
-            await _dbContext.SaveChangesAsync(ct);
-            _logger.LogWarning(
-                "Marked user {UserId} token as NeedsReauth ({ErrorDescription})",
-                userId, existingToken.LastAuthErrorDescription);
-            broadcast = true;
+                    "Marked user {UserId} token as NeedsReauth ({ErrorDescription})",
+                    userId, existingToken.LastAuthErrorDescription);
+                broadcast = true;
+            }, ct);
         }
         finally
         {
@@ -244,47 +249,51 @@ public class DatabaseTokenStore : ITokenStore
         await _lock.WaitAsync(ct);
         try
         {
-            var encryptedToken = _dataProtector.Protect(refreshToken);
-
-            var existingToken = await _dbContext.UserTokens
-                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
-
-            var now = DateTimeOffset.UtcNow;
-
-            if (existingToken != null)
+            await ExecuteWithConcurrencyRetryAsync(async token =>
             {
-                _logger.LogDebug("Updating existing refresh token for user {UserId}", userId);
-                existingToken.RefreshToken = encryptedToken;
-                existingToken.UpdatedAt = now;
+                broadcast = false; // recompute per attempt
+                var encryptedToken = _dataProtector.Protect(refreshToken);
 
-                // Re-consent restores the token; clear any previous NeedsReauth flag.
-                if (existingToken.AuthStatus != TokenAuthStatus.Active
-                    || existingToken.LastAuthErrorDescription != null)
+                var existingToken = await _dbContext.UserTokens
+                    .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, token);
+
+                var now = DateTimeOffset.UtcNow;
+
+                if (existingToken != null)
                 {
-                    existingToken.AuthStatus = TokenAuthStatus.Active;
-                    existingToken.LastAuthErrorDescription = null;
-                    existingToken.AuthStatusChangedAt = now;
-                    broadcast = true;
+                    _logger.LogDebug("Updating existing refresh token for user {UserId}", userId);
+                    existingToken.RefreshToken = encryptedToken;
+                    existingToken.UpdatedAt = now;
+
+                    // Re-consent restores the token; clear any previous NeedsReauth flag.
+                    if (existingToken.AuthStatus != TokenAuthStatus.Active
+                        || existingToken.LastAuthErrorDescription != null)
+                    {
+                        existingToken.AuthStatus = TokenAuthStatus.Active;
+                        existingToken.LastAuthErrorDescription = null;
+                        existingToken.AuthStatusChangedAt = now;
+                        broadcast = true;
+                    }
                 }
-            }
-            else
-            {
-                _logger.LogDebug("Creating new refresh token for user {UserId}", userId);
-                var userToken = new UserToken
+                else
                 {
-                    UserId = userId,
-                    Provider = _provider,
-                    RefreshToken = encryptedToken,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                    AuthStatus = TokenAuthStatus.Active,
-                    AuthStatusChangedAt = now
-                };
-                _dbContext.UserTokens.Add(userToken);
-                // First-time token creation isn't a transition from NeedsReauth — no broadcast.
-            }
+                    _logger.LogDebug("Creating new refresh token for user {UserId}", userId);
+                    _dbContext.UserTokens.Add(new UserToken
+                    {
+                        UserId = userId,
+                        Provider = _provider,
+                        RefreshToken = encryptedToken,
+                        CreatedAt = now,
+                        UpdatedAt = now,
+                        AuthStatus = TokenAuthStatus.Active,
+                        AuthStatusChangedAt = now
+                    });
+                    // First-time token creation isn't a transition from NeedsReauth — no broadcast.
+                }
 
-            await _dbContext.SaveChangesAsync(ct);
+                await _dbContext.SaveChangesAsync(token);
+            }, ct);
+
             _logger.LogInformation("Saved refresh token for user {UserId}", userId);
         }
         finally
@@ -297,6 +306,32 @@ public class DatabaseTokenStore : ITokenStore
             // Fire the SignalR notification AFTER releasing the SemaphoreSlim so a slow
             // hub-context send cannot serialise across token-store callers.
             await _connectionStatusBroadcaster.BroadcastConnectionStatusUpdatedAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Runs a read-modify-save unit of work, retrying on optimistic-concurrency conflicts (FHQ-119).
+    /// On <see cref="DbUpdateConcurrencyException"/> it detaches tracked entities and re-runs the action,
+    /// so the retry reloads the winning row and re-applies this caller's mutation against fresh values —
+    /// last writer wins, but never a silent lost update. After the cap the exception propagates.
+    /// </summary>
+    private async Task ExecuteWithConcurrencyRetryAsync(Func<CancellationToken, Task> readModifySave, CancellationToken ct)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await readModifySave(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxAttempts)
+            {
+                _logger.LogWarning(ex,
+                    "Optimistic-concurrency conflict saving UserToken (attempt {Attempt} of {MaxAttempts}); reloading and retrying",
+                    attempt, maxAttempts);
+                _dbContext.ClearTrackedEntities();
+            }
         }
     }
 

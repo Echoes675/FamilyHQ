@@ -45,4 +45,8 @@ public sealed class FakeFamilyHqDbContext : FamilyHqDbContext
         SaveChangesCount++;
         return Task.FromResult(OnSaveChanges?.Invoke() ?? 0);
     }
+
+    // The double doesn't track entities; the retry loop's reset is a no-op here (and touching the real
+    // ChangeTracker would force a model build with no provider configured).
+    public override void ClearTrackedEntities() { }
 }
