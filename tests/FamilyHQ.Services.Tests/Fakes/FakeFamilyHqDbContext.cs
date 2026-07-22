@@ -12,6 +12,8 @@ namespace FamilyHQ.Services.Tests.Fakes;
 /// means the base model is never finalized, so the FHQ-146 concurrency-token convention never fires here.
 /// Writes do NOT round-trip: assert inserts by interaction (Add + SaveChanges), assert updates on the
 /// seeded instance. Never touch ChangeTracker/FindAsync/Entry/Model on this double — they force model build.
+/// <see cref="Set{T}"/> throws for a type that was never seeded — call <see cref="Setup{T}"/> (an empty
+/// seed is fine) for every entity type the test exercises before calling into the repository under test.
 /// </summary>
 public sealed class FakeFamilyHqDbContext : FamilyHqDbContext
 {
@@ -32,7 +34,11 @@ public sealed class FakeFamilyHqDbContext : FamilyHqDbContext
     }
 
     public override DbSet<T> Set<T>() where T : class =>
-        _sets.TryGetValue(typeof(T), out var s) ? (DbSet<T>)s : Setup<T>().Object;
+        _sets.TryGetValue(typeof(T), out var s)
+            ? (DbSet<T>)s
+            : throw new InvalidOperationException(
+                $"No mock DbSet was seeded for {typeof(T).Name}. Call Setup<{typeof(T).Name}>(...) " +
+                "in the test (use an empty seed if the set should be empty) before exercising the repository.");
 
     public override Task<int> SaveChangesAsync(CancellationToken ct = default)
     {

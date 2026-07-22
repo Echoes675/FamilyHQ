@@ -107,5 +107,6 @@ public class DisplaySettingRepositoryTests
         result.Should().BeSameAs(existing);
         result.IanaTimeZone.Should().BeNull();
         mockSet.Verify(s => s.Add(It.IsAny<DisplaySetting>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(1);
     }
 }
