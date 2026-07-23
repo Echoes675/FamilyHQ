@@ -360,6 +360,85 @@ public class GoogleCalendarClientMappingTests
         end.GetProperty("dateTime").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    [Fact]
+    public async Task PatchEventFieldsAsync_Timed_ClearsStaleDate()
+    {
+        // FHQ-151 (symmetric): converting an all-day event back to timed must send date:null so
+        // Google clears the stale all-day date rather than merging it alongside the new dateTime.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-timed")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-timed" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-timed",
+            Title = "Back to timed",
+            Start = new DateTimeOffset(2026, 12, 9, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 9, 10, 30, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("dateTime").GetString().Should().Be("2026-12-09T09:30:00+00:00");
+        start.GetProperty("timeZone").GetString().Should().Be("UTC");
+        start.TryGetProperty("date", out var sd).Should().BeTrue("timed patch must send date to clear a stale all-day value");
+        sd.ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_Timed_OmitsDateKey_GateLeavesInsertUnchanged()
+    {
+        // FHQ-151 gate: the null-clearing is patch-only. A timed create (POST insert) must NOT emit a
+        // date key — inserts have no stale field, and Google should receive the pruned shape as before.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "created-1" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            Title = "Timed create",
+            Start = new DateTimeOffset(2026, 12, 9, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 9, 10, 30, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        await sut.CreateEventAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.GetProperty("start").TryGetProperty("date", out _).Should().BeFalse("a timed create must omit date, not send date:null");
+    }
+
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
     {
         http.Protected()
