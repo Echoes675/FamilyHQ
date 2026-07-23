@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Services.Auth;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -26,6 +27,7 @@ public sealed class DomainExceptionHandler(
         {
             NotFoundException => StatusCodes.Status404NotFound,
             DomainValidationException => StatusCodes.Status400BadRequest,
+            GoogleApiException => StatusCodes.Status502BadGateway,
             _ => (int?)null
         };
 
@@ -50,12 +52,14 @@ public sealed class DomainExceptionHandler(
                 {
                     NotFoundException         => "Not Found",
                     DomainValidationException => "Validation Failed",
+                    GoogleApiException        => "Upstream Calendar Error",
                     _                         => "Error"
                 },
                 Detail = exception switch
                 {
                     NotFoundException           => null,
                     DomainValidationException e => e.Message,
+                    GoogleApiException          => "The calendar provider rejected the request.",
                     _                           => null
                 }
             }
