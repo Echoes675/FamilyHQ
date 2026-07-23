@@ -329,7 +329,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
         // MapToGoogleEvent emits no `recurrence` key when given no rrule (WhenWritingNull), and PATCH
         // merges — so the master's existing RRULE, attendees and reminders survive the write.
-        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone, clearCounterpartWhenFields: true);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -443,7 +443,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
-    private object MapToGoogleEvent(CalendarEvent evt, string contentHash, string? rrule = null, string? ianaZone = null)
+    private object MapToGoogleEvent(
+        CalendarEvent evt, string contentHash, string? rrule = null, string? ianaZone = null,
+        bool clearCounterpartWhenFields = false)
     {
         var extendedProperties = new
         {
@@ -453,6 +455,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         // Google expects the recurrence array only when the event is a series master.
         var recurrence = rrule is null ? null : new[] { rrule };
 
+        string? startDate = null, startDateTime = null, startZone = null;
+        string? endDate = null, endDateTime = null, endZone = null;
+
         if (evt.IsAllDay)
         {
             // Google requires end.date to be the day AFTER the last day of the event (exclusive).
@@ -461,55 +466,69 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             // without resetting times). Normalise all of these to a strict next-day boundary using
             // each instant's wall-clock date in its own offset, matching how Start is serialised.
             var startWallDate = evt.Start.DateTime.Date;
-            var endWallDate   = evt.End.DateTime.Date;
+            var endWallDate = evt.End.DateTime.Date;
             var exclusiveEndDate = evt.End.TimeOfDay == TimeSpan.Zero && endWallDate > startWallDate
                 ? endWallDate
                 : endWallDate.AddDays(1);
 
-            return new
-            {
-                summary = evt.Title,
-                description = evt.Description,
-                location = evt.Location ?? "",
-                start = new { date = evt.Start.ToString("yyyy-MM-dd") },
-                end = new { date = exclusiveEndDate.ToString("yyyy-MM-dd") },
-                recurrence,
-                extendedProperties
-            };
+            startDate = evt.Start.ToString("yyyy-MM-dd");
+            endDate = exclusiveEndDate.ToString("yyyy-MM-dd");
         }
-
-        // When the user's IANA zone is known, send the wall-clock time in that zone so recurring
-        // series don't drift across DST transitions (FHQ-43). The timeZone field tells Google
-        // how to interpret the dateTime and how to expand future occurrences.
-        if (!string.IsNullOrWhiteSpace(ianaZone))
+        else if (!string.IsNullOrWhiteSpace(ianaZone))
         {
-            return new
-            {
-                summary = evt.Title,
-                description = evt.Description,
-                location = evt.Location ?? "",
-                start = new { dateTime = _timeZoneService.ToZonedWallClock(evt.Start, ianaZone), timeZone = ianaZone },
-                end = new { dateTime = _timeZoneService.ToZonedWallClock(evt.End, ianaZone), timeZone = ianaZone },
-                recurrence,
-                extendedProperties
-            };
+            // When the user's IANA zone is known, send the wall-clock time in that zone so recurring
+            // series don't drift across DST transitions (FHQ-43). The timeZone field tells Google
+            // how to interpret the dateTime and how to expand future occurrences.
+            startDateTime = _timeZoneService.ToZonedWallClock(evt.Start, ianaZone);
+            startZone = ianaZone;
+            endDateTime = _timeZoneService.ToZonedWallClock(evt.End, ianaZone);
+            endZone = ianaZone;
+        }
+        else
+        {
+            // UTC fallback — preserves FHQ-42 behaviour when no zone is resolved. Google REQUIRES a
+            // timeZone on start/end for a recurring event, so send timeZone=UTC with the UTC instant.
+            startDateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
+            startZone = "UTC";
+            endDateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
+            endZone = "UTC";
         }
 
-        // UTC fallback — preserves FHQ-42 behaviour when no zone is resolved.
-        // Google REQUIRES a timeZone on start/end for a recurring event (one with a recurrence
-        // array) — without it the events.insert is rejected 400 "Missing time zone definition for
-        // start time." (FHQ-42). A single event is accepted with just the offset, but sending the
-        // timeZone unconditionally is harmless and keeps create/update of recurring series working.
-        // The dateTime is normalised to UTC so its offset (+00:00) is consistent with timeZone=UTC.
         return new
         {
             summary = evt.Title,
             description = evt.Description,
             location = evt.Location ?? "",
-            start = new { dateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
-            end = new { dateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK"), timeZone = "UTC" },
+            start = BuildWhen(startDate, startDateTime, startZone, clearCounterpartWhenFields),
+            end = BuildWhen(endDate, endDateTime, endZone, clearCounterpartWhenFields),
             recurrence,
             extendedProperties
         };
+    }
+
+    // On events.patch (merge), the unused sub-field must be sent as an explicit JSON null to clear a
+    // stale value when an event flips all-day <-> timed; otherwise Google merges the new date onto the
+    // stale dateTime (or vice-versa) and rejects it 400 "Invalid start time" (FHQ-151). The client-wide
+    // WhenWritingNull would drop an omitted null, so the patch path uses GoogleEventWhenPayload, whose
+    // properties are always emitted. On events.insert (create) there is no stale field to clear, so keep
+    // the pruned anonymous shape (WhenWritingNull omits the null sub-fields).
+    private static object BuildWhen(string? date, string? dateTime, string? timeZone, bool clearCounterpart)
+        => clearCounterpart
+            ? new GoogleEventWhenPayload { Date = date, DateTime = dateTime, TimeZone = timeZone }
+            : new { date, dateTime, timeZone };
+
+    private sealed class GoogleEventWhenPayload
+    {
+        [JsonPropertyName("date")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public string? Date { get; init; }
+
+        [JsonPropertyName("dateTime")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public string? DateTime { get; init; }
+
+        [JsonPropertyName("timeZone")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public string? TimeZone { get; init; }
     }
 }
