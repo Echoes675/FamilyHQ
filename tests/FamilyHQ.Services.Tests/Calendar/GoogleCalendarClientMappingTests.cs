@@ -312,6 +312,54 @@ public class GoogleCalendarClientMappingTests
         doc.RootElement.TryGetProperty("visibility", out _).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task PatchEventFieldsAsync_AllDay_ClearsStaleDateTimeAndTimeZone()
+    {
+        // FHQ-151: converting a timed event to all-day via events.patch (merge) must send the
+        // counterpart dateTime/timeZone as explicit JSON null, or Google merges the new date onto the
+        // stale dateTime and rejects it 400 "Invalid start time."
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-allday")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-allday" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-allday",
+            Title = "Now all day",
+            Start = new DateTimeOffset(2026, 12, 9, 0, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 10, 0, 0, 0, TimeSpan.Zero),
+            IsAllDay = true
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("date").GetString().Should().Be("2026-12-09");
+        start.TryGetProperty("dateTime", out var sdt).Should().BeTrue("all-day patch must send dateTime to clear a stale timed value");
+        sdt.ValueKind.Should().Be(JsonValueKind.Null);
+        start.TryGetProperty("timeZone", out var stz).Should().BeTrue();
+        stz.ValueKind.Should().Be(JsonValueKind.Null);
+
+        var end = doc.RootElement.GetProperty("end");
+        end.GetProperty("date").GetString().Should().Be("2026-12-10");
+        end.GetProperty("dateTime").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
     {
         http.Protected()
