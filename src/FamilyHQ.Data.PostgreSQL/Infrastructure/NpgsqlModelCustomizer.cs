@@ -24,8 +24,17 @@ public sealed class NpgsqlModelCustomizer(ModelCustomizerDependencies dependenci
         // migrations snapshot matches this model — hence AddXminConcurrencyTokenToCalendarSyncJob, and hence
         // DesignTimeDbContextFactory must apply this customizer too.
         // `ClaimNextAsync` relies on the resulting DbUpdateConcurrencyException to detect a job claimed by a
-        // competing worker. FHQ-119 should apply the same three lines to UserToken (plus a no-DDL migration).
+        // competing worker. FHQ-119 applies the same three lines to UserToken (plus a no-DDL migration).
         modelBuilder.Entity<CalendarSyncJob>()
+            .Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsConcurrencyToken()
+            .ValueGeneratedOnAddOrUpdate();
+
+        // FHQ-119: UserToken gets the same xmin optimistic-concurrency token so DatabaseTokenStore's
+        // read-modify-save (token refresh / re-consent / NeedsReauth) detects a lost-update race as a
+        // DbUpdateConcurrencyException. No-op DDL like CalendarSyncJob; still needs its own migration.
+        modelBuilder.Entity<UserToken>()
             .Property<uint>("xmin")
             .HasColumnName("xmin")
             .IsConcurrencyToken()

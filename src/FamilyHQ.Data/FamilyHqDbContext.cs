@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Models;
+using FamilyHQ.Data.Infrastructure;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
@@ -35,6 +36,12 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(FamilyHqDbContext).Assembly);
     }
 
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        base.ConfigureConventions(configurationBuilder);
+        configurationBuilder.Conventions.Add(_ => new RequireConcurrencyTokenConvention());
+    }
+
     public override int SaveChanges()
     {
         ConvertDateTimeOffsetsToUtc();
@@ -58,6 +65,14 @@ public class FamilyHqDbContext : DbContext, IDataProtectionKeyContext
         ConvertDateTimeOffsetsToUtc();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
+
+    /// <summary>
+    /// Detaches all tracked entities so the next query reloads fresh database values. Used by the
+    /// FHQ-119 concurrency-retry loop after a <see cref="DbUpdateConcurrencyException"/>, so the retry
+    /// re-reads the winning row instead of the stale tracked instance. Virtual so the provider-free
+    /// test double can override it to a no-op (it has no change tracker to clear).
+    /// </summary>
+    public virtual void ClearTrackedEntities() => ChangeTracker.Clear();
 
     private void ConvertDateTimeOffsetsToUtc()
     {

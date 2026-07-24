@@ -1,10 +1,12 @@
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Middleware;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Net;
 using Xunit;
 
 namespace FamilyHQ.WebApi.Tests.Middleware;
@@ -126,6 +128,51 @@ public class DomainExceptionHandlerTests
         await handler.TryHandleAsync(context, exception, CancellationToken.None);
 
         captured!.ProblemDetails.Detail.Should().Be(exception.Message);
+    }
+
+    [Fact]
+    public async Task GoogleApiException_MapsTo502()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+    }
+
+    [Fact]
+    public async Task GoogleApiException_Title_IsUpstreamCalendarError_AndStatus502()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.ProblemDetails.Title.Should().Be("Upstream Calendar Error");
+        captured.ProblemDetails.Status.Should().Be(StatusCodes.Status502BadGateway);
+    }
+
+    [Fact]
+    public async Task GoogleApiException_Detail_DoesNotLeakGoogleResponseBody()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            CancellationToken.None);
+
+        captured!.ProblemDetails.Detail.Should().Be("The calendar provider rejected the request.");
+        captured.ProblemDetails.Detail.Should().NotContain("SECRET");
     }
 
     private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut(

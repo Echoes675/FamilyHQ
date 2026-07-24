@@ -23,9 +23,6 @@ public class RequestTimingMiddleware(RequestDelegate next, ILogger<RequestTiming
         try
         {
             await next(context);
-        }
-        finally
-        {
             sw.Stop();
             logger.LogInformation(
                 "HTTP {Method} {Path} responded {StatusCode} in {ElapsedMs} ms",
@@ -33,6 +30,27 @@ public class RequestTimingMiddleware(RequestDelegate next, ILogger<RequestTiming
                 context.Request.Path.Value,
                 context.Response.StatusCode,
                 sw.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            sw.Stop();
+            logger.LogInformation(
+                "HTTP {Method} {Path} aborted by client after {ElapsedMs} ms",
+                context.Request.Method,
+                context.Request.Path.Value,
+                sw.ElapsedMilliseconds);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            logger.LogWarning(
+                ex,
+                "HTTP {Method} {Path} faulted after {ElapsedMs} ms (unhandled exception; final status set by an outer handler)",
+                context.Request.Method,
+                context.Request.Path.Value,
+                sw.ElapsedMilliseconds);
+            throw;
         }
     }
 }

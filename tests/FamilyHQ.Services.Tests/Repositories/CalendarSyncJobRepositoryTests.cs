@@ -1,315 +1,107 @@
 using FamilyHQ.Core.Models;
-using FamilyHQ.Data;
 using FamilyHQ.Data.Exceptions;
 using FamilyHQ.Data.Repositories;
+using FamilyHQ.Services.Tests.Fakes;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using Moq;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests.Repositories;
 
-public class CalendarSyncJobRepositoryTests : IDisposable
+/// <summary>
+/// Pure unit tests for <see cref="CalendarSyncJobRepository"/> against the provider-free
+/// <see cref="FakeFamilyHqDbContext"/> (FHQ-146) — no InMemory provider, no real DB. Writes do not
+/// round-trip on the double: insert paths are asserted by interaction (Add + SaveChanges), update-in-place
+/// paths are asserted on the seeded instance the mock returns.
+/// <see cref="CalendarSyncJobRepository.ClaimNextAsync"/> delegates entirely to
+/// <see cref="ISyncJobClaimStore"/>, which is mocked here rather than exercised through real EF (its
+/// retry/contention policy already has pure coverage in <see cref="CalendarSyncJobClaimPolicyTests"/>).
+/// </summary>
+public class CalendarSyncJobRepositoryTests
 {
-    private readonly FamilyHqDbContext _db;
-    private readonly FakeTimeProvider _time;
-
-    public CalendarSyncJobRepositoryTests()
-    {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _db = new FamilyHqDbContext(options);
-        _time = new FakeTimeProvider(new DateTimeOffset(2026, 5, 29, 12, 0, 0, TimeSpan.Zero));
-    }
-
-    public void Dispose() => _db.Dispose();
+    private readonly FakeFamilyHqDbContext _db = new();
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 5, 29, 12, 0, 0, TimeSpan.Zero));
 
     private CalendarSyncJobRepository CreateSut() =>
         new(_db, _time, new SyncJobClaimStore(_db, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
 
+    private CalendarSyncJobRepository CreateSutWithMockClaimStore(ISyncJobClaimStore claimStore) =>
+        new(_db, _time, claimStore, NullLogger<CalendarSyncJobRepository>.Instance);
+
     [Fact]
     public async Task EnqueueAsync_InsertsAPendingJob()
     {
+        var mockSet = _db.Setup<CalendarSyncJob>();
         var sut = CreateSut();
         var cal = Guid.NewGuid();
 
         await sut.EnqueueAsync("u-1", cal, SyncJobSource.Webhook, "chan-1");
 
-        var jobs = await _db.CalendarSyncJobs.ToListAsync();
-        jobs.Should().ContainSingle();
-        jobs[0].Status.Should().Be(SyncJobStatus.Pending);
-        jobs[0].CalendarInfoId.Should().Be(cal);
-        jobs[0].Source.Should().Be(SyncJobSource.Webhook);
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j =>
+            j.Status == SyncJobStatus.Pending &&
+            j.CalendarInfoId == cal &&
+            j.Source == SyncJobSource.Webhook &&
+            j.ChannelId == "chan-1")), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
     }
 
     [Fact]
     public async Task EnqueueAsync_Coalesces_SecondPendingForSameTargetIsSkipped()
     {
-        var sut = CreateSut();
+        // A Pending job already exists for this user+target — this is exactly the state AnyAsync
+        // detects in the coalesce guard, so EnqueueAsync must no-op rather than insert a second one.
         var cal = Guid.NewGuid();
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = cal, Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
 
-        await sut.EnqueueAsync("u-1", cal, SyncJobSource.Webhook, "chan-1");
         await sut.EnqueueAsync("u-1", cal, SyncJobSource.Webhook, "chan-2");
 
-        (await _db.CalendarSyncJobs.CountAsync()).Should().Be(1);
+        mockSet.Verify(s => s.Add(It.IsAny<CalendarSyncJob>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(0);
     }
 
     [Fact]
     public async Task EnqueueAsync_DoesNotCoalesceAgainstInProgress()
     {
-        var sut = CreateSut();
         var cal = Guid.NewGuid();
-        _db.CalendarSyncJobs.Add(new CalendarSyncJob
+        var existing = new CalendarSyncJob
         {
             UserId = "u-1", CalendarInfoId = cal, Status = SyncJobStatus.InProgress,
             EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow()
-        });
-        await _db.SaveChangesAsync();
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
 
         await sut.EnqueueAsync("u-1", cal, SyncJobSource.Webhook, "chan-1");
 
         // A change made mid-sync must not be lost: a new Pending job is allowed.
-        (await _db.CalendarSyncJobs.CountAsync(j => j.Status == SyncJobStatus.Pending)).Should().Be(1);
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j => j.Status == SyncJobStatus.Pending)), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
     }
 
     [Fact]
     public async Task EnqueueAsync_FailedJobDoesNotBlockNewEnqueue()
     {
-        var sut = CreateSut();
         var cal = Guid.NewGuid();
-        _db.CalendarSyncJobs.Add(new CalendarSyncJob
+        var existing = new CalendarSyncJob
         {
             UserId = "u-1", CalendarInfoId = cal, Status = SyncJobStatus.Failed,
             EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow()
-        });
-        await _db.SaveChangesAsync();
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
 
         await sut.EnqueueAsync("u-1", cal, SyncJobSource.Webhook, "chan-1");
 
-        (await _db.CalendarSyncJobs.CountAsync(j => j.Status == SyncJobStatus.Pending)).Should().Be(1);
-    }
-
-    [Fact]
-    public async Task ClaimNextAsync_ReturnsOldestPending_AndMarksInProgress()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow().AddMinutes(-2) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow().AddMinutes(-1) });
-        await _db.SaveChangesAsync();
-
-        var claimed = await sut.ClaimNextAsync();
-
-        claimed.Should().NotBeNull();
-        claimed!.Status.Should().Be(SyncJobStatus.InProgress);
-        claimed.StartedAt.Should().Be(_time.GetUtcNow());
-        claimed.AttemptCount.Should().Be(1);
-        claimed.EnqueuedAt.Should().Be(_time.GetUtcNow().AddMinutes(-2)); // oldest first
-    }
-
-    [Fact]
-    public async Task ClaimNextAsync_ReturnsNull_WhenNoEligibleJobs()
-    {
-        var sut = CreateSut();
-        (await sut.ClaimNextAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ClaimNextAsync_SkipsJobsWithFutureNextAttemptAt()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.Add(new CalendarSyncJob
-        {
-            UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow(),
-            NextAttemptAt = _time.GetUtcNow().AddMinutes(10) // not yet due
-        });
-        await _db.SaveChangesAsync();
-
-        (await sut.ClaimNextAsync()).Should().BeNull();
-    }
-
-    [Fact]
-    public async Task CompleteAsync_MarksCompletedWithTimestamp()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.CompleteAsync(job.Id);
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Completed);
-        reloaded.CompletedAt.Should().Be(_time.GetUtcNow());
-    }
-
-    [Fact]
-    public async Task FailAsync_Retryable_ReturnsToPendingWithBackoff()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: TimeSpan.FromSeconds(4));
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
-        reloaded.NextAttemptAt.Should().Be(_time.GetUtcNow().AddSeconds(4));
-        reloaded.LastError.Should().Be("boom");
-    }
-
-    [Fact]
-    public async Task FailAsync_Terminal_MarksFailed()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Failed);
-        reloaded.CompletedAt.Should().Be(_time.GetUtcNow());
-        reloaded.LastError.Should().Be("fatal");
-    }
-
-    [Fact]
-    public async Task RecoverOrphansAsync_ResetsStaleInProgressToPending()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() });
-        await _db.SaveChangesAsync();
-
-        var recovered = await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
-
-        recovered.Should().Be(1);
-        (await _db.CalendarSyncJobs.CountAsync(j => j.Status == SyncJobStatus.Pending)).Should().Be(1);
-    }
-
-    [Fact]
-    public async Task PruneTerminalAsync_DeletesOldCompletedAndFailed_KeepsRecentAndActive()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed,    EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-1),  CompletedAt = _time.GetUtcNow().AddDays(-1) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending,   EnqueuedAt = _time.GetUtcNow() });
-        await _db.SaveChangesAsync();
-
-        var pruned = await sut.PruneTerminalAsync(TimeSpan.FromDays(7));
-
-        pruned.Should().Be(2);
-        (await _db.CalendarSyncJobs.CountAsync()).Should().Be(2);
-    }
-
-    [Fact]
-    public async Task GetRecentFailuresAsync_ReturnsOnlyFailedForUser_NewestFirst()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-2) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-1) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
-            new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() });
-        await _db.SaveChangesAsync();
-
-        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
-
-        result.Should().HaveCount(2);
-        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddMinutes(-1)); // newest first
-    }
-
-    [Fact]
-    public async Task GetRecentFailuresAsync_ExcludesFailuresOlderThanMaxAge()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) });
-        await _db.SaveChangesAsync();
-
-        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
-
-        result.Should().ContainSingle();
-        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddDays(-1));
-    }
-
-    [Fact]
-    public async Task GetRecentFailuresAsync_CombinesAgeFilterWithLimit_ReturningNewestWithinWindow()
-    {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) },
-            new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) });
-        await _db.SaveChangesAsync();
-
-        var result = await sut.GetRecentFailuresAsync("u", limit: 1, maxAge: TimeSpan.FromDays(14));
-
-        result.Should().ContainSingle();
-        result[0].CompletedAt.Should().Be(_time.GetUtcNow()); // newest of the 2 within-window rows
-    }
-
-    [Fact]
-    public async Task FailAsync_Terminal_ClearsNextAttemptAt()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob
-        {
-            UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5,
-            EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow(),
-            NextAttemptAt = _time.GetUtcNow().AddSeconds(30) // stale backoff from a prior retry
-        };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Failed);
-        reloaded.NextAttemptAt.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task FailAsync_Retryable_WithNullRetryAfter_IsImmediatelyEligible()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: null);
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
-        reloaded.NextAttemptAt.Should().Be(_time.GetUtcNow()); // now + Zero
-    }
-
-    [Fact]
-    public async Task RecoverOrphansAsync_ClearsStartedBackoffOnRecoveredJob()
-    {
-        var sut = CreateSut();
-        var job = new CalendarSyncJob
-        {
-            UserId = "u", Status = SyncJobStatus.InProgress,
-            EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20),
-            NextAttemptAt = _time.GetUtcNow().AddMinutes(-15)
-        };
-        _db.CalendarSyncJobs.Add(job);
-        await _db.SaveChangesAsync();
-
-        await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
-
-        var reloaded = await _db.CalendarSyncJobs.FindAsync(job.Id);
-        reloaded!.Status.Should().Be(SyncJobStatus.Pending);
-        reloaded.NextAttemptAt.Should().BeNull();
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j => j.Status == SyncJobStatus.Pending)), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
     }
 
     [Fact]
@@ -320,17 +112,226 @@ public class CalendarSyncJobRepositoryTests : IDisposable
         await act.Should().ThrowAsync<ArgumentException>();
     }
 
+    // --- ClaimNextAsync ---
+    //
+    // ClaimNextAsync (the repository method) does nothing but delegate to ISyncJobClaimStore and retry
+    // on a lost race — that retry/contention policy is already fully covered purely by
+    // CalendarSyncJobClaimPolicyTests using a mocked store, so it is not duplicated here. The ordering
+    // (oldest-eligible-first) and NextAttemptAt backoff filtering the *previous* version of this test
+    // class exercised live inside SyncJobClaimStore.FindNextClaimableAsync's EF query — a different type,
+    // not covered by ClaimPolicyTests, and (per the FHQ-146 brief) not to be exercised through real EF
+    // here. That query-level coverage has no purely-tested home after this migration; see
+    // task-7-report.md for the concern raised to the controller. The single test kept below proves the
+    // repository still returns whatever the store claims (including the store's own mutation of the job).
+    [Fact]
+    public async Task ClaimNextAsync_WhenStoreClaimsSuccessfully_ReturnsTheClaimedJob()
+    {
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() };
+        var claimStore = new Mock<ISyncJobClaimStore>(MockBehavior.Strict);
+        claimStore.Setup(s => s.FindNextClaimableAsync(It.IsAny<CancellationToken>())).ReturnsAsync(job);
+        claimStore.Setup(s => s.TryClaimAsync(job, It.IsAny<CancellationToken>()))
+            .Callback<CalendarSyncJob, CancellationToken>((j, _) =>
+            {
+                j.Status = SyncJobStatus.InProgress;
+                j.StartedAt = _time.GetUtcNow();
+                j.AttemptCount += 1;
+            })
+            .ReturnsAsync(true);
+        var sut = CreateSutWithMockClaimStore(claimStore.Object);
+
+        var claimed = await sut.ClaimNextAsync();
+
+        claimed.Should().BeSameAs(job);
+        claimed!.Status.Should().Be(SyncJobStatus.InProgress);
+        claimed.StartedAt.Should().Be(_time.GetUtcNow());
+        claimed.AttemptCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_MarksCompletedWithTimestamp()
+    {
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.CompleteAsync(job.Id);
+
+        job.Status.Should().Be(SyncJobStatus.Completed);
+        job.CompletedAt.Should().Be(_time.GetUtcNow());
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FailAsync_Retryable_ReturnsToPendingWithBackoff()
+    {
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: TimeSpan.FromSeconds(4));
+
+        job.Status.Should().Be(SyncJobStatus.Pending);
+        job.NextAttemptAt.Should().Be(_time.GetUtcNow().AddSeconds(4));
+        job.LastError.Should().Be("boom");
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FailAsync_Terminal_MarksFailed()
+    {
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
+
+        job.Status.Should().Be(SyncJobStatus.Failed);
+        job.CompletedAt.Should().Be(_time.GetUtcNow());
+        job.LastError.Should().Be("fatal");
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FailAsync_Terminal_ClearsNextAttemptAt()
+    {
+        var job = new CalendarSyncJob
+        {
+            UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 5,
+            EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow(),
+            NextAttemptAt = _time.GetUtcNow().AddSeconds(30) // stale backoff from a prior retry
+        };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.FailAsync(job.Id, "fatal", retryable: false, retryAfter: null);
+
+        job.Status.Should().Be(SyncJobStatus.Failed);
+        job.NextAttemptAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FailAsync_Retryable_WithNullRetryAfter_IsImmediatelyEligible()
+    {
+        var job = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, AttemptCount = 1, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.FailAsync(job.Id, "boom", retryable: true, retryAfter: null);
+
+        job.Status.Should().Be(SyncJobStatus.Pending);
+        job.NextAttemptAt.Should().Be(_time.GetUtcNow()); // now + Zero
+    }
+
+    [Fact]
+    public async Task RecoverOrphansAsync_ResetsStaleInProgressToPending()
+    {
+        var stale = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20) };
+        var fresh = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([stale, fresh]);
+        var sut = CreateSut();
+
+        var recovered = await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
+
+        recovered.Should().Be(1);
+        stale.Status.Should().Be(SyncJobStatus.Pending);
+        fresh.Status.Should().Be(SyncJobStatus.InProgress); // untouched — not stale enough
+    }
+
+    [Fact]
+    public async Task RecoverOrphansAsync_ClearsStartedBackoffOnRecoveredJob()
+    {
+        var job = new CalendarSyncJob
+        {
+            UserId = "u", Status = SyncJobStatus.InProgress,
+            EnqueuedAt = _time.GetUtcNow().AddMinutes(-20), StartedAt = _time.GetUtcNow().AddMinutes(-20),
+            NextAttemptAt = _time.GetUtcNow().AddMinutes(-15)
+        };
+        _db.Setup<CalendarSyncJob>([job]);
+        var sut = CreateSut();
+
+        await sut.RecoverOrphansAsync(TimeSpan.FromMinutes(5));
+
+        job.Status.Should().Be(SyncJobStatus.Pending);
+        job.NextAttemptAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PruneTerminalAsync_DeletesOldCompletedAndFailed_KeepsRecentAndActive()
+    {
+        var oldCompleted = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) };
+        var oldFailed    = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed,    EnqueuedAt = _time.GetUtcNow().AddDays(-10), CompletedAt = _time.GetUtcNow().AddDays(-10) };
+        var recent       = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow().AddDays(-1),  CompletedAt = _time.GetUtcNow().AddDays(-1) };
+        var active       = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending,   EnqueuedAt = _time.GetUtcNow() };
+        var mockSet = _db.Setup<CalendarSyncJob>([oldCompleted, oldFailed, recent, active]);
+        var sut = CreateSut();
+
+        var pruned = await sut.PruneTerminalAsync(TimeSpan.FromDays(7));
+
+        // The mock doesn't reflect RemoveRange on later reads, so assert the returned count and the
+        // RemoveRange interaction rather than re-querying the set.
+        pruned.Should().Be(2);
+        mockSet.Verify(s => s.RemoveRange(It.Is<IEnumerable<CalendarSyncJob>>(rows =>
+            rows.Contains(oldCompleted) && rows.Contains(oldFailed) &&
+            !rows.Contains(recent) && !rows.Contains(active))), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_ReturnsOnlyFailedForUser_NewestFirst()
+    {
+        var older = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-2) };
+        var newer = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddMinutes(-1) };
+        var completed = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() };
+        var otherUser = new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() };
+        _db.Setup<CalendarSyncJob>([older, newer, completed, otherUser]);
+        var sut = CreateSut();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
+
+        result.Should().HaveCount(2);
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddMinutes(-1)); // newest first
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_ExcludesFailuresOlderThanMaxAge()
+    {
+        var withinWindow = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) };
+        var tooOld = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) };
+        _db.Setup<CalendarSyncJob>([withinWindow, tooOld]);
+        var sut = CreateSut();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 10, maxAge: TimeSpan.FromDays(14));
+
+        result.Should().ContainSingle();
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow().AddDays(-1));
+    }
+
+    [Fact]
+    public async Task GetRecentFailuresAsync_CombinesAgeFilterWithLimit_ReturningNewestWithinWindow()
+    {
+        var newest = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() };
+        var withinWindow = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-1) };
+        var tooOld = new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow().AddDays(-20) };
+        _db.Setup<CalendarSyncJob>([newest, withinWindow, tooOld]);
+        var sut = CreateSut();
+
+        var result = await sut.GetRecentFailuresAsync("u", limit: 1, maxAge: TimeSpan.FromDays(14));
+
+        result.Should().ContainSingle();
+        result[0].CompletedAt.Should().Be(_time.GetUtcNow()); // newest of the 2 within-window rows
+    }
+
     [Fact]
     public async Task GetActiveJobCountAsync_CountsOnlyPendingAndInProgressForUser()
     {
-        var sut = CreateSut();
-        _db.CalendarSyncJobs.AddRange(
+        _db.Setup<CalendarSyncJob>([
             new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() },
             new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.InProgress, EnqueuedAt = _time.GetUtcNow(), StartedAt = _time.GetUtcNow() },
             new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Completed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
             new CalendarSyncJob { UserId = "u", Status = SyncJobStatus.Failed, EnqueuedAt = _time.GetUtcNow(), CompletedAt = _time.GetUtcNow() },
-            new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() });
-        await _db.SaveChangesAsync();
+            new CalendarSyncJob { UserId = "other", Status = SyncJobStatus.Pending, EnqueuedAt = _time.GetUtcNow() }
+        ]);
+        var sut = CreateSut();
 
         (await sut.GetActiveJobCountAsync("u")).Should().Be(2);
     }
@@ -342,47 +343,55 @@ public class CalendarSyncJobRepositoryTests : IDisposable
         (await sut.GetActiveJobCountAsync("")).Should().Be(0);
     }
 
-    // --- Helper ---
-
-    private sealed class SaveThrowingFamilyHqDbContext : FamilyHqDbContext
-    {
-        private readonly Exception _exception;
-
-        public SaveThrowingFamilyHqDbContext(DbContextOptions<FamilyHqDbContext> options, Exception exception)
-            : base(options) => _exception = exception;
-
-        public override Task<int> SaveChangesAsync(CancellationToken ct = default) => throw _exception;
-    }
-
-    // --- New tests ---
-
-    [Fact]
-    public async Task EnqueueAsync_UniqueConstraintException_IsSwallowed()
-    {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        var original = new DbUpdateException("race", new Exception("inner"));
-        var throwingDb = new SaveThrowingFamilyHqDbContext(options, new UniqueConstraintException("race", original));
-        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
-
-        var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
-
-        await act.Should().NotThrowAsync();
-    }
+    // --- EnqueueAsync save-failure paths ---
 
     [Fact]
     public async Task EnqueueAsync_NonUniqueDbUpdateException_Rethrows()
     {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        var throwingDb = new SaveThrowingFamilyHqDbContext(options,
-            new DbUpdateException("transient DB error", new Exception("connection refused")));
-        var sut = new CalendarSyncJobRepository(throwingDb, _time, new SyncJobClaimStore(throwingDb, _time, NullLogger<SyncJobClaimStore>.Instance), NullLogger<CalendarSyncJobRepository>.Instance);
+        // A plain DbUpdateException (not the UniqueConstraintException subtype) is never caught by
+        // EnqueueAsync's `catch (UniqueConstraintException)` — it propagates directly, never touching
+        // ChangeTracker, so this migrates cleanly onto the provider-free double.
+        _db.Setup<CalendarSyncJob>();
+        _db.OnSaveChanges = () => throw new DbUpdateException("transient DB error", new Exception("connection refused"));
+        var sut = CreateSut();
 
         var act = async () => await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
 
         await act.Should().ThrowAsync<DbUpdateException>();
+    }
+
+    /// <summary>
+    /// KNOWN CONCERN (FHQ-146 Task 7 — see task-7-report.md): EnqueueAsync's swallow of
+    /// <see cref="UniqueConstraintException"/> calls <c>context.ChangeTracker.Clear()</c>. On
+    /// <see cref="FakeFamilyHqDbContext"/> — deliberately provider-free so every other test in this
+    /// suite stays pure — <c>ChangeTracker</c> access forces EF's internal service provider to
+    /// initialize, which throws because no provider is configured. That happens inside the SUT's own
+    /// catch block, so it is not possible on this double to observe "the exception is swallowed and
+    /// EnqueueAsync does not throw" the way the original InMemory-backed test did. The only thing
+    /// observable purely is that SaveChangesAsync was attempted before the (now different) exception
+    /// propagates from the ChangeTracker access. This is a real fidelity gap versus production
+    /// behaviour, not a simplification — flagged for the controller to decide whether to harden the
+    /// fake (e.g. an overridable ChangeTracker) or accept this residual coverage.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueAsync_UniqueConstraintException_AttemptsSaveChanges_SwallowNotObservableOnTheDouble()
+    {
+        _db.Setup<CalendarSyncJob>();
+        var original = new DbUpdateException("race", new Exception("inner"));
+        _db.OnSaveChanges = () => throw new UniqueConstraintException("race", original);
+        var sut = CreateSut();
+
+        try
+        {
+            await sut.EnqueueAsync("u-1", Guid.NewGuid(), SyncJobSource.Webhook, null);
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected on this double: see the KNOWN CONCERN doc comment above — provider-less
+            // ChangeTracker access throws InvalidOperationException. A different exception here would
+            // mean the fidelity gap changed shape, so it is intentionally not swallowed.
+        }
+
+        _db.SaveChangesCount.Should().Be(1);
     }
 }

@@ -1,31 +1,22 @@
 using FamilyHQ.Core.Models;
-using FamilyHQ.Data;
 using FamilyHQ.Data.Repositories;
+using FamilyHQ.Services.Tests.Fakes;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
+using Moq;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests.Repositories;
 
-public class WebhookRegistrationRepositoryTests : IDisposable
+public class WebhookRegistrationRepositoryTests
 {
-    private readonly FamilyHqDbContext _db;
-
-    public WebhookRegistrationRepositoryTests()
-    {
-        var options = new DbContextOptionsBuilder<FamilyHqDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _db = new FamilyHqDbContext(options);
-    }
-
-    public void Dispose() => _db.Dispose();
+    private readonly FakeFamilyHqDbContext _db = new();
 
     private WebhookRegistrationRepository CreateSut() => new(_db);
 
     [Fact]
     public async Task UpsertAsync_NoExistingRegistration_InsertsWithChannelToken()
     {
+        var mockSet = _db.Setup<WebhookRegistration>();
         var sut = CreateSut();
         var calendarInfoId = Guid.NewGuid();
 
@@ -39,8 +30,12 @@ public class WebhookRegistrationRepositoryTests : IDisposable
             RegisteredAt = DateTimeOffset.UtcNow
         });
 
-        var stored = await _db.WebhookRegistrations.SingleAsync(w => w.CalendarInfoId == calendarInfoId);
-        stored.ChannelToken.Should().Be("token-1");
+        mockSet.Verify(s => s.Add(It.Is<WebhookRegistration>(w =>
+            w.CalendarInfoId == calendarInfoId &&
+            w.ChannelId == "chan-1" &&
+            w.ResourceId == "res-1" &&
+            w.ChannelToken == "token-1")), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
     }
 
     [Fact]
@@ -49,10 +44,8 @@ public class WebhookRegistrationRepositoryTests : IDisposable
         // A webhook renewal generates a brand-new channel ID + token and re-registers with Google.
         // The stored registration must reflect the new token, or Google's push notifications on the
         // renewed channel will be rejected as a token mismatch (FHQ-135).
-        var sut = CreateSut();
         var calendarInfoId = Guid.NewGuid();
-
-        await sut.UpsertAsync(new WebhookRegistration
+        var existing = new WebhookRegistration
         {
             CalendarInfoId = calendarInfoId,
             ChannelId = "chan-1",
@@ -60,7 +53,9 @@ public class WebhookRegistrationRepositoryTests : IDisposable
             ChannelToken = "old-token",
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(7),
             RegisteredAt = DateTimeOffset.UtcNow
-        });
+        };
+        var mockSet = _db.Setup<WebhookRegistration>([existing]);
+        var sut = CreateSut();
 
         await sut.UpsertAsync(new WebhookRegistration
         {
@@ -72,8 +67,9 @@ public class WebhookRegistrationRepositoryTests : IDisposable
             RegisteredAt = DateTimeOffset.UtcNow
         });
 
-        var stored = await _db.WebhookRegistrations.SingleAsync(w => w.CalendarInfoId == calendarInfoId);
-        stored.ChannelId.Should().Be("chan-2");
-        stored.ChannelToken.Should().Be("new-token");
+        existing.ChannelId.Should().Be("chan-2");
+        existing.ChannelToken.Should().Be("new-token");
+        mockSet.Verify(s => s.Add(It.IsAny<WebhookRegistration>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(1);
     }
 }

@@ -312,6 +312,133 @@ public class GoogleCalendarClientMappingTests
         doc.RootElement.TryGetProperty("visibility", out _).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task PatchEventFieldsAsync_AllDay_ClearsStaleDateTimeAndTimeZone()
+    {
+        // FHQ-151: converting a timed event to all-day via events.patch (merge) must send the
+        // counterpart dateTime/timeZone as explicit JSON null, or Google merges the new date onto the
+        // stale dateTime and rejects it 400 "Invalid start time."
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-allday")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-allday" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-allday",
+            Title = "Now all day",
+            Start = new DateTimeOffset(2026, 12, 9, 0, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 10, 0, 0, 0, TimeSpan.Zero),
+            IsAllDay = true
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("date").GetString().Should().Be("2026-12-09");
+        start.TryGetProperty("dateTime", out var sdt).Should().BeTrue("all-day patch must send dateTime to clear a stale timed value");
+        sdt.ValueKind.Should().Be(JsonValueKind.Null);
+        start.TryGetProperty("timeZone", out var stz).Should().BeTrue();
+        stz.ValueKind.Should().Be(JsonValueKind.Null);
+
+        var end = doc.RootElement.GetProperty("end");
+        end.GetProperty("date").GetString().Should().Be("2026-12-10");
+        end.GetProperty("dateTime").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_Timed_ClearsStaleDate()
+    {
+        // FHQ-151 (symmetric): converting an all-day event back to timed must send date:null so
+        // Google clears the stale all-day date rather than merging it alongside the new dateTime.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-timed")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-timed" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-timed",
+            Title = "Back to timed",
+            Start = new DateTimeOffset(2026, 12, 9, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 9, 10, 30, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var start = doc.RootElement.GetProperty("start");
+        start.GetProperty("dateTime").GetString().Should().Be("2026-12-09T09:30:00+00:00");
+        start.GetProperty("timeZone").GetString().Should().Be("UTC");
+        start.TryGetProperty("date", out var sd).Should().BeTrue("timed patch must send date to clear a stale all-day value");
+        sd.ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_Timed_OmitsDateKey_GateLeavesInsertUnchanged()
+    {
+        // FHQ-151 gate: the null-clearing is patch-only. A timed create (POST insert) must NOT emit a
+        // date key — inserts have no stale field, and Google should receive the pruned shape as before.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "created-1" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            Title = "Timed create",
+            Start = new DateTimeOffset(2026, 12, 9, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 9, 10, 30, 0, TimeSpan.Zero),
+            IsAllDay = false
+        };
+
+        await sut.CreateEventAsync("cal-1", evt, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.GetProperty("start").TryGetProperty("date", out _).Should().BeFalse("a timed create must omit date, not send date:null");
+    }
+
     private static void SetupEventsResponse(Mock<HttpMessageHandler> http, string json)
     {
         http.Protected()
