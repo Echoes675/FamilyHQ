@@ -31,6 +31,16 @@ public class RequestTimingMiddleware(RequestDelegate next, ILogger<RequestTiming
                 context.Response.StatusCode,
                 sw.ElapsedMilliseconds);
         }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            sw.Stop();
+            logger.LogInformation(
+                "HTTP {Method} {Path} aborted by client after {ElapsedMs} ms",
+                context.Request.Method,
+                context.Request.Path.Value,
+                sw.ElapsedMilliseconds);
+            throw;
+        }
         catch (Exception ex)
         {
             sw.Stop();

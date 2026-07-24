@@ -83,4 +83,36 @@ public class RequestTimingMiddlewareTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
     }
+
+    [Fact]
+    public async Task Invoke_WhenClientAborts_LogsInformationAborted_NotWarning()
+    {
+        var logger = new Mock<ILogger<RequestTimingMiddleware>>();
+        RequestDelegate next = _ => throw new OperationCanceledException();
+        var sut = new RequestTimingMiddleware(next, logger.Object);
+
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Method = "GET";
+        ctx.Request.Path = "/api/calendars/events";
+        ctx.RequestAborted = new CancellationToken(canceled: true);
+
+        var act = async () => await sut.InvokeAsync(ctx);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // client abort → Information "aborted by client", exactly once
+        logger.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("aborted by client")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+
+        // must NOT be logged at Warning
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+    }
 }
