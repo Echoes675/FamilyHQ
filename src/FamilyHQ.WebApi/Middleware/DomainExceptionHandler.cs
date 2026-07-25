@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Services.Auth;
 using Microsoft.AspNetCore.Diagnostics;
@@ -81,12 +82,26 @@ public sealed class DomainExceptionHandler(
                     ["reconnectUrl"] = "/api/auth/login"
                 }),
 
-        GoogleApiException =>
-            new Mapping(
-                StatusCodes.Status502BadGateway,
-                "Upstream Calendar Error",
-                "The calendar provider rejected the request."),
+        GoogleApiException e => MapGoogleApi(e),
 
         _ => null
     };
+
+    /// <summary>
+    /// Google 429 (rate limit) → 503 + Retry-After when Google supplied a delay; every other Google
+    /// status (incl. 400) → 502, unchanged from FHQ-152.
+    /// </summary>
+    private static Mapping MapGoogleApi(GoogleApiException exception) =>
+        exception.StatusCode == HttpStatusCode.TooManyRequests
+            ? new Mapping(
+                StatusCodes.Status503ServiceUnavailable,
+                "Calendar Provider Unavailable",
+                "The calendar provider is rate-limiting requests. Please retry shortly.",
+                RetryAfterSeconds: exception.RetryAfter is { } ra && ra > TimeSpan.Zero
+                    ? (int)Math.Ceiling(ra.TotalSeconds)
+                    : null)
+            : new Mapping(
+                StatusCodes.Status502BadGateway,
+                "Upstream Calendar Error",
+                "The calendar provider rejected the request.");
 }

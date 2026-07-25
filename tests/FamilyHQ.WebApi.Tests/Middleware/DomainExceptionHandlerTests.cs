@@ -176,6 +176,52 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
+    public async Task GoogleApiException_429_MapsTo503WithRetryAfterHeader()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.RetryAfter.ToString().Should().Be("30");
+    }
+
+    [Fact]
+    public async Task GoogleApiException_429_WithoutRetryAfter_MapsTo503AndOmitsHeader()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.ContainsKey("Retry-After").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GoogleApiException_400_StaysAt502()
+    {
+        // Locked decision (FHQ-153): a Google 400 is an upstream integration rejection, not a client
+        // error our SPA can act on (the raw body is stripped) — so it stays 502, not 400.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+    }
+
+    [Fact]
     public async Task GoogleReauthRequiredException_MapsTo409()
     {
         var (handler, context) = CreateSut();
