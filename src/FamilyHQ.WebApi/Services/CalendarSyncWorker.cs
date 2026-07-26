@@ -137,6 +137,13 @@ public class CalendarSyncWorker(
             TimeSpan? backoff = retryable
                 ? TimeSpan.FromSeconds(Math.Pow(2, cappedAttempt) * opts.RetryBackoffBaseSeconds)
                 : null;
+
+            // FHQ-83: honor Google's Retry-After as a floor — never requeue sooner than the upstream asked,
+            // while still growing on repeated failures.
+            if (retryable && backoff is { } expBackoff
+                && ex is GoogleApiException { RetryAfter: { } retryAfter } && retryAfter > expBackoff)
+                backoff = retryAfter;
+
             await queue.FailAsync(job.Id, ex.Message, retryable, backoff, stoppingToken);
             logger.LogWarning(ex, "Sync job {JobId} failed (attempt {Attempt}, retryable={Retryable}).", job.Id, job.AttemptCount, retryable);
         }
