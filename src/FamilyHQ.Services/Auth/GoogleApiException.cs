@@ -13,11 +13,18 @@ public class GoogleApiException : Exception
     public string Operation { get; }
     public string? ResponseBody { get; }
 
-    public GoogleApiException(HttpStatusCode statusCode, string operation, string? responseBody)
+    /// <summary>
+    /// The upstream <c>Retry-After</c> delay when Google supplied one (typically on a 429),
+    /// normalised to a positive <see cref="TimeSpan"/>. Null when absent, unparseable, or non-positive.
+    /// </summary>
+    public TimeSpan? RetryAfter { get; }
+
+    public GoogleApiException(HttpStatusCode statusCode, string operation, string? responseBody, TimeSpan? retryAfter = null)
         : base($"Google API {operation} failed with status {(int)statusCode} {statusCode}.")
     {
         StatusCode = statusCode;
         Operation = operation;
         ResponseBody = responseBody;
+        RetryAfter = retryAfter;
     }
 }
