@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
 using FamilyHQ.Core.Interfaces;
@@ -868,6 +869,154 @@ public class GoogleCalendarClientTests
             .Should().ThrowAsync<GoogleApiException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
         ex.Which.ResponseBody.Should().Contain("backend boom");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When429WithRetryAfter_ThrowsGoogleApiExceptionCarryingRetryAfter()
+    {
+        // Arrange — a Google 429 (rate limit) with a Retry-After header must surface as a
+        // GoogleApiException whose RetryAfter carries the delay, so the handler can emit 503 + Retry-After.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var rateLimited = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.TooManyRequests,
+            Content = new StringContent("{\"error\":{\"message\":\"Rate limit exceeded\"}}")
+        };
+        rateLimited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(rateLimited);
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        ex.Which.RetryAfter.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When429WithHttpDateRetryAfter_PopulatesPositiveRetryAfter()
+    {
+        // Arrange — Google may send Retry-After as an HTTP-date instead of delta-seconds;
+        // NormaliseRetryAfter must compute (date - now) and surface a positive TimeSpan.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var rateLimited = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.TooManyRequests,
+            Content = new StringContent("{\"error\":{\"message\":\"Rate limit exceeded\"}}")
+        };
+        rateLimited.Headers.RetryAfter = new RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(30));
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(rateLimited);
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.RetryAfter.Should().NotBeNull();
+        // The helper subtracts DateTimeOffset.UtcNow at call time, which elapses slightly after the
+        // header is constructed above, so the result is a bit under 30s — never assert exact equality.
+        ex.Which.RetryAfter!.Value.Should().BeGreaterThan(TimeSpan.Zero)
+            .And.BeLessThanOrEqualTo(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When429WithZeroRetryAfter_RetryAfterIsNull()
+    {
+        // Arrange — a zero delta means the non-positive filter (d > TimeSpan.Zero) rejects it,
+        // so RetryAfter must come back null rather than TimeSpan.Zero.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var rateLimited = new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.TooManyRequests,
+            Content = new StringContent("{\"error\":{\"message\":\"Rate limit exceeded\"}}")
+        };
+        rateLimited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(rateLimited);
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.RetryAfter.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When429WithoutRetryAfter_RetryAfterIsNull()
+    {
+        // Arrange — a 429 with no Retry-After header yields a GoogleApiException with RetryAfter == null.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.TooManyRequests,
+                Content = new StringContent("{\"error\":{\"message\":\"Rate limit exceeded\"}}")
+            });
+
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.RetryAfter.Should().BeNull();
     }
 
     [Fact]

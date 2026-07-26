@@ -1,10 +1,8 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
-using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
@@ -78,34 +76,7 @@ public class SyncController : ControllerBase
         var startDate = DateTimeOffset.UtcNow.AddDays(-30);
         var endDate = DateTimeOffset.UtcNow.AddDays(365);
 
-        try
-        {
-            await _syncService.SyncAllAsync(startDate, endDate, ct);
-        }
-        catch (GoogleReauthRequiredException ex)
-        {
-            _logger.LogWarning(
-                "Manual sync rejected: Google re-authentication required ({Source}). {Description}",
-                ex.FailureSource, ex.ErrorDescription);
-            return Conflict(new
-            {
-                status = "needs_reauth",
-                source = ex.FailureSource == GoogleAuthFailureSource.TokenRefresh ? "token_refresh" : "calendar_api",
-                message = ex.ErrorDescription ?? "Google connection requires re-consent.",
-                reconnectUrl = "/api/auth/login"
-            });
-        }
-        catch (GoogleApiException ex)
-        {
-            _logger.LogError(
-                "Manual sync failed: upstream Google API error {Status} ({Operation}).",
-                (int)ex.StatusCode, ex.Operation);
-            return StatusCode(StatusCodes.Status502BadGateway, new
-            {
-                status = "upstream_error",
-                message = $"Google API {ex.Operation} returned {(int)ex.StatusCode}."
-            });
-        }
+        await _syncService.SyncAllAsync(startDate, endDate, ct);
 
         // Manual sync is user-initiated: always notify connected clients to refresh,
         // even on a no-op. Background/periodic syncs suppress no-op broadcasts in

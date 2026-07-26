@@ -175,6 +175,100 @@ public class DomainExceptionHandlerTests
         captured.ProblemDetails.Detail.Should().NotContain("SECRET");
     }
 
+    [Fact]
+    public async Task GoogleApiException_429_MapsTo503WithRetryAfterHeader()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.RetryAfter.ToString().Should().Be("30");
+    }
+
+    [Fact]
+    public async Task GoogleApiException_429_WithoutRetryAfter_MapsTo503AndOmitsHeader()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.ContainsKey("Retry-After").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GoogleApiException_400_StaysAt502()
+    {
+        // Locked decision (FHQ-153): a Google 400 is an upstream integration rejection, not a client
+        // error our SPA can act on (the raw body is stripped) — so it stays 502, not 400.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_MapsTo409()
+    {
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", "raw-google-body-SECRET"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_CarriesReauthExtensions_AndNoBodyLeak()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", "raw-google-body-SECRET"),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        var pd = captured!.ProblemDetails;
+        pd.Title.Should().Be("Reconnect Google Calendar");
+        pd.Extensions["code"].Should().Be("needs_reauth");
+        pd.Extensions["source"].Should().Be("token_refresh");
+        pd.Extensions["reconnectUrl"].Should().Be("/api/auth/login");
+        pd.Detail.Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_CalendarApiSource_MapsSourceToCalendarApi()
+    {
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "insufficient permission"),
+            CancellationToken.None);
+
+        captured!.ProblemDetails.Extensions["source"].Should().Be("calendar_api");
+    }
+
     private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut(
         Action<ProblemDetailsContext>? callback = null)
     {

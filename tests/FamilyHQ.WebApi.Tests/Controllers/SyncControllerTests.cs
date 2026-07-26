@@ -352,46 +352,39 @@ public class SyncControllerTests
     }
 
     [Fact]
-    public async Task TriggerSync_WhenSyncThrowsGoogleReauthRequired_Returns409Conflict()
+    public async Task TriggerSync_WhenSyncThrowsGoogleReauthRequired_PropagatesToHandler()
     {
-        // Arrange
-        var (constructorSync, _, systemUnderTest) = CreateSut();
+        // FHQ-153: SyncController no longer maps this inline; it bubbles to DomainExceptionHandler
+        // (→ 409), giving the sync path the same contract as the events path.
+        var (constructorSync, proxy, systemUnderTest) = CreateSut();
         constructorSync
             .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleReauthRequiredException(
                 GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked."));
 
-        // Act
-        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
+        await systemUnderTest.Invoking(s => s.TriggerSync(CancellationToken.None))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
 
-        // Assert
-        var conflict = result.Should().BeOfType<ConflictObjectResult>().Subject;
-        conflict.Value.Should().NotBeNull();
-        var payload = conflict.Value!.GetType().GetProperties()
-            .ToDictionary(p => p.Name, p => p.GetValue(conflict.Value));
-        payload["status"].Should().Be("needs_reauth");
-        payload["source"].Should().Be("token_refresh");
-        payload["reconnectUrl"].Should().Be("/api/auth/login");
+        // A failed sync must not broadcast an EventsUpdated refresh.
+        proxy.Verify(
+            c => c.SendCoreAsync("EventsUpdated", It.IsAny<object[]>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task TriggerSync_WhenSyncThrowsGoogleApiException_Returns502BadGateway()
+    public async Task TriggerSync_WhenSyncThrowsGoogleApiException_PropagatesToHandler()
     {
-        // Arrange
-        var (constructorSync, _, systemUnderTest) = CreateSut();
+        var (constructorSync, proxy, systemUnderTest) = CreateSut();
         constructorSync
             .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "server boom"));
 
-        // Act
-        var result = await systemUnderTest.TriggerSync(CancellationToken.None);
+        await systemUnderTest.Invoking(s => s.TriggerSync(CancellationToken.None))
+            .Should().ThrowAsync<GoogleApiException>();
 
-        // Assert
-        var status = result.Should().BeOfType<ObjectResult>().Subject;
-        status.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
-        var payload = status.Value!.GetType().GetProperties()
-            .ToDictionary(p => p.Name, p => p.GetValue(status.Value));
-        payload["status"].Should().Be("upstream_error");
+        proxy.Verify(
+            c => c.SendCoreAsync("EventsUpdated", It.IsAny<object[]>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

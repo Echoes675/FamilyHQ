@@ -84,7 +84,18 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _logger.LogWarning(
             "Google {Operation} returned {Status}. Body: {Body}",
             operation, (int)response.StatusCode, truncated);
-        throw new GoogleApiException(response.StatusCode, operation, truncated);
+        throw new GoogleApiException(response.StatusCode, operation, truncated, NormaliseRetryAfter(response.Headers.RetryAfter));
+    }
+
+    /// <summary>
+    /// Reduces an HTTP <c>Retry-After</c> header (delta-seconds or HTTP-date form) to a positive
+    /// <see cref="TimeSpan"/>. Returns null when the header is absent, in the past, or unparseable.
+    /// </summary>
+    private static TimeSpan? NormaliseRetryAfter(RetryConditionHeaderValue? header)
+    {
+        if (header is null) return null;
+        var delta = header.Delta ?? (header.Date is { } date ? date - DateTimeOffset.UtcNow : (TimeSpan?)null);
+        return delta is { } d && d > TimeSpan.Zero ? d : null;
     }
 
     private static string? ParseGoogleErrorReason(string body)
