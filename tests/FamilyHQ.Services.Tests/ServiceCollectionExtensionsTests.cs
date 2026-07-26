@@ -6,6 +6,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Moq;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests;
@@ -64,5 +65,28 @@ public class ServiceCollectionExtensionsTests
             sd.ServiceType == typeof(IHostedService) &&
             sd.ImplementationType == typeof(SyncOrchestrator) &&
             sd.Lifetime == ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_IGoogleCalendarClient_ResolvesToResilientDecorator()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder().Build();
+        services.AddFamilyHqServices(configuration);
+        // These are registered by WebApi/FamilyHQ.Data.PostgreSQL (not AddFamilyHqServices); stub them
+        // so the inner client's dependency chain (GoogleCalendarClient -> TimeZoneService -> ...) can build.
+        services.AddScoped(_ => Mock.Of<ITokenStore>());
+        services.AddScoped(_ => Mock.Of<ICurrentUserService>());
+        services.AddScoped(_ => Mock.Of<IDisplaySettingRepository>());
+        services.AddScoped(_ => Mock.Of<ILocationSettingRepository>());
+        services.AddScoped(_ => Mock.Of<ILocationService>());
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+
+        var client = scope.ServiceProvider.GetRequiredService<IGoogleCalendarClient>();
+
+        client.Should().BeOfType<ResilientGoogleCalendarClient>();
     }
 }
