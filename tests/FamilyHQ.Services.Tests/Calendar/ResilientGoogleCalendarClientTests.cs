@@ -1,0 +1,144 @@
+using System.Net;
+using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
+using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Options;
+using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
+using Moq;
+using Xunit;
+
+namespace FamilyHQ.Services.Tests.Calendar;
+
+public class ResilientGoogleCalendarClientTests
+{
+    private static readonly CalendarEvent SampleEvent = new() { Title = "x" };
+
+    private static (ResilientGoogleCalendarClient sut, Mock<IGoogleCalendarClient> inner, FakeTimeProvider time) CreateSut(
+        int maxAttempts = 3, TimeSpan? baseDelay = null, TimeSpan? cap = null)
+    {
+        var inner = new Mock<IGoogleCalendarClient>();
+        var options = Microsoft.Extensions.Options.Options.Create(new GoogleResilienceOptions
+        {
+            MaxAttempts = maxAttempts,
+            BaseDelay = baseDelay ?? TimeSpan.Zero,          // 0 → exponential path is instant + deterministic
+            RetryAfterInRequestCap = cap ?? TimeSpan.FromSeconds(5)
+        });
+        var time = new FakeTimeProvider();
+        var sut = new ResilientGoogleCalendarClient(inner.Object, options, time, NullLogger<ResilientGoogleCalendarClient>.Instance);
+        return (sut, inner, time);
+    }
+
+    private static GoogleApiException Api(HttpStatusCode status, TimeSpan? retryAfter = null)
+        => new(status, "op", "body", retryAfter);
+
+    [Fact]
+    public async Task FullPolicy_Retries5xx_ThenSucceeds()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.SetupSequence(c => c.GetEventAsync("cal", "e", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.InternalServerError))
+            .ReturnsAsync((GoogleEventDetail?)null);
+
+        var result = await sut.GetEventAsync("cal", "e");
+
+        result.Should().BeNull();
+        inner.Verify(c => c.GetEventAsync("cal", "e", It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task RejectedOnlyPolicy_DoesNotRetry5xx()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.Setup(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.InternalServerError));
+
+        await sut.Invoking(s => s.CreateEventAsync("cal", SampleEvent, "h"))
+            .Should().ThrowAsync<GoogleApiException>();
+
+        inner.Verify(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RejectedOnlyPolicy_Retries429_ThenSucceeds()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.SetupSequence(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.TooManyRequests))
+            .ReturnsAsync(SampleEvent);
+
+        var result = await sut.CreateEventAsync("cal", SampleEvent, "h");
+
+        result.Should().BeSameAs(SampleEvent);
+        inner.Verify(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task Retries403RateLimit_ForAnyPolicy()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.SetupSequence(c => c.MoveEventAsync("s", "e", "d", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.Forbidden))
+            .ReturnsAsync("e");
+
+        var result = await sut.MoveEventAsync("s", "e", "d");
+
+        result.Should().Be("e");
+        inner.Verify(c => c.MoveEventAsync("s", "e", "d", It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ExhaustsMaxAttempts_RethrowsLast()
+    {
+        var (sut, inner, _) = CreateSut(maxAttempts: 3);
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.ServiceUnavailable));
+
+        await sut.Invoking(s => s.GetCalendarsAsync()).Should().ThrowAsync<GoogleApiException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task DoesNotRetryReauthException()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "reconnect"));
+
+        await sut.Invoking(s => s.GetCalendarsAsync()).Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RetryAfterAboveCap_RethrowsWithoutRetrying()
+    {
+        var (sut, inner, _) = CreateSut(cap: TimeSpan.FromSeconds(5));
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(120)));
+
+        await sut.Invoking(s => s.GetCalendarsAsync()).Should().ThrowAsync<GoogleApiException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RetryAfterWithinCap_RetriesAfterThatDelay()
+    {
+        var (sut, inner, time) = CreateSut(cap: TimeSpan.FromSeconds(5));
+        inner.SetupSequence(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(2)))
+            .ReturnsAsync(Array.Empty<CalendarInfo>());
+
+        var task = sut.GetCalendarsAsync();          // first call throws, then awaits Task.Delay(2s, fakeTime)
+        time.Advance(TimeSpan.FromSeconds(2));         // release the delay
+        var result = await task;
+
+        result.Should().BeEmpty();
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+}

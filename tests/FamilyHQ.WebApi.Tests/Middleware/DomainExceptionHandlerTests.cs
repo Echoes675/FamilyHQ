@@ -206,6 +206,22 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
+    public async Task GoogleApiException_403RateLimit_MapsTo503WithRetryAfter()
+    {
+        // FHQ-154: post-FHQ-83 a GoogleApiException(403) is always a rate-limit, so it surfaces like a 429.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.Forbidden, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        context.Response.Headers.RetryAfter.ToString().Should().Be("30");
+    }
+
+    [Fact]
     public async Task GoogleApiException_400_StaysAt502()
     {
         // Locked decision (FHQ-153): a Google 400 is an upstream integration rejection, not a client

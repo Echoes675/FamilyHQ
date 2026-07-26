@@ -88,11 +88,12 @@ public sealed class DomainExceptionHandler(
     };
 
     /// <summary>
-    /// Google 429 (rate limit) → 503 + Retry-After when Google supplied a delay; every other Google
-    /// status (incl. 400) → 502, unchanged from FHQ-152.
+    /// Google 429 or rate-limit 403 → 503 + Retry-After when Google supplied a delay (post-FHQ-83, a
+    /// GoogleApiException carrying 403 is always a rate-limit — auth-403 became
+    /// <see cref="GoogleReauthRequiredException"/>); every other Google status (incl. 400) → 502.
     /// </summary>
     private static Mapping MapGoogleApi(GoogleApiException exception) =>
-        exception.StatusCode == HttpStatusCode.TooManyRequests
+        exception.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.Forbidden
             ? new Mapping(
                 StatusCodes.Status503ServiceUnavailable,
                 "Calendar Provider Unavailable",
