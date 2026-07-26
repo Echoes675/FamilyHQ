@@ -58,7 +58,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var body = await response.Content.ReadAsStringAsync(ct);
         var truncated = body.Length <= MaxLoggedBodyLength ? body : body.Substring(0, MaxLoggedBodyLength);
 
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        var reason = ParseGoogleErrorReason(truncated);
+
+        // 401 is always an auth failure. A 403 is auth too — UNLESS it carries a rate/quota reason,
+        // in which case it is a transient throttle (FHQ-83) and must retry, not prompt reconnect.
+        if (response.StatusCode == HttpStatusCode.Unauthorized
+            || (response.StatusCode == HttpStatusCode.Forbidden && !IsRateLimitReason(reason)))
         {
             _logger.LogWarning(
                 "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
@@ -72,7 +77,6 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         // FHQ-61: allowlist the one benign, permanent rejection — a read-only/subscribed calendar that
         // can't have push notifications. Surface it as a typed, non-error signal so callers skip the
         // calendar quietly. Every other reason still raises GoogleApiException.
-        var reason = ParseGoogleErrorReason(truncated);
         if (reason == "pushNotSupportedForRequestedResource")
         {
             _logger.LogInformation(
@@ -98,6 +102,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return delta is { } d && d > TimeSpan.Zero ? d : null;
     }
 
+    // FHQ-83: Google surfaces throttling as a 403 with one of these reasons. They are transient
+    // (the request was rejected, not processed) and must retry, not trigger a reauth prompt.
+    private static readonly HashSet<string> RateLimitReasons = new(StringComparer.Ordinal)
+    {
+        "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded", "rateLimitExceededUnreg"
+    };
+
+    private static bool IsRateLimitReason(string? reason) => reason is not null && RateLimitReasons.Contains(reason);
+
     private static string? ParseGoogleErrorReason(string body)
     {
         if (string.IsNullOrWhiteSpace(body)) return null;
@@ -105,6 +118,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         {
             using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.Object
                 && error.TryGetProperty("errors", out var errors)
                 && errors.ValueKind == JsonValueKind.Array
                 && errors.GetArrayLength() > 0

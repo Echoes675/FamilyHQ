@@ -754,6 +754,128 @@ public class GoogleCalendarClientTests
         ex.Which.ResponseBody.Should().Contain("Insufficient Permission");
     }
 
+    [Theory]
+    [InlineData("rateLimitExceeded")]
+    [InlineData("userRateLimitExceeded")]
+    [InlineData("quotaExceeded")]
+    [InlineData("dailyLimitExceeded")]
+    [InlineData("rateLimitExceededUnreg")]
+    public async Task GetCalendarsAsync_When403RateLimitReason_ThrowsGoogleApiException_NotReauth(string reason)
+    {
+        // FHQ-83: a transient rate/quota 403 must be a retryable GoogleApiException, NOT a reauth signal.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 403, errors = new[] { new { reason, message = "Rate Limit Exceeded" } } } });
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.Forbidden, Content = new StringContent(body) });
+
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When403RateLimitWithRetryAfter_CapturesRetryAfter()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 403, errors = new[] { new { reason = "rateLimitExceeded", message = "slow down" } } } });
+        var resp = new HttpResponseMessage { StatusCode = HttpStatusCode.Forbidden, Content = new StringContent(body) };
+        resp.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(resp);
+
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+        ex.Which.RetryAfter.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Theory]
+    [InlineData("authError")]
+    [InlineData("insufficientPermissions")]
+    public async Task GetCalendarsAsync_When403AuthReason_ThrowsGoogleReauthRequired(string reason)
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 403, errors = new[] { new { reason, message = "no" } } } });
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.Forbidden, Content = new StringContent(body) });
+
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When403UnknownReason_ThrowsGoogleReauthRequired()
+    {
+        // Fail-safe: an unknown 403 reason stays reauth (preserves pre-FHQ-83 behaviour).
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        var body = JsonSerializer.Serialize(new { error = new { code = 403, errors = new[] { new { reason = "someFutureReason", message = "?" } } } });
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage { StatusCode = HttpStatusCode.Forbidden, Content = new StringContent(body) });
+
+        await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
     [Fact]
     public async Task WatchEventsAsync_WhenPushNotSupported_ThrowsWebhookNotSupportedException()
     {

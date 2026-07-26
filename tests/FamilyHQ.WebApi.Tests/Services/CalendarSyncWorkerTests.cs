@@ -1,3 +1,4 @@
+using System.Net;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
@@ -179,5 +180,37 @@ public class CalendarSyncWorkerTests
         await worker.DrainAsync(CancellationToken.None);
 
         reconciler.Verify(r => r.ReconcileForUserAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_GoogleApiExceptionWithRetryAfter_UsesRetryAfterAsFloor_AndDoesNotReauth()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, queue, sync, _, tokenStore) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(300)));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        // Retry-After (300s) dominates the small exponential backoff for attempt 1.
+        queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), true,
+            It.Is<TimeSpan?>(ts => ts.HasValue && ts.Value >= TimeSpan.FromSeconds(300)), It.IsAny<CancellationToken>()), Times.Once);
+        // A rate-limit is transient — it must NOT mark the user NeedsReauth.
+        tokenStore.Verify(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_GoogleApiExceptionWithoutRetryAfter_UsesExponentialBackoff()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, queue, sync, _, _) = CreateSut(job);
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "boom"));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        // No Retry-After → the small exponential backoff (well under the 300s floor from the other test) is used.
+        queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), true,
+            It.Is<TimeSpan?>(ts => ts.HasValue && ts.Value > TimeSpan.Zero && ts.Value < TimeSpan.FromSeconds(300)), It.IsAny<CancellationToken>()), Times.Once);
     }
 }
