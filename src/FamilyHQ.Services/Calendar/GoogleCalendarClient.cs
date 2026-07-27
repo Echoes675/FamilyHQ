@@ -68,6 +68,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         if (response.StatusCode == HttpStatusCode.Unauthorized
             || (response.StatusCode == HttpStatusCode.Forbidden && !IsRateLimitReason(reason)))
         {
+            // FHQ-82: the access-token cache must not keep serving a token past a revoked grant.
+            // Evict on ANY observed reauth (not just the background sync's MarkNeedsReauthAsync
+            // path) so a stale token is dropped immediately, including foreground event writes.
+            if (_currentUser.UserId is { } reauthUserId)
+                _accessTokenCache.Evict(reauthUserId);
+
             _logger.LogWarning(
                 "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
                 operation, (int)response.StatusCode, truncated);
