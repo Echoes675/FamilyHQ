@@ -60,6 +60,7 @@ public static class ServiceCollectionExtensions
 
         // Webhook self-echo guard (FHQ-30): singleton cache survives across scoped sync requests.
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<IAccessTokenCache, AccessTokenCache>();
         services.TryAddSingleton<ITimeZoneLookup, GeoTimeZoneLookup>();
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();
