@@ -30,7 +30,6 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<ILogger<Calendar.ResilientGoogleCalendarClient>>()));
 
-        services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
         services.AddScoped<IMemberTagParser, MemberTagParser>();
         services.AddScoped<ICalendarMigrationService, CalendarMigrationService>();
         services.AddScoped<IPlacementReconciler, PlacementReconciler>();
