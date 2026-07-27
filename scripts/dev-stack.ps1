@@ -9,6 +9,7 @@ param(
     [switch]$KeepData,
     [switch]$Reuse,
     [switch]$Force,
+    [switch]$DevServer,
     [switch]$Headed,
     [switch]$ForceBrowserInstall,
     [int]$InstallTimeoutMinutes = 5,
@@ -57,8 +58,16 @@ function Invoke-Up {
     Invoke-DevStackReconcile -Config $cfg -Force:$Force
     Start-DevStackPostgres -Config $cfg -KeepData:$KeepData
 
+    # Backend services (postgres/simulator/webapi) always start via dotnet run. By default the
+    # WebUi is served as PUBLISHED STATIC (like the e2e verb) so login-dependent flows work: the
+    # Blazor DevServer's on-the-fly GZip crashes the WebUi under load on .NET/Windows, taking the
+    # OAuth login page down with it (ZLibException, FHQ-150/FHQ-156). Pass -DevServer to serve via
+    # the DevServer instead (no publish step; faster restart for pure UI work, but login-dependent
+    # E2E/manual testing may crash).
+    $startServices = if ($DevServer) { $cfg.Services } else { $cfg.Services | Where-Object { $_.Name -ne 'webui' } }
+
     $pids = @{}
-    foreach ($svc in $cfg.Services) {
+    foreach ($svc in $startServices) {
         Write-Host "Starting $($svc.Name)..."
         $pids[$svc.Name] = Start-DevStackService -Config $cfg -Service $svc
         if (-not (Wait-DevStackHealthy -Service $svc)) {
@@ -68,6 +77,18 @@ function Invoke-Up {
         }
         Write-Host "$($svc.Name) healthy."
     }
+
+    if (-not $DevServer) {
+        # WebUi served as published static (reconcile above already cleared its port).
+        $webuiSvc = $cfg.Services | Where-Object { $_.Name -eq 'webui' }
+        $pids['webui'] = Start-DevStackWebUiStatic -Config $cfg
+        if (-not (Wait-DevStackHealthy -Service $webuiSvc -TimeoutSeconds 120)) {
+            Get-Content (Join-Path $cfg.LogDir 'webui.out.log') -Tail 20 -ErrorAction SilentlyContinue
+            throw "webui (static) did not become healthy"
+        }
+        Write-Host "webui healthy (static, published)."
+    }
+
     Save-DevStackState -Config $cfg -Pids $pids
     Show-DevStackStatus
 }
@@ -84,7 +105,8 @@ function Invoke-UpForE2E {
     # Bring the stack up for an E2E run. Backend services (postgres/simulator/webapi) start
     # normally and are reused if already healthy; the WebUi is always served as PUBLISHED STATIC
     # files rather than via the Blazor DevServer, whose on-the-fly GZip crashes under E2E load on
-    # .NET 10.0.9/Windows (ZLibException, FHQ-150). Interactive `up` keeps the DevServer.
+    # .NET 10.0.9/Windows (ZLibException, FHQ-150). Interactive `up` also serves static by default
+    # (FHQ-156); only `up -DevServer` uses the DevServer.
     Assert-DevCerts
     Initialize-DevStackState -Config $cfg
 
