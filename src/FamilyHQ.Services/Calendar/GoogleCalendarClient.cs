@@ -19,7 +19,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly HttpClient _httpClient;
     private readonly GoogleAuthService _authService;
     private readonly ITokenStore _tokenStore;
-    private readonly IAccessTokenProvider _accessTokenProvider;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAccessTokenCache _accessTokenCache;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
     private readonly ITimeZoneService _timeZoneService;
@@ -32,7 +33,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         HttpClient httpClient,
         GoogleAuthService authService,
         ITokenStore tokenStore,
-        IAccessTokenProvider accessTokenProvider,
+        ICurrentUserService currentUser,
+        IAccessTokenCache accessTokenCache,
         IOptions<GoogleCalendarOptions> options,
         ILogger<GoogleCalendarClient> logger,
         ITimeZoneService timeZoneService)
@@ -40,7 +42,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _httpClient = httpClient;
         _authService = authService;
         _tokenStore = tokenStore;
-        _accessTokenProvider = accessTokenProvider;
+        _currentUser = currentUser;
+        _accessTokenCache = accessTokenCache;
         _options = options.Value;
         _logger = logger;
         _timeZoneService = timeZoneService;
@@ -136,14 +139,16 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
     private async Task<string> GetBearerTokenAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(_accessTokenProvider.AccessToken))
-            return _accessTokenProvider.AccessToken;
+        var userId = _currentUser.UserId
+            ?? throw new InvalidOperationException("No user id available for Google token acquisition.");
 
-        var refreshToken = await _tokenStore.GetRefreshTokenAsync(ct);
-        if (string.IsNullOrEmpty(refreshToken))
-            throw new InvalidOperationException("No refresh token available. User must authenticate first.");
-
-        return await _authService.RefreshAccessTokenAsync(refreshToken, ct);
+        return await _accessTokenCache.GetOrRefreshAsync(userId, async c =>
+        {
+            var refreshToken = await _tokenStore.GetRefreshTokenAsync(c);
+            if (string.IsNullOrEmpty(refreshToken))
+                throw new InvalidOperationException("No refresh token available. User must authenticate first.");
+            return await _authService.RefreshAccessTokenAsync(refreshToken, c);
+        }, ct);
     }
 
     // FHQ-27: build a fresh HttpRequestMessage with Authorization attached per-request.

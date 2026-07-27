@@ -485,10 +485,14 @@ public class GoogleCalendarClientMappingTests
         timeZoneServiceMock
             .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns("test-user-id");
+        var accessTokenCache = new AccessTokenCache(TimeProvider.System);
         var sut = new GoogleCalendarClient(
             httpClient, authService,
             tokenStoreMock.Object,
-            new Mock<IAccessTokenProvider>().Object,
+            currentUserMock.Object,
+            accessTokenCache,
             options,
             new Mock<ILogger<GoogleCalendarClient>>().Object,
             timeZoneServiceMock.Object);

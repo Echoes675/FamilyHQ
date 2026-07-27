@@ -1569,7 +1569,9 @@ public class GoogleCalendarClientTests
         var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
-        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns("test-user-id");
+        var accessTokenCache = new AccessTokenCache(TimeProvider.System);
 
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
@@ -1593,7 +1595,8 @@ public class GoogleCalendarClientTests
             httpClient,
             authService,
             tokenStoreMock.Object,
-            accessTokenProviderMock.Object,
+            currentUserMock.Object,
+            accessTokenCache,
             options,
             loggerMock.Object,
             timeZoneServiceMock.Object);
@@ -1621,7 +1624,9 @@ public class GoogleCalendarClientTests
         var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
-        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns("test-user-id");
+        var accessTokenCache = new AccessTokenCache(TimeProvider.System);
 
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
@@ -1632,7 +1637,8 @@ public class GoogleCalendarClientTests
             httpClient,
             authService,
             tokenStoreMock.Object,
-            accessTokenProviderMock.Object,
+            currentUserMock.Object,
+            accessTokenCache,
             options,
             loggerMock.Object,
             timeZoneServiceMock.Object);
