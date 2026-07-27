@@ -6,14 +6,25 @@
 
 | Command | What it does |
 |---|---|
-| `pwsh scripts/dev-stack.ps1 up` | Postgres container + Simulator + WebApi + WebUi, health-gated. |
+| `pwsh scripts/dev-stack.ps1 up` | Postgres container + Simulator + WebApi + WebUi (published-static), health-gated. |
 | `pwsh scripts/dev-stack.ps1 down` | Stop services + remove container (and volume unless `-KeepData`). |
 | `pwsh scripts/dev-stack.ps1 status` | Show health of each service. |
 | `pwsh scripts/dev-stack.ps1 reset` | `down` then `up` with a fresh DB. |
 | `pwsh scripts/dev-stack.ps1 e2e [-Filter <expr>]` | Ensure up, then run E2E (filtered). |
 
 Flags: `-KeepData` (persist DB volume), `-Reuse` (attach if already healthy), `-Force`
-(override the unidentified-process guard), `-Headed` (visible E2E browser).
+(override the unidentified-process guard), `-DevServer` (serve the WebUi via the Blazor
+DevServer instead of published-static; `up` only), `-Headed` (visible E2E browser).
+
+## WebUi serving (FHQ-150 / FHQ-156)
+
+Both `up` and `e2e` **publish** the WebUi and serve it as static files via
+`tools/FamilyHQ.LocalWebHost`, not the Blazor DevServer. The DevServer's on-the-fly GZip
+crashes the WebUi under load on .NET/Windows (`ZLibException`) and takes the OAuth login
+page down with it — that was the real cause of "OAuth login fails locally", not an
+auth/config issue. Serving published-static (pre-compressed `.br`/`.gz`) never creates a
+`Deflater`, so login-dependent flows run locally. Pass `up -DevServer` for the DevServer
+(no publish step, faster restart; login-dependent E2E/manual testing may crash).
 
 ## Ports
 

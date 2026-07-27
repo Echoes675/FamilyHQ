@@ -19,7 +19,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly HttpClient _httpClient;
     private readonly GoogleAuthService _authService;
     private readonly ITokenStore _tokenStore;
-    private readonly IAccessTokenProvider _accessTokenProvider;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IAccessTokenCache _accessTokenCache;
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
     private readonly ITimeZoneService _timeZoneService;
@@ -32,7 +33,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         HttpClient httpClient,
         GoogleAuthService authService,
         ITokenStore tokenStore,
-        IAccessTokenProvider accessTokenProvider,
+        ICurrentUserService currentUser,
+        IAccessTokenCache accessTokenCache,
         IOptions<GoogleCalendarOptions> options,
         ILogger<GoogleCalendarClient> logger,
         ITimeZoneService timeZoneService)
@@ -40,7 +42,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _httpClient = httpClient;
         _authService = authService;
         _tokenStore = tokenStore;
-        _accessTokenProvider = accessTokenProvider;
+        _currentUser = currentUser;
+        _accessTokenCache = accessTokenCache;
         _options = options.Value;
         _logger = logger;
         _timeZoneService = timeZoneService;
@@ -58,8 +61,19 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var body = await response.Content.ReadAsStringAsync(ct);
         var truncated = body.Length <= MaxLoggedBodyLength ? body : body.Substring(0, MaxLoggedBodyLength);
 
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        var reason = ParseGoogleErrorReason(truncated);
+
+        // 401 is always an auth failure. A 403 is auth too — UNLESS it carries a rate/quota reason,
+        // in which case it is a transient throttle (FHQ-83) and must retry, not prompt reconnect.
+        if (response.StatusCode == HttpStatusCode.Unauthorized
+            || (response.StatusCode == HttpStatusCode.Forbidden && !IsRateLimitReason(reason)))
         {
+            // FHQ-82: the access-token cache must not keep serving a token past a revoked grant.
+            // Evict on ANY observed reauth (not just the background sync's MarkNeedsReauthAsync
+            // path) so a stale token is dropped immediately, including foreground event writes.
+            if (_currentUser.UserId is { } reauthUserId)
+                _accessTokenCache.Evict(reauthUserId);
+
             _logger.LogWarning(
                 "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
                 operation, (int)response.StatusCode, truncated);
@@ -72,7 +86,6 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         // FHQ-61: allowlist the one benign, permanent rejection — a read-only/subscribed calendar that
         // can't have push notifications. Surface it as a typed, non-error signal so callers skip the
         // calendar quietly. Every other reason still raises GoogleApiException.
-        var reason = ParseGoogleErrorReason(truncated);
         if (reason == "pushNotSupportedForRequestedResource")
         {
             _logger.LogInformation(
@@ -98,6 +111,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return delta is { } d && d > TimeSpan.Zero ? d : null;
     }
 
+    // FHQ-83: Google surfaces throttling as a 403 with one of these reasons. They are transient
+    // (the request was rejected, not processed) and must retry, not trigger a reauth prompt.
+    private static readonly HashSet<string> RateLimitReasons = new(StringComparer.Ordinal)
+    {
+        "rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded", "rateLimitExceededUnreg"
+    };
+
+    private static bool IsRateLimitReason(string? reason) => reason is not null && RateLimitReasons.Contains(reason);
+
     private static string? ParseGoogleErrorReason(string body)
     {
         if (string.IsNullOrWhiteSpace(body)) return null;
@@ -105,6 +127,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         {
             using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("error", out var error)
+                && error.ValueKind == JsonValueKind.Object
                 && error.TryGetProperty("errors", out var errors)
                 && errors.ValueKind == JsonValueKind.Array
                 && errors.GetArrayLength() > 0
@@ -122,14 +145,16 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
     private async Task<string> GetBearerTokenAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(_accessTokenProvider.AccessToken))
-            return _accessTokenProvider.AccessToken;
+        var userId = _currentUser.UserId
+            ?? throw new InvalidOperationException("No user id available for Google token acquisition.");
 
-        var refreshToken = await _tokenStore.GetRefreshTokenAsync(ct);
-        if (string.IsNullOrEmpty(refreshToken))
-            throw new InvalidOperationException("No refresh token available. User must authenticate first.");
-
-        return await _authService.RefreshAccessTokenAsync(refreshToken, ct);
+        return await _accessTokenCache.GetOrRefreshAsync(userId, async c =>
+        {
+            var refreshToken = await _tokenStore.GetRefreshTokenAsync(c);
+            if (string.IsNullOrEmpty(refreshToken))
+                throw new InvalidOperationException("No refresh token available. User must authenticate first.");
+            return await _authService.RefreshAccessTokenAsync(refreshToken, c);
+        }, ct);
     }
 
     // FHQ-27: build a fresh HttpRequestMessage with Authorization attached per-request.

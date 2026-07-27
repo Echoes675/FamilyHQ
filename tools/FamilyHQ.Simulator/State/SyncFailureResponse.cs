@@ -29,7 +29,7 @@ internal static class SyncFailureResponse
             }
         })
         { StatusCode = 403 },
-        SyncFailureMode.CalendarApi401 => new ObjectResult(new
+        SyncFailureMode.CalendarApi401 or SyncFailureMode.RefreshTokenInvalidGrant => new ObjectResult(new
         {
             error = new
             {

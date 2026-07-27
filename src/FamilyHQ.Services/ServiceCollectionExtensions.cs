@@ -7,6 +7,7 @@ using FamilyHQ.Services.Weather;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.Services;
@@ -19,9 +20,16 @@ public static class ServiceCollectionExtensions
 
         services.AddHttpClient<GoogleAuthService>();
         services.AddSingleton<IIdTokenValidator, JwksIdTokenValidator>();
-        services.AddHttpClient<IGoogleCalendarClient, GoogleCalendarClient>();
+        // FHQ-154: register the concrete typed client, then decorate it with the retry wrapper.
+        services.AddHttpClient<GoogleCalendarClient>();
+        services.Configure<Options.GoogleResilienceOptions>(
+            configuration.GetSection(Options.GoogleResilienceOptions.SectionName));
+        services.AddTransient<IGoogleCalendarClient>(sp => new Calendar.ResilientGoogleCalendarClient(
+            sp.GetRequiredService<GoogleCalendarClient>(),
+            sp.GetRequiredService<IOptions<Options.GoogleResilienceOptions>>(),
+            sp.GetRequiredService<TimeProvider>(),
+            sp.GetRequiredService<ILogger<Calendar.ResilientGoogleCalendarClient>>()));
 
-        services.AddScoped<IAccessTokenProvider, AccessTokenProvider>();
         services.AddScoped<IMemberTagParser, MemberTagParser>();
         services.AddScoped<ICalendarMigrationService, CalendarMigrationService>();
         services.AddScoped<IPlacementReconciler, PlacementReconciler>();
@@ -51,6 +59,7 @@ public static class ServiceCollectionExtensions
 
         // Webhook self-echo guard (FHQ-30): singleton cache survives across scoped sync requests.
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<IAccessTokenCache, AccessTokenCache>();
         services.TryAddSingleton<ITimeZoneLookup, GeoTimeZoneLookup>();
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();

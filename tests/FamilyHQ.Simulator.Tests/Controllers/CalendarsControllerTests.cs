@@ -1,6 +1,7 @@
 using FamilyHQ.Simulator.Controllers;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.Models;
+using FamilyHQ.Simulator.State;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -78,6 +79,49 @@ public class CalendarsControllerTests
         json.Should().Contain("\"items\":[]");
     }
 
+    [Fact]
+    public async Task GetCalendarList_WhenRefreshTokenInvalidGrantInjected_Returns401()
+    {
+        // Arrange — FHQ-82: a revoked refresh token must also 401 the Calendar API, mirroring real
+        // Google (a revoked OAuth grant invalidates the access token too, not just /token). Without
+        // this, a cached access token masks the revocation and reauth is never detected.
+        using var db = CreateDb();
+        db.Calendars.Add(new SimulatedCalendar { Id = "cal-alice", Summary = "Alice Cal", UserId = "alice" });
+        await db.SaveChangesAsync();
+
+        var failureStore = new SyncFailureModeStore();
+        failureStore.Set("alice", SyncFailureMode.RefreshTokenInvalidGrant);
+        var sut = CreateSut(db, userId: "alice", failureStore: failureStore);
+
+        // Act
+        var result = await sut.GetCalendarList();
+
+        // Assert
+        var objectResult = result.Should().BeOfType<ObjectResult>().Subject;
+        objectResult.StatusCode.Should().Be(401);
+    }
+
+    [Fact]
+    public async Task GetCalendarList_WhenCalendarApi403Injected_Returns403()
+    {
+        // Regression — the pre-existing CalendarApi403 injection mode must be unaffected by the
+        // RefreshTokenInvalidGrant → 401 change above.
+        using var db = CreateDb();
+        db.Calendars.Add(new SimulatedCalendar { Id = "cal-alice", Summary = "Alice Cal", UserId = "alice" });
+        await db.SaveChangesAsync();
+
+        var failureStore = new SyncFailureModeStore();
+        failureStore.Set("alice", SyncFailureMode.CalendarApi403);
+        var sut = CreateSut(db, userId: "alice", failureStore: failureStore);
+
+        // Act
+        var result = await sut.GetCalendarList();
+
+        // Assert
+        var objectResult = result.Should().BeOfType<ObjectResult>().Subject;
+        objectResult.StatusCode.Should().Be(403);
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()
@@ -86,9 +130,10 @@ public class CalendarsControllerTests
         return new SimContext(options);
     }
 
-    private static CalendarsController CreateSut(SimContext db, string? userId = null, string? bearerToken = "auto")
+    private static CalendarsController CreateSut(
+        SimContext db, string? userId = null, string? bearerToken = "auto", SyncFailureModeStore? failureStore = null)
     {
-        var controller = new CalendarsController(db, new FamilyHQ.Simulator.State.SyncFailureModeStore());
+        var controller = new CalendarsController(db, failureStore ?? new SyncFailureModeStore());
         var httpContext = new DefaultHttpContext();
 
         if (bearerToken == "auto" && userId != null)
