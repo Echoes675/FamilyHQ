@@ -19,6 +19,7 @@ public class DatabaseTokenStore : ITokenStore
     private readonly IDataProtector _dataProtector;
     private readonly ILogger<DatabaseTokenStore> _logger;
     private readonly IConnectionStatusBroadcaster _connectionStatusBroadcaster;
+    private readonly IAccessTokenCache _accessTokenCache;
     private readonly string _provider;
 
     /// <summary>
@@ -37,12 +38,14 @@ public class DatabaseTokenStore : ITokenStore
         IDataProtectionProvider dataProtectionProvider,
         ILogger<DatabaseTokenStore> logger,
         IConnectionStatusBroadcaster connectionStatusBroadcaster,
+        IAccessTokenCache accessTokenCache,
         string provider = DefaultProvider)
     {
         _dbContext = dbContext;
         _currentUserService = currentUserService;
         _logger = logger;
         _connectionStatusBroadcaster = connectionStatusBroadcaster;
+        _accessTokenCache = accessTokenCache;
         _provider = provider;
 
         // Create a purpose-specific data protector for tokens
@@ -214,6 +217,11 @@ public class DatabaseTokenStore : ITokenStore
             _lock.Release();
         }
 
+        // A revoked/expired refresh token means any cached access token is no longer trustworthy
+        // (or is about to fail anyway) — evict so the next caller forces a fresh refresh attempt
+        // instead of reusing a soon-to-be-rejected cached token.
+        _accessTokenCache.Evict(userId);
+
         if (broadcast)
         {
             // Fire the SignalR notification AFTER releasing the SemaphoreSlim so a slow
@@ -300,6 +308,10 @@ public class DatabaseTokenStore : ITokenStore
         {
             _lock.Release();
         }
+
+        // Re-consent (or any refresh-token save) installs a new refresh token, so any access
+        // token cached under the old one is stale — evict it so the next caller refreshes.
+        _accessTokenCache.Evict(userId);
 
         if (broadcast)
         {

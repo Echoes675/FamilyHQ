@@ -27,6 +27,7 @@ public class DatabaseTokenStoreTests
     private readonly Mock<ILogger<DatabaseTokenStore>> _loggerMock;
     private readonly Mock<ICurrentUserService> _currentUserServiceMock;
     private readonly Mock<IConnectionStatusBroadcaster> _broadcasterMock;
+    private readonly Mock<IAccessTokenCache> _accessTokenCacheMock = new();
 
     public DatabaseTokenStoreTests()
     {
@@ -46,7 +47,8 @@ public class DatabaseTokenStoreTests
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
     }
 
     private (DatabaseTokenStore sut, Mock<IConnectionStatusBroadcaster> broadcaster) CreateSutWithBroadcaster()
@@ -58,7 +60,8 @@ public class DatabaseTokenStoreTests
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
         return (sut, _broadcasterMock);
     }
 
@@ -152,14 +155,16 @@ public class DatabaseTokenStoreTests
             currentUserService1.Object,
             dataProtectionProvider1,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
 
         var sut2 = new DatabaseTokenStore(
             _db,
             currentUserService2.Object,
             dataProtectionProvider2,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
 
         var mockSet = _db.Setup<UserToken>();
         var added = new List<UserToken>();
@@ -217,7 +222,8 @@ public class DatabaseTokenStoreTests
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
 
         // Act
         var result = await sut.GetRefreshTokenAsync();
@@ -236,7 +242,8 @@ public class DatabaseTokenStoreTests
             _currentUserServiceMock.Object,
             _dataProtectionProvider,
             _loggerMock.Object,
-            _broadcasterMock.Object);
+            _broadcasterMock.Object,
+            _accessTokenCacheMock.Object);
 
         // Act & Assert - throws before touching the DbSet, so nothing needs seeding.
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -272,6 +279,7 @@ public class DatabaseTokenStoreTests
             dataProtectionProvider,
             _loggerMock.Object,
             _broadcasterMock.Object,
+            _accessTokenCacheMock.Object,
             provider: "Google");
 
         var mockSet = _db.Setup<UserToken>();
@@ -578,5 +586,42 @@ public class DatabaseTokenStoreTests
 
         _db.SaveChangesCount.Should().Be(2);
         existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+    }
+
+    [Fact]
+    public async Task MarkNeedsReauthAsync_EvictsCachedAccessToken()
+    {
+        // Arrange - seed an existing token so MarkNeedsReauthAsync finds a row to update.
+        var userId = "user-1";
+        var existing = new UserToken
+        {
+            UserId = userId,
+            Provider = "Google",
+            RefreshToken = "irrelevant-ciphertext",
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        var sut = CreateSut(userId);
+
+        // Act
+        await sut.MarkNeedsReauthAsync("user-1", "revoked", CancellationToken.None);
+
+        // Assert - a revoked/expired token must never leave a stale access token cached.
+        _accessTokenCacheMock.Verify(c => c.Evict("user-1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task SaveRefreshTokenAsync_EvictsCachedAccessToken()
+    {
+        // Arrange
+        var mockSet = _db.Setup<UserToken>();
+        mockSet.Setup(s => s.Add(It.IsAny<UserToken>())).Callback<UserToken>(_ => { });
+        var sut = CreateSut("user-1");
+
+        // Act - re-consent installs a new refresh token; any cached access token is stale.
+        await sut.SaveRefreshTokenAsync("new-refresh", "user-1", CancellationToken.None);
+
+        // Assert
+        _accessTokenCacheMock.Verify(c => c.Evict("user-1"), Times.Once);
     }
 }
