@@ -958,6 +958,43 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetCalendarsAsync_WhenUnauthorized_EvictsCachedAccessTokenForCurrentUser()
+    {
+        // Arrange — FHQ-82: a revoked refresh token must not be masked by a still-cached access
+        // token. Belt-and-braces: ANY observed 401 reauth evicts the cache immediately (not just
+        // the background sync's MarkNeedsReauthAsync path), so the next call is forced to refresh.
+        var (http, tokenStore, cacheMock, systemUnderTest) = CreateSutWithMockCache();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":{\"code\":401,\"message\":\"Invalid Credentials\"}}")
+            });
+
+        // Act & Assert
+        await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        cacheMock.Verify(c => c.Evict("test-user-id"), Times.Once);
+    }
+
+    [Fact]
     public async Task GetCalendarsAsync_When500_ThrowsGoogleApiExceptionWithBody()
     {
         // Arrange — non-auth upstream errors surface as GoogleApiException with body captured.
@@ -1569,7 +1606,9 @@ public class GoogleCalendarClientTests
         var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
-        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns("test-user-id");
+        var accessTokenCache = new AccessTokenCache(TimeProvider.System);
 
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
@@ -1593,7 +1632,8 @@ public class GoogleCalendarClientTests
             httpClient,
             authService,
             tokenStoreMock.Object,
-            accessTokenProviderMock.Object,
+            currentUserMock.Object,
+            accessTokenCache,
             options,
             loggerMock.Object,
             timeZoneServiceMock.Object);
@@ -1621,7 +1661,9 @@ public class GoogleCalendarClientTests
         var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
-        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns("test-user-id");
+        var accessTokenCache = new AccessTokenCache(TimeProvider.System);
 
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
@@ -1632,11 +1674,62 @@ public class GoogleCalendarClientTests
             httpClient,
             authService,
             tokenStoreMock.Object,
-            accessTokenProviderMock.Object,
+            currentUserMock.Object,
+            accessTokenCache,
             options,
             loggerMock.Object,
             timeZoneServiceMock.Object);
 
         return (httpMessageHandlerMock, tokenStoreMock, loggerMock, systemUnderTest);
+    }
+
+    // Builds a SUT with a Mock<IAccessTokenCache> (rather than the real AccessTokenCache the other
+    // helpers use) so tests can verify cache-eviction behaviour. The mock's GetOrRefreshAsync is a
+    // pass-through — it always invokes the refresh delegate — so the real request path (and
+    // ThrowIfFailedAsync) still runs exactly as it would against the real cache on a miss.
+    private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, Mock<IAccessTokenCache> CacheMock, GoogleCalendarClient SystemUnderTest) CreateSutWithMockCache(
+        string currentUserId = "test-user-id")
+    {
+        var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
+        var httpClient = new HttpClient(httpMessageHandlerMock.Object);
+
+        var tokenStoreMock = new Mock<ITokenStore>();
+
+        var options = Microsoft.Extensions.Options.Options.Create(new GoogleCalendarOptions
+        {
+            CalendarApiBaseUrl = "https://calendar.test.com",
+            ClientId = "test-client",
+            ClientSecret = "test-secret",
+            AuthBaseUrl = "https://auth.test.com"
+        });
+
+        var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+
+        var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+        currentUserMock.Setup(c => c.UserId).Returns(currentUserId);
+
+        var cacheMock = new Mock<IAccessTokenCache>();
+        cacheMock
+            .Setup(c => c.GetOrRefreshAsync(It.IsAny<string>(), It.IsAny<Func<CancellationToken, Task<(string, int)>>>(), It.IsAny<CancellationToken>()))
+            .Returns<string, Func<CancellationToken, Task<(string, int)>>, CancellationToken>(async (u, f, ct) => (await f(ct)).Item1);
+
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
+        timeZoneServiceMock
+            .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        var systemUnderTest = new GoogleCalendarClient(
+            httpClient,
+            authService,
+            tokenStoreMock.Object,
+            currentUserMock.Object,
+            cacheMock.Object,
+            options,
+            loggerMock.Object,
+            timeZoneServiceMock.Object);
+
+        return (httpMessageHandlerMock, tokenStoreMock, cacheMock, systemUnderTest);
     }
 }

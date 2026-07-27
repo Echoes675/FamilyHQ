@@ -504,13 +504,10 @@ public class AuthControllerTests
         var hubContextMock = new Mock<IHubContext<CalendarHub>>();
         hubContextMock.Setup(h => h.Clients).Returns(clientsMock.Object);
 
-        var accessTokenProviderMock = new Mock<IAccessTokenProvider>();
-
         var webhookServiceObj = webhookRegistrationService ?? new Mock<IWebhookRegistrationService>().Object;
 
         var scopeMock = new Mock<IServiceScope>();
         var providerMock = new Mock<IServiceProvider>();
-        providerMock.Setup(p => p.GetService(typeof(IAccessTokenProvider))).Returns(accessTokenProviderMock.Object);
         providerMock.Setup(p => p.GetService(typeof(ICalendarSyncService))).Returns(syncServiceMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IHubContext<CalendarHub>))).Returns(hubContextMock.Object);
         providerMock.Setup(p => p.GetService(typeof(IWebhookRegistrationService))).Returns(webhookServiceObj);

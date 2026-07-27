@@ -120,7 +120,8 @@ public class GoogleAuthServiceTests
 
         var result = await systemUnderTest.RefreshAccessTokenAsync("old-refresh-token");
 
-        result.Should().Be("new-access-123");
+        result.AccessToken.Should().Be("new-access-123");
+        result.ExpiresIn.Should().Be(3600);
     }
 
     [Fact]

@@ -71,7 +71,7 @@ public class GoogleAuthService
         return (result.AccessToken, result.RefreshToken, claims.Sub, claims.Email, result.Scope);
     }
 
-    public async Task<string> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
+    public async Task<(string AccessToken, int ExpiresIn)> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
     {
         var request = new FormUrlEncodedContent(new Dictionary<string, string>
         {
@@ -109,7 +109,7 @@ public class GoogleAuthService
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
         _logger.LogInformation("Google granted scopes on token refresh: {GrantedScope}", result!.Scope ?? "(none)");
-        return result.AccessToken;
+        return (result.AccessToken, result.ExpiresIn);
     }
 
     private static (string? Error, string? Description) ParseOAuthError(string body)
