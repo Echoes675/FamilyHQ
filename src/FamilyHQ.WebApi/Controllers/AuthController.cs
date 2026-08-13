@@ -37,6 +37,9 @@ public class AuthController : ControllerBase
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
 
+    internal const string MissingRefreshTokenMessage =
+        "Google did not return a refresh token — reconnect to restore calendar sync.";
+
     public AuthController(
         GoogleAuthService authService,
         ITokenStore tokenStore,
@@ -139,7 +142,24 @@ public class AuthController : ControllerBase
             return BadRequest("Authentication failed: user identity could not be determined.");
 
         if (!string.IsNullOrEmpty(refreshToken))
+        {
             await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
+        }
+        // FHQ-87: Google omitted the refresh token (not contractual, even with prompt=consent) and
+        // nothing is stored to fall back on. Issuing the JWT here would mint an apparently-
+        // authenticated session whose first sync fails with "No refresh token available" — and with
+        // no token row to flag, no re-auth banner would ever surface. Mark best-effort (persists in
+        // the row-exists-but-unreadable case; no-ops when no row exists) and bounce straight back
+        // through Login, which always forces prompt=consent, so the next approval returns a refresh
+        // token. Each pass is user-gated by the consent screen, so this cannot tight-loop.
+        else if (string.IsNullOrEmpty(await _tokenStore.GetRefreshTokenAsync(userId, CancellationToken.None)))
+        {
+            _logger.LogWarning(
+                "Login for user {UserId} returned no refresh token and none is stored; redirecting to re-consent.",
+                userId);
+            await _tokenStore.MarkNeedsReauthAsync(userId, MissingRefreshTokenMessage, CancellationToken.None);
+            return RedirectToAction(nameof(Login));
+        }
 
         var apiToken = _jwtTokenService.GenerateToken(userId, email);
 
