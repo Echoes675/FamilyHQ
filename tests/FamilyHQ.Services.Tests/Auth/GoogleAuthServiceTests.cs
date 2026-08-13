@@ -379,6 +379,37 @@ public class GoogleAuthServiceTests
     }
 
     [Fact]
+    public async Task RefreshAccessTokenAsync_WhilePersistingRotatedToken_DoesNotReturnUntilSaveCompletes()
+    {
+        var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "rotated-refresh-token");
+        var saveGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var saveInvoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tokenStoreMock
+            .Setup(t => t.SaveRefreshTokenAsync("rotated-refresh-token", It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                saveInvoked.TrySetResult();
+                return saveGate.Task;
+            });
+
+        var refreshTask = sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        // Deterministic, timer-free ordering pin: the refresh must invoke the save (saveInvoked wins
+        // the WhenAny) and must stay incomplete while the save task is held open — a regression to
+        // fire-and-forget persistence would let refreshTask complete with the gate still pending.
+        var firstCompleted = await Task.WhenAny(saveInvoked.Task, refreshTask);
+        firstCompleted.Should().BeSameAs(saveInvoked.Task,
+            "the refresh must invoke rotated-token persistence before it can complete");
+        refreshTask.IsCompleted.Should().BeFalse(
+            "the refresh must not return while the rotated-token save is still pending");
+
+        saveGate.SetResult();
+        var result = await refreshTask;
+        result.AccessToken.Should().Be("new-access-123");
+    }
+
+    [Fact]
     public async Task RefreshAccessTokenAsync_WhenResponseHasNoRefreshToken_DoesNotSaveToTokenStore()
     {
         var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
