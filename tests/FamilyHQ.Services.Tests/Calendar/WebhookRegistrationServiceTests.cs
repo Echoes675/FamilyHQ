@@ -231,6 +231,77 @@ public class WebhookRegistrationServiceTests
     }
 
     [Fact]
+    public async Task RegisterAllAsync_WhenWatchThrowsReauth_MarksWithUncancellableToken()
+    {
+        // FHQ-85 review: SyncController's request token flows into RegisterAllAsync — but once
+        // reauth is detected, the mark must survive a client abort, so the store call must
+        // receive CancellationToken.None rather than the caller's token.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var userId = "reauth-uncancellable";
+        tokenStore.Setup(t => t.GetAuthStatusAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo>
+            {
+                new()
+                {
+                    Id = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                    GoogleCalendarId = "cal@google.com",
+                    UserId = userId,
+                    DisplayName = "Cal"
+                }
+            });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.CalendarApi, "Unauthorized", null, userId));
+
+        using var requestCts = new CancellationTokenSource();
+
+        await sut.Invoking(s => s.RegisterAllAsync(userId, ct: requestCts.Token))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync(userId, "Unauthorized", CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterAllAsync_WhenPersistingMarkFails_StillThrowsOriginalReauthException()
+    {
+        // FHQ-85 review: a transient DB failure while marking must not replace the reauth
+        // exception — the caller (foreground → 409 with reconnect payload) needs the original.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var userId = "reauth-mark-fails";
+        tokenStore.Setup(t => t.GetAuthStatusAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+        tokenStore.Setup(t => t.MarkNeedsReauthAsync(userId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo>
+            {
+                new()
+                {
+                    Id = Guid.Parse("66666666-7777-8888-9999-aaaaaaaaaaaa"),
+                    GoogleCalendarId = "cal@google.com",
+                    UserId = userId,
+                    DisplayName = "Cal"
+                }
+            });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", null, userId));
+
+        await sut.Invoking(s => s.RegisterAllAsync(userId))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
+    [Fact]
     public async Task RenewAllAsync_WhenOneUserThrowsReauth_MarksThatUserAndContinuesWithRemainingUsers()
     {
         // Arrange — user-1's token dies mid-renewal; user-2 must still get its channels renewed.

@@ -45,7 +45,7 @@ public sealed class DomainExceptionHandler(
         // waiting for a background sync to also fail. Idempotent: the token store skips the
         // write/broadcast when the user is already flagged.
         if (exception is GoogleReauthRequiredException reauth)
-            await TryMarkNeedsReauthAsync(httpContext, reauth, cancellationToken);
+            await TryMarkNeedsReauthAsync(httpContext, reauth);
 
         httpContext.Response.StatusCode = mapping.Status;
 
@@ -74,10 +74,11 @@ public sealed class DomainExceptionHandler(
     /// <summary>
     /// Persists NeedsReauth for the user carried on the exception. Persistence failure must never
     /// mask the 409 contract, so any error is logged and swallowed — the background sync path
-    /// re-attempts the mark on its next failure.
+    /// re-attempts the mark on its next failure. The store call deliberately uses
+    /// <see cref="CancellationToken.None"/>: once reauth is detected, a client abort must not
+    /// cancel the mark (matching the AuthController webhook-registration precedent).
     /// </summary>
-    private async Task TryMarkNeedsReauthAsync(
-        HttpContext httpContext, GoogleReauthRequiredException exception, CancellationToken cancellationToken)
+    private async Task TryMarkNeedsReauthAsync(HttpContext httpContext, GoogleReauthRequiredException exception)
     {
         if (exception.UserId is not { } userId)
         {
@@ -90,7 +91,12 @@ public sealed class DomainExceptionHandler(
         try
         {
             var tokenStore = httpContext.RequestServices.GetRequiredService<ITokenStore>();
-            await tokenStore.MarkNeedsReauthAsync(userId, exception.ErrorDescription, cancellationToken);
+            await tokenStore.MarkNeedsReauthAsync(userId, exception.ErrorDescription, CancellationToken.None);
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Benign shutdown-race cancellation (the request token is never passed in).
+            logger.LogDebug(ex, "NeedsReauth persistence cancelled for user {UserId}.", userId);
         }
         catch (Exception ex)
         {

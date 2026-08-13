@@ -325,6 +325,24 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
+    public async Task GoogleReauthRequiredException_WhenRequestAborted_StillPersistsWithUncancellableToken()
+    {
+        // FHQ-85 review: once reauth is DETECTED the mark must not be cancellable — a client
+        // abort mid-request would otherwise cancel the DB write and lose the flag. The store
+        // call must therefore receive CancellationToken.None, never the request token.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+        var abortedRequestToken = new CancellationToken(canceled: true);
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", null, "user-1"),
+            abortedRequestToken);
+
+        handled.Should().BeTrue();
+        tokenStore.Verify(t => t.MarkNeedsReauthAsync("user-1", "revoked", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
     public async Task GoogleReauthRequiredException_WhenMarkingFails_StillMaps409()
     {
         // Persistence failure must never mask the 409 contract — the background sync path

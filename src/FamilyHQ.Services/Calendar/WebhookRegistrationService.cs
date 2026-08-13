@@ -147,7 +147,19 @@ public class WebhookRegistrationService(
             // silently retrying the dead token forever. Remaining calendars share the same
             // OAuth token, so the loop is aborted. The exception still surfaces to the caller
             // (foreground register-webhooks → 409 via DomainExceptionHandler).
-            await tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, ct);
+            // CancellationToken.None: once reauth is detected, a request abort must not cancel
+            // the mark. A mark failure is logged but never replaces the original reauth
+            // exception — the caller needs the 409/reconnect payload, not a 500.
+            try
+            {
+                await tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, CancellationToken.None);
+            }
+            catch (Exception markEx)
+            {
+                logger.LogError(markEx,
+                    "Failed to persist NeedsReauth for user {UserId} during webhook registration; rethrowing the original reauth failure.",
+                    userId);
+            }
             logger.LogWarning(
                 "Webhook registration for user {UserId} requires re-authentication; remaining calendars skipped.",
                 userId);

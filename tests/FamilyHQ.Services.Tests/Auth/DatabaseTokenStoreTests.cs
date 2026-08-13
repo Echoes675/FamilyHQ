@@ -461,6 +461,48 @@ public class DatabaseTokenStoreTests
     }
 
     [Fact]
+    public async Task MarkNeedsReauthAsync_WhenConcurrentMarkerWinsRace_RetrySkipsWithoutSecondSaveOrBroadcast()
+    {
+        // FHQ-85 headline race: the sync worker and the DomainExceptionHandler both observe the
+        // same dead token and mark concurrently. The loser's save conflicts; its concurrency
+        // retry re-reads the row, sees the winner already committed NeedsReauth, and skips.
+        var (sut, broadcasterMock) = CreateSutWithBroadcaster();
+        var winnerSince = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var existing = new UserToken
+        {
+            UserId = "u-race",
+            Provider = "Google",
+            RefreshToken = "ignored",
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        _db.OnSaveChanges = () =>
+        {
+            // The winner (worker) commits first, so this caller's save conflicts. Real EF
+            // reloads fresh DB values after ClearTrackedEntities; the fake reuses the instance,
+            // so apply the winner's committed values here before throwing.
+            existing.AuthStatus = TokenAuthStatus.NeedsReauth;
+            existing.LastAuthErrorDescription = "winner failure";
+            existing.AuthStatusChangedAt = winnerSince;
+            throw new DbUpdateConcurrencyException("lost the race to the concurrent marker");
+        };
+
+        await sut.MarkNeedsReauthAsync("u-race", "loser failure", CancellationToken.None);
+
+        // The loser contributes NO second save and NO duplicate broadcast, and the winner's
+        // failure record survives. The winner's own single save + single broadcast is pinned by
+        // MarkNeedsReauthAsync_WhenTokenUpdates_BroadcastsConnectionStatusUpdated — so the race
+        // nets exactly one effective save and exactly one broadcast system-wide.
+        _db.SaveChangesCount.Should().Be(1);
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+        existing.LastAuthErrorDescription.Should().Be("winner failure");
+        existing.AuthStatusChangedAt.Should().Be(winnerSince);
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task MarkNeedsReauthAsync_WhenNoTokenRow_DoesNotBroadcast()
     {
         var (sut, broadcasterMock) = CreateSutWithBroadcaster();
