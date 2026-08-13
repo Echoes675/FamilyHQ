@@ -88,7 +88,7 @@
             {
                 var isShared = _shared[cal.Id];
                 var isVisible = _visibility[cal.Id];
-                <li class="calendar-settings-row glass-surface" data-testid="@($"calendar-row-{cal.DisplayName}")">
+                <li @key="cal.Id" class="calendar-settings-row glass-surface" data-testid="@($"calendar-row-{cal.DisplayName}")">
                     <span class="calendar-settings-row__color" style="background-color: @(cal.Color ?? "var(--theme-text-muted)");"></span>
                     <span class="calendar-settings-row__name">@cal.DisplayName</span>
 

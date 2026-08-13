@@ -121,7 +121,7 @@
                     <tbody>
                         @foreach (var cal in _connectionStatus.Calendars)
                         {
-                            <tr>
+                            <tr @key="cal.CalendarId">
                                 <td>@cal.DisplayName</td>
                                 <td>
                                     @if (cal.LastSyncedAt.HasValue)
@@ -168,7 +168,7 @@
                 <tbody>
                     @foreach (var failure in _failures!)
                     {
-                        <tr>
+                        <tr @key="failure.Id">
                             <td>
                                 <time title="@DiagnosticsView.FormatAbsolute(failure.FailedAt)">
                                     @DiagnosticsView.FormatRelative(failure.FailedAt, _now)
@@ -210,7 +210,7 @@
                 <tbody>
                     @foreach (var run in _failedRuns)
                     {
-                        <tr>
+                        <tr @key="run.Id">
                             <td><time title="@DiagnosticsView.FormatAbsolute(run.LastAttemptAt)">@DiagnosticsView.FormatRelative(run.LastAttemptAt, _now)</time></td>
                             <td>@(run.CalendarInfoId is null ? "All calendars" : ResolveCalendarName(run.CalendarInfoId))</td>
                             <td>@run.Source</td>

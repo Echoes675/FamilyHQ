@@ -41,7 +41,7 @@
             <div class="time-axis-header"></div>
             @foreach (var cal in DisplayCalendars)
             {
-                <div class="calendar-header-col" title="@cal.DisplayName" data-testid="@($"day-calendar-header-{cal.Id}")">
+                <div @key="cal.Id" class="calendar-header-col" title="@cal.DisplayName" data-testid="@($"day-calendar-header-{cal.Id}")">
                     @if (_reorderMode)
                     {
                         var idx = _reorderList.IndexOf(cal);
@@ -69,10 +69,10 @@
             @foreach (var cal in DisplayCalendars)
             {
                 var calAllDayEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id && e.IsAllDay).ToList();
-                <div class="all-day-col">
+                <div @key="cal.Id" class="all-day-col">
                     @foreach (var evt in calAllDayEvents)
                     {
-                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
+                        <div @key="evt.Id" class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
                              title="@evt.Title"
                              @onclick="() => OnEditEvent.InvokeAsync(evt)">
                             @evt.Title
@@ -119,10 +119,10 @@
                 {
                     var calEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id).ToList();
                     var placedEvents = GetPlacedEvents(calEvents);
-                    <div class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
+                    <div @key="cal.Id" class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
                         @foreach (var p in placedEvents)
                         {
-                            <div class="day-event-block"
+                            <div @key="p.Event.Id" class="day-event-block"
                                  style="@GetEventStyle(p, SelectedDate)"
                                  title="@($"{p.Event.Title}\n{p.Event.StartLocal():t} - {p.Event.EndLocal():t}\n{p.Event.Location}")"
                                  @onclick:stopPropagation="true"
