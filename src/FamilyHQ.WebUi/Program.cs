@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.Services.Auth;
@@ -31,6 +32,24 @@ public class Program
         builder.Services.AddTransient<CorrelationIdMessageHandler>();
         builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
 
+        // FHQ-126: sliding JWT renewal so the kiosk never reaches the token-expiry cliff.
+        var jwtRenewalOptions = new JwtRenewalOptions();
+        builder.Configuration.GetSection(JwtRenewalOptions.SectionName).Bind(jwtRenewalOptions);
+        jwtRenewalOptions.Validate();
+        builder.Services.AddSingleton(jwtRenewalOptions);
+        builder.Services.AddScoped<IJwtRenewalService>(sp => new JwtRenewalService(
+            // The handler-free "Auth" client: the renewal call must not pass through
+            // CustomAuthorizationMessageHandler (which itself triggers renewal on 401).
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("Auth"),
+            sp.GetRequiredService<IAuthTokenStore>(),
+            sp.GetRequiredService<JwtRenewalOptions>(),
+            // Deliberately TimeProvider.System, NOT the app-wide KioskTimeProvider: the kiosk
+            // clock's dev-tools day offset shifts GetUtcNow(), which would shrink the token's
+            // apparent remaining lifetime and cause spurious renewals when E2E advances the
+            // displayed day. Token-expiry math must always use the real clock.
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<JwtRenewalService>>()));
+
         builder.Services.AddHttpClient<ICalendarApiService, CalendarApiService>(client =>
         {
             client.BaseAddress = new Uri(backendUrl);
@@ -38,7 +57,20 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
-        builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
+        // FHQ-125: connection-state coordinator — logs connection failures, drives the
+        // stale-data indicator, and restarts a permanently-lost hub connection with backoff.
+        var reconnectOptions = builder.Configuration.GetSection("SignalRReconnect")
+            .Get<SignalRReconnectOptions>() ?? new SignalRReconnectOptions();
+        builder.Services.AddSingleton(reconnectOptions);
+        builder.Services.AddSingleton<ISignalRConnectionCoordinator>(sp => new SignalRConnectionCoordinator(
+            sp.GetRequiredService<ILogger<SignalRConnectionCoordinator>>(),
+            TimeProvider.System,
+            sp.GetRequiredService<SignalRReconnectOptions>()));
+        builder.Services.AddSingleton<ISignalRConnectionMonitor>(sp =>
+            sp.GetRequiredService<ISignalRConnectionCoordinator>());
+        builder.Services.AddSingleton(sp => new SignalRService(
+            backendUrl,
+            sp.GetRequiredService<ISignalRConnectionCoordinator>()));
         builder.Services.AddSingleton<ISignalRConnectionEvents>(sp => sp.GetRequiredService<SignalRService>());
 
         builder.Services.AddHttpClient<IThemeService, ThemeService>(client =>
@@ -110,6 +142,16 @@ public class Program
 
         var host = builder.Build();
         await host.Services.GetRequiredService<IVersionService>().InitializeAsync();
+
+        // FHQ-126: startup expiry check, then a daily background re-check. Fire-and-forget so a
+        // slow/hung renew-jwt call can never delay first render (security review Minor); the
+        // service logs its own failures, and the continuation catches anything that still escapes.
+        var jwtRenewalService = host.Services.GetRequiredService<IJwtRenewalService>();
+        var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
+        _ = jwtRenewalService.InitializeAsync().ContinueWith(
+            t => startupLogger.LogWarning(t.Exception, "JWT renewal initialization failed."),
+            TaskContinuationOptions.OnlyOnFaulted);
+
         await host.RunAsync();
     }
 }

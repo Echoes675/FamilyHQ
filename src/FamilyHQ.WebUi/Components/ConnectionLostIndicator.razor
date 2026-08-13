@@ -1,0 +1,31 @@
+@using FamilyHQ.WebUi.Services
+@implements IDisposable
+@inject ISignalRConnectionMonitor ConnectionMonitor
+
+@if (ConnectionMonitor.IsConnectionDown)
+{
+    <div class="connection-lost-indicator glass-surface"
+         role="status"
+         aria-live="polite"
+         data-testid="connection-lost-indicator">
+        <span class="connection-lost-indicator__dot" aria-hidden="true"></span>
+        <span class="connection-lost-indicator__text">Live updates paused &mdash; reconnecting&hellip;</span>
+    </div>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        ConnectionMonitor.ConnectionStateChanged += OnConnectionStateChanged;
+    }
+
+    private void OnConnectionStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ConnectionMonitor.ConnectionStateChanged -= OnConnectionStateChanged;
+    }
+}

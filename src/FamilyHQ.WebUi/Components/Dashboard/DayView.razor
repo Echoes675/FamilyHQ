@@ -1,8 +1,11 @@
 @using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.WebUi.Services
+@using Microsoft.Extensions.Logging
 @inject IJSRuntime JSRuntime
 @inject IWeatherUiService WeatherService
-@implements IDisposable
+@inject TimeProvider TimeProvider
+@inject ILogger<DayView> Logger
+@implements IAsyncDisposable
 
 @* Day nav bar *@
 <div class="flex justify-between items-center mb-4">
@@ -38,7 +41,7 @@
             <div class="time-axis-header"></div>
             @foreach (var cal in DisplayCalendars)
             {
-                <div class="calendar-header-col" title="@cal.DisplayName" data-testid="@($"day-calendar-header-{cal.Id}")">
+                <div @key="cal.Id" class="calendar-header-col" title="@cal.DisplayName" data-testid="@($"day-calendar-header-{cal.Id}")">
                     @if (_reorderMode)
                     {
                         var idx = _reorderList.IndexOf(cal);
@@ -66,10 +69,10 @@
             @foreach (var cal in DisplayCalendars)
             {
                 var calAllDayEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id && e.IsAllDay).ToList();
-                <div class="all-day-col">
+                <div @key="cal.Id" class="all-day-col">
                     @foreach (var evt in calAllDayEvents)
                     {
-                        <div class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
+                        <div @key="evt.Id" class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
                              title="@evt.Title"
                              @onclick="() => OnEditEvent.InvokeAsync(evt)">
                             @evt.Title
@@ -81,7 +84,7 @@
     </div>
     <div class="day-body-scrollable" id="day-body-scrollable">
         <div class="day-body-flex">
-            @if (SelectedDate == DateTime.Today)
+            @if (NowLinePosition.IsVisible(SelectedDate, TimeProvider))
             {
                 <div class="current-time-line" style="top: @GetCurrentTimeTopPosition()%" id="current-time-line"></div>
             }
@@ -116,10 +119,10 @@
                 {
                     var calEvents = dayEvents.Where(e => e.CalendarInfoId == cal.Id).ToList();
                     var placedEvents = GetPlacedEvents(calEvents);
-                    <div class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
+                    <div @key="cal.Id" class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
                         @foreach (var p in placedEvents)
                         {
-                            <div class="day-event-block"
+                            <div @key="p.Event.Id" class="day-event-block"
                                  style="@GetEventStyle(p, SelectedDate)"
                                  title="@($"{p.Event.Title}\n{p.Event.StartLocal():t} - {p.Event.EndLocal():t}\n{p.Event.Location}")"
                                  @onclick:stopPropagation="true"
@@ -151,6 +154,11 @@
 
     private DateTime? _lastScrolledDate;
     private DateOnly _lastLoadedDate;
+
+    // FHQ-127: re-render every minute so the now-line keeps moving on a quiet calendar day.
+    private static readonly TimeSpan NowLineRefreshPeriod = TimeSpan.FromMinutes(1);
+    private readonly CancellationTokenSource _nowLineCts = new();
+    private Task? _nowLineLoop;
 
     private bool _reorderMode;
     private List<CalendarSummaryViewModel> _reorderList = new();
@@ -196,13 +204,28 @@
     protected override void OnInitialized()
     {
         WeatherService.OnWeatherChanged += HandleWeatherChanged;
+        _nowLineLoop = PeriodicUiRefreshLoop.RunAsync(
+            TimeProvider, NowLineRefreshPeriod, () => InvokeAsync(StateHasChanged), Logger, _nowLineCts.Token);
     }
 
     private void HandleWeatherChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         WeatherService.OnWeatherChanged -= HandleWeatherChanged;
+        _nowLineCts.Cancel();
+        if (_nowLineLoop is not null)
+        {
+            try
+            {
+                await _nowLineLoop;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Now-line refresh loop faulted during component disposal");
+            }
+        }
+        _nowLineCts.Dispose();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -217,25 +240,24 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (SelectedDate.Date == DateTime.Today && _lastScrolledDate != DateTime.Today)
+        // FHQ-132: "today" and "now" come from the injected (kiosk-adjusted) TimeProvider, not
+        // the wall clock, so a simulated kiosk time scrolls to the simulated position. The gate
+        // advances before the interop so a failed scroll is not retried on every render.
+        var plan = DayViewScrollPlan.Decide(SelectedDate, _lastScrolledDate, TimeProvider);
+        _lastScrolledDate = plan.LastScrolledDate;
+        if (plan.ShouldScroll)
         {
-            _lastScrolledDate = DateTime.Today;
             try
             {
-                var currentMins = DateTime.Now.TimeOfDay.TotalMinutes;
-                await JSRuntime.InvokeVoidAsync("eval", $@"
-                    var c = document.getElementById('day-view-container');
-                    if(c) {{
-                        var target = ({currentMins} / 1440) * 1440;
-                        c.scrollTop = target - (c.clientHeight / 4);
-                    }}
-                ");
+                // Imported per invocation (at most once per kiosk day; the browser caches the
+                // module) so no module reference needs disposing when the component tears down.
+                await using var ui = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/ui-helpers.js");
+                await ui.InvokeVoidAsync("scrollDayViewToMinutes", plan.TargetMinutesOfDay);
             }
-            catch { }
-        }
-        else if (SelectedDate.Date != DateTime.Today)
-        {
-            _lastScrolledDate = null;
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Day view scroll-to-now JS interop failed; expected during component teardown");
+            }
         }
     }
 
@@ -253,11 +275,7 @@
         OnAddEvent.InvokeAsync((startDateTime, calendarId));
     }
 
-    private double GetCurrentTimeTopPosition()
-    {
-        var now = DateTime.Now.TimeOfDay;
-        return (now.TotalMinutes / 1440.0) * 100;
-    }
+    private double GetCurrentTimeTopPosition() => NowLinePosition.TopPercent(TimeProvider);
 
     private List<PlacedEvent> GetPlacedEvents(IEnumerable<CalendarEventViewModel> events)
     {

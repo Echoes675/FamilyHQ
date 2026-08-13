@@ -2,6 +2,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -14,7 +15,6 @@ using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
-using Microsoft.IdentityModel.Tokens;
 
 namespace FamilyHQ.WebApi.Controllers;
 
@@ -30,6 +30,9 @@ public class AuthController : ControllerBase
     private readonly ILogger<AuthController> _logger;
     private readonly IDataProtector _stateProtector;
     private readonly IMemoryCache _cache;
+    private readonly IJwtTokenService _jwtTokenService;
+    private readonly JwtSessionOptions _jwtSessionOptions;
+    private readonly TimeProvider _timeProvider;
 
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
@@ -42,7 +45,10 @@ public class AuthController : ControllerBase
         IOptions<SyncOptions> syncOptions,
         ILogger<AuthController> logger,
         IDataProtectionProvider dataProtectionProvider,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        IJwtTokenService jwtTokenService,
+        JwtSessionOptions jwtSessionOptions,
+        TimeProvider timeProvider)
     {
         _authService = authService;
         _tokenStore = tokenStore;
@@ -52,6 +58,9 @@ public class AuthController : ControllerBase
         _logger = logger;
         _stateProtector = dataProtectionProvider.CreateProtector("FamilyHQ.OAuthState");
         _cache = cache;
+        _jwtTokenService = jwtTokenService;
+        _jwtSessionOptions = jwtSessionOptions;
+        _timeProvider = timeProvider;
     }
 
     /// <summary>
@@ -132,7 +141,7 @@ public class AuthController : ControllerBase
         if (!string.IsNullOrEmpty(refreshToken))
             await _tokenStore.SaveRefreshTokenAsync(refreshToken, userId);
 
-        var apiToken = GenerateJwt(userId, email);
+        var apiToken = _jwtTokenService.GenerateToken(userId, email);
 
         // FHQ-60: Google granted identity but not the calendar scope — saving + syncing would only
         // 403. Flag the account with a specific, actionable reason (surfaces in the re-auth banner
@@ -197,30 +206,62 @@ public class AuthController : ControllerBase
         return Ok(new { token = jwt });
     }
 
-    private string GenerateJwt(string userId, string? email)
+    /// <summary>
+    /// Re-mints the API JWT for the currently-authenticated principal (FHQ-126). Renewal only
+    /// extends a LIVE session: [Authorize] requires a valid, unexpired bearer token, so an
+    /// expired or missing token can never be renewed here. Total session age is capped via the
+    /// auth_time claim (JwtSessionOptions) so a leaked token cannot be renewed forever. The new
+    /// token is returned in the response body — never in a URL.
+    /// </summary>
+    [HttpPost("renew-jwt")]
+    [Authorize]
+    public IActionResult RenewJwt()
     {
-        var claims = new List<Claim>
+        // MapInboundClaims=false (Program.cs) keeps the raw "sub"/"name" claim names.
+        var userId = User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        if (string.IsNullOrEmpty(userId))
         {
-            new Claim(JwtRegisteredClaimNames.Sub, userId),
-            new Claim(JwtRegisteredClaimNames.UniqueName, userId)
-        };
-        if (!string.IsNullOrEmpty(email))
-            claims.Add(new Claim(JwtRegisteredClaimNames.Name, email));
-        
-        var jwtKey = _configuration["Jwt:SigningKey"]
-            ?? throw new InvalidOperationException("JWT signing key is not configured.");
-        
-        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(jwtKey));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var token = new JwtSecurityToken(
-            issuer: "FamilyHQ",
-            audience: "FamilyHQ",
-            claims: claims.ToArray(),
-            notBefore: DateTime.UtcNow,
-            expires: DateTime.UtcNow.AddDays(365),
-            signingCredentials: creds
-        );
-        return new JwtSecurityTokenHandler().WriteToken(token);
+            _logger.LogWarning("JWT renewal rejected — authenticated principal has no sub claim.");
+            return Unauthorized();
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var authTime = TryParseUnixSeconds(User.FindFirstValue(JwtRegisteredClaimNames.AuthTime));
+        if (authTime is null)
+        {
+            // Grandfathering: tokens minted before auth_time existed (or with an unreadable
+            // claim) start a FRESH cap window at "now". Deliberate choice for already-deployed
+            // kiosks — they cannot re-authenticate silently, and every token minted from here
+            // on carries auth_time, so the cap applies from this renewal onward.
+            _logger.LogInformation(
+                "JWT renewal grandfathered a fresh session-cap window for user {UserId} (token had no readable auth_time).",
+                userId);
+            authTime = now;
+        }
+        else if (now - authTime.Value > TimeSpan.FromDays(_jwtSessionOptions.MaxSessionAgeDays))
+        {
+            _logger.LogInformation(
+                "JWT renewal rejected for user {UserId} — session age {SessionAgeDays:F0} days exceeds the {MaxSessionAgeDays}-day cap; re-authentication required.",
+                userId, (now - authTime.Value).TotalDays, _jwtSessionOptions.MaxSessionAgeDays);
+            return Unauthorized();
+        }
+
+        var email = User.FindFirstValue(JwtRegisteredClaimNames.Name);
+        var token = _jwtTokenService.GenerateToken(userId, email, authTime);
+        _logger.LogInformation("JWT renewed for user {UserId}.", userId);
+
+        // OAuth BCP defence-in-depth: token responses must never be cached.
+        Response.Headers.CacheControl = "no-store";
+        return Ok(new { token });
+    }
+
+    private static DateTimeOffset? TryParseUnixSeconds(string? value)
+    {
+        if (!long.TryParse(value, out var seconds))
+            return null;
+        if (seconds < DateTimeOffset.MinValue.ToUnixTimeSeconds() || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            return null;
+        return DateTimeOffset.FromUnixTimeSeconds(seconds);
     }
 
     private async Task SyncCalendarEventsAsync(string userId)

@@ -1,35 +1,23 @@
+@using Microsoft.Extensions.Logging
+@inject TimeProvider TimeProvider
+@inject ILogger<HeaderClock> Logger
 @implements IAsyncDisposable
 
 <span class="dashboard-header__clock" aria-live="off">@_time</span>
 
 @code {
-    private string _time = DateTime.Now.ToString("HH:mm");
+    // FHQ-131: tick every second so the minute rollover is picked up promptly; the loop only
+    // re-renders when the displayed "HH:mm" string actually changes.
+    private static readonly TimeSpan ClockRefreshPeriod = TimeSpan.FromSeconds(1);
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
+    private string _time = string.Empty;
 
     protected override void OnInitialized()
     {
-        _loop = RunAsync(_cts.Token);
-    }
-
-    private async Task RunAsync(CancellationToken token)
-    {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(token))
-            {
-                var next = DateTime.Now.ToString("HH:mm");
-                if (next != _time)
-                {
-                    _time = next;
-                    await InvokeAsync(StateHasChanged);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
+        _time = HeaderClockDisplay.CurrentTime(TimeProvider);
+        _loop = PeriodicUiRefreshLoop.RunAsync(
+            TimeProvider, ClockRefreshPeriod, RefreshTimeAsync, Logger, _cts.Token);
     }
 
     public async ValueTask DisposeAsync()
@@ -41,10 +29,21 @@
             {
                 await _loop;
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.LogDebug(ex, "Header clock refresh loop faulted during component disposal");
             }
         }
         _cts.Dispose();
+    }
+
+    private async Task RefreshTimeAsync()
+    {
+        var next = HeaderClockDisplay.CurrentTime(TimeProvider);
+        if (next != _time)
+        {
+            _time = next;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 }

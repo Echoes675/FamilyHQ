@@ -228,14 +228,22 @@
 
     private void RefreshDataFromSignalR()
     {
-        // Must be invoked on the UI thread
+        // Must be invoked on the UI thread. The dispatched task is discarded, so
+        // exceptions must be observed here or they vanish silently (FHQ-125).
         InvokeAsync(async () =>
         {
-            await LoadConnectionStatusAsync();
-            _calendars = await CalendarApi.GetCalendarsAsync();
-            _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
-            await LoadMonthDataAsync(showSpinner: _monthView is null);
-            StateHasChanged();
+            try
+            {
+                await LoadConnectionStatusAsync();
+                _calendars = await CalendarApi.GetCalendarsAsync();
+                _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
+                await LoadMonthDataAsync(showSpinner: _monthView is null);
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Dashboard refresh after SignalR events update failed; keeping previous data");
+            }
         });
     }
 
@@ -243,8 +251,15 @@
     {
         InvokeAsync(async () =>
         {
-            await LoadConnectionStatusAsync();
-            StateHasChanged();
+            try
+            {
+                await LoadConnectionStatusAsync();
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Connection-status refresh after SignalR update failed; keeping previous status");
+            }
         });
     }
 
@@ -430,8 +445,10 @@
         {
             _connectionStatus = await CalendarApi.GetConnectionStatusAsync();
         }
-        catch
+        catch (Exception ex)
         {
+            // Expected while the backend is briefly unreachable — status is treated as unknown.
+            Logger.LogDebug(ex, "Connection status load failed; treating status as unknown");
             _connectionStatus = null;
         }
     }

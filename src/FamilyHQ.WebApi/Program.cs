@@ -44,6 +44,16 @@ builder.Services.AddPostgreSqlDataAccess(builder.Configuration);
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, FamilyHQ.WebApi.Services.CurrentUserService>();
 
+// Single owner of the API JWT claims + lifetime policy (FHQ-126): used by the login callback
+// and the renew-jwt endpoint. Stateless, so singleton.
+builder.Services.AddSingleton<FamilyHQ.WebApi.Services.IJwtTokenService, FamilyHQ.WebApi.Services.JwtTokenService>();
+
+// FHQ-126: absolute cap on renewable session age — fail-fast validated at boot.
+var jwtSessionOptions = new FamilyHQ.WebApi.Configuration.JwtSessionOptions();
+builder.Configuration.GetSection(FamilyHQ.WebApi.Configuration.JwtSessionOptions.SectionName).Bind(jwtSessionOptions);
+jwtSessionOptions.Validate();
+builder.Services.AddSingleton(jwtSessionOptions);
+
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
