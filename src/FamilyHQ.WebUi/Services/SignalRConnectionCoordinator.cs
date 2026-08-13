@@ -15,7 +15,7 @@ public sealed class SignalRConnectionCoordinator(
 {
     private readonly ILogger<SignalRConnectionCoordinator> _logger = logger;
     private readonly TimeProvider _timeProvider = timeProvider;
-    private readonly SignalRReconnectOptions _options = options;
+    private readonly SignalRReconnectOptions _options = ValidateOptions(options);
 
     private Func<CancellationToken, Task>? _restartAsync;
     private CancellationTokenSource? _restartLoopCts;
@@ -52,8 +52,10 @@ public sealed class SignalRConnectionCoordinator(
         EnsureInitialized();
         _logger.LogError(exception,
             "Initial SignalR connection failed; live updates are unavailable until a background restart succeeds");
-        SetConnectionDown(true);
+        // Loop first: a throwing ConnectionStateChanged subscriber must not
+        // prevent the restart schedule from starting.
         BeginRestartLoop();
+        SetConnectionDown(true);
     }
 
     public void OnReconnecting(Exception? exception)
@@ -75,8 +77,10 @@ public sealed class SignalRConnectionCoordinator(
         EnsureInitialized();
         _logger.LogError(exception,
             "SignalR connection closed permanently (automatic reconnect exhausted); scheduling background restart attempts");
-        SetConnectionDown(true);
+        // Loop first: a throwing ConnectionStateChanged subscriber must not
+        // prevent the restart schedule from starting.
         BeginRestartLoop();
+        SetConnectionDown(true);
     }
 
     public void Dispose()
@@ -122,6 +126,12 @@ public sealed class SignalRConnectionCoordinator(
             _restartLoopCts = null;
             cts.Cancel();
             cts.Dispose();
+
+            // The cancelled loop's own finally runs as a queued continuation, so it
+            // may not have observed the cancellation yet. Clear the flag here (safe:
+            // a cancelled loop never invokes the restart callback again) so a new
+            // outage reported in that window can still begin a fresh loop.
+            _restartLoopRunning = false;
         }
     }
 
@@ -154,7 +164,10 @@ public sealed class SignalRConnectionCoordinator(
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex,
+                    // The outage itself was already reported at Error by
+                    // OnStartFailed/OnClosed; a failed attempt during a known
+                    // outage is expected-and-handled → Warning (logging skill).
+                    _logger.LogWarning(ex,
                         "SignalR restart attempt {Attempt} failed; will retry with backoff", attempt);
                 }
             }
@@ -172,8 +185,34 @@ public sealed class SignalRConnectionCoordinator(
         }
         finally
         {
-            _restartLoopRunning = false;
+            // A cancelled loop's flag was already cleared by CancelRestartLoop, and
+            // a successor loop may own it by now — only non-cancelled exits
+            // (success or the safety net) may clear it here.
+            if (!ct.IsCancellationRequested)
+            {
+                _restartLoopRunning = false;
+            }
         }
+    }
+
+    private static SignalRReconnectOptions ValidateOptions(SignalRReconnectOptions options)
+    {
+        // Fail fast at startup: these are config-bound, and bad values would either
+        // spin a hot restart loop (zero/negative) or break the backoff invariant.
+        if (options.InitialRetryDelay <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.InitialRetryDelay,
+                $"{nameof(SignalRReconnectOptions.InitialRetryDelay)} must be positive.");
+        }
+
+        if (options.MaxRetryDelay < options.InitialRetryDelay)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.MaxRetryDelay,
+                $"{nameof(SignalRReconnectOptions.MaxRetryDelay)} must be greater than or equal to " +
+                $"{nameof(SignalRReconnectOptions.InitialRetryDelay)}.");
+        }
+
+        return options;
     }
 
     private TimeSpan ComputeDelay(int attempt)

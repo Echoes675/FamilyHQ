@@ -23,7 +23,13 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
             .WithAutomaticReconnect()
             .Build();
 
-        _coordinator.Initialize(ct => _hubConnection.StartAsync(ct));
+        // Only a disconnected hub may be started: if a manual StartAsync is already
+        // mid-Connecting (or has won the race) when a restart attempt fires, treat
+        // it as a no-op success rather than throwing from a double start.
+        _coordinator.Initialize(ct =>
+            _hubConnection.State == HubConnectionState.Disconnected
+                ? _hubConnection.StartAsync(ct)
+                : Task.CompletedTask);
         _coordinator.ConnectionRestored += () => Reconnected?.Invoke();
 
         _hubConnection.On("EventsUpdated", () =>
@@ -80,6 +86,13 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
         }
         catch (Exception ex)
         {
+            // Disposal cancels an in-flight start — deliberate shutdown, not a
+            // failure, so nothing to report and no restart loop to schedule.
+            if (_disposing)
+            {
+                return;
+            }
+
             // WithAutomaticReconnect() does NOT retry a failed initial start —
             // the coordinator logs the failure and schedules background restarts.
             _coordinator.OnStartFailed(ex);

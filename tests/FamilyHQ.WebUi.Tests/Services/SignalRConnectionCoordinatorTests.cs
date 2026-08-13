@@ -55,7 +55,8 @@ public class SignalRConnectionCoordinatorTests
         // Assert
         sut.IsConnectionDown.Should().BeTrue();
         stateChanges.Should().Be(1);
-        VerifyLog(logger, LogLevel.Error, Times.Once());
+        VerifyLog(logger, LogLevel.Error, Times.Once(),
+            messageContains: "Initial SignalR connection failed", withException: true);
     }
 
     [Fact]
@@ -104,10 +105,12 @@ public class SignalRConnectionCoordinatorTests
     }
 
     [Fact]
-    public async Task RestartAuthFailure_LogsError_AndSchedulesAnotherAttempt()
+    public async Task RestartAuthFailure_LogsWarning_AndSchedulesAnotherAttempt()
     {
         // Arrange — the ticket's test case: an auth failure during restart must be
-        // logged and another attempt scheduled, not swallowed.
+        // logged and another attempt scheduled, not swallowed. The outage itself is
+        // already reported at Error by OnClosed; per-attempt failures during a known
+        // outage are expected-and-handled → Warning (logging skill).
         var time = new FakeTimeProvider();
         var logger = CreateLogger();
         var calls = 0;
@@ -129,9 +132,13 @@ public class SignalRConnectionCoordinatorTests
         time.Advance(InitialDelay);
         await WaitUntilAsync(() => calls == 1);
 
-        // Assert — failure logged (OnClosed itself also logs Error → two in total)
+        // Assert — the outage is the only Error; the failed attempt logs a Warning
+        // with the auth exception attached
         sut.IsConnectionDown.Should().BeTrue();
-        VerifyLog(logger, LogLevel.Error, Times.Exactly(2));
+        VerifyLog(logger, LogLevel.Error, Times.Once(),
+            messageContains: "closed permanently", withException: true);
+        VerifyLog(logger, LogLevel.Warning, Times.Once(),
+            messageContains: "restart attempt", withException: true);
 
         // Act — second attempt runs after the doubled delay and succeeds
         time.Advance(MaxDelay - TimeSpan.FromMilliseconds(100));
@@ -193,7 +200,8 @@ public class SignalRConnectionCoordinatorTests
         // Assert
         sut.IsConnectionDown.Should().BeTrue();
         stateChanges.Should().Be(1);
-        VerifyLog(logger, LogLevel.Warning, Times.Once());
+        VerifyLog(logger, LogLevel.Warning, Times.Once(),
+            messageContains: "automatic reconnect in progress", withException: true);
     }
 
     [Fact]
@@ -249,7 +257,8 @@ public class SignalRConnectionCoordinatorTests
 
         // Assert
         sut.IsConnectionDown.Should().BeTrue();
-        VerifyLog(logger, LogLevel.Error, Times.Once());
+        VerifyLog(logger, LogLevel.Error, Times.Once(),
+            messageContains: "closed permanently", withException: true);
 
         time.Advance(InitialDelay);
         await WaitUntilAsync(() => calls == 1);
@@ -379,6 +388,70 @@ public class SignalRConnectionCoordinatorTests
     }
 
     [Fact]
+    public async Task OnClosed_AfterCancelledRestartLoop_SchedulesRestartAgain()
+    {
+        // Arrange — a cancelled loop must never leave the coordinator believing a
+        // loop is still running, or a later outage would go un-retried forever.
+        var time = new FakeTimeProvider();
+        var calls = 0;
+        var sut = CreateSut(time, restart: _ =>
+        {
+            calls++;
+            return Task.CompletedTask;
+        });
+
+        sut.OnClosed(new InvalidOperationException("first outage"));
+        sut.OnStarted(); // cancels the pending restart loop
+
+        // Act — a fresh outage after the cancellation
+        sut.OnClosed(new InvalidOperationException("second outage"));
+        time.Advance(InitialDelay);
+        await WaitUntilAsync(() => calls == 1);
+
+        // Assert
+        calls.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void Constructor_WithNonPositiveInitialRetryDelay_Throws(int seconds)
+    {
+        // Arrange — config-bound delays must fail fast at startup: zero would spin a
+        // hot restart loop; negative would kill the loop with the indicator stuck on.
+        var options = new SignalRReconnectOptions
+        {
+            InitialRetryDelay = TimeSpan.FromSeconds(seconds),
+            MaxRetryDelay = MaxDelay
+        };
+
+        // Act
+        var act = () => new SignalRConnectionCoordinator(
+            CreateLogger().Object, new FakeTimeProvider(), options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void Constructor_WithMaxRetryDelayBelowInitial_Throws()
+    {
+        // Arrange
+        var options = new SignalRReconnectOptions
+        {
+            InitialRetryDelay = TimeSpan.FromSeconds(10),
+            MaxRetryDelay = TimeSpan.FromSeconds(5)
+        };
+
+        // Act
+        var act = () => new SignalRConnectionCoordinator(
+            CreateLogger().Object, new FakeTimeProvider(), options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void OnStartFailed_BeforeInitialize_Throws()
     {
         // Arrange — constructed directly so Initialize is never called
@@ -430,13 +503,18 @@ public class SignalRConnectionCoordinatorTests
     };
 
     private static void VerifyLog(
-        Mock<ILogger<SignalRConnectionCoordinator>> logger, LogLevel level, Times times) =>
+        Mock<ILogger<SignalRConnectionCoordinator>> logger,
+        LogLevel level,
+        Times times,
+        string? messageContains = null,
+        bool withException = false) =>
         logger.Verify(
             l => l.Log(
                 level,
                 It.IsAny<EventId>(),
-                It.IsAny<It.IsAnyType>(),
-                It.IsAny<Exception?>(),
+                It.Is<It.IsAnyType>((state, _) =>
+                    messageContains == null || state.ToString()!.Contains(messageContains)),
+                It.Is<Exception?>(e => !withException || e != null),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             times);
 
