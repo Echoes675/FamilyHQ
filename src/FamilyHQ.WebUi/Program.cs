@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.Services.Auth;
@@ -128,8 +129,16 @@ public class Program
 
         var host = builder.Build();
         await host.Services.GetRequiredService<IVersionService>().InitializeAsync();
-        // FHQ-126: startup expiry check, then a daily background re-check.
-        await host.Services.GetRequiredService<IJwtRenewalService>().InitializeAsync();
+
+        // FHQ-126: startup expiry check, then a daily background re-check. Fire-and-forget so a
+        // slow/hung renew-jwt call can never delay first render (security review Minor); the
+        // service logs its own failures, and the continuation catches anything that still escapes.
+        var jwtRenewalService = host.Services.GetRequiredService<IJwtRenewalService>();
+        var startupLogger = host.Services.GetRequiredService<ILogger<Program>>();
+        _ = jwtRenewalService.InitializeAsync().ContinueWith(
+            t => startupLogger.LogWarning(t.Exception, "JWT renewal initialization failed."),
+            TaskContinuationOptions.OnlyOnFaulted);
+
         await host.RunAsync();
     }
 }

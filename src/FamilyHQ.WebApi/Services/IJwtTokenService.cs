@@ -8,6 +8,9 @@ public interface IJwtTokenService
 {
     /// <summary>
     /// Generates a signed JWT for the given user. The optional email lands in the "name" claim.
+    /// The auth_time claim records the ORIGINAL authentication instant: omit
+    /// <paramref name="authTime"/> on first mint (login) to stamp "now"; renewal passes the
+    /// original value through so the absolute session-age cap cannot be reset by renewing.
     /// </summary>
-    string GenerateToken(string userId, string? email);
+    string GenerateToken(string userId, string? email, DateTimeOffset? authTime = null);
 }

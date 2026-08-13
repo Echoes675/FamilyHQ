@@ -2,6 +2,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -30,6 +31,7 @@ public class AuthController : ControllerBase
     private readonly IDataProtector _stateProtector;
     private readonly IMemoryCache _cache;
     private readonly IJwtTokenService _jwtTokenService;
+    private readonly JwtSessionOptions _jwtSessionOptions;
 
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
@@ -43,7 +45,8 @@ public class AuthController : ControllerBase
         ILogger<AuthController> logger,
         IDataProtectionProvider dataProtectionProvider,
         IMemoryCache cache,
-        IJwtTokenService jwtTokenService)
+        IJwtTokenService jwtTokenService,
+        JwtSessionOptions jwtSessionOptions)
     {
         _authService = authService;
         _tokenStore = tokenStore;
@@ -54,6 +57,7 @@ public class AuthController : ControllerBase
         _stateProtector = dataProtectionProvider.CreateProtector("FamilyHQ.OAuthState");
         _cache = cache;
         _jwtTokenService = jwtTokenService;
+        _jwtSessionOptions = jwtSessionOptions;
     }
 
     /// <summary>
@@ -202,8 +206,9 @@ public class AuthController : ControllerBase
     /// <summary>
     /// Re-mints the API JWT for the currently-authenticated principal (FHQ-126). Renewal only
     /// extends a LIVE session: [Authorize] requires a valid, unexpired bearer token, so an
-    /// expired or missing token can never be renewed here. The new token is returned in the
-    /// response body — never in a URL.
+    /// expired or missing token can never be renewed here. Total session age is capped via the
+    /// auth_time claim (JwtSessionOptions) so a leaked token cannot be renewed forever. The new
+    /// token is returned in the response body — never in a URL.
     /// </summary>
     [HttpPost("renew-jwt")]
     [Authorize]
@@ -217,10 +222,40 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
+        var now = DateTimeOffset.UtcNow;
+        var authTime = TryParseUnixSeconds(User.FindFirstValue(JwtRegisteredClaimNames.AuthTime));
+        if (authTime is null)
+        {
+            // Grandfathering: tokens minted before auth_time existed (or with an unreadable
+            // claim) start a FRESH cap window at "now". Deliberate choice for already-deployed
+            // kiosks — they cannot re-authenticate silently, and every token minted from here
+            // on carries auth_time, so the cap applies from this renewal onward.
+            authTime = now;
+        }
+        else if (now - authTime.Value > TimeSpan.FromDays(_jwtSessionOptions.MaxSessionAgeDays))
+        {
+            _logger.LogInformation(
+                "JWT renewal rejected for user {UserId} — session age {SessionAgeDays:F0} days exceeds the {MaxSessionAgeDays}-day cap; re-authentication required.",
+                userId, (now - authTime.Value).TotalDays, _jwtSessionOptions.MaxSessionAgeDays);
+            return Unauthorized();
+        }
+
         var email = User.FindFirstValue(JwtRegisteredClaimNames.Name);
-        var token = _jwtTokenService.GenerateToken(userId, email);
+        var token = _jwtTokenService.GenerateToken(userId, email, authTime);
         _logger.LogInformation("JWT renewed for user {UserId}.", userId);
+
+        // OAuth BCP defence-in-depth: token responses must never be cached.
+        Response.Headers.CacheControl = "no-store";
         return Ok(new { token });
+    }
+
+    private static DateTimeOffset? TryParseUnixSeconds(string? value)
+    {
+        if (!long.TryParse(value, out var seconds))
+            return null;
+        if (seconds < DateTimeOffset.MinValue.ToUnixTimeSeconds() || seconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds())
+            return null;
+        return DateTimeOffset.FromUnixTimeSeconds(seconds);
     }
 
     private async Task SyncCalendarEventsAsync(string userId)

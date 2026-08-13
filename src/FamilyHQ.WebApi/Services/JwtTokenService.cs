@@ -14,7 +14,7 @@ public class JwtTokenService(IConfiguration configuration) : IJwtTokenService
     private const string IssuerAndAudience = "FamilyHQ";
     private const int LifetimeDays = 365;
 
-    public string GenerateToken(string userId, string? email)
+    public string GenerateToken(string userId, string? email, DateTimeOffset? authTime = null)
     {
         var claims = new List<Claim>
         {
@@ -23,6 +23,12 @@ public class JwtTokenService(IConfiguration configuration) : IJwtTokenService
         };
         if (!string.IsNullOrEmpty(email))
             claims.Add(new Claim(JwtRegisteredClaimNames.Name, email));
+
+        // auth_time (unix seconds): the ORIGINAL authentication instant. First mint (login
+        // callback) stamps "now"; renewal carries the caller-supplied original through, so the
+        // absolute session-age cap (JwtSessionOptions) cannot be reset by renewing (FHQ-126).
+        var authTimeSeconds = (authTime ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
+        claims.Add(new Claim(JwtRegisteredClaimNames.AuthTime, authTimeSeconds.ToString(), ClaimValueTypes.Integer64));
 
         var jwtKey = configuration["Jwt:SigningKey"]
             ?? throw new InvalidOperationException("JWT signing key is not configured.");

@@ -42,7 +42,16 @@ public class JwtRenewalService : IJwtRenewalService
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
-        await CheckAndRenewAsync(ct);
+        try
+        {
+            await CheckAndRenewAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // Catch-all by design (security review, FHQ-126): the startup check must NEVER fail
+            // app boot — e.g. a JSException from localStorage. The daily loop below retries.
+            _logger.LogWarning(ex, "Startup JWT renewal check failed; the daily loop will retry.");
+        }
         _loop = RunLoopAsync(_cts.Token);
     }
 
@@ -132,6 +141,12 @@ public class JwtRenewalService : IJwtRenewalService
             {
                 _logger.LogDebug("JWT renewal loop cancelled during dispose.");
             }
+            catch (Exception ex)
+            {
+                // A faulted loop must never rethrow out of dispose; the failure was already
+                // logged where it happened.
+                _logger.LogDebug(ex, "JWT renewal loop had faulted before dispose.");
+            }
         }
         _cts.Dispose();
     }
@@ -143,7 +158,21 @@ public class JwtRenewalService : IJwtRenewalService
         {
             while (await timer.WaitForNextTickAsync(token))
             {
-                await CheckAndRenewAsync(token);
+                try
+                {
+                    await CheckAndRenewAsync(token);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // shutdown — handled by the outer catch below
+                }
+                catch (Exception ex)
+                {
+                    // Catch-all by design (security review, FHQ-126): one bad tick (e.g. a
+                    // JSException from localStorage) must not kill the renewal loop for the
+                    // remaining months of kiosk uptime.
+                    _logger.LogWarning(ex, "JWT renewal tick failed; will retry at the next tick.");
+                }
             }
         }
         catch (OperationCanceledException)

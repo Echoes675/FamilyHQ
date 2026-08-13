@@ -264,6 +264,79 @@ public class JwtRenewalServiceTests
         handler.CallCount.Should().Be(2);
     }
 
+    [Fact]
+    public async Task InitializeAsync_WhenStartupCheckThrows_DoesNotPropagate()
+    {
+        // Arrange — e.g. a JSException surfacing from localStorage must never fail app boot
+        var tokenStore = new Mock<IAuthTokenStore>();
+        tokenStore.Setup(s => s.GetTokenAsync())
+            .ThrowsAsync(new InvalidOperationException("localStorage unavailable"));
+        await using var sut = CreateSut(tokenStore);
+
+        // Act
+        var act = () => sut.InitializeAsync();
+
+        // Assert
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task LoopTick_WhenCheckThrows_LoopKeepsTicking()
+    {
+        // Arrange — every check throws; the loop must log and keep ticking, not die
+        var calls = 0;
+        var tokenStore = new Mock<IAuthTokenStore>();
+        tokenStore.Setup(s => s.GetTokenAsync())
+            .Callback(() => calls++)
+            .ThrowsAsync(new InvalidOperationException("localStorage unavailable"));
+        var handler = CreateSuccessHandler();
+        var fakeTime = new FakeTimeProvider(TestNow);
+        await using var sut = CreateSut(tokenStore, handler, timeProvider: fakeTime);
+        await sut.InitializeAsync(); // startup check = call 1 (throws, swallowed)
+
+        // Act — first tick (throws, must be caught) then a second tick (must still happen)
+        fakeTime.Advance(TimeSpan.FromDays(1));
+        for (var i = 0; i < 200 && calls < 2; i++)
+        {
+            await Task.Delay(10);
+        }
+        calls.Should().Be(2, "the first tick should have run its check");
+
+        fakeTime.Advance(TimeSpan.FromDays(1));
+        for (var i = 0; i < 200 && calls < 3; i++)
+        {
+            await Task.Delay(10);
+        }
+
+        // Assert — the loop survived the first tick's exception
+        calls.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_AfterFailingTicks_DoesNotThrow()
+    {
+        // Arrange
+        var calls = 0;
+        var tokenStore = new Mock<IAuthTokenStore>();
+        tokenStore.Setup(s => s.GetTokenAsync())
+            .Callback(() => calls++)
+            .ThrowsAsync(new InvalidOperationException("localStorage unavailable"));
+        var fakeTime = new FakeTimeProvider(TestNow);
+        var sut = CreateSut(tokenStore, CreateSuccessHandler(), timeProvider: fakeTime);
+        await sut.InitializeAsync();
+        fakeTime.Advance(TimeSpan.FromDays(1));
+        for (var i = 0; i < 200 && calls < 2; i++)
+        {
+            await Task.Delay(10);
+        }
+
+        // Act
+        var act = () => sut.DisposeAsync().AsTask();
+
+        // Assert — a faulted/erroring loop must never rethrow out of dispose
+        await act.Should().NotThrowAsync();
+    }
+
     #endregion
 
     #region Helpers
