@@ -432,6 +432,35 @@ public class DatabaseTokenStoreTests
     }
 
     [Fact]
+    public async Task MarkNeedsReauthAsync_WhenAlreadyNeedsReauth_KeepsOriginalRecordAndDoesNotBroadcast()
+    {
+        // FHQ-85: multiple catch sites (worker, sync service, exception handler, webhook
+        // registration) may all observe the same dead token — only the first mark may write
+        // and broadcast, so the kiosk is not spammed and the original failure record survives.
+        var (sut, broadcasterMock) = CreateSutWithBroadcaster();
+        var originalSince = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var existing = new UserToken
+        {
+            UserId = "u-already-marked",
+            Provider = "Google",
+            RefreshToken = "ignored",
+            AuthStatus = TokenAuthStatus.NeedsReauth,
+            LastAuthErrorDescription = "original failure",
+            AuthStatusChangedAt = originalSince
+        };
+        _db.Setup<UserToken>([existing]);
+
+        await sut.MarkNeedsReauthAsync("u-already-marked", "later duplicate failure", CancellationToken.None);
+
+        existing.LastAuthErrorDescription.Should().Be("original failure");
+        existing.AuthStatusChangedAt.Should().Be(originalSince);
+        _db.SaveChangesCount.Should().Be(0);
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task MarkNeedsReauthAsync_WhenNoTokenRow_DoesNotBroadcast()
     {
         var (sut, broadcasterMock) = CreateSutWithBroadcaster();
@@ -577,7 +606,18 @@ public class DatabaseTokenStoreTests
         _db.OnSaveChanges = () =>
         {
             calls++;
-            if (calls == 1) throw new DbUpdateConcurrencyException("simulated lost race");
+            if (calls == 1)
+            {
+                // The fake reuses the same entity instance on the retry's re-read, but real EF
+                // reloads fresh DB values after ClearTrackedEntities. Model that reload here:
+                // the conflicting writer did NOT mark NeedsReauth (e.g. a token rotation bumped
+                // the row), so the retried read must see Active again — otherwise the FHQ-85
+                // already-marked guard would (correctly) skip the re-apply.
+                existing.AuthStatus = TokenAuthStatus.Active;
+                existing.LastAuthErrorDescription = null;
+                existing.AuthStatusChangedAt = null;
+                throw new DbUpdateConcurrencyException("simulated lost race");
+            }
             return 1;
         };
         var sut = CreateSut(userId);

@@ -200,6 +200,18 @@ public class DatabaseTokenStore : ITokenStore
                     return;
                 }
 
+                if (existingToken.AuthStatus == TokenAuthStatus.NeedsReauth)
+                {
+                    // FHQ-85: multiple catch sites (sync worker, sync service, exception handler,
+                    // webhook registration) may observe the same dead token. Only the first mark
+                    // writes and broadcasts — keep the original failure record and don't spam
+                    // the kiosk with duplicate ConnectionStatusUpdated notifications.
+                    _logger.LogDebug(
+                        "User {UserId} token already marked NeedsReauth; skipping duplicate mark.",
+                        userId);
+                    return;
+                }
+
                 existingToken.AuthStatus = TokenAuthStatus.NeedsReauth;
                 existingToken.LastAuthErrorDescription = Truncate(errorDescription, 512);
                 existingToken.AuthStatusChangedAt = DateTimeOffset.UtcNow;

@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Middleware;
 using FluentAssertions;
@@ -285,6 +286,63 @@ public class DomainExceptionHandlerTests
         captured!.ProblemDetails.Extensions["source"].Should().Be("calendar_api");
     }
 
+    [Fact]
+    public async Task GoogleReauthRequiredException_WithUserId_PersistsNeedsReauthOnce()
+    {
+        // FHQ-85: the 409 mapping point is the single foreground seam that sees every reauth-required
+        // request (event writes, manual sync, webhook registration) — it must also persist the flag
+        // so the reconnect banner appears without waiting for a background sync to fail.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", "raw-body", "user-1"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("user-1", "Token has been expired or revoked.", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_WithoutUserId_StillMaps409AndDoesNotMark()
+    {
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "insufficient permission"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_WhenMarkingFails_StillMaps409()
+    {
+        // Persistence failure must never mask the 409 contract — the background sync path
+        // re-attempts the mark on its next failure.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+        tokenStore
+            .Setup(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", null, "user-1"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+    }
+
     private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut(
         Action<ProblemDetailsContext>? callback = null)
     {
@@ -298,5 +356,19 @@ public class DomainExceptionHandlerTests
         var handler = new DomainExceptionHandler(problemDetails.Object, logger.Object);
         var context = new DefaultHttpContext();
         return (handler, context);
+    }
+
+    private static (DomainExceptionHandler Handler, HttpContext Context, Mock<ITokenStore> TokenStore) CreateSutWithTokenStore()
+    {
+        var (handler, context) = CreateSut();
+
+        var tokenStore = new Mock<ITokenStore>();
+        var services = new Mock<IServiceProvider>();
+        services
+            .Setup(s => s.GetService(typeof(ITokenStore)))
+            .Returns(tokenStore.Object);
+        context.RequestServices = services.Object;
+
+        return (handler, context, tokenStore);
     }
 }
