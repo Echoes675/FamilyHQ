@@ -1,8 +1,11 @@
 @using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.WebUi.Services
+@using Microsoft.Extensions.Logging
 @inject IJSRuntime JSRuntime
 @inject IWeatherUiService WeatherService
-@implements IDisposable
+@inject TimeProvider TimeProvider
+@inject ILogger<DayView> Logger
+@implements IAsyncDisposable
 
 @* Day nav bar *@
 <div class="flex justify-between items-center mb-4">
@@ -81,7 +84,7 @@
     </div>
     <div class="day-body-scrollable" id="day-body-scrollable">
         <div class="day-body-flex">
-            @if (SelectedDate == DateTime.Today)
+            @if (NowLinePosition.IsVisible(SelectedDate, TimeProvider))
             {
                 <div class="current-time-line" style="top: @GetCurrentTimeTopPosition()%" id="current-time-line"></div>
             }
@@ -152,6 +155,11 @@
     private DateTime? _lastScrolledDate;
     private DateOnly _lastLoadedDate;
 
+    // FHQ-127: re-render every minute so the now-line keeps moving on a quiet calendar day.
+    private static readonly TimeSpan NowLineRefreshPeriod = TimeSpan.FromMinutes(1);
+    private readonly CancellationTokenSource _nowLineCts = new();
+    private Task? _nowLineLoop;
+
     private bool _reorderMode;
     private List<CalendarSummaryViewModel> _reorderList = new();
 
@@ -196,13 +204,28 @@
     protected override void OnInitialized()
     {
         WeatherService.OnWeatherChanged += HandleWeatherChanged;
+        _nowLineLoop = NowLineRefreshLoop.RunAsync(
+            TimeProvider, NowLineRefreshPeriod, () => InvokeAsync(StateHasChanged), Logger, _nowLineCts.Token);
     }
 
     private void HandleWeatherChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         WeatherService.OnWeatherChanged -= HandleWeatherChanged;
+        _nowLineCts.Cancel();
+        if (_nowLineLoop is not null)
+        {
+            try
+            {
+                await _nowLineLoop;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Now-line refresh loop faulted during component disposal");
+            }
+        }
+        _nowLineCts.Dispose();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -253,11 +276,7 @@
         OnAddEvent.InvokeAsync((startDateTime, calendarId));
     }
 
-    private double GetCurrentTimeTopPosition()
-    {
-        var now = DateTime.Now.TimeOfDay;
-        return (now.TotalMinutes / 1440.0) * 100;
-    }
+    private double GetCurrentTimeTopPosition() => NowLinePosition.TopPercent(TimeProvider);
 
     private List<PlacedEvent> GetPlacedEvents(IEnumerable<CalendarEventViewModel> events)
     {
