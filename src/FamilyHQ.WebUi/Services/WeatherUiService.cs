@@ -24,7 +24,7 @@ public class WeatherUiService : IWeatherUiService
         _signalRService = signalRService;
         _logger = logger;
 
-        _weatherUpdatedHandler = () => _ = RefreshAsync();
+        _weatherUpdatedHandler = () => _ = RefreshFromSignalRAsync();
         _signalRService.OnWeatherUpdated += _weatherUpdatedHandler;
     }
 
@@ -109,6 +109,21 @@ public class WeatherUiService : IWeatherUiService
         Settings = await response.Content.ReadFromJsonAsync<WeatherSettingDto>();
         OnWeatherChanged?.Invoke();
         return Settings!;
+    }
+
+    private async Task RefreshFromSignalRAsync()
+    {
+        // Fire-and-forget from the SignalR handler — RefreshAsync only handles
+        // HttpRequestException itself, so anything else (e.g. malformed JSON)
+        // must be observed here or it vanishes silently (FHQ-125).
+        try
+        {
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Weather refresh after SignalR update failed");
+        }
     }
 
     private async Task<T?> GetOrDefaultAsync<T>(string url) where T : class

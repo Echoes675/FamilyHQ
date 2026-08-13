@@ -111,7 +111,10 @@ public class VersionService : IVersionService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Reconnect-driven version check failed");
+            // CheckAsync handles expected transport failures internally (Debug);
+            // anything reaching this handler is unexpected — an async void
+            // handler must never let it escape unobserved (FHQ-125).
+            _logger.LogWarning(ex, "Reconnect-driven version check failed unexpectedly");
         }
     }
 

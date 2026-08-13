@@ -27,11 +27,7 @@ public class ThemeService : IThemeService, IAsyncDisposable
         _displaySettingService = displaySettingService;
         _logger = logger;
 
-        _themeChangedHandler = period =>
-        {
-            if (_displaySettingService.IsAutoTheme)
-                _ = SetThemeAsync(period);
-        };
+        _themeChangedHandler = period => _ = ApplyPushedThemeChangeAsync(period);
         _signalRService.OnThemeChanged += _themeChangedHandler;
     }
 
@@ -69,6 +65,21 @@ public class ThemeService : IThemeService, IAsyncDisposable
         catch (HttpRequestException ex)
         {
             _logger.LogDebug(ex, "Failed to apply current theme period; leaving theme unchanged.");
+        }
+    }
+
+    private async Task ApplyPushedThemeChangeAsync(string period)
+    {
+        // Fire-and-forget from the SignalR handler — exceptions must be
+        // observed here or they vanish silently (FHQ-125).
+        try
+        {
+            if (_displaySettingService.IsAutoTheme)
+                await SetThemeAsync(period);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to apply pushed theme change for {Period}", period);
         }
     }
 

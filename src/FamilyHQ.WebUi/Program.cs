@@ -38,7 +38,20 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
-        builder.Services.AddSingleton(sp => new SignalRService(backendUrl));
+        // FHQ-125: connection-state coordinator — logs connection failures, drives the
+        // stale-data indicator, and restarts a permanently-lost hub connection with backoff.
+        var reconnectOptions = builder.Configuration.GetSection("SignalRReconnect")
+            .Get<SignalRReconnectOptions>() ?? new SignalRReconnectOptions();
+        builder.Services.AddSingleton(reconnectOptions);
+        builder.Services.AddSingleton<ISignalRConnectionCoordinator>(sp => new SignalRConnectionCoordinator(
+            sp.GetRequiredService<ILogger<SignalRConnectionCoordinator>>(),
+            TimeProvider.System,
+            sp.GetRequiredService<SignalRReconnectOptions>()));
+        builder.Services.AddSingleton<ISignalRConnectionMonitor>(sp =>
+            sp.GetRequiredService<ISignalRConnectionCoordinator>());
+        builder.Services.AddSingleton(sp => new SignalRService(
+            backendUrl,
+            sp.GetRequiredService<ISignalRConnectionCoordinator>()));
         builder.Services.AddSingleton<ISignalRConnectionEvents>(sp => sp.GetRequiredService<SignalRService>());
 
         builder.Services.AddHttpClient<IThemeService, ThemeService>(client =>
