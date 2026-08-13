@@ -7,12 +7,18 @@ namespace FamilyHQ.WebUi.Services.Auth;
 public class CustomAuthorizationMessageHandler : DelegatingHandler
 {
     private readonly IAuthTokenStore _tokenStore;
+    private readonly IJwtRenewalService _renewalService;
     private readonly NavigationManager _navigationManager;
     private readonly ILogger<CustomAuthorizationMessageHandler> _logger;
 
-    public CustomAuthorizationMessageHandler(IAuthTokenStore tokenStore, NavigationManager navigationManager, ILogger<CustomAuthorizationMessageHandler> logger)
+    public CustomAuthorizationMessageHandler(
+        IAuthTokenStore tokenStore,
+        IJwtRenewalService renewalService,
+        NavigationManager navigationManager,
+        ILogger<CustomAuthorizationMessageHandler> logger)
     {
         _tokenStore = tokenStore;
+        _renewalService = renewalService;
         _navigationManager = navigationManager;
         _logger = logger;
     }
@@ -30,9 +36,25 @@ public class CustomAuthorizationMessageHandler : DelegatingHandler
 
         if (hadToken && response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
-            _logger.LogWarning("Bearer token rejected (401); clearing token and redirecting to login");
-            await _tokenStore.ClearTokenAsync();
-            _navigationManager.NavigateTo("/", forceLoad: true);
+            // FHQ-126: before signing the kiosk out, attempt ONE silent renewal and retry the
+            // original request once. The renewal goes through the handler-free "Auth" client, so
+            // it cannot re-enter this handler, and this block is structurally single-shot — the
+            // retried response falls through to the clear+redirect below if it is still 401.
+            var renewedToken = await _renewalService.RenewNowAsync(cancellationToken);
+            if (!string.IsNullOrEmpty(renewedToken))
+            {
+                _logger.LogInformation("Bearer token rejected (401); renewed JWT and retrying the request once.");
+                response.Dispose();
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", renewedToken);
+                response = await base.SendAsync(request, cancellationToken);
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning("Bearer token rejected (401); clearing token and redirecting to login");
+                await _tokenStore.ClearTokenAsync();
+                _navigationManager.NavigateTo("/", forceLoad: true);
+            }
         }
 
         return response;

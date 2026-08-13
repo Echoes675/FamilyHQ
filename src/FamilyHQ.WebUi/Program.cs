@@ -31,6 +31,24 @@ public class Program
         builder.Services.AddTransient<CorrelationIdMessageHandler>();
         builder.Services.AddTransient<CustomAuthorizationMessageHandler>();
 
+        // FHQ-126: sliding JWT renewal so the kiosk never reaches the token-expiry cliff.
+        var jwtRenewalOptions = new JwtRenewalOptions();
+        builder.Configuration.GetSection(JwtRenewalOptions.SectionName).Bind(jwtRenewalOptions);
+        jwtRenewalOptions.Validate();
+        builder.Services.AddSingleton(jwtRenewalOptions);
+        builder.Services.AddScoped<IJwtRenewalService>(sp => new JwtRenewalService(
+            // The handler-free "Auth" client: the renewal call must not pass through
+            // CustomAuthorizationMessageHandler (which itself triggers renewal on 401).
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("Auth"),
+            sp.GetRequiredService<IAuthTokenStore>(),
+            sp.GetRequiredService<JwtRenewalOptions>(),
+            // Deliberately TimeProvider.System, NOT the app-wide KioskTimeProvider: the kiosk
+            // clock's dev-tools day offset shifts GetUtcNow(), which would shrink the token's
+            // apparent remaining lifetime and cause spurious renewals when E2E advances the
+            // displayed day. Token-expiry math must always use the real clock.
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<JwtRenewalService>>()));
+
         builder.Services.AddHttpClient<ICalendarApiService, CalendarApiService>(client =>
         {
             client.BaseAddress = new Uri(backendUrl);
@@ -110,6 +128,8 @@ public class Program
 
         var host = builder.Build();
         await host.Services.GetRequiredService<IVersionService>().InitializeAsync();
+        // FHQ-126: startup expiry check, then a daily background re-check.
+        await host.Services.GetRequiredService<IJwtRenewalService>().InitializeAsync();
         await host.RunAsync();
     }
 }

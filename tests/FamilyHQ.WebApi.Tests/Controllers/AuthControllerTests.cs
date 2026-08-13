@@ -396,6 +396,103 @@ public class AuthControllerTests
         decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
     }
 
+    [Fact]
+    public void RenewJwt_WithAuthenticatedPrincipal_ReturnsNewTokenForSameUser()
+    {
+        // Arrange
+        var httpContext = new DefaultHttpContext
+        {
+            User = CreateAuthenticatedPrincipal("user1", "user1@example.com")
+        };
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.RenewJwt();
+
+        // Assert — token in the response body (never a URL), same claims + lifetime policy
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        var doc = JsonSerializer.Deserialize<JsonElement>(json);
+        var token = doc.GetProperty("token").GetString()!;
+        token.Should().NotBeNullOrEmpty();
+
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.Claims.Should().Contain(c => c.Type == JwtRegisteredClaimNames.Sub && c.Value == "user1");
+        decoded.Claims.Should().Contain(c => c.Type == JwtRegisteredClaimNames.Name && c.Value == "user1@example.com");
+        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
+    }
+
+    [Fact]
+    public void RenewJwt_WithoutNameClaim_ReturnsTokenWithoutNameClaim()
+    {
+        // Arrange
+        var httpContext = new DefaultHttpContext
+        {
+            User = CreateAuthenticatedPrincipal("user1", email: null)
+        };
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.RenewJwt();
+
+        // Assert
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        var doc = JsonSerializer.Deserialize<JsonElement>(json);
+        var token = doc.GetProperty("token").GetString()!;
+
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.Claims.Should().NotContain(c => c.Type == JwtRegisteredClaimNames.Name);
+    }
+
+    [Fact]
+    public void RenewJwt_WhenSubClaimMissing_ReturnsUnauthorized()
+    {
+        // Arrange — authenticated identity but no "sub" claim (should never happen with our tokens)
+        var identity = new System.Security.Claims.ClaimsIdentity(
+            new[] { new System.Security.Claims.Claim(JwtRegisteredClaimNames.Name, "user1@example.com") },
+            authenticationType: "TestAuth");
+        var httpContext = new DefaultHttpContext
+        {
+            User = new System.Security.Claims.ClaimsPrincipal(identity)
+        };
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.RenewJwt();
+
+        // Assert
+        result.Should().BeOfType<UnauthorizedResult>();
+    }
+
+    [Fact]
+    public void RenewJwt_IsProtectedByAuthorizeAttribute()
+    {
+        // Arrange
+        var method = typeof(AuthController).GetMethod(nameof(AuthController.RenewJwt))!;
+
+        // Assert — renewal must only extend a LIVE session; no anonymous path
+        method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), inherit: true)
+            .Should().NotBeEmpty();
+        method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute), inherit: true)
+            .Should().BeEmpty();
+    }
+
+    private static System.Security.Claims.ClaimsPrincipal CreateAuthenticatedPrincipal(string userId, string? email)
+    {
+        var claims = new List<System.Security.Claims.Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, userId),
+            new(JwtRegisteredClaimNames.UniqueName, userId)
+        };
+        if (!string.IsNullOrEmpty(email))
+            claims.Add(new(JwtRegisteredClaimNames.Name, email));
+
+        // MapInboundClaims=false in Program.cs keeps raw claim names ("sub"/"name") on the principal.
+        return new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(claims, authenticationType: "TestAuth"));
+    }
+
     private static string CreateTestIdToken(string sub, string? email = null)
     {
         var header = Base64UrlEncode("{\"alg\":\"none\",\"typ\":\"JWT\"}");
@@ -535,7 +632,8 @@ public class AuthControllerTests
             syncOptions,
             new Mock<ILogger<AuthController>>().Object,
             dataProtectionProvider,
-            cache)
+            cache,
+            new FamilyHQ.WebApi.Services.JwtTokenService(configuration))
         {
             ControllerContext = new ControllerContext
             {
