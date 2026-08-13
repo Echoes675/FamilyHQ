@@ -204,7 +204,7 @@
     protected override void OnInitialized()
     {
         WeatherService.OnWeatherChanged += HandleWeatherChanged;
-        _nowLineLoop = NowLineRefreshLoop.RunAsync(
+        _nowLineLoop = PeriodicUiRefreshLoop.RunAsync(
             TimeProvider, NowLineRefreshPeriod, () => InvokeAsync(StateHasChanged), Logger, _nowLineCts.Token);
     }
 
