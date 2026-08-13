@@ -743,7 +743,8 @@ public class AuthControllerTests
             new HttpClient(httpHandlerMock.Object),
             options,
             new Mock<ILogger<GoogleAuthService>>().Object,
-            idTokenValidatorMock.Object);
+            idTokenValidatorMock.Object,
+            new Mock<ITokenStore>().Object);
 
         // IConfiguration
         var configPairs = new List<KeyValuePair<string, string?>>();

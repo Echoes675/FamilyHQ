@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FluentAssertions;
@@ -16,7 +17,7 @@ public class GoogleAuthServiceTests
     [Fact]
     public async Task ExchangeCodeForTokenAsync_WhenResponseContainsIdToken_ExtractsUserIdFromSub()
     {
-        var (httpMock, systemUnderTest, _, validatorMock) = CreateSutFull();
+        var (httpMock, systemUnderTest, _, validatorMock, _) = CreateSutFull();
         validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IdTokenClaims("google-user-123", "user@example.com"));
 
@@ -73,7 +74,7 @@ public class GoogleAuthServiceTests
     [Fact]
     public async Task ExchangeCodeForTokenAsync_WhenIdTokenValidationFails_ThrowsIdTokenValidationException()
     {
-        var (httpMock, systemUnderTest, _, validatorMock) = CreateSutFull();
+        var (httpMock, systemUnderTest, _, validatorMock, _) = CreateSutFull();
         validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IdTokenValidationException("Signature validation failed."));
 
@@ -347,21 +348,175 @@ public class GoogleAuthServiceTests
             It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
     }
 
+    // ── FHQ-86: rotated-refresh-token persistence ──────────────────────────
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenResponseContainsRotatedRefreshToken_PersistsRotatedTokenBeforeReturning()
+    {
+        var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "rotated-refresh-token");
+
+        var result = await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        result.AccessToken.Should().Be("new-access-123");
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync("rotated-refresh-token", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenPersistingRotatedToken_UsesUncancellableToken()
+    {
+        var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "rotated-refresh-token");
+        using var callerCts = new CancellationTokenSource();
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token", callerCts.Token);
+
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync("rotated-refresh-token", CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenResponseHasNoRefreshToken_DoesNotSaveToTokenStore()
+    {
+        var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: null);
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenResponseHasEmptyRefreshToken_DoesNotSaveToTokenStore()
+    {
+        var (httpMock, sut, tokenStoreMock) = CreateSutWithTokenStore();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "");
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        tokenStoreMock.Verify(
+            t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenPersistingRotatedTokenFails_LogsErrorAndStillReturnsAccessToken()
+    {
+        var (httpMock, sut, loggerMock, _, tokenStoreMock) = CreateSutFull();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "rotated-refresh-token");
+        tokenStoreMock
+            .Setup(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("token store unavailable"));
+
+        var result = await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        result.AccessToken.Should().Be("new-access-123");
+        loggerMock.Verify(l => l.Log(
+            LogLevel.Error, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("rotated refresh token")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenPersistingRotatedTokenFails_DoesNotLogTokenValue()
+    {
+        var (httpMock, sut, loggerMock, _, tokenStoreMock) = CreateSutFull();
+        const string rotatedToken = "rotated-SECRET-refresh-token-VALUE";
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: rotatedToken);
+        tokenStoreMock
+            .Setup(t => t.SaveRefreshTokenAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("token store unavailable"));
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        loggerMock.Invocations
+            .SelectMany(i => i.Arguments)
+            .Select(a => a?.ToString() ?? string.Empty)
+            .Should().NotContain(s => s.Contains(rotatedToken));
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenRotatedTokenPersisted_DoesNotLogTokenValue()
+    {
+        var (httpMock, sut, loggerMock, _, _) = CreateSutFull();
+        const string rotatedToken = "rotated-SECRET-refresh-token-VALUE";
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: rotatedToken);
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        loggerMock.Invocations
+            .SelectMany(i => i.Arguments)
+            .Select(a => a?.ToString() ?? string.Empty)
+            .Should().NotContain(s => s.Contains(rotatedToken));
+    }
+
+    [Fact]
+    public async Task RefreshAccessTokenAsync_WhenRotatedTokenPersisted_LogsRotationAtInformation()
+    {
+        var (httpMock, sut, loggerMock, _, _) = CreateSutFull();
+        SetupSuccessfulRefreshResponse(httpMock, rotatedRefreshToken: "rotated-refresh-token");
+
+        await sut.RefreshAccessTokenAsync("old-refresh-token");
+
+        loggerMock.Verify(l => l.Log(
+            LogLevel.Information, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("rotated")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
+
+    private static void SetupSuccessfulRefreshResponse(Mock<HttpMessageHandler> httpMock, string? rotatedRefreshToken)
+    {
+        var payload = new Dictionary<string, object>
+        {
+            ["access_token"] = "new-access-123",
+            ["expires_in"] = 3600,
+            ["token_type"] = "Bearer"
+        };
+        if (rotatedRefreshToken != null)
+            payload["refresh_token"] = rotatedRefreshToken;
+
+        httpMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(payload))
+            });
+    }
 
     private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService Sut) CreateSut()
     {
-        var (httpMock, sut, _, _) = CreateSutFull();
+        var (httpMock, sut, _, _, _) = CreateSutFull();
         return (httpMock, sut);
     }
 
     private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService Sut, Mock<ILogger<GoogleAuthService>> LoggerMock) CreateSutWithLogger()
     {
-        var (httpMock, sut, loggerMock, _) = CreateSutFull();
+        var (httpMock, sut, loggerMock, _, _) = CreateSutFull();
         return (httpMock, sut, loggerMock);
     }
 
-    private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService Sut, Mock<ILogger<GoogleAuthService>> LoggerMock, Mock<IIdTokenValidator> ValidatorMock) CreateSutFull()
+    private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService Sut, Mock<ITokenStore> TokenStoreMock) CreateSutWithTokenStore()
+    {
+        var (httpMock, sut, _, _, tokenStoreMock) = CreateSutFull();
+        return (httpMock, sut, tokenStoreMock);
+    }
+
+    private static (Mock<HttpMessageHandler> HttpMock, GoogleAuthService Sut, Mock<ILogger<GoogleAuthService>> LoggerMock, Mock<IIdTokenValidator> ValidatorMock, Mock<ITokenStore> TokenStoreMock) CreateSutFull()
     {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(httpMessageHandlerMock.Object);
@@ -379,7 +534,9 @@ public class GoogleAuthServiceTests
         validatorMock.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IdTokenClaims("default-user", "default@example.com"));
 
-        var sut = new GoogleAuthService(httpClient, options, loggerMock.Object, validatorMock.Object);
-        return (httpMessageHandlerMock, sut, loggerMock, validatorMock);
+        var tokenStoreMock = new Mock<ITokenStore>();
+
+        var sut = new GoogleAuthService(httpClient, options, loggerMock.Object, validatorMock.Object, tokenStoreMock.Object);
+        return (httpMessageHandlerMock, sut, loggerMock, validatorMock, tokenStoreMock);
     }
 }
