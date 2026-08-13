@@ -25,6 +25,8 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 
 public class AuthControllerTests
 {
+    private static readonly DateTimeOffset TestNow = new(2026, 8, 13, 12, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public void Login_RedirectsToAuthorizationUrl()
     {
@@ -390,10 +392,10 @@ public class AuthControllerTests
         var doc = JsonSerializer.Deserialize<JsonElement>(json);
         var token = doc.GetProperty("token").GetString()!;
 
-        // Assert — decode the JWT and verify expiry is ~365 days from now in UTC
+        // Assert — decode the JWT and verify expiry is exactly 365 days from the injected clock, UTC
         var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
         decoded.ValidTo.Kind.Should().Be(DateTimeKind.Utc);
-        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
+        decoded.ValidTo.Should().Be(TestNow.AddDays(365).UtcDateTime);
     }
 
     [Fact]
@@ -419,7 +421,7 @@ public class AuthControllerTests
         var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
         decoded.Claims.Should().Contain(c => c.Type == JwtRegisteredClaimNames.Sub && c.Value == "user1");
         decoded.Claims.Should().Contain(c => c.Type == JwtRegisteredClaimNames.Name && c.Value == "user1@example.com");
-        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
+        decoded.ValidTo.Should().Be(TestNow.AddDays(365).UtcDateTime);
     }
 
     [Fact]
@@ -469,7 +471,7 @@ public class AuthControllerTests
     public void RenewJwt_CarriesOriginalAuthTimeThrough()
     {
         // Arrange — session started 100 days ago; renewal must NOT reset the session clock
-        var originalAuthTime = DateTimeOffset.UtcNow.AddDays(-100).ToUnixTimeSeconds();
+        var originalAuthTime = TestNow.AddDays(-100).ToUnixTimeSeconds();
         var httpContext = new DefaultHttpContext
         {
             User = CreateAuthenticatedPrincipal("user1", "user1@example.com", authTime: originalAuthTime.ToString())
@@ -491,7 +493,7 @@ public class AuthControllerTests
     public void RenewJwt_WhenSessionAgeJustUnderCap_ReturnsOk()
     {
         // Arrange — 729 days into the default 730-day cap
-        var authTime = DateTimeOffset.UtcNow.AddDays(-729).ToUnixTimeSeconds();
+        var authTime = TestNow.AddDays(-729).ToUnixTimeSeconds();
         var httpContext = new DefaultHttpContext
         {
             User = CreateAuthenticatedPrincipal("user1", "user1@example.com", authTime: authTime.ToString())
@@ -509,7 +511,7 @@ public class AuthControllerTests
     public void RenewJwt_WhenSessionAgeExceedsCap_ReturnsUnauthorized()
     {
         // Arrange — 731 days exceeds the default 730-day cap; kiosk must re-authenticate
-        var authTime = DateTimeOffset.UtcNow.AddDays(-731).ToUnixTimeSeconds();
+        var authTime = TestNow.AddDays(-731).ToUnixTimeSeconds();
         var httpContext = new DefaultHttpContext
         {
             User = CreateAuthenticatedPrincipal("user1", "user1@example.com", authTime: authTime.ToString())
@@ -544,7 +546,50 @@ public class AuthControllerTests
         var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
         var authTimeClaim = decoded.Claims.Single(c => c.Type == JwtRegisteredClaimNames.AuthTime);
         var mintedAuthTime = DateTimeOffset.FromUnixTimeSeconds(long.Parse(authTimeClaim.Value));
-        mintedAuthTime.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(2));
+        mintedAuthTime.Should().Be(TestNow);
+    }
+
+    [Fact]
+    public void RenewJwt_NearCap_ClampsRenewedTokenExpiryToSessionCap()
+    {
+        // Arrange — 729 days into the default 730-day cap
+        var authTime = TestNow.AddDays(-729);
+        var httpContext = new DefaultHttpContext
+        {
+            User = CreateAuthenticatedPrincipal("user1", "user1@example.com",
+                authTime: authTime.ToUnixTimeSeconds().ToString())
+        };
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.RenewJwt();
+
+        // Assert — the renewed token dies AT the cap (authTime + 730d = 1 day away), not
+        // now + 365d; otherwise the effective leaked-token bound would be cap + lifetime
+        var token = ExtractToken(result);
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Should().Be(authTime.AddDays(730).UtcDateTime);
+    }
+
+    [Fact]
+    public void RenewJwt_NormalRenewal_KeepsFullTokenLifetime()
+    {
+        // Arrange — 100-day-old session: cap expiry is far beyond the normal lifetime
+        var authTime = TestNow.AddDays(-100);
+        var httpContext = new DefaultHttpContext
+        {
+            User = CreateAuthenticatedPrincipal("user1", "user1@example.com",
+                authTime: authTime.ToUnixTimeSeconds().ToString())
+        };
+        var sut = CreateSut(httpContext: httpContext);
+
+        // Act
+        var result = sut.RenewJwt();
+
+        // Assert
+        var token = ExtractToken(result);
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Should().Be(TestNow.AddDays(365).UtcDateTime);
     }
 
     [Fact]
@@ -593,6 +638,13 @@ public class AuthControllerTests
         // MapInboundClaims=false in Program.cs keeps raw claim names ("sub"/"name") on the principal.
         return new System.Security.Claims.ClaimsPrincipal(
             new System.Security.Claims.ClaimsIdentity(claims, authenticationType: "TestAuth"));
+    }
+
+    private static TimeProvider CreateFixedTimeProvider(DateTimeOffset now)
+    {
+        var mock = new Mock<TimeProvider>();
+        mock.Setup(t => t.GetUtcNow()).Returns(now);
+        return mock.Object;
     }
 
     private static string ExtractToken(IActionResult result)
@@ -734,6 +786,10 @@ public class AuthControllerTests
         // MemoryCache — default to real instance
         var cache = memoryCache ?? new MemoryCache(new MemoryCacheOptions());
 
+        // Fixed clock + shared session options so cap/expiry assertions are exact
+        var sessionOptions = new FamilyHQ.WebApi.Configuration.JwtSessionOptions();
+        var clock = CreateFixedTimeProvider(TestNow);
+
         var controller = new AuthController(
             authService,
             tokenStore ?? new Mock<ITokenStore>().Object,
@@ -743,8 +799,9 @@ public class AuthControllerTests
             new Mock<ILogger<AuthController>>().Object,
             dataProtectionProvider,
             cache,
-            new FamilyHQ.WebApi.Services.JwtTokenService(configuration),
-            new FamilyHQ.WebApi.Configuration.JwtSessionOptions())
+            new FamilyHQ.WebApi.Services.JwtTokenService(configuration, sessionOptions, clock),
+            sessionOptions,
+            clock)
         {
             ControllerContext = new ControllerContext
             {

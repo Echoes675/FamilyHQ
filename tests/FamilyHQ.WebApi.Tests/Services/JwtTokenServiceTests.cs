@@ -1,6 +1,8 @@
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Services;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using Moq;
 using System.IdentityModel.Tokens.Jwt;
 using Xunit;
 
@@ -9,6 +11,7 @@ namespace FamilyHQ.WebApi.Tests.Services;
 public class JwtTokenServiceTests
 {
     private const string TestSigningKey = "SuperSecretDummyKeyForFamilyHqSimulatorMVF1";
+    private static readonly DateTimeOffset TestNow = new(2026, 8, 13, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public void GenerateToken_WithEmail_IncludesSubUniqueNameAndNameClaims()
@@ -61,13 +64,13 @@ public class JwtTokenServiceTests
         // Arrange
         var sut = CreateSut();
 
-        // Act
+        // Act — login-mint path (no authTime): full lifetime, unclamped
         var token = sut.GenerateToken("user1", "user1@example.com");
 
         // Assert — same lifetime policy as the original AuthController mint (FHQ-126 scope guard)
         var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
         decoded.ValidTo.Kind.Should().Be(DateTimeKind.Utc);
-        decoded.ValidTo.Should().BeCloseTo(DateTime.UtcNow.AddDays(365), TimeSpan.FromMinutes(2));
+        decoded.ValidTo.Should().Be(TestNow.AddDays(365).UtcDateTime);
     }
 
     [Fact]
@@ -75,16 +78,45 @@ public class JwtTokenServiceTests
     {
         // Arrange
         var sut = CreateSut();
-        var before = DateTimeOffset.UtcNow.AddMinutes(-2).ToUnixTimeSeconds();
 
         // Act
         var token = sut.GenerateToken("user1", "user1@example.com");
 
         // Assert — first mint stamps the original authentication instant as "now"
-        var after = DateTimeOffset.UtcNow.AddMinutes(2).ToUnixTimeSeconds();
         var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
         var authTimeClaim = decoded.Claims.Single(c => c.Type == JwtRegisteredClaimNames.AuthTime);
-        long.Parse(authTimeClaim.Value).Should().BeInRange(before, after);
+        authTimeClaim.Value.Should().Be(TestNow.ToUnixTimeSeconds().ToString());
+    }
+
+    [Fact]
+    public void GenerateToken_WithAuthTimeNearSessionCap_ClampsExpiryToAuthTimePlusCap()
+    {
+        // Arrange — session is 729 days old against the default 730-day cap
+        var sut = CreateSut();
+        var authTime = TestNow.AddDays(-729);
+
+        // Act
+        var token = sut.GenerateToken("user1", "user1@example.com", authTime);
+
+        // Assert — expiry is clamped to authTime + cap (1 day away), NOT now + 365 days,
+        // so the effective leaked-token bound is the cap itself (FHQ-126 security review)
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Should().Be(authTime.AddDays(730).UtcDateTime);
+    }
+
+    [Fact]
+    public void GenerateToken_WithRecentAuthTime_KeepsFullLifetime()
+    {
+        // Arrange — 100-day-old session: cap expiry (now + 630d) is beyond the normal lifetime
+        var sut = CreateSut();
+        var authTime = TestNow.AddDays(-100);
+
+        // Act
+        var token = sut.GenerateToken("user1", "user1@example.com", authTime);
+
+        // Assert — normal renewal keeps the full 365-day lifetime
+        var decoded = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        decoded.ValidTo.Should().Be(TestNow.AddDays(365).UtcDateTime);
     }
 
     [Fact]
@@ -128,6 +160,13 @@ public class JwtTokenServiceTests
             .AddInMemoryCollection(configPairs)
             .Build();
 
-        return new JwtTokenService(configuration);
+        return new JwtTokenService(configuration, new JwtSessionOptions(), CreateFixedTimeProvider(TestNow));
+    }
+
+    private static TimeProvider CreateFixedTimeProvider(DateTimeOffset now)
+    {
+        var mock = new Mock<TimeProvider>();
+        mock.Setup(t => t.GetUtcNow()).Returns(now);
+        return mock.Object;
     }
 }

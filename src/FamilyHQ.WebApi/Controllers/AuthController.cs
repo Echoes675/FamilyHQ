@@ -32,6 +32,7 @@ public class AuthController : ControllerBase
     private readonly IMemoryCache _cache;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly JwtSessionOptions _jwtSessionOptions;
+    private readonly TimeProvider _timeProvider;
 
     internal const string MissingCalendarScopeMessage =
         "Google did not grant calendar access — reconnect and allow the calendar permission.";
@@ -46,7 +47,8 @@ public class AuthController : ControllerBase
         IDataProtectionProvider dataProtectionProvider,
         IMemoryCache cache,
         IJwtTokenService jwtTokenService,
-        JwtSessionOptions jwtSessionOptions)
+        JwtSessionOptions jwtSessionOptions,
+        TimeProvider timeProvider)
     {
         _authService = authService;
         _tokenStore = tokenStore;
@@ -58,6 +60,7 @@ public class AuthController : ControllerBase
         _cache = cache;
         _jwtTokenService = jwtTokenService;
         _jwtSessionOptions = jwtSessionOptions;
+        _timeProvider = timeProvider;
     }
 
     /// <summary>
@@ -222,7 +225,7 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var now = _timeProvider.GetUtcNow();
         var authTime = TryParseUnixSeconds(User.FindFirstValue(JwtRegisteredClaimNames.AuthTime));
         if (authTime is null)
         {
@@ -230,6 +233,9 @@ public class AuthController : ControllerBase
             // claim) start a FRESH cap window at "now". Deliberate choice for already-deployed
             // kiosks — they cannot re-authenticate silently, and every token minted from here
             // on carries auth_time, so the cap applies from this renewal onward.
+            _logger.LogInformation(
+                "JWT renewal grandfathered a fresh session-cap window for user {UserId} (token had no readable auth_time).",
+                userId);
             authTime = now;
         }
         else if (now - authTime.Value > TimeSpan.FromDays(_jwtSessionOptions.MaxSessionAgeDays))
