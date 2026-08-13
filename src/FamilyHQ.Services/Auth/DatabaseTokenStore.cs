@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Security.Cryptography;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Data;
@@ -26,6 +28,13 @@ public class DatabaseTokenStore : ITokenStore
     /// Default OAuth provider
     /// </summary>
     private const string DefaultProvider = "Google";
+
+    /// <summary>
+    /// Reason persisted when a stored refresh token cannot be decrypted (FHQ-90) — e.g. after a
+    /// Data Protection key-ring rotation/loss. Distinguishes an unreadable token from "never connected".
+    /// </summary>
+    internal const string DecryptionFailedReason =
+        "DecryptionFailed: the stored Google connection could not be read — reconnect your Google account.";
 
     /// <summary>
     /// Use SemaphoreSlim for async-compatible locking
@@ -61,33 +70,7 @@ public class DatabaseTokenStore : ITokenStore
             return null;
         }
 
-        await _lock.WaitAsync(ct);
-        try
-        {
-            var userToken = await _dbContext.UserTokens
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
-
-            if (userToken == null)
-            {
-                _logger.LogDebug("No refresh token found for user {UserId}", userId);
-                return null;
-            }
-
-            // Decrypt the stored token
-            var decryptedToken = _dataProtector.Unprotect(userToken.RefreshToken);
-            _logger.LogDebug("Retrieved refresh token for user {UserId}", userId);
-            return decryptedToken;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving refresh token for user {UserId}", userId);
-            return null;
-        }
-        finally
-        {
-            _lock.Release();
-        }
+        return await GetRefreshTokenInternalAsync(userId, ct);
     }
 
     /// <summary>
@@ -101,33 +84,7 @@ public class DatabaseTokenStore : ITokenStore
             return null;
         }
 
-        await _lock.WaitAsync(ct);
-        try
-        {
-            var userToken = await _dbContext.UserTokens
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
-
-            if (userToken == null)
-            {
-                _logger.LogDebug("No refresh token found for user {UserId}", userId);
-                return null;
-            }
-
-            // Decrypt the stored token
-            var decryptedToken = _dataProtector.Unprotect(userToken.RefreshToken);
-            _logger.LogDebug("Retrieved refresh token for user {UserId}", userId);
-            return decryptedToken;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving refresh token for user {UserId}", userId);
-            return null;
-        }
-        finally
-        {
-            _lock.Release();
-        }
+        return await GetRefreshTokenInternalAsync(userId, ct);
     }
 
     public async Task SaveRefreshTokenAsync(string refreshToken, CancellationToken ct = default)
@@ -249,6 +206,73 @@ public class DatabaseTokenStore : ITokenStore
         }
 
         return new AuthStatusResult(token.AuthStatus, token.LastAuthErrorDescription, token.AuthStatusChangedAt);
+    }
+
+    /// <summary>
+    /// Reads and decrypts the stored refresh token (FHQ-90 failure semantics):
+    /// <list type="bullet">
+    /// <item>No row → null ("never connected").</item>
+    /// <item>Unreadable ciphertext (key-ring rotation/loss, corrupt column) → persist NeedsReauth with
+    /// <see cref="DecryptionFailedReason"/>, log Error, THEN return null — callers' null-handling routes
+    /// the user to re-consent, which self-heals by replacing the unreadable token.</item>
+    /// <item>DB failure → log and rethrow; a DB blip must never impersonate "not connected".</item>
+    /// </list>
+    /// </summary>
+    private async Task<string?> GetRefreshTokenInternalAsync(string userId, CancellationToken ct)
+    {
+        UserToken? userToken = null;
+        var decryptionFailed = false;
+
+        await _lock.WaitAsync(ct);
+        try
+        {
+            userToken = await _dbContext.UserTokens
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.UserId == userId && t.Provider == _provider, ct);
+
+            if (userToken == null)
+            {
+                _logger.LogDebug("No refresh token found for user {UserId}", userId);
+                return null;
+            }
+
+            // Decrypt the stored token
+            var decryptedToken = _dataProtector.Unprotect(userToken.RefreshToken);
+            _logger.LogDebug("Retrieved refresh token for user {UserId}", userId);
+            return decryptedToken;
+        }
+        catch (DbException ex)
+        {
+            _logger.LogError(ex, "Database error retrieving refresh token for user {UserId}", userId);
+            throw;
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException)
+        {
+            // CryptographicException: the Data Protection key ring no longer holds the key that
+            // protected this payload (rotation/loss) or the payload is tampered. FormatException:
+            // the column is not even valid base64url. Both mean the token is unreadable — a
+            // fleet-wide key-ring incident must be operator-visible, not look like "never connected".
+            _logger.LogError(ex,
+                "Failed to decrypt stored refresh token for user {UserId} — Data Protection key ring may have been rotated or lost; marking NeedsReauth",
+                userId);
+            decryptionFailed = true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        // Reached only on decryption failure. Mark AFTER releasing the semaphore
+        // (MarkNeedsReauthAsync re-acquires it) and uncancellable — the persisted signal must
+        // survive the caller's request being torn down. Skip when the row is already flagged so
+        // repeated failed reads (every kiosk poll) don't re-save/re-broadcast; matches the
+        // FHQ-85 keep-first-record semantics.
+        if (decryptionFailed && userToken is { AuthStatus: not TokenAuthStatus.NeedsReauth })
+        {
+            await MarkNeedsReauthAsync(userId, DecryptionFailedReason, CancellationToken.None);
+        }
+
+        return null;
     }
 
     private async Task SaveRefreshTokenInternalAsync(string refreshToken, string userId, CancellationToken ct)
