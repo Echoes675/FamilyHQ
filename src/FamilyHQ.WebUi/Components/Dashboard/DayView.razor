@@ -240,25 +240,24 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (SelectedDate.Date == DateTime.Today && _lastScrolledDate != DateTime.Today)
+        // FHQ-132: "today" and "now" come from the injected (kiosk-adjusted) TimeProvider, not
+        // the wall clock, so a simulated kiosk time scrolls to the simulated position. The gate
+        // advances before the interop so a failed scroll is not retried on every render.
+        var plan = DayViewScrollPlan.Decide(SelectedDate, _lastScrolledDate, TimeProvider);
+        _lastScrolledDate = plan.LastScrolledDate;
+        if (plan.ShouldScroll)
         {
-            _lastScrolledDate = DateTime.Today;
             try
             {
-                var currentMins = DateTime.Now.TimeOfDay.TotalMinutes;
-                await JSRuntime.InvokeVoidAsync("eval", $@"
-                    var c = document.getElementById('day-view-container');
-                    if(c) {{
-                        var target = ({currentMins} / 1440) * 1440;
-                        c.scrollTop = target - (c.clientHeight / 4);
-                    }}
-                ");
+                // Imported per invocation (at most once per kiosk day; the browser caches the
+                // module) so no module reference needs disposing when the component tears down.
+                await using var ui = await JSRuntime.InvokeAsync<IJSObjectReference>("import", "./js/ui-helpers.js");
+                await ui.InvokeVoidAsync("scrollDayViewToMinutes", plan.TargetMinutesOfDay);
             }
-            catch { }
-        }
-        else if (SelectedDate.Date != DateTime.Today)
-        {
-            _lastScrolledDate = null;
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Day view scroll-to-now JS interop failed; expected during component teardown");
+            }
         }
     }
 
