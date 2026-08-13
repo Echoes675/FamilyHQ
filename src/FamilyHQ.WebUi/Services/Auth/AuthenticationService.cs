@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using FamilyHQ.WebUi.Services.Correlation;
 
 namespace FamilyHQ.WebUi.Services.Auth;
@@ -72,73 +70,20 @@ public class AuthenticationService : IAuthenticationService
             return;
 
         var token = await _tokenStore.GetTokenAsync();
-        
+
         if (!string.IsNullOrEmpty(token))
         {
-            var (userId, username) = DecodeJwtToken(token);
-            
-            if (!string.IsNullOrEmpty(userId))
+            // Shared decoder (FHQ-126) — also used by JwtRenewalService for the exp claim.
+            var claims = JwtTokenDecoder.Decode(token);
+
+            if (!string.IsNullOrEmpty(claims.UserId))
             {
-                _cachedUserId = userId;
-                _cachedUsername = username;
+                _cachedUserId = claims.UserId;
+                _cachedUsername = claims.Username;
                 _isAuthenticated = true;
             }
         }
 
         _isInitialized = true;
-    }
-
-    /// <summary>
-    /// Decodes a JWT token and extracts the user ID and username claims.
-    /// </summary>
-    private static (string? userId, string? username) DecodeJwtToken(string token)
-    {
-        try
-        {
-            // JWT format: header.payload.signature
-            var parts = token.Split('.');
-            if (parts.Length != 3)
-                return (null, null);
-
-            // Decode the payload (second part)
-            var payload = parts[1];
-            
-            // Add padding if needed
-            var padding = 4 - (payload.Length % 4);
-            if (padding != 4)
-                payload += new string('=', padding);
-
-            var jsonBytes = Convert.FromBase64String(payload.Replace('-', '+').Replace('_', '/'));
-            var jsonString = Encoding.UTF8.GetString(jsonBytes);
-
-            using var doc = JsonDocument.Parse(jsonString);
-            var root = doc.RootElement;
-
-            // Extract "sub" claim (user ID)
-            string? userId = null;
-            if (root.TryGetProperty("sub", out var subElement))
-            {
-                userId = subElement.GetString();
-            }
-
-            // Extract username - try "name" first, then "unique_name"
-            string? username = null;
-            if (root.TryGetProperty("name", out var nameElement))
-            {
-                username = nameElement.GetString();
-            }
-            
-            if (string.IsNullOrEmpty(username) && root.TryGetProperty("unique_name", out var uniqueNameElement))
-            {
-                username = uniqueNameElement.GetString();
-            }
-
-            return (userId, username);
-        }
-        catch
-        {
-            // If decoding fails, return null values
-            return (null, null);
-        }
     }
 }
