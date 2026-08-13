@@ -34,7 +34,7 @@
                 <th class="agenda-day-col">Day</th>
                 @foreach (var cal in (_reorderMode ? _reorderList : Calendars))
                 {
-                    <th data-testid="@($"agenda-calendar-header-{cal.Id}")" class="agenda-cal-col">
+                    <th @key="cal.Id" data-testid="@($"agenda-calendar-header-{cal.Id}")" class="agenda-cal-col">
                         @if (_reorderMode)
                         {
                             var idx = _reorderList.IndexOf(cal);
@@ -73,7 +73,7 @@
                     + (isWeekend ? " agenda-weekend-row" : "")
                     + (isToday ? " agenda-today-row" : "");
 
-                <tr class="@rowCss">
+                <tr @key="date" class="@rowCss">
                     <td data-testid="@($"agenda-day-label-{dateKey}")" class="agenda-day-col"
                         style="cursor:pointer" @onclick="() => OnAddEvent.InvokeAsync(date)">
                         @date.ToString("dd ddd")
@@ -101,7 +101,7 @@
                             .ThenBy(e => e.Start)
                             .ToList();
 
-                        <td data-testid="@($"agenda-cell-{dateKey}-{cal.Id}")"
+                        <td @key="cal.Id" data-testid="@($"agenda-cell-{dateKey}-{cal.Id}")"
                             class="agenda-cal-cell"
                             @onclick="async () => {
                                 if (calDayEvents.Count > 0) await OnDayDrillDown.InvokeAsync(date);
@@ -113,7 +113,7 @@
                                 var displayText = (evt.IsAllDay || isContinuation)
                                     ? evt.Title
                                     : $"{evt.StartLocal():HH:mm} {evt.Title}";
-                                <div data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
+                                <div @key="evt.Id" data-testid="@($"agenda-event-{evt.Id}-{cal.Id}")"
                                      class="agenda-event-line">
                                     @if (evt.IsRecurring)
                                     {

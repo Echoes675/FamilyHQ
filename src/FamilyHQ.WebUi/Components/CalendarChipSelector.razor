@@ -7,7 +7,7 @@
         var isActive = SelectedCalendarIds.Contains(cal.Id);
         var isLast   = isActive && SelectedCalendarIds.Count == 1;
 
-        <div class="chip @(isActive ? "chip-active" : "chip-inactive")"
+        <div @key="cal.Id" class="chip @(isActive ? "chip-active" : "chip-inactive")"
              style="--chip-color: @(cal.Color ?? "#6c757d")"
              @onclick="() => ToggleCalendarAsync(cal)"
              title="@(isLast ? "Use Delete to remove this event entirely." : "")">

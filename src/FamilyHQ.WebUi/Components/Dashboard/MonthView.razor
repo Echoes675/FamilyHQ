@@ -40,7 +40,7 @@
                     if (isToday) cssClass += " today-cell";
                     else if (isWeekend && isCurrentMonth) cssClass += " weekend-cell";
 
-                    <td class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
+                    <td @key="day.Date" class="@cssClass" id="day-cell-@day.Date.ToString("yyyy-MM-dd")">
                         <div class="flex justify-between items-center">
                             <span style="font-weight: @(isToday ? "700" : "400")">@day.Date.Day</span>
                             <button class="btn btn-ghost btn-sm" title="Add event on this day"
@@ -51,7 +51,7 @@
                         <div class="mt-2">
                             @foreach (var evt in day.Events.Take(3))
                             {
-                                <div class="event-capsule"
+                                <div @key="evt.Id" class="event-capsule"
                                      style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)"); cursor: pointer;"
                                      title="@evt.Title (@evt.StartLocal().ToString("t")) - @evt.Location"
                                      @onclick="() => OnEditEvent.InvokeAsync(evt)">
