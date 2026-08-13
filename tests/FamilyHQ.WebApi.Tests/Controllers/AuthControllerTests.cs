@@ -224,6 +224,57 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndNoneStoredAndMarkFails_StillRedirectsToReconsent()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        tokenStoreMock
+            .Setup(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated DB write failure"));
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        // The mark is best-effort — a failed DB write must not 500 the callback when the
+        // remedy IS the re-consent redirect.
+        var redirect = result.Should().BeOfType<RedirectToActionResult>().Subject;
+        redirect.ActionName.Should().Be(nameof(AuthController.Login));
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndCalendarScopeMissing_RedirectsToReconsent()
+    {
+        // Pins precedence: with BOTH the refresh token and the calendar scope missing, the FHQ-87
+        // guard wins over the FHQ-60 missing-scope handling — re-consent fixes both, whereas the
+        // FHQ-60 login-success path would hand over a JWT with no stored refresh token behind it.
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            grantedScope: "openid email",
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var redirect = result.Should().BeOfType<RedirectToActionResult>().Subject;
+        redirect.ActionName.Should().Be(nameof(AuthController.Login));
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync("user1", AuthController.MissingRefreshTokenMessage, CancellationToken.None),
+            Times.Once);
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync(It.IsAny<string>(), AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task Callback_WhenNoRefreshTokenReturnedButOneStored_RedirectsToFrontendLoginSuccess()
     {
         var protectorMock = CreateProtectorMock();

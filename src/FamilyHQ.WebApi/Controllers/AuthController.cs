@@ -157,7 +157,18 @@ public class AuthController : ControllerBase
             _logger.LogWarning(
                 "Login for user {UserId} returned no refresh token and none is stored; redirecting to re-consent.",
                 userId);
-            await _tokenStore.MarkNeedsReauthAsync(userId, MissingRefreshTokenMessage, CancellationToken.None);
+            try
+            {
+                await _tokenStore.MarkNeedsReauthAsync(userId, MissingRefreshTokenMessage, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: the remedy for this state IS the re-consent redirect below, so a
+                // failed status write must not 500 the callback and strand the user.
+                _logger.LogError(ex,
+                    "Failed to mark user {UserId} as needing re-auth after a missing refresh token; continuing to the re-consent redirect.",
+                    userId);
+            }
             return RedirectToAction(nameof(Login));
         }
 
