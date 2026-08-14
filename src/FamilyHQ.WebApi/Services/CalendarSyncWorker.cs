@@ -77,7 +77,9 @@ public class CalendarSyncWorker(
         BackgroundUserContext.Current = job.UserId;
         try
         {
-            if (job.Source == SyncJobSource.DesignationChange)
+            // Reconcile-only work type (FHQ-69): placement reconciler, no Google sync. The mapping
+            // lives in SyncJobSourceExtensions.IsReconcileOnly, shared with the enqueue coalescing guard.
+            if (job.Source.IsReconcileOnly())
             {
                 var reconciler = scope.ServiceProvider.GetRequiredService<IPlacementReconciler>();
                 var rStart = DateTimeOffset.UtcNow.AddDays(-30);

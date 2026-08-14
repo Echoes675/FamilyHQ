@@ -25,15 +25,20 @@ public class CalendarSyncJobRepository(
         if (string.IsNullOrEmpty(userId))
             throw new ArgumentException("userId must not be empty.", nameof(userId));
 
-        // FHQ-69: coalesce only within the same work type. The worker executes DesignationChange
-        // jobs as reconcile-only (placement reconciler, no Google sync) and every other source as a
-        // Google sync (reconciling only when the sync changed data), so coalescing across the two
-        // work types silently drops work: a pending Periodic/Login sync-all must not swallow a
-        // DesignationChange (the reconcile would never run for that cycle), and a pending
+        // FHQ-69: coalesce only within the same work type (see SyncJobSourceExtensions.IsReconcileOnly,
+        // the single source of truth shared with the worker's dispatch branch). The worker executes
+        // DesignationChange jobs as reconcile-only (placement reconciler, no Google sync) and every
+        // other source as a Google sync (reconciling only when the sync changed data), so coalescing
+        // across the two work types silently drops work: a pending Periodic/Login sync-all must not
+        // swallow a DesignationChange (the reconcile would never run for that cycle), and a pending
         // DesignationChange must not swallow a sync (no Google sync would run). Sync-type sources
         // (Webhook/Periodic/Login) still coalesce with each other — the worker does identical work
         // for them.
-        var enqueueIsReconcileOnly = source == SyncJobSource.DesignationChange;
+        //
+        // The lambda compares j.Source against the DesignationChange literal (the DB-side encoding of
+        // IsReconcileOnly for the single reconcile-only member) rather than calling the helper: an
+        // extension-method call inside the expression tree would not translate to SQL.
+        var enqueueIsReconcileOnly = source.IsReconcileOnly();
         var alreadyPending = await context.CalendarSyncJobs.AnyAsync(
             j => j.UserId == userId
                  && j.CalendarInfoId == calendarInfoId
