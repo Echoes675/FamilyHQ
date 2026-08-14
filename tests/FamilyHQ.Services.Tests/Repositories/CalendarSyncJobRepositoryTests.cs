@@ -67,6 +67,110 @@ public class CalendarSyncJobRepositoryTests
         _db.SaveChangesCount.Should().Be(0);
     }
 
+    // --- FHQ-69: coalescing must respect the work type the worker executes ---
+    //
+    // The worker runs two distinct kinds of job: DesignationChange = reconcile-only (placement
+    // reconciler, no Google sync); every other source = Google sync (reconcile only if the sync
+    // changed data). Coalescing across those work types loses work, so the guard must only
+    // coalesce within a work type.
+
+    [Fact]
+    public async Task EnqueueAsync_DesignationChangeWithPendingPeriodicSyncAll_InsertsNewJob()
+    {
+        // A pending Periodic sync-all must NOT swallow a DesignationChange: an unchanged periodic
+        // sync skips the reconciler, so the designation toggle would never be reconciled.
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.Pending,
+            Source = SyncJobSource.Periodic, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
+
+        await sut.EnqueueAsync("u-1", null, SyncJobSource.DesignationChange, null);
+
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j =>
+            j.Status == SyncJobStatus.Pending &&
+            j.CalendarInfoId == null &&
+            j.Source == SyncJobSource.DesignationChange)), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_DesignationChangeWithPendingLoginSyncAll_InsertsNewJob()
+    {
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.Pending,
+            Source = SyncJobSource.Login, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
+
+        await sut.EnqueueAsync("u-1", null, SyncJobSource.DesignationChange, null);
+
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j =>
+            j.Source == SyncJobSource.DesignationChange)), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_DesignationChangeWithPendingDesignationChange_IsCoalesced()
+    {
+        // Two back-to-back designation toggles need only one reconcile pass — same work type, coalesce.
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.Pending,
+            Source = SyncJobSource.DesignationChange, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
+
+        await sut.EnqueueAsync("u-1", null, SyncJobSource.DesignationChange, null);
+
+        mockSet.Verify(s => s.Add(It.IsAny<CalendarSyncJob>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_PeriodicSyncAllWithPendingDesignationChange_InsertsNewJob()
+    {
+        // Converse direction: a pending DesignationChange job is reconcile-only — it performs no
+        // Google sync — so it must not swallow a Periodic sync-all either.
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.Pending,
+            Source = SyncJobSource.DesignationChange, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
+
+        await sut.EnqueueAsync("u-1", null, SyncJobSource.Periodic, null);
+
+        mockSet.Verify(s => s.Add(It.Is<CalendarSyncJob>(j =>
+            j.Source == SyncJobSource.Periodic)), Times.Once);
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_LoginSyncAllWithPendingPeriodicSyncAll_IsCoalesced()
+    {
+        // Pins existing cross-source behaviour within the sync work type: Periodic/Login sync-alls
+        // do identical work in the worker, so they must keep coalescing with each other.
+        var existing = new CalendarSyncJob
+        {
+            UserId = "u-1", CalendarInfoId = null, Status = SyncJobStatus.Pending,
+            Source = SyncJobSource.Periodic, EnqueuedAt = _time.GetUtcNow()
+        };
+        var mockSet = _db.Setup<CalendarSyncJob>([existing]);
+        var sut = CreateSut();
+
+        await sut.EnqueueAsync("u-1", null, SyncJobSource.Login, null);
+
+        mockSet.Verify(s => s.Add(It.IsAny<CalendarSyncJob>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(0);
+    }
+
     [Fact]
     public async Task EnqueueAsync_DoesNotCoalesceAgainstInProgress()
     {
