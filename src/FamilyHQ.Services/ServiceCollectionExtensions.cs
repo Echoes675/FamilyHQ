@@ -18,10 +18,20 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));
 
-        services.AddHttpClient<GoogleAuthService>();
+        // FHQ-91: bind eagerly and fail-fast at boot (JwtSessionOptions precedent) — a bad timeout
+        // must not surface as a hung or instantly-cancelled Google call at runtime.
+        var googleResilience = configuration
+            .GetSection(Options.GoogleResilienceOptions.SectionName)
+            .Get<Options.GoogleResilienceOptions>() ?? new Options.GoogleResilienceOptions();
+        googleResilience.Validate();
+
+        // FHQ-91: explicit per-attempt timeouts (HttpClient's 100s default held the sync worker /
+        // a login request hostage on a hung Google endpoint). Worst-case wall-time math lives on
+        // GoogleResilienceOptions.CalendarTimeout.
+        services.AddHttpClient<GoogleAuthService>(client => client.Timeout = googleResilience.AuthTimeout);
         services.AddSingleton<IIdTokenValidator, JwksIdTokenValidator>();
         // FHQ-154: register the concrete typed client, then decorate it with the retry wrapper.
-        services.AddHttpClient<GoogleCalendarClient>();
+        services.AddHttpClient<GoogleCalendarClient>(client => client.Timeout = googleResilience.CalendarTimeout);
         services.Configure<Options.GoogleResilienceOptions>(
             configuration.GetSection(Options.GoogleResilienceOptions.SectionName));
         services.AddTransient<IGoogleCalendarClient>(sp => new Calendar.ResilientGoogleCalendarClient(
