@@ -28,13 +28,16 @@ public sealed class GoogleResilienceOptions
     public TimeSpan AuthTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// PER-ATTEMPT HttpClient timeout for <c>GoogleCalendarClient</c>: each retry the decorator
-    /// makes is a full HttpClient call, so worst-case wall time per operation is
+    /// PER-REQUEST HttpClient timeout for <c>GoogleCalendarClient</c>: each retry the decorator
+    /// makes is a full client call, so for single-request operations the worst-case wall time is
     /// MaxAttempts × CalendarTimeout plus the inter-attempt sleeps (each capped at
     /// <see cref="RetryAfterInRequestCap"/>, longer waits rethrow). Defaults: 3 × 45s + 2 × 5s
     /// = 145s (~2.4 min) — deliberately tuned below the sync worker's 5-minute
     /// OrphanRecoveryThreshold, with headroom because each attempt may also spend up to
     /// <see cref="AuthTimeout"/> refreshing the access token inside the same call.
+    /// Note: paginated operations (GetEventsAsync, up to 20 pages) get this budget PER PAGE
+    /// within one attempt, so a slow-but-succeeding paged fetch is not bounded by this figure;
+    /// that is safe because orphan recovery never preempts the live single-consumer worker.
     /// </summary>
     public TimeSpan CalendarTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
