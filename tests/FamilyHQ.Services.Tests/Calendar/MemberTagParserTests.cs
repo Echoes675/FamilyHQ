@@ -69,6 +69,56 @@ public class MemberTagParserTests
         result.Should().BeEquivalentTo(["Eoin"]);
     }
 
+    // ── FHQ-75: an empty explicit tag is treated as "no tag present" ──────────
+    //    "[members: ]" (and whitespace/comma-only variants) must fall through to free-form
+    //    name matching instead of authoritatively wiping the event's membership.
+
+    [Fact]
+    public void ParseMembers_EmptyTag_FallsBackToNameMatching()
+    {
+        var result = _sut.ParseMembers("Eoin and Sarah are free [members: ]", KnownNames);
+        result.Should().Contain("Eoin").And.Contain("Sarah");
+    }
+
+    [Fact]
+    public void ParseMembers_EmptyTagWithoutSpace_FallsBackToNameMatching()
+    {
+        var result = _sut.ParseMembers("Lunch with Sarah [members:]", KnownNames);
+        result.Should().BeEquivalentTo(["Sarah"]);
+    }
+
+    [Fact]
+    public void ParseMembers_WhitespaceOnlyTag_FallsBackToNameMatching()
+    {
+        var result = _sut.ParseMembers("Kids football practice [members:   ]", KnownNames);
+        result.Should().BeEquivalentTo(["Kids"]);
+    }
+
+    [Fact]
+    public void ParseMembers_CommaOnlyTag_FallsBackToNameMatching()
+    {
+        // A tag containing only separators carries no member content — same as an empty tag.
+        var result = _sut.ParseMembers("Dinner with Eoin [members: , ]", KnownNames);
+        result.Should().BeEquivalentTo(["Eoin"]);
+    }
+
+    [Fact]
+    public void ParseMembers_EmptyTagNoNameMatch_ReturnsEmpty()
+    {
+        // Fall-through lands on free-form matching, which finds nothing here.
+        var result = _sut.ParseMembers("Grocery shopping [members: ]", KnownNames);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseMembers_TagWithOnlyUnknownName_IsAuthoritativeAndReturnsEmpty()
+    {
+        // Pins the boundary of the FHQ-75 fall-through: a tag WITH content stays authoritative
+        // even when no name resolves — it must NOT fall through and match "Eoin" free-form.
+        var result = _sut.ParseMembers("Dinner with Eoin [members: Bogus]", KnownNames);
+        result.Should().BeEmpty();
+    }
+
     // ── FHQ-46: explicit tag is authoritative (resolves against taggedCalendarNames); ────────────
     //    free-form fallback only ever matches member (non-shared) names. "Family" models the shared
     //    container calendar — present in the all-calendars tag set but NOT in the member set.
