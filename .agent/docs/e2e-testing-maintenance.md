@@ -76,11 +76,16 @@ To run tests with verbose output:
 dotnet test --logger "console;verbosity=detailed"
 ```
 
-To run a specific scenario:
+To run a specific scenario, filter on the Reqnroll-generated method name — the scenario
+title in PascalCase with punctuation removed (e.g. "View upcoming events on the dashboard
+month view" generates `ViewUpcomingEventsOnTheDashboardMonthView`):
 
 ```bash
-dotnet test --filter "Scenario=View upcoming events on the dashboard month view"
+dotnet test --filter "FullyQualifiedName~ViewUpcomingEventsOnTheDashboardMonthView"
 ```
+
+Do not use `--filter "Scenario=<title>"` — Reqnroll does not expose the human scenario
+title as a test trait, so a title-based filter resolves to zero tests.
 
 ---
 
