@@ -166,6 +166,152 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndNoneStored_RedirectsToReconsentInsteadOfLoginSuccess()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var redirect = result.Should().BeOfType<RedirectToActionResult>().Subject;
+        redirect.ActionName.Should().Be(nameof(AuthController.Login));
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndNoneStored_MarksNeedsReauthWithMessage()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        await sut.Callback("dummy_code_for_user1", "test-state");
+
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync("user1", AuthController.MissingRefreshTokenMessage, CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndNoneStored_DoesNotEnqueueSync()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        var queueMock = new Mock<ICalendarSyncJobQueue>();
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            syncJobQueue: queueMock.Object,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        await sut.Callback("dummy_code_for_user1", "test-state");
+
+        queueMock.Verify(
+            q => q.EnqueueAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<SyncJobSource>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndNoneStoredAndMarkFails_StillRedirectsToReconsent()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        tokenStoreMock
+            .Setup(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated DB write failure"));
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        // The mark is best-effort — a failed DB write must not 500 the callback when the
+        // remedy IS the re-consent redirect.
+        var redirect = result.Should().BeOfType<RedirectToActionResult>().Subject;
+        redirect.ActionName.Should().Be(nameof(AuthController.Login));
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedAndCalendarScopeMissing_RedirectsToReconsent()
+    {
+        // Pins precedence: with BOTH the refresh token and the calendar scope missing, the FHQ-87
+        // guard wins over the FHQ-60 missing-scope handling — re-consent fixes both, whereas the
+        // FHQ-60 login-success path would hand over a JWT with no stored refresh token behind it.
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: null);
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            grantedScope: "openid email",
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var redirect = result.Should().BeOfType<RedirectToActionResult>().Subject;
+        redirect.ActionName.Should().Be(nameof(AuthController.Login));
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync("user1", AuthController.MissingRefreshTokenMessage, CancellationToken.None),
+            Times.Once);
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync(It.IsAny<string>(), AuthController.MissingCalendarScopeMessage, It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedButOneStored_RedirectsToFrontendLoginSuccess()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: "previously-stored-refresh-token");
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        var result = await sut.Callback("dummy_code_for_user1", "test-state");
+
+        var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+        redirect.Url.Should().StartWith("https://frontend.test/login-success?code=");
+    }
+
+    [Fact]
+    public async Task Callback_WhenNoRefreshTokenReturnedButOneStored_DoesNotMarkNeedsReauth()
+    {
+        var protectorMock = CreateProtectorMock();
+        var httpContext = new DefaultHttpContext();
+        SetValidStateCookie(httpContext, protectorMock.Object, "test-state");
+        var tokenStoreMock = CreateTokenStoreMock(storedRefreshToken: "previously-stored-refresh-token");
+        var sut = CreateSut(tokenStore: tokenStoreMock.Object,
+            includeRefreshToken: false,
+            httpContext: httpContext,
+            dataProtectionProvider: CreateProviderMock(protectorMock));
+
+        await sut.Callback("dummy_code_for_user1", "test-state");
+
+        tokenStoreMock.Verify(
+            t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task Callback_WhenGrantMissingCalendarScope_MarksNeedsReauthWithMessage()
     {
         var protectorMock = CreateProtectorMock();
@@ -667,6 +813,19 @@ public class AuthControllerTests
     private static string Base64UrlEncode(string input)
         => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(input))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    /// <summary>
+    /// Token-store mock whose per-user GetRefreshTokenAsync overload returns the given stored token
+    /// (null = nothing stored), as the FHQ-87 callback guard reads it.
+    /// </summary>
+    private static Mock<ITokenStore> CreateTokenStoreMock(string? storedRefreshToken)
+    {
+        var tokenStoreMock = new Mock<ITokenStore>();
+        tokenStoreMock
+            .Setup(t => t.GetRefreshTokenAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(storedRefreshToken);
+        return tokenStoreMock;
+    }
 
     private static Mock<IDataProtector> CreateProtectorMock()
     {
