@@ -4,6 +4,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
+using FluentAssertions;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -180,6 +181,39 @@ public class CalendarSyncWorkerTests
         await worker.DrainAsync(CancellationToken.None);
 
         reconciler.Verify(r => r.ReconcileForUserAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_HttpClientTimeout_FailsRetryable_AndDoesNotReauth()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, queue, sync, _, tokenStore) = CreateSut(job);
+        // FHQ-91: HttpClient's per-attempt timeout surfaces as TaskCanceledException wrapping
+        // TimeoutException. Syncs run with CancellationToken.None, so it can only mean a hung
+        // Google endpoint — a transient failure that must take the retryable path.
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("HttpClient.Timeout elapsed", new TimeoutException()));
+
+        await worker.DrainAsync(CancellationToken.None);
+
+        queue.Verify(q => q.FailAsync(job.Id, It.IsAny<string>(), true, It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+        tokenStore.Verify(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_PlainCancellation_PropagatesWithoutFailingJob()
+    {
+        var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
+        var (worker, queue, sync, _, _) = CreateSut(job);
+        // A genuine cancellation (no TimeoutException inner) is not a job failure — it must
+        // propagate so shutdown semantics are preserved (orphan recovery re-queues the job).
+        sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        await worker.Invoking(w => w.DrainAsync(CancellationToken.None))
+            .Should().ThrowAsync<OperationCanceledException>();
+
+        queue.Verify(q => q.FailAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

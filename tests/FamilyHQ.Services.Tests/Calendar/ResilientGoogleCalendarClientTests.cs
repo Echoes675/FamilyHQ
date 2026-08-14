@@ -126,6 +126,65 @@ public class ResilientGoogleCalendarClientTests
         inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // HttpClient's per-attempt timeout surfaces as TaskCanceledException wrapping TimeoutException
+    // (distinct from caller cancellation, whose token is cancelled) — FHQ-91.
+    private static TaskCanceledException HttpTimeout()
+        => new("The request was canceled due to the configured HttpClient.Timeout elapsing.", new TimeoutException());
+
+    [Fact]
+    public async Task FullPolicy_RetriesHttpTimeout_ThenSucceeds()
+    {
+        var (sut, inner, _) = CreateSut();
+        inner.SetupSequence(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(HttpTimeout())
+            .ReturnsAsync(Array.Empty<CalendarInfo>());
+
+        var result = await sut.GetCalendarsAsync();
+
+        result.Should().BeEmpty();
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task RejectedOnlyPolicy_DoesNotRetryHttpTimeout()
+    {
+        // A timed-out create may still have been processed by Google — retrying risks duplicates.
+        var (sut, inner, _) = CreateSut();
+        inner.Setup(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(HttpTimeout());
+
+        await sut.Invoking(s => s.CreateEventAsync("cal", SampleEvent, "h"))
+            .Should().ThrowAsync<TaskCanceledException>();
+
+        inner.Verify(c => c.CreateEventAsync("cal", It.IsAny<CalendarEvent>(), "h", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task HttpTimeout_ExhaustsMaxAttempts_RethrowsTaskCanceled()
+    {
+        var (sut, inner, _) = CreateSut(maxAttempts: 3);
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(HttpTimeout());
+
+        await sut.Invoking(s => s.GetCalendarsAsync()).Should().ThrowAsync<TaskCanceledException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task CallerCancellation_IsNotRetried()
+    {
+        var (sut, inner, _) = CreateSut();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("canceled", new TimeoutException()));
+
+        await sut.Invoking(s => s.GetCalendarsAsync(cts.Token)).Should().ThrowAsync<TaskCanceledException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task RetryAfterWithinCap_RetriesAfterThatDelay()
     {

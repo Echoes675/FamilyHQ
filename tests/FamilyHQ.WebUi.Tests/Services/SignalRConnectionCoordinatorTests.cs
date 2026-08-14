@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FamilyHQ.WebUi.Services;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,10 @@ public class SignalRConnectionCoordinatorTests
 {
     private static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(10);
+
+    // WaitUntilAsync bounds (real wall-clock, failure path only — see the helper).
+    private static readonly TimeSpan ConditionDeadline = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(10);
 
     [Fact]
     public void IsConnectionDown_BeforeAnyEvents_IsFalse()
@@ -531,23 +536,31 @@ public class SignalRConnectionCoordinatorTests
     }
 
     /// <summary>
-    /// Deterministically waits (via yields, no real timers) until the condition
-    /// holds, then yields a little longer so the coordinator's synchronous
-    /// continuation — e.g. scheduling the next backoff delay — completes too.
+    /// Waits until the condition holds, then yields a little longer so the
+    /// coordinator's synchronous continuation — e.g. scheduling the next backoff
+    /// delay — completes too. Wall-clock-bounded: polls with a yield plus a small
+    /// real delay between checks (the JwtRenewalServiceTests pattern) so the
+    /// thread pool is guaranteed time to run the loop's queued continuation under
+    /// CI load — a fixed yield budget burns scheduler round-trips, not time, and
+    /// expired before the continuation ran (see intermittent-issues issue 10).
+    /// The deadline only bounds the failure path; the normal case exits within
+    /// the first checks in microseconds.
     /// </summary>
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
-        for (var i = 0; i < 10_000; i++)
+        var stopwatch = Stopwatch.StartNew();
+        while (!condition() && stopwatch.Elapsed < ConditionDeadline)
         {
+            await Task.Yield();
             if (condition())
             {
-                await YieldAsync();
-                return;
+                break;
             }
 
-            await Task.Yield();
+            await Task.Delay(PollInterval);
         }
 
         condition().Should().BeTrue("the coordinator should have reached the expected state");
+        await YieldAsync();
     }
 }

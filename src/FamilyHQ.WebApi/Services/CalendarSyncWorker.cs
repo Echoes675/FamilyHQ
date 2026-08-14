@@ -129,7 +129,12 @@ public class CalendarSyncWorker(
             await queue.FailAsync(job.Id, $"Reauth required: {ex.ErrorDescription}", retryable: false, retryAfter: null, stoppingToken);
             logger.LogWarning("Sync job {JobId} for user {UserId} needs re-auth.", job.Id, job.UserId);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // FHQ-91: an HttpClient per-attempt timeout surfaces as TaskCanceledException wrapping
+        // TimeoutException. Syncs run with CancellationToken.None, so that shape can only mean a
+        // hung Google endpoint — route it through the retryable path instead of letting it escape
+        // and stall the job InProgress until orphan recovery. Genuine cancellation still propagates.
+        catch (Exception ex) when (ex is not OperationCanceledException
+            || ex is TaskCanceledException { InnerException: TimeoutException })
         {
             var retryable = job.AttemptCount < opts.MaxSyncAttempts;
             // Cap the exponent so a misconfigured MaxSyncAttempts cannot overflow TimeSpan.FromSeconds.
