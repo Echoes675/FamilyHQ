@@ -99,8 +99,10 @@ public class WebhookRegistrationService(
                 calendarInfoId, ex.Reason);
             await calendarRepository.MarkWebhooksUnsupportedAsync(calendarInfoId, ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not GoogleReauthRequiredException)
         {
+            // FHQ-85: a reauth-required failure must propagate (so RegisterAllAsync can persist
+            // NeedsReauth for the user); every other failure stays contained per-calendar.
             logger.LogError(ex, "Failed to register webhook for calendar {CalendarInfoId}", calendarInfoId);
         }
     }
@@ -125,15 +127,43 @@ public class WebhookRegistrationService(
 
         var calendars = await calendarRepository.GetCalendarsByUserIdAsync(userId, ct);
 
-        foreach (var calendar in calendars)
+        try
         {
-            if (!calendar.WebhooksSupported)
+            foreach (var calendar in calendars)
             {
-                logger.LogDebug("Calendar {CalendarInfoId} marked as not supporting webhooks; skipping.", calendar.Id);
-                continue;
-            }
+                if (!calendar.WebhooksSupported)
+                {
+                    logger.LogDebug("Calendar {CalendarInfoId} marked as not supporting webhooks; skipping.", calendar.Id);
+                    continue;
+                }
 
-            await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, force, ct);
+                await RegisterForCalendarAsync(calendar.Id, calendar.GoogleCalendarId, force, ct);
+            }
+        }
+        catch (GoogleReauthRequiredException ex)
+        {
+            // FHQ-85: first detection of a dead grant can happen HERE — persist it (idempotent)
+            // so the renewal cycle skips this user and the kiosk banner appears, instead of
+            // silently retrying the dead token forever. Remaining calendars share the same
+            // OAuth token, so the loop is aborted. The exception still surfaces to the caller
+            // (foreground register-webhooks → 409 via DomainExceptionHandler).
+            // CancellationToken.None: once reauth is detected, a request abort must not cancel
+            // the mark. A mark failure is logged but never replaces the original reauth
+            // exception — the caller needs the 409/reconnect payload, not a 500.
+            try
+            {
+                await tokenStore.MarkNeedsReauthAsync(userId, ex.ErrorDescription, CancellationToken.None);
+            }
+            catch (Exception markEx)
+            {
+                logger.LogError(markEx,
+                    "Failed to persist NeedsReauth for user {UserId} during webhook registration; rethrowing the original reauth failure.",
+                    userId);
+            }
+            logger.LogWarning(
+                "Webhook registration for user {UserId} requires re-authentication; remaining calendars skipped.",
+                userId);
+            throw;
         }
     }
 
@@ -161,7 +191,18 @@ public class WebhookRegistrationService(
                 continue;
             }
 
-            await RegisterAllAsync(state.UserId, ct: ct);
+            try
+            {
+                await RegisterAllAsync(state.UserId, ct: ct);
+            }
+            catch (GoogleReauthRequiredException)
+            {
+                // FHQ-85: RegisterAllAsync already persisted NeedsReauth for this user; one
+                // dead grant must not abort the renewal cycle for the remaining users.
+                logger.LogInformation(
+                    "Webhook renewal for {UserId} detected re-authentication is required; continuing with remaining users.",
+                    state.UserId);
+            }
         }
     }
 }

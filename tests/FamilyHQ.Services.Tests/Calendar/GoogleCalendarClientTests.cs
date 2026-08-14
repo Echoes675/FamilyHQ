@@ -958,6 +958,69 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetCalendarsAsync_WhenUnauthorized_ReauthExceptionCarriesCurrentUserId()
+    {
+        // Arrange — FHQ-85: catch sites (DomainExceptionHandler, webhook registration) need the
+        // user on the exception to persist NeedsReauth; the client is the seam that knows it.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":{\"code\":401,\"message\":\"Invalid Credentials\"}}")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.UserId.Should().Be("test-user-id");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenRefreshRejectedWithInvalidGrant_ReauthExceptionCarriesCurrentUserId()
+    {
+        // Arrange — FHQ-85: GoogleAuthService only sees the raw refresh-token string, so its
+        // exception has no user; the client must enrich it before it propagates.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("revoked-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent("{\"error\":\"invalid_grant\",\"error_description\":\"Token has been expired or revoked.\"}")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.UserId.Should().Be("test-user-id");
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.TokenRefresh);
+        ex.Which.ErrorDescription.Should().Be("Token has been expired or revoked.");
+    }
+
+    [Fact]
     public async Task GetCalendarsAsync_WhenUnauthorized_EvictsCachedAccessTokenForCurrentUser()
     {
         // Arrange — FHQ-82: a revoked refresh token must not be masked by a still-cached access

@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Net;
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Middleware;
@@ -38,6 +40,13 @@ public sealed class DomainExceptionHandler(
             "Domain exception mapped to {StatusCode} for {Method} {Path}.",
             mapping.Status, httpContext.Request.Method, httpContext.Request.Path);
 
+        // FHQ-85: this is the single point every foreground reauth-required request passes
+        // through — persist NeedsReauth here so the kiosk reconnect banner appears without
+        // waiting for a background sync to also fail. Idempotent: the token store skips the
+        // write/broadcast when the user is already flagged.
+        if (exception is GoogleReauthRequiredException reauth)
+            await TryMarkNeedsReauthAsync(httpContext, reauth);
+
         httpContext.Response.StatusCode = mapping.Status;
 
         if (mapping.RetryAfterSeconds is { } seconds)
@@ -60,6 +69,39 @@ public sealed class DomainExceptionHandler(
             Exception = exception,
             ProblemDetails = problemDetails
         });
+    }
+
+    /// <summary>
+    /// Persists NeedsReauth for the user carried on the exception. Persistence failure must never
+    /// mask the 409 contract, so any error is logged and swallowed — the background sync path
+    /// re-attempts the mark on its next failure. The store call deliberately uses
+    /// <see cref="CancellationToken.None"/>: once reauth is detected, a client abort must not
+    /// cancel the mark (matching the AuthController webhook-registration precedent).
+    /// </summary>
+    private async Task TryMarkNeedsReauthAsync(HttpContext httpContext, GoogleReauthRequiredException exception)
+    {
+        if (exception.UserId is not { } userId)
+        {
+            logger.LogWarning(
+                "Reauth-required exception from {Source} carried no user id; NeedsReauth not persisted for this request.",
+                exception.FailureSource);
+            return;
+        }
+
+        try
+        {
+            var tokenStore = httpContext.RequestServices.GetRequiredService<ITokenStore>();
+            await tokenStore.MarkNeedsReauthAsync(userId, exception.ErrorDescription, CancellationToken.None);
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Benign shutdown-race cancellation (the request token is never passed in).
+            logger.LogDebug(ex, "NeedsReauth persistence cancelled for user {UserId}.", userId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to persist NeedsReauth for user {UserId}.", userId);
+        }
     }
 
     private static Mapping? Map(Exception exception) => exception switch

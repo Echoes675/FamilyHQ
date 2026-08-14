@@ -77,10 +77,13 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             _logger.LogWarning(
                 "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
                 operation, (int)response.StatusCode, truncated);
+            // FHQ-85: attach the user so catch sites (DomainExceptionHandler, webhook
+            // registration) can persist NeedsReauth without re-resolving the current user.
             throw new GoogleReauthRequiredException(
                 GoogleAuthFailureSource.CalendarApi,
                 response.ReasonPhrase,
-                truncated);
+                truncated,
+                _currentUser.UserId);
         }
 
         // FHQ-61: allowlist the one benign, permanent rejection — a read-only/subscribed calendar that
@@ -153,7 +156,18 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var refreshToken = await _tokenStore.GetRefreshTokenAsync(c);
             if (string.IsNullOrEmpty(refreshToken))
                 throw new InvalidOperationException("No refresh token available. User must authenticate first.");
-            return await _authService.RefreshAccessTokenAsync(refreshToken, c);
+            try
+            {
+                return await _authService.RefreshAccessTokenAsync(refreshToken, c);
+            }
+            catch (GoogleReauthRequiredException ex) when (ex.UserId is null)
+            {
+                // FHQ-85: GoogleAuthService only sees the raw refresh-token string; this seam
+                // knows which user it belongs to. Re-throw with the user attached so catch
+                // sites can persist NeedsReauth.
+                throw new GoogleReauthRequiredException(
+                    ex.FailureSource, ex.ErrorDescription, ex.ResponseBody, userId);
+            }
         }, ct);
     }
 
