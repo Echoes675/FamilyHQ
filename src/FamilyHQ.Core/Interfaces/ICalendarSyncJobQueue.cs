@@ -6,7 +6,10 @@ public interface ICalendarSyncJobQueue
 {
     /// <summary>
     /// Enqueue a sync job, coalescing against an existing Pending job for the same
-    /// (userId, calendarInfoId). InProgress jobs do not suppress a new Pending job.
+    /// (userId, calendarInfoId) and work type. DesignationChange jobs (reconcile-only) coalesce
+    /// only with other DesignationChange jobs; all other sources (Google-sync jobs) coalesce with
+    /// each other but never across the two work types (FHQ-69). InProgress jobs do not suppress a
+    /// new Pending job.
     /// </summary>
     Task EnqueueAsync(string userId, Guid? calendarInfoId, SyncJobSource source, string? channelId, CancellationToken ct = default);
 
