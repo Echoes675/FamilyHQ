@@ -33,7 +33,7 @@ public class ResilientGoogleCalendarClientTests
     }
 
     private static GoogleApiException Api(HttpStatusCode status, TimeSpan? retryAfter = null)
-        => new(status, "op", "body", retryAfter);
+        => new(status, "op", retryAfter);
 
     [Fact]
     public async Task FullPolicy_Retries5xx_ThenSucceeds()

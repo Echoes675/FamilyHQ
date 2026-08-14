@@ -43,7 +43,7 @@ public class WebhookRenewalServiceTests
         var (service, registration, _) = CreateSut(["user-1", "user-2"]);
         registration.Setup(r => r.RegisterAllAsync("user-1", false, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleReauthRequiredException(
-                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", null, "user-1"));
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: "user-1"));
 
         await service.RegisterAllWebhooksAsync(CancellationToken.None);
 
@@ -59,7 +59,7 @@ public class WebhookRenewalServiceTests
         var (service, registration, logger) = CreateSut(["user-1"]);
         registration.Setup(r => r.RegisterAllAsync("user-1", false, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new GoogleReauthRequiredException(
-                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", null, "user-1"));
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: "user-1"));
 
         await service.RegisterAllWebhooksAsync(CancellationToken.None);
 
