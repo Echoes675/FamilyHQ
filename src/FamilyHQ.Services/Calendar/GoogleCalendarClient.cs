@@ -49,7 +49,6 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _timeZoneService = timeZoneService;
     }
 
-    private const int MaxLoggedBodyLength = 4096;
     public const int MaxSyncPages = 20;
     private const string EventsListFields =
         "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)";
@@ -58,10 +57,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     {
         if (response.IsSuccessStatusCode) return;
 
+        // FHQ-88: the raw Google error body is parsed for its reason code and then discarded —
+        // it must never be logged or retained on an exception, where a generic handler or logger
+        // up the stack could leak it.
         var body = await response.Content.ReadAsStringAsync(ct);
-        var truncated = body.Length <= MaxLoggedBodyLength ? body : body.Substring(0, MaxLoggedBodyLength);
-
-        var reason = ParseGoogleErrorReason(truncated);
+        var reason = ParseGoogleErrorReason(body);
 
         // 401 is always an auth failure. A 403 is auth too — UNLESS it carries a rate/quota reason,
         // in which case it is a transient throttle (FHQ-83) and must retry, not prompt reconnect.
@@ -75,15 +75,14 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 _accessTokenCache.Evict(reauthUserId);
 
             _logger.LogWarning(
-                "Google {Operation} returned {Status}; user re-authentication required. Body: {Body}",
-                operation, (int)response.StatusCode, truncated);
+                "Google {Operation} returned {Status}; user re-authentication required (reason: {Reason}).",
+                operation, (int)response.StatusCode, reason ?? response.ReasonPhrase);
             // FHQ-85: attach the user so catch sites (DomainExceptionHandler, webhook
             // registration) can persist NeedsReauth without re-resolving the current user.
             throw new GoogleReauthRequiredException(
                 GoogleAuthFailureSource.CalendarApi,
                 response.ReasonPhrase,
-                truncated,
-                _currentUser.UserId);
+                userId: _currentUser.UserId);
         }
 
         // FHQ-61: allowlist the one benign, permanent rejection — a read-only/subscribed calendar that
@@ -94,13 +93,13 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             _logger.LogInformation(
                 "Google {Operation} returned {Status} ({Reason}); resource does not support push notifications.",
                 operation, (int)response.StatusCode, reason);
-            throw new WebhookNotSupportedException(operation, reason, truncated);
+            throw new WebhookNotSupportedException(operation, reason);
         }
 
         _logger.LogWarning(
-            "Google {Operation} returned {Status}. Body: {Body}",
-            operation, (int)response.StatusCode, truncated);
-        throw new GoogleApiException(response.StatusCode, operation, truncated, NormaliseRetryAfter(response.Headers.RetryAfter));
+            "Google {Operation} returned {Status} (reason: {Reason}).",
+            operation, (int)response.StatusCode, reason ?? "unknown");
+        throw new GoogleApiException(response.StatusCode, operation, NormaliseRetryAfter(response.Headers.RetryAfter));
     }
 
     /// <summary>
@@ -166,7 +165,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 // knows which user it belongs to. Re-throw with the user attached so catch
                 // sites can persist NeedsReauth.
                 throw new GoogleReauthRequiredException(
-                    ex.FailureSource, ex.ErrorDescription, ex.ResponseBody, userId);
+                    ex.FailureSource, ex.ErrorDescription, userId: userId);
             }
         }, ct);
     }

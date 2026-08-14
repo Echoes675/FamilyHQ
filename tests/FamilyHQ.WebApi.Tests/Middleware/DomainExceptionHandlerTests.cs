@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Net;
+using System.Text.Json;
 using Xunit;
 
 namespace FamilyHQ.WebApi.Tests.Middleware;
@@ -138,7 +139,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -153,7 +154,7 @@ public class DomainExceptionHandlerTests
 
         await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         captured.Should().NotBeNull();
@@ -162,18 +163,35 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
-    public async Task GoogleApiException_Detail_DoesNotLeakGoogleResponseBody()
+    public async Task GoogleApiException_Detail_IsFixedGenericMessage()
     {
+        // FHQ-88: the 502 detail is a fixed generic string — no Google error text can reach it.
         ProblemDetailsContext? captured = null;
         var (handler, context) = CreateSut(ctx => captured = ctx);
 
         await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         captured!.ProblemDetails.Detail.Should().Be("The calendar provider rejected the request.");
-        captured.ProblemDetails.Detail.Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task GoogleApiException_RateLimit503_Detail_IsFixedGenericMessage()
+    {
+        // FHQ-88: the 503 rate-limit detail is a fixed generic string — no Google text reaches it.
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", TimeSpan.FromSeconds(30)),
+            CancellationToken.None);
+
+        captured!.ProblemDetails.Status.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        captured.ProblemDetails.Detail.Should().Be(
+            "The calendar provider is rate-limiting requests. Please retry shortly.");
     }
 
     [Fact]
@@ -183,7 +201,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", TimeSpan.FromSeconds(30)),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -198,7 +216,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited"),
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -214,7 +232,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.Forbidden, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            new GoogleApiException(HttpStatusCode.Forbidden, "GetCalendars", TimeSpan.FromSeconds(30)),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -231,7 +249,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -245,7 +263,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", "raw-google-body-SECRET"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked."),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -253,23 +271,27 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
-    public async Task GoogleReauthRequiredException_CarriesReauthExtensions_AndNoBodyLeak()
+    public async Task GoogleReauthRequiredException_CarriesReauthExtensions_AndDoesNotLeakGoogleErrorText()
     {
         ProblemDetailsContext? captured = null;
         var (handler, context) = CreateSut(ctx => captured = ctx);
 
         await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", "raw-google-body-SECRET"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "google-error-description-SECRET"),
             CancellationToken.None);
 
         captured.Should().NotBeNull();
         var pd = captured!.ProblemDetails;
         pd.Title.Should().Be("Reconnect Google Calendar");
+        pd.Detail.Should().Be("Your Google connection needs to be re-authorised.");
         pd.Extensions["code"].Should().Be("needs_reauth");
         pd.Extensions["source"].Should().Be("token_refresh");
         pd.Extensions["reconnectUrl"].Should().Be("/api/auth/login");
-        pd.Detail.Should().NotContain("SECRET");
+
+        // FHQ-88: the parsed Google ErrorDescription stays server-side — the whole client
+        // payload (title, detail, extensions) must not contain it.
+        JsonSerializer.Serialize(pd).Should().NotContain("SECRET");
     }
 
     [Fact]
@@ -297,7 +319,7 @@ public class DomainExceptionHandlerTests
         var handled = await handler.TryHandleAsync(
             context,
             new GoogleReauthRequiredException(
-                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", "raw-body", "user-1"),
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: "user-1"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -335,7 +357,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", null, "user-1"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", userId: "user-1"),
             abortedRequestToken);
 
         handled.Should().BeTrue();
@@ -354,7 +376,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", null, "user-1"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", userId: "user-1"),
             CancellationToken.None);
 
         handled.Should().BeTrue();

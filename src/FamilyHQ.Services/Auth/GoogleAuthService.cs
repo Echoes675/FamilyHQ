@@ -101,10 +101,11 @@ public class GoogleAuthService
             if (response.StatusCode == System.Net.HttpStatusCode.BadRequest
                 && error is "invalid_grant" or "unauthorized_client" or "invalid_token")
             {
+                // FHQ-88: only the parsed error_description travels on the exception — the raw
+                // token-endpoint body is discarded here and must never be retained or logged.
                 throw new GoogleReauthRequiredException(
                     GoogleAuthFailureSource.TokenRefresh,
-                    description,
-                    body);
+                    description);
             }
 
             throw new InvalidOperationException(

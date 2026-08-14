@@ -222,7 +222,7 @@ public class CalendarSyncWorkerTests
         var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
         var (worker, queue, sync, _, tokenStore) = CreateSut(job);
         sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(300)));
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", TimeSpan.FromSeconds(300)));
 
         await worker.DrainAsync(CancellationToken.None);
 
@@ -239,7 +239,7 @@ public class CalendarSyncWorkerTests
         var job = new CalendarSyncJob { Id = Guid.NewGuid(), UserId = "u-1", CalendarInfoId = Guid.NewGuid(), Status = SyncJobStatus.InProgress, AttemptCount = 1 };
         var (worker, queue, sync, _, _) = CreateSut(job);
         sync.Setup(s => s.SyncAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "boom"));
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars"));
 
         await worker.DrainAsync(CancellationToken.None);
 
