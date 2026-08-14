@@ -57,6 +57,31 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ---
 
+### 10. SignalR coordinator unit test times out waiting for the FakeTimeProvider-driven restart continuation under CI load (FHQ-125)
+
+**Status:** root cause confirmed (helper design, reproduced by inspection); helper fix applied on branch `fix/FHQ-91-google-client-timeouts` (test-infra change riding along for that branch's CI gate). Per this file's own convention (see issue 3-legacy): **do not mark Resolved off a handful of green runs** — the failure is load-dependent, so the bar is a sustained streak of loaded shared-host CI runs with zero recurrences.
+**Component:** unit-test infra only — `tests/FamilyHQ.WebUi.Tests/Services/SignalRConnectionCoordinatorTests.cs` (`WaitUntilAsync` helper). No production code involved; the coordinator under test behaved correctly.
+**First seen:** FamilyHQ branch build `fix/FHQ-91-google-client-timeouts` #1 (2026-08-14), `OnStartFailed_SchedulesRestart_AfterInitialDelay` — after ~10 consecutive green CI runs of the same tests. The failing branch does not touch SignalR code.
+**Occurrences:** branch build `fix/FHQ-91-google-client-timeouts` #1 (2026-08-14).
+
+**Symptom:**
+```text
+FluentAssertions: Expected condition() to be True because the coordinator
+should have reached the expected state, but found False.
+   at ...SignalRConnectionCoordinatorTests.WaitUntilAsync(...)
+   at ...OnStartFailed_SchedulesRestart_AfterInitialDelay()
+```
+
+**Root cause (confirmed by helper inspection):** `WaitUntilAsync` bounded its wait with a **fixed count of 10,000 `Task.Yield()` iterations** — a scheduler-round-trip budget, not a time budget. After `FakeTimeProvider.Advance` completes the coordinator's fake `Task.Delay`, the restart-loop continuation (which invokes the fake restart callback and increments the observed counter) is queued to the thread pool, while each of the asserting method's yields posts back through xUnit's shared `MaxConcurrencySyncContext`. On the shared Jenkins host, with other test classes' work saturating the pool, the asserting thread can complete all 10,000 yield round-trips — consuming essentially zero wall-clock time — before the pool ever schedules the coordinator's continuation. Classic load-dependent flake: unreproducible on an idle machine.
+
+**Fix (helper robustness only — every test's assertions/semantics unchanged):** `WaitUntilAsync` is now wall-clock-bounded: it polls the condition with a `Task.Yield()` plus a **10 ms real `Task.Delay`** between checks, up to a generous 5 s deadline. The real delay guarantees the pool wall-clock time to make progress regardless of load; the deadline only bounds the failure path (normal-case cost is unchanged — the condition is typically already true at the first check because FakeTimeProvider continuations usually run inline within `Advance`). This is the same accepted bounded real-delay polling pattern already used in `JwtRenewalServiceTests`. `YieldAsync` (fixed 20-yield budget) was deliberately left as-is: it backs **negative** assertions ("nothing fired yet"), where a starved budget can only produce a false pass in buggy-code scenarios, never a false failure — it cannot flake CI, and no finite wait can prove a negative.
+
+**Known residual (accepted, diagnosable):** a theoretical window remains where a test's `Advance` runs before the coordinator's loop has registered its *next* fake-timer delay (the trailing settle after `WaitUntilAsync` is still yield-based); the timer would then be due 10 fake-seconds after creation and never advanced past. If that ever occurs, the *following* `WaitUntilAsync` now fails loudly at its 5 s deadline with the same assertion message — it cannot hang. A recurrence of this symptom on a test **other than** the first-attempt ones should be triaged against this window first.
+
+**If the symptom returns:** confirm which `WaitUntilAsync` call failed. First-attempt waits recurring means the 5 s deadline is genuinely being exceeded under load — check CI host contention (parallel jobs on the shared host, see `project_ci_shared_host`) before touching the helper again; do not fix by inflating the yield count (a time-free budget was the original defect). Later-attempt waits → the residual window above.
+
+---
+
 ## Resolved issues
 
 ### 7. Multi-calendar event membership flaps during the first-login auto-designation window (FHQ-46)
