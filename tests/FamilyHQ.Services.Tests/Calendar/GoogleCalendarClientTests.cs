@@ -1666,7 +1666,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();
@@ -1721,7 +1721,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();
@@ -1767,7 +1767,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();
