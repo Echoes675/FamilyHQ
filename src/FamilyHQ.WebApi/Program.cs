@@ -193,9 +193,11 @@ if (app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseMiddleware<GlobalExceptionMiddleware>();
-// Maps typed domain exceptions to ProblemDetails (FHQ-39). Registered inside GlobalExceptionMiddleware
-// so domain exceptions are turned into 4xx here; any non-domain exception this handler declines falls
-// through to GlobalExceptionMiddleware and surfaces as a 500.
+// Maps typed domain exceptions to ProblemDetails 4xx (FHQ-39). A declined (non-domain) exception does
+// NOT fall through outward: UseExceptionHandler terminates it itself with a framework ProblemDetails
+// 500 (verified on .NET 10, FHQ-100). GlobalExceptionMiddleware only ever receives exceptions
+// UseExceptionHandler rethrows — a response that has already started, or a failure inside exception
+// handling itself — and must never mutate a started response (it logs and rethrows instead).
 app.UseExceptionHandler();
 app.UseMiddleware<RequestTimingMiddleware>();
 
