@@ -4,6 +4,9 @@ public class WeatherOptions
 {
     public const string SectionName = "Weather";
 
+    /// <summary>Hard ceiling on <see cref="MaxFailureBackoffMinutes"/>: one day.</summary>
+    private const int MaxFailureBackoffCeilingMinutes = 1440;
+
     public string BaseUrl { get; set; } = "https://api.open-meteo.com";
     public int PollIntervalMinutes { get; set; } = 30;
     public int MinPollIntervalMinutes { get; set; } = 1;
@@ -21,7 +24,10 @@ public class WeatherOptions
     /// 1-minute floor backs off 2 → 4 → 8 … → 60 minutes, so a permanently rate-limited Open-Meteo
     /// costs at most <c>ExternalHttpResilienceOptions.MaxAttempts</c> requests per hour for that
     /// user instead of 60 requests per hour. A single successful refresh resets to the configured
-    /// interval. Must be at least <see cref="MinPollIntervalMinutes"/>.
+    /// interval. Must be at least <see cref="MinPollIntervalMinutes"/> and at most
+    /// <see cref="MaxFailureBackoffCeilingMinutes"/> — a longer wait than <c>Task.Delay</c> can
+    /// express would throw inside the loop, which then catches and re-enters every minute forever:
+    /// exactly the spin this setting exists to remove.
     /// </summary>
     public int MaxFailureBackoffMinutes { get; set; } = 60;
 
@@ -48,9 +54,11 @@ public class WeatherOptions
             throw new InvalidOperationException(
                 $"{nameof(WeatherOptions)}.{nameof(FailureBackoffMultiplier)} must be at least 1 (was {FailureBackoffMultiplier}).");
 
-        if (MaxFailureBackoffMinutes < MinPollIntervalMinutes)
+        if (MaxFailureBackoffMinutes < MinPollIntervalMinutes
+            || MaxFailureBackoffMinutes > MaxFailureBackoffCeilingMinutes)
             throw new InvalidOperationException(
-                $"{nameof(WeatherOptions)}.{nameof(MaxFailureBackoffMinutes)} must be at least " +
-                $"{nameof(MinPollIntervalMinutes)} ({MinPollIntervalMinutes}) (was {MaxFailureBackoffMinutes}).");
+                $"{nameof(WeatherOptions)}.{nameof(MaxFailureBackoffMinutes)} must be between " +
+                $"{nameof(MinPollIntervalMinutes)} ({MinPollIntervalMinutes}) and " +
+                $"{MaxFailureBackoffCeilingMinutes} (was {MaxFailureBackoffMinutes}).");
     }
 }

@@ -215,6 +215,41 @@ public class WeatherPollerServiceTests
     }
 
     [Fact]
+    public async Task RunPollCycle_SustainedFailuresAtCap_ReEmitsAtWarningPeriodically()
+    {
+        // Flood control must not become silence: Debug is off in production, so an unrecovered
+        // provider outage still has to surface periodically once the interval stops escalating.
+        var (sut, refresh, repo, time, logger) = CreateSut(new WeatherOptions { MaxFailureBackoffMinutes = 4 });
+        repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Setting(UserA)]);
+        refresh.Setup(r => r.RefreshAsync(UserA, It.IsAny<CancellationToken>())).ThrowsAsync(RateLimited());
+
+        await RunCyclesAsync(sut, time, cycles: 12);
+
+        logger.Records.Count(r => r.Level == LogLevel.Error).Should().Be(2,
+            "only the two escalating intervals (2 min, 4 min) are transitions");
+        logger.Records.Should().Contain(r => r.Level == LogLevel.Warning && r.Message.Contains("still failing"),
+            "a sustained outage must re-surface above Debug");
+    }
+
+    [Fact]
+    public async Task RunPollCycle_LongBackoff_StillWakesWithinTheDiscoveryCeiling()
+    {
+        // A user who enables weather while someone else is backed off to the cap must not wait an
+        // hour to be picked up: before FHQ-109 the loop woke at least every PollIntervalMinutes.
+        var (sut, refresh, repo, time, _) = CreateSut();
+        repo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Setting(UserA)]);
+        refresh.Setup(r => r.RefreshAsync(UserA, It.IsAny<CancellationToken>())).ThrowsAsync(RateLimited());
+
+        var delays = await RunCyclesAsync(sut, time, cycles: 8);
+
+        delays.Should().OnlyContain(d => d <= TimeSpan.FromMinutes(30));
+        delays.Should().Contain(TimeSpan.FromMinutes(30),
+            "the clamp must actually engage once the user's backoff passes the ceiling");
+    }
+
+    [Fact]
     public async Task RunPollCycle_RefreshThrows_DoesNotPropagate()
     {
         var (sut, refresh, repo, _, _) = CreateSut();

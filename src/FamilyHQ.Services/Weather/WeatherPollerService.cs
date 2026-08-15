@@ -23,12 +23,20 @@ public class WeatherPollerService(
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(1);
 
+    /// <summary>Consecutive failures between Warning-level reminders once the interval stops escalating.</summary>
+    private const int SustainedFailureLogInterval = 10;
+
     private readonly WeatherOptions _options = options.Value;
 
     // Per-user backoff state. The poll loop is a single hosted service running one cycle at a time,
     // so no synchronisation is needed. Keys are pruned to the current enabled-user set every cycle,
     // which bounds this by the number of users with weather enabled right now — never by the number
     // of users seen historically.
+    //
+    // Deliberately NOT shared with the on-demand path: a successful POST /api/weather/refresh does
+    // not clear a user's backoff here, so the poller keeps its own escalated interval until its next
+    // scheduled attempt succeeds. That is safe (the user already has fresh data, and the poller only
+    // ever waits longer, never hammers), and it keeps this state single-writer.
     private readonly Dictionary<string, UserPollState> _pollStates = new(StringComparer.Ordinal);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -121,14 +129,20 @@ public class WeatherPollerService(
         var interval = EscalatedInterval(BaseInterval(setting), failures);
 
         // Log the escalation transition, not every cycle: once the interval plateaus at the cap a
-        // permanently broken provider would otherwise emit one Error per poll forever.
+        // permanently broken provider would otherwise emit one Error per poll forever. Flood control
+        // must not become silence though — Debug is off in production, so a still-unrecovered outage
+        // is re-surfaced at Warning every SustainedFailureLogInterval attempts.
         if (interval != previous?.Interval)
             logger.LogError(ex,
                 "Weather refresh failed for user {UserId} ({Failures} consecutive); next attempt in {IntervalMinutes} min.",
                 setting.UserId, failures, interval.TotalMinutes);
+        else if (failures % SustainedFailureLogInterval == 0)
+            logger.LogWarning(ex,
+                "Weather refresh still failing for user {UserId} ({Failures} consecutive); poll interval held at {IntervalMinutes} min.",
+                setting.UserId, failures, interval.TotalMinutes);
         else
             logger.LogDebug(ex,
-                "Weather refresh still failing for user {UserId} ({Failures} consecutive); poll interval held at the {IntervalMinutes} min cap.",
+                "Weather refresh still failing for user {UserId} ({Failures} consecutive); poll interval held at {IntervalMinutes} min.",
                 setting.UserId, failures, interval.TotalMinutes);
 
         _pollStates[setting.UserId] = new UserPollState(failures, interval, timeProvider.GetUtcNow() + interval);
@@ -146,7 +160,15 @@ public class WeatherPollerService(
             .Min();
 
         var untilDue = earliestDue - now;
-        return untilDue < floor ? floor : untilDue;
+        if (untilDue < floor)
+            return floor;
+
+        // Discovery ceiling: a backed-off user must not stop the loop noticing someone who has just
+        // enabled weather. Before FHQ-109 the loop woke at least every Min(user PollIntervalMinutes),
+        // so cap the wait at the configured default interval to keep that guarantee. A cycle that
+        // wakes with nobody due is a single repository read.
+        var discoveryCeiling = TimeSpan.FromMinutes(_options.PollIntervalMinutes);
+        return untilDue > discoveryCeiling ? discoveryCeiling : untilDue;
     }
 
     private void PruneStatesFor(List<WeatherSetting> enabledSettings)
