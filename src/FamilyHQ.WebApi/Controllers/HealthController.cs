@@ -1,8 +1,12 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FamilyHQ.WebApi.Controllers;
 
+// Explicitly public (FHQ-98): deployment health checks and E2E probes call /api/health
+// without credentials; the payload contains no user data.
+[AllowAnonymous]
 [ApiController]
 [Route("api/[controller]")]
 public class HealthController : ControllerBase

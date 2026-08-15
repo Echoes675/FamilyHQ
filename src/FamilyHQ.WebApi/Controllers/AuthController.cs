@@ -70,6 +70,7 @@ public class AuthController : ControllerBase
     /// Initiates the OAuth2 authorization code flow by redirecting to the consent screen.
     /// </summary>
     [HttpGet("login")]
+    [AllowAnonymous]
     public IActionResult Login()
     {
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
@@ -92,6 +93,7 @@ public class AuthController : ControllerBase
     /// and redirects the browser to the frontend /login-success page.
     /// </summary>
     [HttpGet("callback")]
+    [AllowAnonymous]
     public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string? state)
     {
         var stateCookie = Request.Cookies["oauth_state"];
