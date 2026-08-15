@@ -47,6 +47,40 @@ public class HealthControllerTests
         version.Should().MatchRegex(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$");
     }
 
+    // FHQ-103: the endpoint is anonymous, so the git SHA MinVer appends to
+    // AssemblyInformationalVersion must not reach the caller — it fingerprints the exact
+    // deployed commit.
+
+    [Fact]
+    public void Get_Response_VersionFieldCarriesNoBuildMetadata()
+    {
+        var sut = CreateSut();
+
+        var result = sut.Get();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var doc = SerializeResponse(ok);
+        doc.RootElement.GetProperty("version").GetString().Should().NotContain("+");
+    }
+
+    [Theory]
+    [InlineData("1.1.0+abc1234", "1.1.0")]
+    [InlineData("1.1.0", "1.1.0")]
+    public void StripBuildMetadata_WithOrWithoutMetadata_ReturnsVersionWithoutIt(
+        string informationalVersion, string expected)
+    {
+        HealthController.StripBuildMetadata(informationalVersion).Should().Be(expected);
+    }
+
+    [Fact]
+    public void StripBuildMetadata_WithPreReleaseLabel_KeepsThePreRelease()
+    {
+        // The WASM client compares this value against its own baked-in version and strips build
+        // metadata only (VersionService.VersionsMatch). Dropping the pre-release here too would
+        // make every untagged build compare unequal forever — a reload loop on every kiosk.
+        HealthController.StripBuildMetadata("1.1.0-alpha.0.5+abc1234").Should().Be("1.1.0-alpha.0.5");
+    }
+
     [Fact]
     public void Get_SetsCacheControlNoStoreHeader()
     {
