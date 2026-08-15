@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.WebApi.Middleware;
 using FluentAssertions;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Net;
+using System.Text.Json;
 using Xunit;
 
 namespace FamilyHQ.WebApi.Tests.Middleware;
@@ -137,7 +139,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -152,7 +154,7 @@ public class DomainExceptionHandlerTests
 
         await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         captured.Should().NotBeNull();
@@ -161,18 +163,35 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
-    public async Task GoogleApiException_Detail_DoesNotLeakGoogleResponseBody()
+    public async Task GoogleApiException_Detail_IsFixedGenericMessage()
     {
+        // FHQ-88: the 502 detail is a fixed generic string — no Google error text can reach it.
         ProblemDetailsContext? captured = null;
         var (handler, context) = CreateSut(ctx => captured = ctx);
 
         await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "raw-google-body-SECRET"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         captured!.ProblemDetails.Detail.Should().Be("The calendar provider rejected the request.");
-        captured.ProblemDetails.Detail.Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task GoogleApiException_RateLimit503_Detail_IsFixedGenericMessage()
+    {
+        // FHQ-88: the 503 rate-limit detail is a fixed generic string — no Google text reaches it.
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", TimeSpan.FromSeconds(30)),
+            CancellationToken.None);
+
+        captured!.ProblemDetails.Status.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        captured.ProblemDetails.Detail.Should().Be(
+            "The calendar provider is rate-limiting requests. Please retry shortly.");
     }
 
     [Fact]
@@ -182,7 +201,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", TimeSpan.FromSeconds(30)),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -197,7 +216,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars", "rate limited"),
+            new GoogleApiException(HttpStatusCode.TooManyRequests, "GetCalendars"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -213,7 +232,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.Forbidden, "GetCalendars", "rate limited", TimeSpan.FromSeconds(30)),
+            new GoogleApiException(HttpStatusCode.Forbidden, "GetCalendars", TimeSpan.FromSeconds(30)),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -230,11 +249,75 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields", "{\"error\":{\"message\":\"Invalid start time.\"}}"),
+            new GoogleApiException(HttpStatusCode.BadRequest, "PatchEventFields"),
             CancellationToken.None);
 
         handled.Should().BeTrue();
         context.Response.StatusCode.Should().Be(StatusCodes.Status502BadGateway);
+    }
+
+    [Fact]
+    public async Task HttpTimeout_TaskCanceledWithTimeoutInner_MapsTo504WithoutRetryAfter()
+    {
+        // FHQ-100 drive-by (FHQ-91/FHQ-154 context): an exhausted foreground HTTP timeout surfaces as
+        // TaskCanceledException wrapping TimeoutException — a transient gateway timeout, not a 500.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException()),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status504GatewayTimeout);
+        context.Response.Headers.ContainsKey("Retry-After").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HttpTimeout_TitleAndDetail_AreFixedGenericStrings()
+    {
+        // FHQ-88 discipline: no upstream/internal exception text reaches the client payload.
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("internal-timeout-detail-SECRET", new TimeoutException()),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.ProblemDetails.Title.Should().Be("Upstream Timeout");
+        captured.ProblemDetails.Detail.Should().Be("An upstream service did not respond in time. Please retry shortly.");
+        JsonSerializer.Serialize(captured.ProblemDetails).Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task TaskCanceledException_WithoutTimeoutInner_IsDeclined()
+    {
+        // A plain cancellation carries no TimeoutException inner — it is not an HttpClient timeout,
+        // so it must not be dressed up as a gateway timeout.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context, new TaskCanceledException("cancelled"), CancellationToken.None);
+
+        handled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HttpTimeout_WhenRequestAborted_IsDeclined()
+    {
+        // Client-abort cancellation must never become a 504 — when the caller is gone the framework's
+        // aborted-request handling applies, not a gateway-timeout response nobody will read.
+        var (handler, context) = CreateSut();
+        context.RequestAborted = new CancellationToken(canceled: true);
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("canceled", new TimeoutException()),
+            CancellationToken.None);
+
+        handled.Should().BeFalse();
     }
 
     [Fact]
@@ -244,7 +327,7 @@ public class DomainExceptionHandlerTests
 
         var handled = await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", "raw-google-body-SECRET"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked."),
             CancellationToken.None);
 
         handled.Should().BeTrue();
@@ -252,23 +335,27 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
-    public async Task GoogleReauthRequiredException_CarriesReauthExtensions_AndNoBodyLeak()
+    public async Task GoogleReauthRequiredException_CarriesReauthExtensions_AndDoesNotLeakGoogleErrorText()
     {
         ProblemDetailsContext? captured = null;
         var (handler, context) = CreateSut(ctx => captured = ctx);
 
         await handler.TryHandleAsync(
             context,
-            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", "raw-google-body-SECRET"),
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "google-error-description-SECRET"),
             CancellationToken.None);
 
         captured.Should().NotBeNull();
         var pd = captured!.ProblemDetails;
         pd.Title.Should().Be("Reconnect Google Calendar");
+        pd.Detail.Should().Be("Your Google connection needs to be re-authorised.");
         pd.Extensions["code"].Should().Be("needs_reauth");
         pd.Extensions["source"].Should().Be("token_refresh");
         pd.Extensions["reconnectUrl"].Should().Be("/api/auth/login");
-        pd.Detail.Should().NotContain("SECRET");
+
+        // FHQ-88: the parsed Google ErrorDescription stays server-side — the whole client
+        // payload (title, detail, extensions) must not contain it.
+        JsonSerializer.Serialize(pd).Should().NotContain("SECRET");
     }
 
     [Fact]
@@ -285,6 +372,81 @@ public class DomainExceptionHandlerTests
         captured!.ProblemDetails.Extensions["source"].Should().Be("calendar_api");
     }
 
+    [Fact]
+    public async Task GoogleReauthRequiredException_WithUserId_PersistsNeedsReauthOnce()
+    {
+        // FHQ-85: the 409 mapping point is the single foreground seam that sees every reauth-required
+        // request (event writes, manual sync, webhook registration) — it must also persist the flag
+        // so the reconnect banner appears without waiting for a background sync to fail.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: "user-1"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("user-1", "Token has been expired or revoked.", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_WithoutUserId_StillMaps409AndDoesNotMark()
+    {
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "insufficient permission"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_WhenRequestAborted_StillPersistsWithUncancellableToken()
+    {
+        // FHQ-85 review: once reauth is DETECTED the mark must not be cancellable — a client
+        // abort mid-request would otherwise cancel the DB write and lose the flag. The store
+        // call must therefore receive CancellationToken.None, never the request token.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+        var abortedRequestToken = new CancellationToken(canceled: true);
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", userId: "user-1"),
+            abortedRequestToken);
+
+        handled.Should().BeTrue();
+        tokenStore.Verify(t => t.MarkNeedsReauthAsync("user-1", "revoked", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task GoogleReauthRequiredException_WhenMarkingFails_StillMaps409()
+    {
+        // Persistence failure must never mask the 409 contract — the background sync path
+        // re-attempts the mark on its next failure.
+        var (handler, context, tokenStore) = CreateSutWithTokenStore();
+        tokenStore
+            .Setup(t => t.MarkNeedsReauthAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new GoogleReauthRequiredException(GoogleAuthFailureSource.TokenRefresh, "revoked", userId: "user-1"),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status409Conflict);
+    }
+
     private static (DomainExceptionHandler Handler, HttpContext Context) CreateSut(
         Action<ProblemDetailsContext>? callback = null)
     {
@@ -298,5 +460,19 @@ public class DomainExceptionHandlerTests
         var handler = new DomainExceptionHandler(problemDetails.Object, logger.Object);
         var context = new DefaultHttpContext();
         return (handler, context);
+    }
+
+    private static (DomainExceptionHandler Handler, HttpContext Context, Mock<ITokenStore> TokenStore) CreateSutWithTokenStore()
+    {
+        var (handler, context) = CreateSut();
+
+        var tokenStore = new Mock<ITokenStore>();
+        var services = new Mock<IServiceProvider>();
+        services
+            .Setup(s => s.GetService(typeof(ITokenStore)))
+            .Returns(tokenStore.Object);
+        context.RequestServices = services.Object;
+
+        return (handler, context, tokenStore);
     }
 }

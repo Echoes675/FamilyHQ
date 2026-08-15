@@ -145,7 +145,7 @@ public class CalendarSyncServiceRecurringTests
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
         client.Setup(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleApiException(System.Net.HttpStatusCode.ServiceUnavailable, "GetSeriesMaster", "boom"));
+            .ThrowsAsync(new GoogleApiException(System.Net.HttpStatusCode.ServiceUnavailable, "GetSeriesMaster"));
 
         // Act
         await sut.SyncAsync(calendarId, start, end);

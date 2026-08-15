@@ -68,6 +68,61 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddFamilyHqServices_GoogleHttpClients_GetDefaultTimeouts()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder().Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        // AddHttpClient<T> registers a named client using the type's short name; the typed
+        // client receives exactly this configured HttpClient.
+        factory.CreateClient(nameof(GoogleAuthService)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
+        factory.CreateClient(nameof(GoogleCalendarClient)).Timeout.Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_GoogleTimeoutsConfigured_AppliesConfiguredValues()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("GoogleResilience:AuthTimeout", "00:00:07"),
+                new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:09")
+            })
+            .Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        factory.CreateClient(nameof(GoogleAuthService)).Timeout.Should().Be(TimeSpan.FromSeconds(7));
+        factory.CreateClient(nameof(GoogleCalendarClient)).Timeout.Should().Be(TimeSpan.FromSeconds(9));
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_InvalidGoogleResilienceConfig_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:00")
+            })
+            .Build();
+
+        // Fail-fast: a zero/negative timeout must surface at boot, not as a hung/instantly-failing call.
+        services.Invoking(s => s.AddFamilyHqServices(configuration))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*CalendarTimeout*");
+    }
+
+    [Fact]
     public void AddFamilyHqServices_IGoogleCalendarClient_ResolvesToResilientDecorator()
     {
         var services = new ServiceCollection();

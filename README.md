@@ -149,10 +149,11 @@ cd tests-e2e/FamilyHQ.E2E.Features
 dotnet test
 ```
 
-Run a single scenario:
+Run a single scenario by filtering on the Reqnroll-generated method name — the scenario
+title in PascalCase (`Scenario=<title>` is not a recognised trait and matches zero tests):
 
 ```bash
-dotnet test --filter "Scenario=View upcoming events on the dashboard month view"
+dotnet test --filter "FullyQualifiedName~ViewUpcomingEventsOnTheDashboardMonthView"
 ```
 
 See [`.agent/docs/e2e-testing-maintenance.md`](.agent/docs/e2e-testing-maintenance.md) for full E2E documentation.

@@ -82,6 +82,56 @@ public class WeatherDataPointRepositoryTests
     }
 
     [Fact]
+    public async Task GetDailyAsync_NullZone_StartBoundIsUtcMidnightInclusive()
+    {
+        // FHQ-118 regression pin: the null-zone window must start at EXACTLY the UTC midnight of the
+        // TimeProvider's "today" (2026-06-18T00:00:00Z), inclusive. A derivation that bypasses the
+        // TimeProvider (DateTimeOffset.UtcNow.Date) or anchors to host-local midnight shifts this instant.
+        // T (exactly 2026-06-18T00:00:00Z): first instant of the window — INCLUDED.
+        // U (2026-06-17T23:59:59Z): one second before the window — EXCLUDED.
+        var t = MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+        var u = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 23, 59, 59, TimeSpan.Zero));
+        _db.Setup<WeatherDataPoint>([t, u]);
+
+        var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: null);
+
+        result.Should().ContainSingle("the start bound is inclusive at exactly UTC midnight of today");
+        result[0].Timestamp.Should().Be(t.Timestamp);
+    }
+
+    [Fact]
+    public async Task GetDailyAsync_NullZone_EndBoundIsExclusiveAfterRequestedDays()
+    {
+        // Fake clock: 2026-06-18T12:00Z. days: 2 → window [2026-06-18T00:00Z, 2026-06-20T00:00Z).
+        // V (2026-06-19T23:59:59Z): last second of day 2 — INCLUDED.
+        // W (exactly 2026-06-20T00:00:00Z): end bound — EXCLUDED (half-open window).
+        var v = MakeDaily(1, new DateTimeOffset(2026, 6, 19, 23, 59, 59, TimeSpan.Zero));
+        var w = MakeDaily(1, new DateTimeOffset(2026, 6, 20, 0, 0, 0, TimeSpan.Zero));
+        _db.Setup<WeatherDataPoint>([v, w]);
+
+        var result = await CreateSut().GetDailyAsync(1, days: 2, ianaTimeZone: null);
+
+        result.Should().ContainSingle("the end bound is exclusive at UTC midnight after the requested days");
+        result[0].Timestamp.Should().Be(v.Timestamp);
+    }
+
+    [Fact]
+    public async Task GetDailyAsync_WithIanaZone_StartBoundIsLocalMidnightInclusive()
+    {
+        // Dublin BST (UTC+1): local midnight June 18 = 2026-06-17T23:00:00Z exactly.
+        // M (exactly 2026-06-17T23:00:00Z): first instant of the local day — INCLUDED.
+        // N (2026-06-17T22:59:59Z): one second before local midnight — EXCLUDED.
+        var m = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 23, 0, 0, TimeSpan.Zero));
+        var n = MakeDaily(1, new DateTimeOffset(2026, 6, 17, 22, 59, 59, TimeSpan.Zero));
+        _db.Setup<WeatherDataPoint>([m, n]);
+
+        var result = await CreateSut().GetDailyAsync(1, days: 7, ianaTimeZone: "Europe/Dublin");
+
+        result.Should().ContainSingle("the start bound is inclusive at exactly Dublin local midnight");
+        result[0].Timestamp.Should().Be(m.Timestamp);
+    }
+
+    [Fact]
     public async Task GetHourlyAsync_WithIanaZone_ReturnsDataInLocalDayWindow()
     {
         // Dublin BST (UTC+1): local June 18 spans UTC 2026-06-17T23:00 → 2026-06-18T23:00.

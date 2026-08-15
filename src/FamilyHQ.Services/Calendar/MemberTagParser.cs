@@ -20,10 +20,19 @@ public class MemberTagParser : IMemberTagParser
 
         var tagMatch = TagRegex.Match(description);
         if (tagMatch.Success)
-            // An explicit tag is authoritative: resolve it against the broader candidate set (all
-            // calendars, incl. a transiently-shared one) when supplied, so a tagged member is not
-            // dropped while its calendar is shared (FHQ-46). Falls back to the member set when null.
-            return ResolveTagContent(tagMatch.Groups[1].Value, taggedCalendarNames ?? knownMemberNames);
+        {
+            var tagNames = SplitTagContent(tagMatch.Groups[1].Value);
+
+            // FHQ-75: an empty tag ("[members: ]", whitespace- or comma-only) carries no member
+            // content, so it is treated as if no tag were present — fall through to free-form
+            // matching instead of authoritatively wiping the event's membership.
+            if (tagNames.Length > 0)
+                // An explicit tag with content is authoritative: resolve it against the broader
+                // candidate set (all calendars, incl. a transiently-shared one) when supplied, so a
+                // tagged member is not dropped while its calendar is shared (FHQ-46). Falls back to
+                // the member set when null.
+                return ResolveTagContent(tagNames, taggedCalendarNames ?? knownMemberNames);
+        }
 
         // Free-form fallback: whole-word, case-insensitive, any separator/format (e.g. "Alice and
         // Bob", "alice; bob"). Matches ONLY member (non-shared) calendar names, so a description that
@@ -40,13 +49,15 @@ public class MemberTagParser : IMemberTagParser
 
         var tagMatch = TagRegex.Match(description);
         return tagMatch.Success
-            ? ResolveTagContent(tagMatch.Groups[1].Value, knownMemberNames)
+            ? ResolveTagContent(SplitTagContent(tagMatch.Groups[1].Value), knownMemberNames)
             : [];
     }
 
-    private static List<string> ResolveTagContent(string tagContent, IReadOnlyList<string> knownMemberNames) =>
-        tagContent
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    private static string[] SplitTagContent(string tagContent) =>
+        tagContent.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static List<string> ResolveTagContent(string[] tagNames, IReadOnlyList<string> knownMemberNames) =>
+        tagNames
             .Select(name => knownMemberNames.FirstOrDefault(
                 k => string.Equals(k, name, StringComparison.OrdinalIgnoreCase)))
             .Where(n => n is not null)

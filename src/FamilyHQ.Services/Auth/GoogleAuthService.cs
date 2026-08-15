@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,17 +13,20 @@ public class GoogleAuthService
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleAuthService> _logger;
     private readonly IIdTokenValidator _idTokenValidator;
+    private readonly ITokenStore _tokenStore;
 
     public GoogleAuthService(
         HttpClient httpClient,
         IOptions<GoogleCalendarOptions> options,
         ILogger<GoogleAuthService> logger,
-        IIdTokenValidator idTokenValidator)
+        IIdTokenValidator idTokenValidator,
+        ITokenStore tokenStore)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
         _idTokenValidator = idTokenValidator;
+        _tokenStore = tokenStore;
     }
 
     public string GetAuthorizationUrl(string redirectUri, string state)
@@ -97,10 +101,11 @@ public class GoogleAuthService
             if (response.StatusCode == System.Net.HttpStatusCode.BadRequest
                 && error is "invalid_grant" or "unauthorized_client" or "invalid_token")
             {
+                // FHQ-88: only the parsed error_description travels on the exception — the raw
+                // token-endpoint body is discarded here and must never be retained or logged.
                 throw new GoogleReauthRequiredException(
                     GoogleAuthFailureSource.TokenRefresh,
-                    description,
-                    body);
+                    description);
             }
 
             throw new InvalidOperationException(
@@ -109,7 +114,43 @@ public class GoogleAuthService
 
         var result = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct);
         _logger.LogInformation("Google granted scopes on token refresh: {GrantedScope}", result!.Scope ?? "(none)");
+        await PersistRotatedRefreshTokenAsync(result.RefreshToken);
         return (result.AccessToken, result.ExpiresIn);
+    }
+
+    /// <summary>
+    /// FHQ-86: Google may rotate the refresh token in a refresh-grant response. A rotated token must
+    /// be persisted before the access token is returned — discarding it leaves the stored token stale,
+    /// so the next refresh fails with invalid_grant and forces a needless re-consent. The save uses the
+    /// current-user <see cref="ITokenStore"/> overload: refresh always runs in a context where
+    /// ICurrentUserService resolves the user (request JWT sub, or BackgroundUserContext during sync) —
+    /// the same ambient identity the token store used to read the refresh token being replaced.
+    /// </summary>
+    private async Task PersistRotatedRefreshTokenAsync(string? rotatedRefreshToken)
+    {
+        if (string.IsNullOrEmpty(rotatedRefreshToken)) return;
+
+        try
+        {
+            // CancellationToken.None is deliberate: once the rotated token is in hand, a cancelled
+            // request must not abort the save — losing the replacement token orphans the session.
+            await _tokenStore.SaveRefreshTokenAsync(rotatedRefreshToken, CancellationToken.None);
+
+            // Token values are never logged — length only.
+            _logger.LogInformation(
+                "Google rotated the refresh token on refresh; replacement persisted (length {TokenLength}).",
+                rotatedRefreshToken.Length);
+        }
+        catch (Exception ex)
+        {
+            // Deliberate log-and-continue: the access token just issued is valid regardless, so the
+            // in-flight sync should proceed. If Google's rotation already invalidated the old stored
+            // token, the next refresh fails with invalid_grant and the FHQ-85 reauth machinery
+            // surfaces the reconnect banner; rethrowing here would only fail work we can complete.
+            _logger.LogError(ex,
+                "Failed to persist rotated refresh token (length {TokenLength}); the stored refresh token may now be stale and the next refresh may require re-consent.",
+                rotatedRefreshToken.Length);
+        }
     }
 
     private static (string? Error, string? Description) ParseOAuthError(string body)

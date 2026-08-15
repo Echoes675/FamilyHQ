@@ -377,7 +377,7 @@ public class SyncControllerTests
         var (constructorSync, proxy, systemUnderTest) = CreateSut();
         constructorSync
             .Setup(s => s.SyncAllAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars", "server boom"));
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.InternalServerError, "GetCalendars"));
 
         await systemUnderTest.Invoking(s => s.TriggerSync(CancellationToken.None))
             .Should().ThrowAsync<GoogleApiException>();

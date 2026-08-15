@@ -1,19 +1,24 @@
 using System.Globalization;
 using System.Net;
 using FamilyHQ.Core.Exceptions;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace FamilyHQ.WebApi.Middleware;
 
 /// <summary>
 /// The single point that maps typed domain exceptions to HTTP status codes (FHQ-39). The HTTP
-/// contract no longer depends on exception message text. Any exception this handler does not
-/// recognise is declined so the framework's default handling surfaces it as a 500.
+/// contract no longer depends on exception message text. Also maps an exhausted foreground HTTP
+/// timeout (TaskCanceledException wrapping TimeoutException, the FHQ-91 per-attempt timeout after
+/// FHQ-154 retries ran out) to a 504 — unless the request was aborted by the client, in which case
+/// cancellation is declined. Any exception this handler does not recognise is declined so the
+/// framework's default handling surfaces it as a 500.
 /// </summary>
 public sealed class DomainExceptionHandler(
     IProblemDetailsService problemDetailsService,
@@ -30,6 +35,12 @@ public sealed class DomainExceptionHandler(
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
+        // Belt-and-braces for the abort race: the framework normally 499s aborted requests before
+        // handlers run, so this guard is only reachable when the abort lands mid-flight — decline
+        // rather than dress a dead-socket cancellation up as an upstream timeout.
+        if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+            return false;
+
         if (Map(exception) is not { } mapping)
             return false; // not a domain exception → let the default pipeline produce a 500
 
@@ -37,6 +48,13 @@ public sealed class DomainExceptionHandler(
             exception,
             "Domain exception mapped to {StatusCode} for {Method} {Path}.",
             mapping.Status, httpContext.Request.Method, httpContext.Request.Path);
+
+        // FHQ-85: this is the single point every foreground reauth-required request passes
+        // through — persist NeedsReauth here so the kiosk reconnect banner appears without
+        // waiting for a background sync to also fail. Idempotent: the token store skips the
+        // write/broadcast when the user is already flagged.
+        if (exception is GoogleReauthRequiredException reauth)
+            await TryMarkNeedsReauthAsync(httpContext, reauth);
 
         httpContext.Response.StatusCode = mapping.Status;
 
@@ -62,6 +80,39 @@ public sealed class DomainExceptionHandler(
         });
     }
 
+    /// <summary>
+    /// Persists NeedsReauth for the user carried on the exception. Persistence failure must never
+    /// mask the 409 contract, so any error is logged and swallowed — the background sync path
+    /// re-attempts the mark on its next failure. The store call deliberately uses
+    /// <see cref="CancellationToken.None"/>: once reauth is detected, a client abort must not
+    /// cancel the mark (matching the AuthController webhook-registration precedent).
+    /// </summary>
+    private async Task TryMarkNeedsReauthAsync(HttpContext httpContext, GoogleReauthRequiredException exception)
+    {
+        if (exception.UserId is not { } userId)
+        {
+            logger.LogWarning(
+                "Reauth-required exception from {Source} carried no user id; NeedsReauth not persisted for this request.",
+                exception.FailureSource);
+            return;
+        }
+
+        try
+        {
+            var tokenStore = httpContext.RequestServices.GetRequiredService<ITokenStore>();
+            await tokenStore.MarkNeedsReauthAsync(userId, exception.ErrorDescription, CancellationToken.None);
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Benign shutdown-race cancellation (the request token is never passed in).
+            logger.LogDebug(ex, "NeedsReauth persistence cancelled for user {UserId}.", userId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to persist NeedsReauth for user {UserId}.", userId);
+        }
+    }
+
     private static Mapping? Map(Exception exception) => exception switch
     {
         NotFoundException =>
@@ -83,6 +134,16 @@ public sealed class DomainExceptionHandler(
                 }),
 
         GoogleApiException e => MapGoogleApi(e),
+
+        // FHQ-91: an HttpClient per-attempt timeout is a TaskCanceledException wrapping a
+        // TimeoutException — after the FHQ-154 retries are exhausted it reaches here. The title is
+        // provider-neutral because every typed HttpClient (Google, location, geocoding) shares this
+        // signature. No Retry-After: that header belongs to 503/429 responses.
+        TaskCanceledException { InnerException: TimeoutException } =>
+            new Mapping(
+                StatusCodes.Status504GatewayTimeout,
+                "Upstream Timeout",
+                "An upstream service did not respond in time. Please retry shortly."),
 
         _ => null
     };

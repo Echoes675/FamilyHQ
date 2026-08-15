@@ -6,12 +6,13 @@ namespace FamilyHQ.Services.Auth;
 /// Thrown for non-auth 4xx/5xx responses from the Google Calendar API.
 /// Distinct from <see cref="GoogleReauthRequiredException"/> so callers can decide
 /// between "user must reconnect" (409) and "upstream error" (502) handling.
+/// Deliberately does NOT retain the raw Google response body (FHQ-88) — the status code and
+/// operation are enough for handlers; diagnostic detail belongs in the parsed, structured logs.
 /// </summary>
 public class GoogleApiException : Exception
 {
     public HttpStatusCode StatusCode { get; }
     public string Operation { get; }
-    public string? ResponseBody { get; }
 
     /// <summary>
     /// The upstream <c>Retry-After</c> delay when Google supplied one (typically on a 429),
@@ -19,12 +20,11 @@ public class GoogleApiException : Exception
     /// </summary>
     public TimeSpan? RetryAfter { get; }
 
-    public GoogleApiException(HttpStatusCode statusCode, string operation, string? responseBody, TimeSpan? retryAfter = null)
+    public GoogleApiException(HttpStatusCode statusCode, string operation, TimeSpan? retryAfter = null)
         : base($"Google API {operation} failed with status {(int)statusCode} {statusCode}.")
     {
         StatusCode = statusCode;
         Operation = operation;
-        ResponseBody = responseBody;
         RetryAfter = retryAfter;
     }
 }

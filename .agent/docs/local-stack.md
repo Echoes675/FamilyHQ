@@ -38,10 +38,17 @@ auth/config issue. Serving published-static (pre-compressed `.br`/`.gz`) never c
 
 `-Filter` is passed through to `dotnet test --filter` (the `@ignore` tag is always excluded):
 
-- One scenario: `-Filter "Scenario=<name>"`
-- A whole feature: `-Filter "FullyQualifiedName~RecurringEventsEdit"`
+- One scenario: `-Filter "FullyQualifiedName~<GeneratedMethod>"` — the generated method name
+  is the scenario title in PascalCase with punctuation removed, e.g. scenario
+  "View upcoming events on the dashboard month view" →
+  `-Filter "FullyQualifiedName~ViewUpcomingEventsOnTheDashboardMonthView"`
+- A whole feature: `-Filter "FullyQualifiedName~RecurringEventsEdit"` (the generated class is
+  `<FeatureName>Feature`, so the feature name alone matches the whole class)
 - A tag/area: `-Filter "Category=dashboard"`
 - Combine: `-Filter "Category=webui&Category!=day-rollover"`
+
+> **Do not use `-Filter "Scenario=<title>"`** — Reqnroll does not expose the human scenario
+> title as a test trait, so a title-based filter resolves to zero tests.
 
 Results are written as `TestResults/e2e.trx` and the process exit code matches `dotnet test`.
 

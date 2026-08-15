@@ -14,6 +14,9 @@ namespace FamilyHQ.Services.Calendar;
 /// operations — never a create/watch, to avoid duplicates), honouring Google's Retry-After. Long waits
 /// are rethrown rather than slept in-request (foreground → 503; background → job-level retry). Every
 /// other exception (reauth, webhook-not-supported, sync-token-expired, cancellation) propagates un-retried.
+/// FHQ-91: a per-attempt HttpClient timeout (TaskCanceledException wrapping TimeoutException) is retried
+/// like a 5xx — idempotent operations only. The client's Timeout applies inside each attempt's
+/// SendAsync; Retry-After waits happen HERE, between attempts, so the timeout can never cut them short.
 /// </summary>
 public sealed class ResilientGoogleCalendarClient(
     IGoogleCalendarClient inner,
@@ -95,6 +98,23 @@ public sealed class ResilientGoogleCalendarClient(
                     operation, (int)ex.StatusCode, attempt, _options.MaxAttempts, (int)delay.TotalMilliseconds);
                 await Task.Delay(delay, timeProvider, ct);
             }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException && !ct.IsCancellationRequested)
+            {
+                // FHQ-91: per-attempt HttpClient timeout (the inner TimeoutException and untouched
+                // caller token distinguish it from cancellation). Like a 5xx, the request may have
+                // reached Google — so only idempotent operations retry, never a create/watch.
+                if (attempt >= _options.MaxAttempts || policy != RetryPolicy.Full)
+                    throw;
+
+                var delay = ComputeExponentialDelay(attempt);
+                if (delay > _options.RetryAfterInRequestCap)
+                    throw;
+
+                logger.LogWarning(
+                    "Google {Operation} attempt timed out; retry {Attempt}/{Max} after {DelayMs}ms.",
+                    operation, attempt, _options.MaxAttempts, (int)delay.TotalMilliseconds);
+                await Task.Delay(delay, timeProvider, ct);
+            }
         }
     }
 
@@ -112,6 +132,11 @@ public sealed class ResilientGoogleCalendarClient(
     {
         if (ex.RetryAfter is { } ra && ra > TimeSpan.Zero)
             return ra;
+        return ComputeExponentialDelay(attempt);
+    }
+
+    private TimeSpan ComputeExponentialDelay(int attempt)
+    {
         var expMs = _options.BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
         var jitterMs = expMs * Random.Shared.NextDouble(); // full jitter: [exp, 2*exp)
         return TimeSpan.FromMilliseconds(expMs + jitterMs);

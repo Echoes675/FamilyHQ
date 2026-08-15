@@ -480,7 +480,7 @@ public class GoogleCalendarClientMappingTests
             ClientSecret = "test-secret",
             AuthBaseUrl = "https://auth.test.com"
         });
-        var authService = new GoogleAuthService(httpClient, options, new Mock<ILogger<GoogleAuthService>>().Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, new Mock<ILogger<GoogleAuthService>>().Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
         timeZoneServiceMock
             .Setup(s => s.GetSendZoneAsync(It.IsAny<CancellationToken>()))

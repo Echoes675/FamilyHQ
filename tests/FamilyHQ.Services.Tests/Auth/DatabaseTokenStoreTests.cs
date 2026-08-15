@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Npgsql;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests.Auth;
@@ -432,6 +433,77 @@ public class DatabaseTokenStoreTests
     }
 
     [Fact]
+    public async Task MarkNeedsReauthAsync_WhenAlreadyNeedsReauth_KeepsOriginalRecordAndDoesNotBroadcast()
+    {
+        // FHQ-85: multiple catch sites (worker, sync service, exception handler, webhook
+        // registration) may all observe the same dead token — only the first mark may write
+        // and broadcast, so the kiosk is not spammed and the original failure record survives.
+        var (sut, broadcasterMock) = CreateSutWithBroadcaster();
+        var originalSince = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var existing = new UserToken
+        {
+            UserId = "u-already-marked",
+            Provider = "Google",
+            RefreshToken = "ignored",
+            AuthStatus = TokenAuthStatus.NeedsReauth,
+            LastAuthErrorDescription = "original failure",
+            AuthStatusChangedAt = originalSince
+        };
+        _db.Setup<UserToken>([existing]);
+
+        await sut.MarkNeedsReauthAsync("u-already-marked", "later duplicate failure", CancellationToken.None);
+
+        existing.LastAuthErrorDescription.Should().Be("original failure");
+        existing.AuthStatusChangedAt.Should().Be(originalSince);
+        _db.SaveChangesCount.Should().Be(0);
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task MarkNeedsReauthAsync_WhenConcurrentMarkerWinsRace_RetrySkipsWithoutSecondSaveOrBroadcast()
+    {
+        // FHQ-85 headline race: the sync worker and the DomainExceptionHandler both observe the
+        // same dead token and mark concurrently. The loser's save conflicts; its concurrency
+        // retry re-reads the row, sees the winner already committed NeedsReauth, and skips.
+        var (sut, broadcasterMock) = CreateSutWithBroadcaster();
+        var winnerSince = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+        var existing = new UserToken
+        {
+            UserId = "u-race",
+            Provider = "Google",
+            RefreshToken = "ignored",
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        _db.OnSaveChanges = () =>
+        {
+            // The winner (worker) commits first, so this caller's save conflicts. Real EF
+            // reloads fresh DB values after ClearTrackedEntities; the fake reuses the instance,
+            // so apply the winner's committed values here before throwing.
+            existing.AuthStatus = TokenAuthStatus.NeedsReauth;
+            existing.LastAuthErrorDescription = "winner failure";
+            existing.AuthStatusChangedAt = winnerSince;
+            throw new DbUpdateConcurrencyException("lost the race to the concurrent marker");
+        };
+
+        await sut.MarkNeedsReauthAsync("u-race", "loser failure", CancellationToken.None);
+
+        // The loser contributes NO second save and NO duplicate broadcast, and the winner's
+        // failure record survives. The winner's own single save + single broadcast is pinned by
+        // MarkNeedsReauthAsync_WhenTokenUpdates_BroadcastsConnectionStatusUpdated — so the race
+        // nets exactly one effective save and exactly one broadcast system-wide.
+        _db.SaveChangesCount.Should().Be(1);
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+        existing.LastAuthErrorDescription.Should().Be("winner failure");
+        existing.AuthStatusChangedAt.Should().Be(winnerSince);
+        broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task MarkNeedsReauthAsync_WhenNoTokenRow_DoesNotBroadcast()
     {
         var (sut, broadcasterMock) = CreateSutWithBroadcaster();
@@ -577,7 +649,18 @@ public class DatabaseTokenStoreTests
         _db.OnSaveChanges = () =>
         {
             calls++;
-            if (calls == 1) throw new DbUpdateConcurrencyException("simulated lost race");
+            if (calls == 1)
+            {
+                // The fake reuses the same entity instance on the retry's re-read, but real EF
+                // reloads fresh DB values after ClearTrackedEntities. Model that reload here:
+                // the conflicting writer did NOT mark NeedsReauth (e.g. a token rotation bumped
+                // the row), so the retried read must see Active again — otherwise the FHQ-85
+                // already-marked guard would (correctly) skip the re-apply.
+                existing.AuthStatus = TokenAuthStatus.Active;
+                existing.LastAuthErrorDescription = null;
+                existing.AuthStatusChangedAt = null;
+                throw new DbUpdateConcurrencyException("simulated lost race");
+            }
             return 1;
         };
         var sut = CreateSut(userId);
@@ -623,5 +706,156 @@ public class DatabaseTokenStoreTests
 
         // Assert
         _accessTokenCacheMock.Verify(c => c.Evict("user-1"), Times.Once);
+    }
+
+    // ---- FHQ-90: decryption failures must persist a NeedsReauth signal; DB failures must rethrow ----
+
+    /// <summary>
+    /// Seeds a token row whose ciphertext was protected under a DIFFERENT key ring than the SUT's,
+    /// reproducing a Data Protection key-ring rotation/loss — Unprotect throws CryptographicException.
+    /// </summary>
+    private UserToken SeedTokenFromForeignKeyRing(string userId)
+    {
+        var foreignProtector = new EphemeralDataProtectionProvider().CreateProtector(Purpose);
+        var existing = new UserToken
+        {
+            UserId = userId,
+            Provider = "Google",
+            RefreshToken = foreignProtector.Protect("token-from-lost-key-ring"),
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        return existing;
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WhenDecryptionFails_ReturnsNullAndMarksNeedsReauthWithDecryptionReason()
+    {
+        // Arrange
+        var userId = "u-decrypt-fail";
+        var existing = SeedTokenFromForeignKeyRing(userId);
+        var sut = CreateSut(userId);
+
+        // Act
+        var result = await sut.GetRefreshTokenAsync();
+
+        // Assert — null keeps callers on their existing "not connected" path, but the persisted
+        // NeedsReauth + DecryptionFailed reason distinguishes a key-ring incident from "never connected".
+        result.Should().BeNull();
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+        existing.LastAuthErrorDescription.Should().Contain("DecryptionFailed");
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WithExplicitUserId_WhenDecryptionFails_ReturnsNullAndMarksNeedsReauth()
+    {
+        // Arrange
+        var userId = "u-decrypt-fail-explicit";
+        var existing = SeedTokenFromForeignKeyRing(userId);
+        var sut = CreateSut(userId);
+
+        // Act — the explicit-userId overload (used by the OAuth callback) must behave identically.
+        var result = await sut.GetRefreshTokenAsync(userId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+        existing.LastAuthErrorDescription.Should().Contain("DecryptionFailed");
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WhenDecryptionFails_LogsError()
+    {
+        // Arrange — userId deliberately shares no words with the expected message.
+        var userId = "u-keyring-incident";
+        SeedTokenFromForeignKeyRing(userId);
+        var sut = CreateSut(userId);
+
+        // Act
+        await sut.GetRefreshTokenAsync();
+
+        // Assert — a key-ring incident needs operator attention: Error, not the old swallowed path.
+        _loggerMock.Verify(l => l.Log(
+            LogLevel.Error, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Failed to decrypt")),
+            It.IsAny<Exception>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WhenDecryptionFailsRepeatedly_MarksAndBroadcastsOnlyOnce()
+    {
+        // Arrange
+        var userId = "u-decrypt-fail-repeat";
+        SeedTokenFromForeignKeyRing(userId);
+        var sut = CreateSut(userId);
+
+        // Act — every kiosk poll re-reads the token; repeated failures must not spam mark/broadcast.
+        await sut.GetRefreshTokenAsync();
+        await sut.GetRefreshTokenAsync();
+        await sut.GetRefreshTokenAsync();
+
+        // Assert — only the first failed read persists the mark and notifies clients.
+        _db.SaveChangesCount.Should().Be(1);
+        _broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WhenStoredCiphertextIsMalformed_ReturnsNullAndMarksNeedsReauth()
+    {
+        // Arrange — a corrupted column (not even valid base64url) fails before the crypto layer with
+        // FormatException; operationally it is the same unreadable-token incident.
+        var userId = "u-malformed-ciphertext";
+        var existing = new UserToken
+        {
+            UserId = userId,
+            Provider = "Google",
+            RefreshToken = "not-base64url-!!!",
+            AuthStatus = TokenAuthStatus.Active
+        };
+        _db.Setup<UserToken>([existing]);
+        var sut = CreateSut(userId);
+
+        // Act
+        var result = await sut.GetRefreshTokenAsync();
+
+        // Assert
+        result.Should().BeNull();
+        existing.AuthStatus.Should().Be(TokenAuthStatus.NeedsReauth);
+        existing.LastAuthErrorDescription.Should().Contain("DecryptionFailed");
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WhenDatabaseReadFails_RethrowsDbException()
+    {
+        // Arrange — the DbSet's query provider throws, as a dropped connection would mid-query.
+        var userId = "u-db-blip";
+        var mockSet = _db.Setup<UserToken>();
+        mockSet.As<IQueryable<UserToken>>()
+            .Setup(q => q.Provider)
+            .Throws(new NpgsqlException("connection refused"));
+        var sut = CreateSut(userId);
+
+        // Act & Assert — a DB blip must surface to the caller, never impersonate "not connected".
+        await Assert.ThrowsAsync<NpgsqlException>(() => sut.GetRefreshTokenAsync());
+        _broadcasterMock.Verify(
+            b => b.BroadcastConnectionStatusUpdatedAsync(It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetRefreshTokenAsync_WithExplicitUserId_WhenDatabaseReadFails_RethrowsDbException()
+    {
+        // Arrange
+        var userId = "u-db-blip-explicit";
+        var mockSet = _db.Setup<UserToken>();
+        mockSet.As<IQueryable<UserToken>>()
+            .Setup(q => q.Provider)
+            .Throws(new NpgsqlException("connection refused"));
+        var sut = CreateSut(userId);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<NpgsqlException>(() => sut.GetRefreshTokenAsync(userId, CancellationToken.None));
     }
 }

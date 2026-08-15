@@ -2,6 +2,7 @@ namespace FamilyHQ.WebApi.Services;
 
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Logging;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -46,7 +47,8 @@ public class WebhookRenewalService(
     // Iterates users manually rather than calling WebhookRegistrationService.RenewAllAsync
     // because each user needs BackgroundUserContext set and a fresh DI scope so that
     // scoped services (ICalendarRepository, ICurrentUserService) resolve correctly.
-    private async Task RegisterAllWebhooksAsync(CancellationToken ct)
+    // Internal (not private) so unit tests can drive the loop directly, like CalendarSyncWorker.DrainAsync.
+    internal async Task RegisterAllWebhooksAsync(CancellationToken ct)
     {
         using var scope = serviceProvider.CreateScope();
         var tokenStore = scope.ServiceProvider.GetRequiredService<ITokenStore>();
@@ -62,6 +64,15 @@ public class WebhookRenewalService(
                 using var userScope = serviceProvider.CreateScope();
                 var registrationService = userScope.ServiceProvider.GetRequiredService<IWebhookRegistrationService>();
                 await registrationService.RegisterAllAsync(userId, ct: ct);
+            }
+            catch (GoogleReauthRequiredException)
+            {
+                // FHQ-85: RegisterAllAsync already persisted NeedsReauth and Warning-logged the
+                // detection — here it is a handled account-state condition, not an error. The
+                // next cycle skips this user via the auth-status guard; continue with the rest.
+                logger.LogInformation(
+                    "Webhook renewal for {UserId} requires re-authentication; continuing with remaining users.",
+                    userId);
             }
             catch (Exception ex)
             {

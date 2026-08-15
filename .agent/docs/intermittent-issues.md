@@ -14,6 +14,19 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 11. "Day view shows hourly temperatures" fails in the 23:00–00:00 UTC window — seed date vs view date diverge (FHQ-134 class)
+
+**Status:** root-cause **hypothesis** with a strong evidence chain; not yet reproduced on demand. Do not mark resolved off green daytime runs — only a green run *inside* the window (or the FHQ-134-class fix) counts.
+**Component:** E2E date plumbing — `tests-e2e/FamilyHQ.E2E.Steps/WeatherSteps.cs` (`GivenHourlyWeatherDataIsSeededFor` → `DateExpressionResolver.ResolveLondon`) vs the app/browser UTC "today"; related production-side ticket: FHQ-134 (`EnsureTodayAsync` server-local date key), Backlog-Priority Batch 5.
+**First seen:** Deploy-Dev **#656** (2026-08-14, E2E phase ~23:25–23:35 UTC), on a **docs-only** branch (`chore/FHQ-67-localstack-docs`) — the diff cannot have caused it.
+**Occurrences:** Deploy-Dev #656. This scenario had passed in all ~25 preceding gate runs (#610–#655), every one of which ran outside the window.
+
+**Symptom:** `ThenISeeHourlyTemperaturesInTheDayView` times out (30 s) waiting for `.day-hour-temp` — the day view renders zero hourly temperature labels.
+
+**Hypothesis (evidence-based):** the seed step resolves "today" via `ResolveLondon` — Europe/London local date, which at 23:xx UTC in summer is already the **next** day. The day view's selected date comes from the kiosk clock's local date in the CI browser/container, which is **UTC** — still the **previous** day until 00:00 UTC. For one hour per day the hourly rows are seeded under a date the day view never queries → empty forecast → no `.day-hour-temp`. Same 23:00–00:00 UTC divergence class as FHQ-134's theme-record bug.
+
+**If the symptom returns:** check the run's E2E-phase wall-clock first — inside 23:00–00:00 UTC supports this entry (update Occurrences, re-run the gate outside the window); outside it means a different cause — investigate fresh, do not attach it here. Real fix options when FHQ-134 (Batch 5) is picked up: make the E2E seed and the view derive "today" from the same zone source, and/or fix the production date-key derivation the ticket covers.
+
 ### 8. Recurring-event create 500s on a `GoogleEventId` unique-constraint race with the sync worker (FHQ-66)
 
 **Status:** root cause confirmed (local repro + real #505); fix implemented on branch `fix/FHQ-66-recurring-create-duplicate-key`, **pending the Deploy-Dev recurrence gate** (do not mark resolved off local runs alone — see issue #3-legacy).
@@ -54,6 +67,31 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 **How to confirm + recover:** check for a testhost/browser process and the launcher's CPU delta; if wedged, `Stop-Process` the `dev-stack` `pwsh` (and its child), then `dev-stack.ps1 down` to reconcile the stale services. Then push and let **Deploy-Dev** run the E2E (it exercises the same feature files). Per the local-run rule this is an acceptable deviation when the local infra is unavailable — the intent (don't burn Deploy-Dev cycles on failures catchable locally) is moot when the local runner can't run.
 
 **What a real fix needs:** the phase logging/timeout is done (FHQ-148). The remaining work is to pin the Wedge-A `dotnet test` shutdown deadlock from the next captured occurrence — the `PHASE dotnet-test` timeout will now abort it and log the boundary, so the next hang should yield a diagnosable trail (orphaned browser command lines, testhost state) rather than 2h of silence.
+
+---
+
+### 10. SignalR coordinator unit test times out waiting for the FakeTimeProvider-driven restart continuation under CI load (FHQ-125)
+
+**Status:** root cause confirmed (helper design, reproduced by inspection); helper fix applied on branch `fix/FHQ-91-google-client-timeouts` (test-infra change riding along for that branch's CI gate). Per this file's own convention (see issue 3-legacy): **do not mark Resolved off a handful of green runs** — the failure is load-dependent, so the bar is a sustained streak of loaded shared-host CI runs with zero recurrences.
+**Component:** unit-test infra only — `tests/FamilyHQ.WebUi.Tests/Services/SignalRConnectionCoordinatorTests.cs` (`WaitUntilAsync` helper). No production code involved; the coordinator under test behaved correctly.
+**First seen:** FamilyHQ branch build `fix/FHQ-91-google-client-timeouts` #1 (2026-08-14), `OnStartFailed_SchedulesRestart_AfterInitialDelay` — after ~10 consecutive green CI runs of the same tests. The failing branch does not touch SignalR code.
+**Occurrences:** branch build `fix/FHQ-91-google-client-timeouts` #1 (2026-08-14).
+
+**Symptom:**
+```text
+FluentAssertions: Expected condition() to be True because the coordinator
+should have reached the expected state, but found False.
+   at ...SignalRConnectionCoordinatorTests.WaitUntilAsync(...)
+   at ...OnStartFailed_SchedulesRestart_AfterInitialDelay()
+```
+
+**Root cause (confirmed by helper inspection):** `WaitUntilAsync` bounded its wait with a **fixed count of 10,000 `Task.Yield()` iterations** — a scheduler-round-trip budget, not a time budget. After `FakeTimeProvider.Advance` completes the coordinator's fake `Task.Delay`, the restart-loop continuation (which invokes the fake restart callback and increments the observed counter) is queued to the thread pool, while each of the asserting method's yields posts back through xUnit's shared `MaxConcurrencySyncContext`. On the shared Jenkins host, with other test classes' work saturating the pool, the asserting thread can complete all 10,000 yield round-trips — consuming essentially zero wall-clock time — before the pool ever schedules the coordinator's continuation. Classic load-dependent flake: unreproducible on an idle machine.
+
+**Fix (helper robustness only — every test's assertions/semantics unchanged):** `WaitUntilAsync` is now wall-clock-bounded: it polls the condition with a `Task.Yield()` plus a **10 ms real `Task.Delay`** between checks, up to a generous 5 s deadline. The real delay guarantees the pool wall-clock time to make progress regardless of load; the deadline only bounds the failure path (normal-case cost is unchanged — the condition is typically already true at the first check because FakeTimeProvider continuations usually run inline within `Advance`). This is the same accepted bounded real-delay polling pattern already used in `JwtRenewalServiceTests`. `YieldAsync` (fixed 20-yield budget) was deliberately left as-is: it backs **negative** assertions ("nothing fired yet"), where a starved budget can only produce a false pass in buggy-code scenarios, never a false failure — it cannot flake CI, and no finite wait can prove a negative.
+
+**Known residual (accepted, diagnosable):** a theoretical window remains where a test's `Advance` runs before the coordinator's loop has registered its *next* fake-timer delay (the trailing settle after `WaitUntilAsync` is still yield-based); the timer would then be due 10 fake-seconds after creation and never advanced past. If that ever occurs, the *following* `WaitUntilAsync` now fails loudly at its 5 s deadline with the same assertion message — it cannot hang. A recurrence of this symptom on a test **other than** the first-attempt ones should be triaged against this window first.
+
+**If the symptom returns:** confirm which `WaitUntilAsync` call failed. First-attempt waits recurring means the 5 s deadline is genuinely being exceeded under load — check CI host contention (parallel jobs on the shared host, see `project_ci_shared_host`) before touching the helper again; do not fix by inflating the yield count (a time-free budget was the original defect). Later-attempt waits → the residual window above.
 
 ---
 

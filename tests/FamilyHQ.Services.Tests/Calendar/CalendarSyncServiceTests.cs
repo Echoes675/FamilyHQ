@@ -1022,6 +1022,141 @@ public class CalendarSyncServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── FHQ-75: duplicate calendar display names must not abort the sync ─────
+
+    [Fact]
+    public async Task SyncAsync_DuplicateCalendarDisplayNames_ResolvesToFirstOnceAndLogsWarning()
+    {
+        // Google does not enforce unique calendar names. Previously calendarByName was built with
+        // ToDictionary, so two calendars sharing a display name threw ArgumentException and aborted
+        // the whole sync. First-wins is deterministic because GetCalendarsAsync orders by
+        // DisplayOrder then Id.
+        var (client, calendarRepository, tagParser, logger, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-dup");
+        var workId    = Guid.Parse("11111111-aaaa-aaaa-aaaa-111111111111");
+        var familyAId = Guid.Parse("22222222-bbbb-bbbb-bbbb-222222222222");
+        var familyBId = Guid.Parse("33333333-cccc-cccc-cccc-333333333333");
+        var start     = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var end       = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+
+        var work    = new CalendarInfo { Id = workId,    GoogleCalendarId = "work@g",    DisplayName = "Work Calendar",   IsShared = false };
+        var familyA = new CalendarInfo { Id = familyAId, GoogleCalendarId = "familyA@g", DisplayName = "Family Calendar", IsShared = false };
+        var familyB = new CalendarInfo { Id = familyBId, GoogleCalendarId = "familyB@g", DisplayName = "Family Calendar", IsShared = false };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(work);
+        // Incremental sync (token exists) — skips the full-sync tombstone branch.
+        calendarRepository.Setup(r => r.GetSyncStateAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok" });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { work, familyA, familyB });
+
+        var fetched = new CalendarEvent
+        {
+            GoogleEventId = "evt-dup",
+            Title         = "Dinner",
+            Description   = "Dinner with Family Calendar"
+        };
+        client.Setup(c => c.GetEventsAsync("work@g", null, null, "tok", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-dup", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        // Realistic free-form parser: echoes each known name the description mentions, once per
+        // occurrence in the supplied list — so the duplicated name comes back twice and the sync
+        // must still resolve it to a single member (no duplicate junction rows).
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns((string d, IReadOnlyList<string> known, IReadOnlyList<string>? _) =>
+                known.Where(n => d.Contains(n, StringComparison.OrdinalIgnoreCase)).ToList());
+
+        // Act — must not throw despite the duplicate display name
+        await systemUnderTest.SyncAsync(workId, start, end);
+
+        // Assert — the first-ordered duplicate wins, exactly once; the loser is never a member.
+        // FHQ-68: the owning (non-shared) work calendar is also included as an attendee.
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e =>
+                e.GoogleEventId == "evt-dup"
+                && e.Members.Count(m => m.Id == familyAId) == 1
+                && e.Members.All(m => m.Id != familyBId)
+                && e.Members.Count(m => m.Id == workId) == 1),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Sync completed — token advanced.
+        calendarRepository.Verify(r => r.SaveSyncStateAsync(
+            It.Is<SyncState>(s => s.SyncToken == "tok2"), It.IsAny<CancellationToken>()), Times.Once);
+
+        // A Warning names the duplicate by id only — calendar display names are user data (PII)
+        // and must not appear in the log message.
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) =>
+                v.ToString()!.Contains("Duplicate calendar display name")
+                && v.ToString()!.Contains(familyBId.ToString())
+                && v.ToString()!.Contains(familyAId.ToString())
+                && !v.ToString()!.Contains("Family Calendar")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_CaseInsensitiveDuplicateCalendarNames_ResolvesToFirstWithoutThrowing()
+    {
+        // The lookup comparer is OrdinalIgnoreCase, so "FAMILY CALENDAR" collides with
+        // "Family Calendar" — the collision must be handled the same way as an exact duplicate.
+        var (client, calendarRepository, tagParser, logger, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-dup-ci");
+        var workId    = Guid.Parse("44444444-aaaa-aaaa-aaaa-444444444444");
+        var familyAId = Guid.Parse("55555555-bbbb-bbbb-bbbb-555555555555");
+        var familyBId = Guid.Parse("66666666-cccc-cccc-cccc-666666666666");
+        var start     = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(-30);
+        var end       = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(30);
+
+        var work    = new CalendarInfo { Id = workId,    GoogleCalendarId = "work@g",    DisplayName = "Work Calendar",   IsShared = false };
+        var familyA = new CalendarInfo { Id = familyAId, GoogleCalendarId = "familyA@g", DisplayName = "Family Calendar", IsShared = false };
+        var familyB = new CalendarInfo { Id = familyBId, GoogleCalendarId = "familyB@g", DisplayName = "FAMILY CALENDAR", IsShared = false };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(work);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(workId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok" });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { work, familyA, familyB });
+
+        var fetched = new CalendarEvent
+        {
+            GoogleEventId = "evt-dup-ci",
+            Title         = "Dinner",
+            Description   = "Dinner with Family Calendar"
+        };
+        client.Setup(c => c.GetEventsAsync("work@g", null, null, "tok", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-dup-ci", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns((string d, IReadOnlyList<string> known, IReadOnlyList<string>? _) =>
+                known.Where(n => d.Contains(n, StringComparison.OrdinalIgnoreCase)).ToList());
+
+        // Act — must not throw despite the case-insensitive duplicate
+        await systemUnderTest.SyncAsync(workId, start, end);
+
+        // Assert — resolves to the first-ordered calendar exactly once, and the warning fired.
+        calendarRepository.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e =>
+                e.GoogleEventId == "evt-dup-ci"
+                && e.Members.Count(m => m.Id == familyAId) == 1
+                && e.Members.All(m => m.Id != familyBId)),
+            It.IsAny<CancellationToken>()), Times.Once);
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Duplicate calendar display name")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {

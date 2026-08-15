@@ -747,11 +747,11 @@ public class GoogleCalendarClientTests
                 Content = new StringContent(forbiddenBody)
             });
 
-        // Act & Assert
+        // Act & Assert — FHQ-88: the raw body is parsed for routing but never retained.
         var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
             .Should().ThrowAsync<GoogleReauthRequiredException>();
         ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.CalendarApi);
-        ex.Which.ResponseBody.Should().Contain("Insufficient Permission");
+        AllStringPropertyValues(ex.Which).Should().NotContain(v => v.Contains("Insufficient Permission"));
     }
 
     [Theory]
@@ -958,6 +958,69 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetCalendarsAsync_WhenUnauthorized_ReauthExceptionCarriesCurrentUserId()
+    {
+        // Arrange — FHQ-85: catch sites (DomainExceptionHandler, webhook registration) need the
+        // user on the exception to persist NeedsReauth; the client is the seam that knows it.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":{\"code\":401,\"message\":\"Invalid Credentials\"}}")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.UserId.Should().Be("test-user-id");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenRefreshRejectedWithInvalidGrant_ReauthExceptionCarriesCurrentUserId()
+    {
+        // Arrange — FHQ-85: GoogleAuthService only sees the raw refresh-token string, so its
+        // exception has no user; the client must enrich it before it propagates.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("revoked-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadRequest,
+                Content = new StringContent("{\"error\":\"invalid_grant\",\"error_description\":\"Token has been expired or revoked.\"}")
+            });
+
+        // Act & Assert
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+        ex.Which.UserId.Should().Be("test-user-id");
+        ex.Which.FailureSource.Should().Be(GoogleAuthFailureSource.TokenRefresh);
+        ex.Which.ErrorDescription.Should().Be("Token has been expired or revoked.");
+    }
+
+    [Fact]
     public async Task GetCalendarsAsync_WhenUnauthorized_EvictsCachedAccessTokenForCurrentUser()
     {
         // Arrange — FHQ-82: a revoked refresh token must not be masked by a still-cached access
@@ -995,9 +1058,9 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
-    public async Task GetCalendarsAsync_When500_ThrowsGoogleApiExceptionWithBody()
+    public async Task GetCalendarsAsync_When500_ThrowsGoogleApiExceptionWithStatus()
     {
-        // Arrange — non-auth upstream errors surface as GoogleApiException with body captured.
+        // Arrange — non-auth upstream errors surface as GoogleApiException carrying the status.
         var (http, tokenStore, systemUnderTest) = CreateSut();
         tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
 
@@ -1023,12 +1086,186 @@ public class GoogleCalendarClientTests
                 Content = new StringContent("backend boom")
             });
 
-        // Act & Assert
+        // Act & Assert — FHQ-88: status is carried; the raw body is not.
         var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
             .Should().ThrowAsync<GoogleApiException>();
         ex.Which.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
-        ex.Which.ResponseBody.Should().Contain("backend boom");
+        AllStringPropertyValues(ex.Which).Should().NotContain(v => v.Contains("backend boom"));
     }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenUnauthorized_DoesNotLogRawGoogleResponseBody()
+    {
+        // Arrange — FHQ-88: the raw Google error body must never reach the logs at any level;
+        // only the parsed reason and status may be logged.
+        var (http, tokenStore, loggerMock, systemUnderTest) = CreateSutWithLogger();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":{\"code\":401,\"message\":\"raw-google-body-MARKER\"}}")
+            });
+
+        // Act
+        await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        // Assert — no log entry at any level contains the raw Google body text.
+        loggerMock.Verify(
+            x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("raw-google-body-MARKER")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenUnauthorized_ThrownExceptionDoesNotRetainRawGoogleBody()
+    {
+        // Arrange — FHQ-88: the exception object is in scope for any generic handler/logger up
+        // the stack, so it must not retain the raw Google body on any property.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.Unauthorized,
+                Content = new StringContent("{\"error\":{\"code\":401,\"message\":\"raw-google-body-MARKER\"}}")
+            });
+
+        // Act
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        // Assert — no public string property (Message, ErrorDescription, ...) carries the raw body.
+        AllStringPropertyValues(ex.Which).Should().NotContain(v => v.Contains("raw-google-body-MARKER"));
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When500_DoesNotLogRawGoogleResponseBody()
+    {
+        // Arrange — FHQ-88: the non-auth failure branch must not log the raw body either.
+        var (http, tokenStore, loggerMock, systemUnderTest) = CreateSutWithLogger();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.InternalServerError,
+                Content = new StringContent("raw-google-body-MARKER upstream boom")
+            });
+
+        // Act
+        await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+
+        // Assert
+        loggerMock.Verify(
+            x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("raw-google-body-MARKER")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_When500_ThrownExceptionDoesNotRetainRawGoogleBody()
+    {
+        // Arrange — FHQ-88: GoogleApiException must not retain the raw Google body on any property.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.InternalServerError,
+                Content = new StringContent("raw-google-body-MARKER upstream boom")
+            });
+
+        // Act
+        var ex = await systemUnderTest.Invoking(s => s.GetCalendarsAsync())
+            .Should().ThrowAsync<GoogleApiException>();
+
+        // Assert
+        AllStringPropertyValues(ex.Which).Should().NotContain(v => v.Contains("raw-google-body-MARKER"));
+    }
+
+    /// <summary>
+    /// Sweeps every public string property of an exception (Message, ErrorDescription, ...) so
+    /// leak assertions keep guarding even if a new property is added later.
+    /// </summary>
+    private static IEnumerable<string> AllStringPropertyValues(Exception exception) =>
+        exception.GetType()
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => p.GetValue(exception))
+            .OfType<string>();
 
     [Fact]
     public async Task GetCalendarsAsync_When429WithRetryAfter_ThrowsGoogleApiExceptionCarryingRetryAfter()
@@ -1603,7 +1840,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();
@@ -1658,7 +1895,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();
@@ -1704,7 +1941,7 @@ public class GoogleCalendarClientTests
         });
 
         var authLoggerMock = new Mock<ILogger<GoogleAuthService>>();
-        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object);
+        var authService = new GoogleAuthService(httpClient, options, authLoggerMock.Object, new Mock<IIdTokenValidator>().Object, new Mock<ITokenStore>().Object);
 
         var loggerMock = new Mock<ILogger<GoogleCalendarClient>>();
         var currentUserMock = new Mock<ICurrentUserService>();

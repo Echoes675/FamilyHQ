@@ -184,6 +184,178 @@ public class WebhookRegistrationServiceTests
     }
 
     [Fact]
+    public async Task RegisterAllAsync_WhenWatchThrowsReauth_MarksNeedsReauthAndRethrows()
+    {
+        // Arrange — FHQ-85: if the FIRST detection of a revoked grant happens during webhook
+        // registration, the reauth must be persisted here (not swallowed) or the renewal cycle
+        // keeps retrying the dead token forever.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var userId = "reauth-during-registration";
+        tokenStore.Setup(t => t.GetAuthStatusAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+
+        var calendar1 = new CalendarInfo
+        {
+            Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            GoogleCalendarId = "cal1@google.com",
+            UserId = userId,
+            DisplayName = "Cal 1"
+        };
+        var calendar2 = new CalendarInfo
+        {
+            Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            GoogleCalendarId = "cal2@google.com",
+            UserId = userId,
+            DisplayName = "Cal 2"
+        };
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar1, calendar2 });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: userId));
+
+        // Act & Assert — the reauth propagates to the caller (foreground → 409 via DomainExceptionHandler)
+        await sut.Invoking(s => s.RegisterAllAsync(userId))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        // Persisted exactly once, and the second calendar was not attempted (same dead token).
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync(userId, "Token has been expired or revoked.", It.IsAny<CancellationToken>()),
+            Times.Once);
+        client.Verify(c => c.WatchEventsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterAllAsync_WhenWatchThrowsReauth_MarksWithUncancellableToken()
+    {
+        // FHQ-85 review: SyncController's request token flows into RegisterAllAsync — but once
+        // reauth is detected, the mark must survive a client abort, so the store call must
+        // receive CancellationToken.None rather than the caller's token.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var userId = "reauth-uncancellable";
+        tokenStore.Setup(t => t.GetAuthStatusAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo>
+            {
+                new()
+                {
+                    Id = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                    GoogleCalendarId = "cal@google.com",
+                    UserId = userId,
+                    DisplayName = "Cal"
+                }
+            });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.CalendarApi, "Unauthorized", userId: userId));
+
+        using var requestCts = new CancellationTokenSource();
+
+        await sut.Invoking(s => s.RegisterAllAsync(userId, ct: requestCts.Token))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync(userId, "Unauthorized", CancellationToken.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterAllAsync_WhenPersistingMarkFails_StillThrowsOriginalReauthException()
+    {
+        // FHQ-85 review: a transient DB failure while marking must not replace the reauth
+        // exception — the caller (foreground → 409 with reconnect payload) needs the original.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var userId = "reauth-mark-fails";
+        tokenStore.Setup(t => t.GetAuthStatusAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+        tokenStore.Setup(t => t.MarkNeedsReauthAsync(userId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db unavailable"));
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo>
+            {
+                new()
+                {
+                    Id = Guid.Parse("66666666-7777-8888-9999-aaaaaaaaaaaa"),
+                    GoogleCalendarId = "cal@google.com",
+                    UserId = userId,
+                    DisplayName = "Cal"
+                }
+            });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+        client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.TokenRefresh, "Token has been expired or revoked.", userId: userId));
+
+        await sut.Invoking(s => s.RegisterAllAsync(userId))
+            .Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
+    [Fact]
+    public async Task RenewAllAsync_WhenOneUserThrowsReauth_MarksThatUserAndContinuesWithRemainingUsers()
+    {
+        // Arrange — user-1's token dies mid-renewal; user-2 must still get its channels renewed.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var states = new List<UserAuthState>
+        {
+            new("user-1", TokenAuthStatus.Active),
+            new("user-2", TokenAuthStatus.Active)
+        };
+        tokenStore.Setup(t => t.GetAllUserAuthStatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(states);
+        tokenStore.Setup(t => t.GetAuthStatusAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthStatusResult(TokenAuthStatus.Active, null, null));
+
+        var user1Calendar = new CalendarInfo
+        {
+            Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            GoogleCalendarId = "u1-cal@google.com",
+            UserId = "user-1",
+            DisplayName = "User 1 Cal"
+        };
+        var user2Calendar = new CalendarInfo
+        {
+            Id = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            GoogleCalendarId = "u2-cal@google.com",
+            UserId = "user-2",
+            DisplayName = "User 2 Cal"
+        };
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { user1Calendar });
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("user-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { user2Calendar });
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+
+        client.Setup(c => c.WatchEventsAsync("u1-cal@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(
+                GoogleAuthFailureSource.CalendarApi, "Unauthorized", userId: "user-1"));
+        client.Setup(c => c.WatchEventsAsync("u2-cal@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("ch-2", "res-2", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        // Act — must not throw; one user's dead token cannot abort the renewal cycle.
+        await sut.Invoking(s => s.RenewAllAsync()).Should().NotThrowAsync();
+
+        // Assert
+        tokenStore.Verify(
+            t => t.MarkNeedsReauthAsync("user-1", "Unauthorized", It.IsAny<CancellationToken>()),
+            Times.Once);
+        client.Verify(c => c.WatchEventsAsync(
+            "u2-cal@google.com", It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RenewAllAsync_RegistersForAllUsersAndCalendars()
     {
         // Arrange
@@ -405,7 +577,7 @@ public class WebhookRegistrationServiceTests
         webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((WebhookRegistration?)null);
         client.Setup(c => c.WatchEventsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new WebhookNotSupportedException("WatchEvents", "pushNotSupportedForRequestedResource", "{}"));
+            .ThrowsAsync(new WebhookNotSupportedException("WatchEvents", "pushNotSupportedForRequestedResource"));
 
         await sut.Invoking(s => s.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId)).Should().NotThrowAsync();
 
@@ -506,7 +678,7 @@ public class WebhookRegistrationServiceTests
             .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
 
         client.Setup(c => c.StopChannelAsync("existing-channel", "existing-resource", It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new GoogleApiException(HttpStatusCode.NotFound, "StopChannel", null));
+            .ThrowsAsync(new GoogleApiException(HttpStatusCode.NotFound, "StopChannel"));
 
         // Act
         var act = () => sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
