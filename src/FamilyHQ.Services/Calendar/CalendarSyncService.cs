@@ -196,8 +196,23 @@ public class CalendarSyncService(
             //    the shared container calendar.
             var memberCalendarNames = allLocalCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
             var allCalendarNames    = allLocalCalendars.Select(c => c.DisplayName).ToList();
-            var calendarByName      = allLocalCalendars
-                .ToDictionary(c => c.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+            // FHQ-75: Google does not enforce unique calendar names, so two calendars can share a
+            // display name (case-insensitively). ToDictionary would throw and abort the whole sync;
+            // build defensively instead — first wins, which is deterministic because
+            // GetCalendarsAsync orders by DisplayOrder then Id. Display names are user data (family
+            // member names), so the warning carries calendar ids only, never the name itself.
+            var calendarByName = new Dictionary<string, CalendarInfo>(StringComparer.OrdinalIgnoreCase);
+            foreach (var localCal in allLocalCalendars)
+            {
+                if (!calendarByName.TryAdd(localCal.DisplayName, localCal))
+                {
+                    logger.LogWarning(
+                        "Duplicate calendar display name during sync: calendar {IgnoredCalendarId} shares a display name with calendar {KeptCalendarId}; member-name resolution uses the first-ordered calendar.",
+                        localCal.Id,
+                        calendarByName[localCal.DisplayName].Id);
+                }
+            }
 
             // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the
             // pass-1 instances and cache it for this sync run, so each unknown master is fetched
@@ -262,9 +277,13 @@ public class CalendarSyncService(
                     // Derive members from description: free-form fallback over member calendars only,
                     // explicit [members:] tag resolved authoritatively over all calendars (FHQ-46).
                     var parsedNames   = memberTagParser.ParseMembers(evt.Description, memberCalendarNames, allCalendarNames);
+                    // Distinct: duplicate display names (FHQ-75) make the parser return the same
+                    // name once per duplicate, and every occurrence resolves to the same winning
+                    // calendar — collapse them so an event never gets duplicate junction rows.
                     var parsedMembers = parsedNames
                         .Where(n => calendarByName.ContainsKey(n))
                         .Select(n => calendarByName[n])
+                        .Distinct()
                         .ToList();
 
                     // FHQ-68: the owning (source) calendar is always an attendee of its own events when it is a

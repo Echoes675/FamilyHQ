@@ -13,9 +13,11 @@ public interface IMemberTagParser
     /// (container) calendar's name is never treated as a membership.</para>
     ///
     /// <para><paramref name="taggedCalendarNames"/> (optional) is the candidate set for resolving an
-    /// <b>explicit</b> [members:] tag. An explicit tag is authoritative, so it resolves against this
-    /// broader set (typically <i>all</i> calendars, including a currently-shared one) — this is what
-    /// keeps a tagged member from being dropped while its calendar is transiently shared (FHQ-46).
+    /// <b>explicit</b> [members:] tag. An explicit tag with content is authoritative, so it resolves
+    /// against this broader set (typically <i>all</i> calendars, including a currently-shared one) —
+    /// this is what keeps a tagged member from being dropped while its calendar is transiently shared
+    /// (FHQ-46). A tag whose content yields no name tokens (e.g. "[members: ]") is treated as no tag
+    /// at all and falls through to free-form matching — never an authoritative empty wipe (FHQ-75).
     /// When null, the tag resolves against <paramref name="knownMemberNames"/> (legacy behaviour).</para>
     /// </summary>
     IReadOnlyList<string> ParseMembers(
