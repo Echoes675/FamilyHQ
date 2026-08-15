@@ -38,8 +38,10 @@ public class DayThemeSchedulerService(
         // FHQ-65: correlate the one-time startup broadcast.
         using (logger.BeginCorrelationScope())
         {
-            // Startup wrapped in try/catch so a TriggerRecalculationAsync race or
-            // transient failure does not crash the hosted service.
+            // Startup wrapped in try/catch so a transient failure does not crash the hosted service.
+            // Note this block only ever passes stoppingToken — the recalculation token is never linked
+            // here, so a TriggerRecalculationAsync arriving during startup cannot cancel it; it is
+            // served by the first loop iteration's fresh read instead.
             try
             {
                 using var scope = serviceProvider.CreateScope();
@@ -51,7 +53,9 @@ public class DayThemeSchedulerService(
             }
             catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
             {
-                // Recalculation triggered during startup — loop will re-read boundaries
+                // Not shutdown, so this came from inside the theme service itself. Benign: the loop's
+                // first iteration reads the boundaries again.
+                logger.LogDebug("Startup theme broadcast cancelled without host shutdown; the loop will re-read the boundaries");
             }
             catch (Exception ex)
             {
@@ -70,11 +74,15 @@ public class DayThemeSchedulerService(
                 }
                 catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
                 {
-                    // Recalculation was triggered — loop restarts to re-read boundaries
+                    // Recalculation was triggered — loop restarts to re-read boundaries. FHQ-108: this
+                    // is the only evidence a trigger was ever honoured; without it a recurrence of the
+                    // silently-lost recalculation would be exactly as invisible as the original bug.
+                    logger.LogDebug("Theme recalculation triggered; re-reading day-theme boundaries");
                 }
                 catch (OperationCanceledException)
                 {
                     // Host is shutting down — exit the loop cleanly
+                    logger.LogDebug("DayThemeScheduler loop stopping; host shutdown requested");
                     break;
                 }
                 catch (Exception ex)
@@ -90,7 +98,7 @@ public class DayThemeSchedulerService(
         }
     }
 
-    private static async Task DelayQuietlyAsync(TimeSpan delay, CancellationToken stoppingToken)
+    private async Task DelayQuietlyAsync(TimeSpan delay, CancellationToken stoppingToken)
     {
         // Swallow cancellation during the backoff so shutdown is graceful; the loop condition exits next.
         try
@@ -99,7 +107,8 @@ public class DayThemeSchedulerService(
         }
         catch (OperationCanceledException)
         {
-            // Expected on host shutdown — nothing to log; the loop condition exits on the next check.
+            // Expected on host shutdown — the loop condition exits on the next check.
+            logger.LogDebug("DayThemeScheduler error backoff cancelled; host shutdown requested");
         }
     }
 
@@ -125,7 +134,10 @@ public class DayThemeSchedulerService(
         var nextBoundary = GetNextBoundaryDelay(dto);
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, recalculationToken);
-        await Task.Delay(nextBoundary, linkedCts.Token);
+        // Delay through the injected TimeProvider, like every boundary computation above, so the whole
+        // iteration honours one clock. With TimeProvider.System this is the ambient Task.Delay; under
+        // FakeTimeProvider the wait becomes drivable, which is what makes the delay-elapses path testable.
+        await Task.Delay(nextBoundary, timeProvider, linkedCts.Token);
 
         // The delay may have crossed midnight; ensure again before the post-delay read so the new
         // calendar day's record is present. This closes the FHQ-55 race in which the rollover check

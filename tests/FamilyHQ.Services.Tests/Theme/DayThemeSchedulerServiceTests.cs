@@ -108,20 +108,66 @@ public class DayThemeSchedulerServiceTests
         // TriggerRecalculationAsync completes synchronously, so there is nothing to await here.
         triggerRecalculation = () => _ = sut.TriggerRecalculationAsync();
 
-        var run = sut.RunExecuteAsync(cts.Token);
-        // The bound exists only to turn a regression's 12.5-hour sleep into a failure: on the correct
-        // path the loop runs to completion synchronously (every mock returns a completed task and the
-        // delay is pre-cancelled), so this deadline is never approached and cannot false-fail.
-        var completed = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(15)));
-        await cts.CancelAsync();
+        // Tripwire only. On the correct path the loop runs to completion synchronously — every mock
+        // returns a completed task and the delay is pre-cancelled, so no timer is ever armed and this
+        // deadline is never approached. A regression that swallows the trigger instead waits 12.5 hours
+        // on a fake clock the test never advances, which this turns into a prompt failure.
+        await sut.RunExecuteAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(15));
 
-        completed.Should().BeSameAs(run,
-            "the triggered recalculation must break the delay the in-flight iteration was about to enter");
         getTodayCalls.Should().Be(3, "the trigger must cause exactly one fresh boundary re-read");
         logger.Records.Should().NotContain(r => r.Level == LogLevel.Error,
-            "no iteration may fail — a disposed CancellationTokenSource read by the in-flight iteration "
-            + "would surface as a swallowed ObjectDisposedException logged as a failed iteration");
-        await run;
+            "the trigger must be absorbed as a clean cancellation, not surface as a failed iteration");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenBoundaryDelayElapses_BroadcastsThePeriodThatBecameActive()
+    {
+        // The scheduler's core contract: sleep to the next boundary, then re-read and broadcast the
+        // period that has JUST become active — not the one that was active when the delay started.
+        // Now unit-testable because the delay runs on the injected TimeProvider: TimerArmedTimeProvider
+        // signals the instant the loop enters the delay and advancing the fake clock is what ends it,
+        // so the whole test is driven by explicit steps with no polling and no wall-clock waiting.
+        using var cts = new CancellationTokenSource();
+        // 06:30 UTC = 07:30 Europe/Dublin (BST); the next boundary is EveningStart 20:00 local = 12.5h away.
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var clock = new TimerArmedTimeProvider(fakeTime);
+        DayThemeDto DtoFor(string period) => new(
+            new DateOnly(2024, 6, 21),
+            new TimeOnly(5, 30), new TimeOnly(6, 0), new TimeOnly(20, 0), new TimeOnly(21, 30),
+            "Europe/Dublin",
+            period);
+
+        var getTodayCalls = 0;
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+            // Calls 1 (startup) and 2 (the pre-delay read) still see Daytime; the boundary is crossed
+            // during the delay, so the post-delay read must observe Evening.
+            .Returns(() => Task.FromResult(DtoFor(Interlocked.Increment(ref getTodayCalls) <= 2 ? "Daytime" : "Evening")));
+
+        var broadcastPeriods = new List<string>();
+        var broadcasterMock = new Mock<IThemeBroadcaster>();
+        broadcasterMock.Setup(x => x.BroadcastThemeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string period, CancellationToken _) =>
+            {
+                broadcastPeriods.Add(period);
+                // Startup broadcast, then the post-delay one — stop the loop so the test terminates.
+                if (broadcastPeriods.Count >= 2) cts.Cancel();
+                return Task.CompletedTask;
+            });
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+
+        var sut = CreateSut(dayThemeServiceMock.Object, broadcasterMock.Object, logger, clock);
+
+        var run = sut.RunExecuteAsync(cts.Token);
+        await clock.TimerArmed;                          // the loop is now waiting on the boundary
+        fakeTime.Advance(TimeSpan.FromHours(13));        // cross the boundary — this is what ends the wait
+        await run.WaitAsync(TimeSpan.FromSeconds(15));   // tripwire only; the loop completes inline
+
+        broadcastPeriods.Should().Equal(["Daytime", "Evening"],
+            "the boundary broadcast must carry the period read after the delay, not the one read before it");
+        logger.Records.Should().NotContain(r => r.Level == LogLevel.Error);
     }
 
     [Fact]
