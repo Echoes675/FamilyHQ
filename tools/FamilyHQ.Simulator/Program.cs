@@ -19,6 +19,9 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
         environment: builder.Environment.EnvironmentName));
 
 builder.Services.AddControllers();
+// Backs the webhook push-out to the WebApi (WebhookController); pooled handlers instead of a
+// per-request `new HttpClient()`, and an injectable seam so the push can be unit-tested.
+builder.Services.AddHttpClient();
 builder.Services.AddDbContext<SimContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<SyncFailureModeStore>();

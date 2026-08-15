@@ -99,6 +99,94 @@ public class RateLimitingConfigurationTests
         key.Should().Be(RateLimitingConfiguration.UnknownIpPartitionKey);
     }
 
+    // ── Policy wiring (limits + partition per policy) ────────────────────────
+    // The framework's PolicyMap is internal, so registration goes through these two seams and
+    // the seams are pinned here: cross-wiring a policy's limits or partitioning (e.g. giving the
+    // auth policy the webhook limit, or partitioning a per-user policy by IP) would otherwise be
+    // invisible to every other test in this file.
+
+    [Theory]
+    [InlineData(RateLimitPolicies.AuthPerIp, 11)]
+    [InlineData(RateLimitPolicies.WebhookPerIp, 22)]
+    [InlineData(RateLimitPolicies.SyncTriggerPerUser, 33)]
+    [InlineData(RateLimitPolicies.WeatherRefreshPerUser, 44)]
+    public void ResolveOptionsForPolicy_KnownPolicy_ReturnsThatPolicysLimits(
+        string policyName, int expectedPermitLimit)
+    {
+        // Arrange — distinct limits so a wrong mapping cannot pass by coincidence.
+        var options = new RateLimitingOptions();
+        options.AuthPerIp.PermitLimit = 11;
+        options.WebhookPerIp.PermitLimit = 22;
+        options.SyncTriggerPerUser.PermitLimit = 33;
+        options.WeatherRefreshPerUser.PermitLimit = 44;
+
+        // Act
+        var resolved = RateLimitingConfiguration.ResolveOptionsForPolicy(policyName, options);
+
+        // Assert
+        resolved.Should().NotBeNull();
+        resolved!.PermitLimit.Should().Be(expectedPermitLimit);
+    }
+
+    [Fact]
+    public void ResolveOptionsForPolicy_UnknownPolicy_ReturnsNull()
+    {
+        // Arrange
+        var options = new RateLimitingOptions();
+
+        // Act
+        var resolved = RateLimitingConfiguration.ResolveOptionsForPolicy("no-such-policy", options);
+
+        // Assert
+        resolved.Should().BeNull();
+    }
+
+    [Fact]
+    public void ResolveOptionsForPolicy_EveryRegisteredPolicy_HasLimits()
+    {
+        // Arrange — registration throws at boot for a policy with no limits, so this is the
+        // cheap guard that adding a policy name without limits fails here first.
+        var options = new RateLimitingOptions();
+
+        // Act
+        var resolved = RateLimitPolicies.All
+            .Select(policy => RateLimitingConfiguration.ResolveOptionsForPolicy(policy, options));
+
+        // Assert
+        resolved.Should().OnlyContain(policyOptions => policyOptions != null);
+    }
+
+    [Theory]
+    [InlineData(RateLimitPolicies.SyncTriggerPerUser)]
+    [InlineData(RateLimitPolicies.WeatherRefreshPerUser)]
+    public void ResolvePartitionKeyForPolicy_PerUserPolicy_PartitionsBySubClaim(string policyName)
+    {
+        // Arrange
+        var httpContext = CreateAuthenticatedContext();
+
+        // Act
+        var key = RateLimitingConfiguration.ResolvePartitionKeyForPolicy(policyName, httpContext);
+
+        // Assert
+        key.Should().Be($"user:{TestSub}");
+    }
+
+    [Theory]
+    [InlineData(RateLimitPolicies.AuthPerIp)]
+    [InlineData(RateLimitPolicies.WebhookPerIp)]
+    public void ResolvePartitionKeyForPolicy_PerIpPolicy_PartitionsByIpEvenWhenAuthenticated(
+        string policyName)
+    {
+        // Arrange — an authenticated caller must still be limited per IP on these policies.
+        var httpContext = CreateAuthenticatedContext();
+
+        // Act
+        var key = RateLimitingConfiguration.ResolvePartitionKeyForPolicy(policyName, httpContext);
+
+        // Assert
+        key.Should().Be($"ip:{TestIp}");
+    }
+
     // ── Retry-After derivation ───────────────────────────────────────────────
 
     [Fact]
@@ -125,6 +213,20 @@ public class RateLimitingConfigurationTests
 
         // Assert
         seconds.Should().Be(45);
+    }
+
+    [Fact]
+    public void DeriveRetryAfterSeconds_WithZeroMetadata_ReturnsOneSecondNotTheWindow()
+    {
+        // Arrange — at the window edge the lease reports zero; the honest answer is "retry now",
+        // so the fallback window must NOT be substituted for it.
+        var lease = new TestRateLimitLease(TimeSpan.Zero);
+
+        // Act
+        var seconds = RateLimitingConfiguration.DeriveRetryAfterSeconds(lease, TimeSpan.FromMinutes(1));
+
+        // Assert
+        seconds.Should().Be(1);
     }
 
     [Fact]
@@ -220,6 +322,9 @@ public class RateLimitingConfigurationTests
         using var body = ParseResponseBody(httpContext);
         body.RootElement.GetProperty("status").GetInt32().Should().Be(429);
         body.RootElement.GetProperty("title").GetString().Should().Be("Too Many Requests");
+        // Correlatable in Seq like every other ProblemDetails response (FHQ-39 writes this via
+        // the framework's writer; the rejection path writes it directly, so it adds it itself).
+        body.RootElement.GetProperty("traceId").GetString().Should().NotBeNullOrEmpty();
 
         loggerMock.Verify(
             l => l.Log(
@@ -287,9 +392,17 @@ public class RateLimitingConfigurationTests
     {
         var services = new ServiceCollection();
         services.AddFamilyHqRateLimiting(options);
-        var limiterOptions = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<RateLimiterOptions>>().Value;
-        return limiterOptions.OnRejected!;
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IOptions<RateLimiterOptions>>().Value.OnRejected!;
+    }
+
+    private static DefaultHttpContext CreateAuthenticatedContext()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Connection.RemoteIpAddress = IPAddress.Parse(TestIp);
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            new[] { new Claim("sub", TestSub) }, authenticationType: "TestAuth"));
+        return httpContext;
     }
 
     private static JsonDocument ParseResponseBody(DefaultHttpContext httpContext)

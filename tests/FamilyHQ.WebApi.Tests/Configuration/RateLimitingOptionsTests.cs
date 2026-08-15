@@ -23,17 +23,18 @@ public class RateLimitingOptionsTests
     }
 
     [Fact]
-    public void Defaults_PinTheE2ESafeLimits()
+    public void Defaults_WhenUnconfigured_PinTheE2ESafeLimits()
     {
         // Arrange / Act
         var options = new RateLimitingOptions();
 
-        // Assert — sized from observed Deploy-Dev E2E traffic with >=5x headroom (FHQ-101):
-        // ~181 login flows x 2 auth requests per run, 31 webhook pushes, and per-user
-        // sync/weather peaks of 1/min and 3/min respectively.
+        // Assert — sized against the 6-way-parallel Deploy-Dev E2E suite from one host IP
+        // (FHQ-101): auth clears a ~170/min parallel worst case; the webhook limit sits above
+        // the whole run's 31 pushes so clustering cannot trip it; per-user sync/weather peaks
+        // are 1/min and 3/min against 10 and 15.
         options.AuthPerIp.PermitLimit.Should().Be(300);
         options.AuthPerIp.Window.Should().Be(TimeSpan.FromMinutes(1));
-        options.WebhookPerIp.PermitLimit.Should().Be(30);
+        options.WebhookPerIp.PermitLimit.Should().Be(60);
         options.WebhookPerIp.Window.Should().Be(TimeSpan.FromMinutes(1));
         options.SyncTriggerPerUser.PermitLimit.Should().Be(10);
         options.SyncTriggerPerUser.Window.Should().Be(TimeSpan.FromMinutes(1));
@@ -95,7 +96,7 @@ public class RateLimitingOptionsTests
     [InlineData("WebhookPerIp")]
     [InlineData("SyncTriggerPerUser")]
     [InlineData("WeatherRefreshPerUser")]
-    public void Validate_ChecksEveryPolicy(string policyProperty)
+    public void Validate_WhenAnySinglePolicyIsInvalid_ThrowsNamingThatPolicy(string policyProperty)
     {
         // Arrange — break exactly one policy and expect the error to name it.
         var options = new RateLimitingOptions();

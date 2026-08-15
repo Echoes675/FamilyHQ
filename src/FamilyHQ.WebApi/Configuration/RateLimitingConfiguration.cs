@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -21,8 +22,11 @@ namespace FamilyHQ.WebApi.Configuration;
 /// </summary>
 public static class RateLimitingConfiguration
 {
+    private const string IpPartitionKeyPrefix = "ip:";
+    private const string UserPartitionKeyPrefix = "user:";
+
     /// <summary>Shared partition for requests whose transport exposes no remote IP.</summary>
-    internal const string UnknownIpPartitionKey = "ip:unknown";
+    internal const string UnknownIpPartitionKey = IpPartitionKeyPrefix + "unknown";
 
     private const string LoggerCategory = "FamilyHQ.WebApi.RateLimiting";
 
@@ -35,25 +39,24 @@ public static class RateLimitingConfiguration
             limiter.OnRejected = (context, cancellationToken) =>
                 HandleRejectionAsync(context, options, cancellationToken);
 
-            limiter.AddPolicy(RateLimitPolicies.AuthPerIp, httpContext =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    ResolveIpPartitionKey(httpContext),
-                    _ => CreateFixedWindowOptions(options.AuthPerIp)));
+            // Every policy is registered through the same two seams, so the policy -> limits and
+            // policy -> partition mappings exist exactly once and are unit-testable on their own
+            // (the framework's PolicyMap is internal, so a cross-wiring here would otherwise be
+            // invisible to tests). Looping over RateLimitPolicies.All also makes it impossible to
+            // add a policy name without registering it.
+            foreach (var policyName in RateLimitPolicies.All)
+            {
+                // Resolved at registration (boot), so a policy name without matching options is a
+                // startup failure rather than a silently unlimited endpoint.
+                var policyOptions = ResolveOptionsForPolicy(policyName, options)
+                    ?? throw new InvalidOperationException(
+                        $"{nameof(RateLimitingOptions)} has no limits mapped for policy '{policyName}'.");
 
-            limiter.AddPolicy(RateLimitPolicies.WebhookPerIp, httpContext =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    ResolveIpPartitionKey(httpContext),
-                    _ => CreateFixedWindowOptions(options.WebhookPerIp)));
-
-            limiter.AddPolicy(RateLimitPolicies.SyncTriggerPerUser, httpContext =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    ResolveUserPartitionKey(httpContext),
-                    _ => CreateFixedWindowOptions(options.SyncTriggerPerUser)));
-
-            limiter.AddPolicy(RateLimitPolicies.WeatherRefreshPerUser, httpContext =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    ResolveUserPartitionKey(httpContext),
-                    _ => CreateFixedWindowOptions(options.WeatherRefreshPerUser)));
+                limiter.AddPolicy(policyName, httpContext =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        ResolvePartitionKeyForPolicy(policyName, httpContext),
+                        _ => CreateFixedWindowOptions(policyOptions)));
+            }
         });
 
         return services;
@@ -67,7 +70,7 @@ public static class RateLimitingConfiguration
     /// </summary>
     internal static string ResolveIpPartitionKey(HttpContext httpContext) =>
         httpContext.Connection.RemoteIpAddress is { } ip
-            ? $"ip:{ip}"
+            ? $"{IpPartitionKeyPrefix}{ip}"
             : UnknownIpPartitionKey;
 
     /// <summary>
@@ -80,17 +83,43 @@ public static class RateLimitingConfiguration
         var sub = httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
         return string.IsNullOrEmpty(sub)
             ? ResolveIpPartitionKey(httpContext)
-            : $"user:{sub}";
+            : $"{UserPartitionKeyPrefix}{sub}";
     }
 
     /// <summary>
+    /// The partition a named policy counts against: per-user policies key on the JWT sub (with the
+    /// IP fallback above), everything else keys on the client IP. Single-sourced so the limiter
+    /// registration and the rejection log can never disagree about which bucket was consumed.
+    /// </summary>
+    internal static string ResolvePartitionKeyForPolicy(string? policyName, HttpContext httpContext) =>
+        policyName switch
+        {
+            RateLimitPolicies.SyncTriggerPerUser or RateLimitPolicies.WeatherRefreshPerUser =>
+                ResolveUserPartitionKey(httpContext),
+            _ => ResolveIpPartitionKey(httpContext)
+        };
+
+    /// <summary>Limits configured for a named policy; null when the name is unknown.</summary>
+    internal static RateLimitPolicyOptions? ResolveOptionsForPolicy(
+        string? policyName, RateLimitingOptions options) =>
+        policyName switch
+        {
+            RateLimitPolicies.AuthPerIp => options.AuthPerIp,
+            RateLimitPolicies.WebhookPerIp => options.WebhookPerIp,
+            RateLimitPolicies.SyncTriggerPerUser => options.SyncTriggerPerUser,
+            RateLimitPolicies.WeatherRefreshPerUser => options.WeatherRefreshPerUser,
+            _ => null
+        };
+
+    /// <summary>
     /// Seconds for the Retry-After header: the lease's RetryAfter metadata (time until the fixed
-    /// window resets) when present, otherwise the policy's full window. Never less than 1s — a
-    /// zero would invite an immediate client retry loop.
+    /// window resets) whenever the lease supplies it — including a zero at the window edge, where
+    /// the honest answer is "immediately" rather than a full window — otherwise the policy's
+    /// configured window. Never less than 1s: a zero would invite an immediate client retry loop.
     /// </summary>
     internal static int DeriveRetryAfterSeconds(RateLimitLease lease, TimeSpan fallbackWindow)
     {
-        var retryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var metadata) && metadata > TimeSpan.Zero
+        var retryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var metadata)
             ? metadata
             : fallbackWindow;
         return Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
@@ -98,14 +127,7 @@ public static class RateLimitingConfiguration
 
     /// <summary>Configured window for a named policy; one minute for an unknown/absent name.</summary>
     internal static TimeSpan ResolveWindowForPolicy(string? policyName, RateLimitingOptions options) =>
-        policyName switch
-        {
-            RateLimitPolicies.AuthPerIp => options.AuthPerIp.Window,
-            RateLimitPolicies.WebhookPerIp => options.WebhookPerIp.Window,
-            RateLimitPolicies.SyncTriggerPerUser => options.SyncTriggerPerUser.Window,
-            RateLimitPolicies.WeatherRefreshPerUser => options.WeatherRefreshPerUser.Window,
-            _ => TimeSpan.FromMinutes(1)
-        };
+        ResolveOptionsForPolicy(policyName, options)?.Window ?? TimeSpan.FromMinutes(1);
 
     private static FixedWindowRateLimiterOptions CreateFixedWindowOptions(RateLimitPolicyOptions policy) =>
         new()
@@ -130,9 +152,7 @@ public static class RateLimitingConfiguration
 
         // Partition keys are safe to log: IPs are operational data and the sub claim is a stable
         // identifier — never user display names or emails (logging skill).
-        var partitionKey = policyName is RateLimitPolicies.SyncTriggerPerUser or RateLimitPolicies.WeatherRefreshPerUser
-            ? ResolveUserPartitionKey(httpContext)
-            : ResolveIpPartitionKey(httpContext);
+        var partitionKey = ResolvePartitionKeyForPolicy(policyName, httpContext);
 
         httpContext.RequestServices
             .GetRequiredService<ILoggerFactory>()
@@ -141,14 +161,21 @@ public static class RateLimitingConfiguration
                 "Rate limit exceeded for policy {PolicyName} on {Method} {Path} (partition {PartitionKey}); Retry-After {RetryAfterSeconds}s.",
                 policyName, httpContext.Request.Method, httpContext.Request.Path, partitionKey, retryAfterSeconds);
 
+        var problemDetails = new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Too Many Requests",
+            Detail = "Rate limit exceeded for this endpoint. Retry after the indicated delay.",
+            Type = "https://tools.ietf.org/html/rfc6585#section-4"
+        };
+
+        // The rejection is written directly rather than through IProblemDetailsService (no
+        // exception is in flight), so carry the trace id the framework's writer would have added —
+        // 429s are exactly the responses worth correlating in Seq.
+        problemDetails.Extensions["traceId"] = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+
         return new ValueTask(httpContext.Response.WriteAsJsonAsync(
-            new ProblemDetails
-            {
-                Status = StatusCodes.Status429TooManyRequests,
-                Title = "Too Many Requests",
-                Detail = "Rate limit exceeded for this endpoint. Retry after the indicated delay.",
-                Type = "https://tools.ietf.org/html/rfc6585#section-4"
-            },
+            problemDetails,
             options: null,
             contentType: "application/problem+json",
             cancellationToken));

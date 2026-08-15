@@ -59,8 +59,8 @@ builder.Services.AddSingleton(jwtSessionOptions);
 // FHQ-101: per-endpoint rate limiting (auth, sync-trigger, weather-refresh, webhook). Named
 // policies only — deliberately NO global limiter (kiosk polling and the SignalR hub must never
 // be limited). Fail-fast validated at boot.
-var rateLimitingOptions = new FamilyHQ.WebApi.Configuration.RateLimitingOptions();
-builder.Configuration.GetSection(FamilyHQ.WebApi.Configuration.RateLimitingOptions.SectionName).Bind(rateLimitingOptions);
+var rateLimitingOptions = new RateLimitingOptions();
+builder.Configuration.GetSection(RateLimitingOptions.SectionName).Bind(rateLimitingOptions);
 rateLimitingOptions.Validate();
 builder.Services.AddSingleton(rateLimitingOptions);
 builder.Services.AddFamilyHqRateLimiting(rateLimitingOptions);

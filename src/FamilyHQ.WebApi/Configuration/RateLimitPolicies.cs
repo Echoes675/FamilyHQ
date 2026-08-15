@@ -18,4 +18,17 @@ public static class RateLimitPolicies
 
     /// <summary>POST /api/weather/refresh — per authenticated user (JWT sub).</summary>
     public const string WeatherRefreshPerUser = "weather-refresh-per-user";
+
+    /// <summary>
+    /// Every policy the limiter registers. Registration loops over this, so a name added here
+    /// without matching limits in <see cref="RateLimitingOptions"/> fails at boot rather than
+    /// leaving an endpoint silently unlimited.
+    /// </summary>
+    public static readonly IReadOnlyList<string> All =
+    [
+        AuthPerIp,
+        WebhookPerIp,
+        SyncTriggerPerUser,
+        WeatherRefreshPerUser
+    ];
 }
