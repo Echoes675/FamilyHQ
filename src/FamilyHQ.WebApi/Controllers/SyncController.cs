@@ -108,7 +108,10 @@ public class SyncController : ControllerBase
     /// </summary>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>A 200 OK status.</returns>
+    // Explicitly public (FHQ-98): Google push notifications carry no bearer token.
+    // Authenticity is enforced via the per-channel token check below instead (FHQ-81).
     [HttpPost("webhook")]
+    [AllowAnonymous]
     public async Task<IActionResult> GooglePushWebhook(CancellationToken ct)
     {
         // Google sends headers indicating the resource that changed:

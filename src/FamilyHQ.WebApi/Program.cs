@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using FamilyHQ.WebApi.Configuration;
 using Microsoft.AspNetCore.HttpOverrides;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data;
@@ -153,6 +154,10 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer
         };
     });
 
+// Deny-by-default authorization (FHQ-98): endpoints without authorization metadata require an
+// authenticated user; public endpoints carry an explicit [AllowAnonymous] / .AllowAnonymous().
+builder.Services.AddFallbackAuthorizationPolicy();
+
 // CORS — use FrontendBaseUrl from configuration
 var frontendBaseUrl = builder.Configuration["FrontendBaseUrl"]
     ?? throw new InvalidOperationException("FrontendBaseUrl must be configured.");
@@ -202,12 +207,14 @@ app.UseMiddleware<RequestTimingMiddleware>();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference(options => 
+    // Dev-only conveniences: the fallback policy (FHQ-98) would otherwise 401 the OpenAPI
+    // document and the Scalar UI, which are only mapped in Development.
+    app.MapOpenApi().AllowAnonymous();
+    app.MapScalarApiReference(options =>
     {
         options.WithTitle("FamilyHQ Backend API");
         options.WithTheme(Scalar.AspNetCore.ScalarTheme.DeepSpace);
-    });
+    }).AllowAnonymous();
 }
 
 if (!app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
@@ -220,7 +227,10 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// Map SignalR Hub
-app.MapHub<CalendarHub>("/hubs/calendar");
+// Map SignalR Hub. Explicitly anonymous (FHQ-98): the WebUi's HubConnection (SignalRService)
+// attaches no access token, so the kiosk negotiates pre-auth — requiring auth here would break
+// its live updates. The hub only pushes server→client refresh signals; it exposes no
+// client-invokable methods and no per-user data.
+app.MapHub<CalendarHub>("/hubs/calendar").AllowAnonymous();
 
 app.Run();
