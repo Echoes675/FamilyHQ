@@ -207,8 +207,9 @@ app.UseMiddleware<RequestTimingMiddleware>();
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    // Dev-only conveniences: the fallback policy (FHQ-98) would otherwise 401 the OpenAPI
-    // document and the Scalar UI, which are only mapped in Development.
+    // Development-environment-only endpoints — which includes the deployed dev host, where
+    // ASPNETCORE_ENVIRONMENT=Development and Traefik routes /openapi and /scalar. The fallback
+    // policy (FHQ-98) would otherwise 401 the OpenAPI document and the Scalar UI.
     app.MapOpenApi().AllowAnonymous();
     app.MapScalarApiReference(options =>
     {

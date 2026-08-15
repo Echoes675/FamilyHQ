@@ -20,10 +20,9 @@ public class AuthorizationPolicyConfigurationTests
 
         // Act
         services.AddFallbackAuthorizationPolicy();
+        var options = ResolveAuthorizationOptions(services);
 
         // Assert
-        using var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
         options.FallbackPolicy.Should().NotBeNull(
             "FHQ-98: endpoints without authorization metadata must fall back to a deny-by-default policy");
     }
@@ -36,12 +35,17 @@ public class AuthorizationPolicyConfigurationTests
 
         // Act
         services.AddFallbackAuthorizationPolicy();
+        var options = ResolveAuthorizationOptions(services);
 
         // Assert
-        using var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
         options.FallbackPolicy!.Requirements.Should().ContainSingle()
             .Which.Should().BeOfType<DenyAnonymousAuthorizationRequirement>(
                 "the fallback policy must require an authenticated user and nothing weaker");
+    }
+
+    private static AuthorizationOptions ResolveAuthorizationOptions(IServiceCollection services)
+    {
+        using var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
     }
 }
