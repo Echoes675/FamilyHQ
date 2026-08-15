@@ -18,6 +18,7 @@ using Moq;
 using Moq.Protected;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using Xunit;
 
@@ -753,6 +754,28 @@ public class AuthControllerTests
 
         // Assert — OAuth BCP: token responses must never be cached
         httpContext.Response.Headers.CacheControl.ToString().Should().Contain("no-store");
+    }
+
+    [Fact]
+    public void Login_HasAuthPerIpRateLimitingPolicy()
+    {
+        // FHQ-101: the OAuth entry points are unauthenticated — limit per client IP.
+        var method = typeof(AuthController).GetMethod(nameof(AuthController.Login))!;
+        method.GetCustomAttribute<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>(inherit: false)
+            .Should().NotBeNull().And.Subject
+            .As<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()
+            .PolicyName.Should().Be(FamilyHQ.WebApi.Configuration.RateLimitPolicies.AuthPerIp);
+    }
+
+    [Fact]
+    public void Callback_HasAuthPerIpRateLimitingPolicy()
+    {
+        // FHQ-101: each callback hit performs a Google token exchange — limit per client IP.
+        var method = typeof(AuthController).GetMethod(nameof(AuthController.Callback))!;
+        method.GetCustomAttribute<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>(inherit: false)
+            .Should().NotBeNull().And.Subject
+            .As<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()
+            .PolicyName.Should().Be(FamilyHQ.WebApi.Configuration.RateLimitPolicies.AuthPerIp);
     }
 
     [Fact]

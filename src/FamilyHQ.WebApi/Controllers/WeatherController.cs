@@ -2,9 +2,11 @@ namespace FamilyHQ.WebApi.Controllers;
 
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.WebApi.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 [Authorize]
 [ApiController]
@@ -15,6 +17,7 @@ public class WeatherController(
     ICurrentUserService currentUser) : ControllerBase
 {
     [HttpPost("refresh")]
+    [EnableRateLimiting(RateLimitPolicies.WeatherRefreshPerUser)]
     public async Task<IActionResult> Refresh(CancellationToken ct)
     {
         var userId = currentUser.UserId;

@@ -1,5 +1,4 @@
 using System.Security.Cryptography.X509Certificates;
-using FamilyHQ.WebApi.Configuration;
 using Microsoft.AspNetCore.HttpOverrides;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Data;
@@ -9,6 +8,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
 using FamilyHQ.Core.Logging;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Middleware;
 using Microsoft.AspNetCore.DataProtection;
@@ -54,6 +54,15 @@ var jwtSessionOptions = new FamilyHQ.WebApi.Configuration.JwtSessionOptions();
 builder.Configuration.GetSection(FamilyHQ.WebApi.Configuration.JwtSessionOptions.SectionName).Bind(jwtSessionOptions);
 jwtSessionOptions.Validate();
 builder.Services.AddSingleton(jwtSessionOptions);
+
+// FHQ-101: per-endpoint rate limiting (auth, sync-trigger, weather-refresh, webhook). Named
+// policies only — deliberately NO global limiter (kiosk polling and the SignalR hub must never
+// be limited). Fail-fast validated at boot.
+var rateLimitingOptions = new RateLimitingOptions();
+builder.Configuration.GetSection(RateLimitingOptions.SectionName).Bind(rateLimitingOptions);
+rateLimitingOptions.Validate();
+builder.Services.AddSingleton(rateLimitingOptions);
+builder.Services.AddFamilyHqRateLimiting(rateLimitingOptions);
 
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
@@ -229,6 +238,14 @@ if (!app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))
 app.UseCors("AllowBlazorApp");
 
 app.UseAuthentication();
+
+// FHQ-101: AFTER UseAuthentication so the per-user policies can partition on the JWT sub claim,
+// and BEFORE UseAuthorization so the limiter runs regardless of auth outcome — unauthenticated
+// hits on per-user endpoints are throttled via the IP-fallback partition instead of getting free
+// 401s. UseForwardedHeaders (top of pipeline, when ReverseProxy:Enabled) has already rewritten
+// RemoteIpAddress to the real client IP by this point.
+app.UseRateLimiter();
+
 app.UseAuthorization();
 app.MapControllers();
 
