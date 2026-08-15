@@ -5,9 +5,20 @@ using System.Text.Json;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Services.Weather;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
+using Moq;
 
 public class OpenMeteoWeatherProviderTests
 {
+    private static Mock<ILogger<OpenMeteoWeatherProvider>> CreateLogger() => new();
+
+    private static OpenMeteoWeatherProvider CreateProvider(
+        FakeHttpHandler handler, Mock<ILogger<OpenMeteoWeatherProvider>>? logger = null)
+    {
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
+        return new OpenMeteoWeatherProvider(httpClient, (logger ?? CreateLogger()).Object);
+    }
+
     [Fact]
     public async Task Parses_current_weather_from_api_response()
     {
@@ -26,8 +37,7 @@ public class OpenMeteoWeatherProviderTests
                 [25.0, 12.0])));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
@@ -59,8 +69,7 @@ public class OpenMeteoWeatherProviderTests
                 [15.0])));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, "Europe/Dublin");
 
@@ -95,8 +104,7 @@ public class OpenMeteoWeatherProviderTests
                 [12.0])));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         var result = await provider.GetWeatherAsync(35.68, 139.69, "Asia/Tokyo");
 
@@ -125,8 +133,7 @@ public class OpenMeteoWeatherProviderTests
                 [15.0])));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, "Not/AZone");
 
@@ -148,8 +155,7 @@ public class OpenMeteoWeatherProviderTests
             Daily: null));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         await provider.GetWeatherAsync(53.35, -6.26, "Europe/Dublin");
 
@@ -175,8 +181,7 @@ public class OpenMeteoWeatherProviderTests
                 [15.0])));
 
         var handler = new FakeHttpHandler(json);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        var provider = new OpenMeteoWeatherProvider(httpClient);
+        var provider = CreateProvider(handler);
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
@@ -184,6 +189,184 @@ public class OpenMeteoWeatherProviderTests
         hourlyTimestamp.Offset.Should().Be(TimeSpan.Zero,
             "null zone falls back to AssumeUniversal — offset-less '14:00' treated as UTC");
         hourlyTimestamp.UtcDateTime.Hour.Should().Be(14);
+    }
+
+    // FHQ-110 pins: Open-Meteo's parallel value arrays are not guaranteed to be the
+    // same length as `time`. Indexing them off `time.Count` threw
+    // ArgumentOutOfRangeException, which lost the whole refresh (poller) or returned
+    // 500 (POST /api/weather/refresh). Parse the safe overlap instead.
+    [Fact]
+    public async Task GetWeatherAsync_RaggedHourlyArrays_ReturnsEntriesUpToShortestArray()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00", "2026-06-15T13:00", "2026-06-15T14:00"],
+                [14.5, 15.0],
+                [3, 0, 1],
+                [22.0, 18.0, 12.0]),
+            Daily: null));
+
+        var provider = CreateProvider(new FakeHttpHandler(json));
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.HourlyForecasts.Should().HaveCount(2,
+            "temperature_2m is the shortest array at 2 entries; the third hour has no temperature");
+        result.HourlyForecasts[0].TemperatureCelsius.Should().Be(14.5);
+        result.HourlyForecasts[1].TemperatureCelsius.Should().Be(15.0);
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_RaggedDailyArrays_ReturnsEntriesUpToShortestArray()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: null,
+            Daily: new OpenMeteoDailyData(
+                ["2026-06-15", "2026-06-16", "2026-06-17"],
+                [3, 0, 1],
+                [16.0, 18.0, 19.0],
+                [8.0, 9.0, 10.0],
+                [25.0])));
+
+        var provider = CreateProvider(new FakeHttpHandler(json));
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.DailyForecasts.Should().HaveCount(1,
+            "wind_speed_10m_max is the shortest array at 1 entry");
+        result.DailyForecasts[0].Date.Should().Be(new DateOnly(2026, 6, 15));
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_RaggedHourlyArrays_LogsWarningWithSectionAndCounts()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00", "2026-06-15T13:00", "2026-06-15T14:00"],
+                [14.5, 15.0],
+                [3, 0, 1],
+                [22.0, 18.0, 12.0]),
+            Daily: null));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) =>
+                v.ToString()!.Contains("hourly")
+                && v.ToString()!.Contains("time=3")
+                && v.ToString()!.Contains("temperature_2m=2")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "the degraded upstream response is logged once per parse, not once per element");
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_RaggedDailyArrays_LogsWarningWithSectionAndCounts()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: null,
+            Daily: new OpenMeteoDailyData(
+                ["2026-06-15", "2026-06-16", "2026-06-17"],
+                [3, 0, 1],
+                [16.0, 18.0, 19.0],
+                [8.0, 9.0, 10.0],
+                [25.0])));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) =>
+                v.ToString()!.Contains("daily")
+                && v.ToString()!.Contains("time=3")
+                && v.ToString()!.Contains("wind_speed_10m_max=1")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_EvenLengthArrays_LogsNoWarning()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00", "2026-06-15T13:00"],
+                [14.5, 15.0],
+                [3, 0],
+                [22.0, 18.0]),
+            Daily: new OpenMeteoDailyData(
+                ["2026-06-15"],
+                [3],
+                [16.0],
+                [8.0],
+                [25.0])));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "a healthy response must not produce warning noise on every poll");
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_HourlyValueArrayMissingEntirely_ReturnsNoHourlyEntries()
+    {
+        // A missing value array deserialises to null; treat it as length 0 rather than
+        // dereferencing it while walking `time`.
+        const string json = """
+            {
+              "current": { "time": "2026-06-15T12:00", "temperature_2m": 14.5, "weather_code": 3, "wind_speed_10m": 22.0 },
+              "hourly": { "time": ["2026-06-15T12:00", "2026-06-15T13:00"], "weather_code": [3, 0], "wind_speed_10m": [22.0, 18.0] }
+            }
+            """;
+
+        var provider = CreateProvider(new FakeHttpHandler(json));
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.HourlyForecasts.Should().BeEmpty();
+        result.CurrentTemperatureCelsius.Should().Be(14.5,
+            "a degraded hourly block must not cost us the current conditions");
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_HourlyTimeArrayMissingEntirely_ReturnsNoHourlyEntries()
+    {
+        const string json = """
+            {
+              "current": { "time": "2026-06-15T12:00", "temperature_2m": 14.5, "weather_code": 3, "wind_speed_10m": 22.0 },
+              "hourly": { "temperature_2m": [14.5], "weather_code": [3], "wind_speed_10m": [22.0] }
+            }
+            """;
+
+        var provider = CreateProvider(new FakeHttpHandler(json));
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.HourlyForecasts.Should().BeEmpty();
     }
 
     private class FakeHttpHandler(string responseJson) : HttpMessageHandler
