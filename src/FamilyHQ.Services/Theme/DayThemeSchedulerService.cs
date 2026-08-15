@@ -77,7 +77,9 @@ public class DayThemeSchedulerService(
                     // Recalculation was triggered — loop restarts to re-read boundaries. FHQ-108: this
                     // is the only evidence a trigger was ever honoured; without it a recurrence of the
                     // silently-lost recalculation would be exactly as invisible as the original bug.
-                    logger.LogDebug("Theme recalculation triggered; re-reading day-theme boundaries");
+                    // Information, not Debug, because prod runs at Information and a trigger only ever
+                    // comes from a human saving or clearing a location — it cannot flood.
+                    logger.LogInformation("Theme recalculation triggered; re-reading day-theme boundaries");
                 }
                 catch (OperationCanceledException)
                 {
