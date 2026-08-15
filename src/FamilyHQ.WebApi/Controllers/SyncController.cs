@@ -1,9 +1,11 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Hubs;
 using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 
@@ -55,6 +57,7 @@ public class SyncController : ControllerBase
     /// <returns>A status response.</returns>
     [Authorize]
     [HttpPost("trigger")]
+    [EnableRateLimiting(RateLimitPolicies.SyncTriggerPerUser)]
     public async Task<IActionResult> TriggerSync(CancellationToken ct)
     {
         // FHQ-31: explicit UserId guard. [Authorize] above gates the request on
@@ -112,6 +115,7 @@ public class SyncController : ControllerBase
     // Authenticity is enforced via the per-channel token check below instead (FHQ-81).
     [HttpPost("webhook")]
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.WebhookPerIp)]
     public async Task<IActionResult> GooglePushWebhook(CancellationToken ct)
     {
         // Google sends headers indicating the resource that changed:

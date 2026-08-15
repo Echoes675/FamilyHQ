@@ -102,6 +102,15 @@ Distinct from the per-event `SyncEventFailure` subsystem (individual events that
 - `PUT  /api/settings/weather` → upserts user's weather settings; requires auth
 - `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
 
+### Rate limiting (FHQ-101)
+Four named fixed-window policies (`Configuration/RateLimitingConfiguration.cs`, applied via `[EnableRateLimiting]`; NO global limiter — kiosk polling and the SignalR hub must never be limited). Rejections return 429 + Retry-After + a ProblemDetails body, logged at Warning. All limits/windows configurable via the `RateLimiting` config section (env-var overridable per environment); defaults sized ≥5× over observed Deploy-Dev E2E peaks:
+- `auth-per-ip` — `GET /api/auth/login` + `GET /api/auth/callback`, per client IP (shared bucket), 300/min
+- `webhook-per-ip` — `POST /api/sync/webhook`, per client IP, 30/min
+- `sync-trigger-per-user` — `POST /api/sync/trigger`, per JWT `sub` (IP fallback when unauthenticated), 10/min
+- `weather-refresh-per-user` — `POST /api/weather/refresh`, per JWT `sub` (IP fallback), 15/min
+
+`UseRateLimiter` sits after `UseAuthentication` (per-user partitioning needs the `sub` claim) and before `UseAuthorization` (limits apply regardless of auth outcome).
+
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
 - **ThemeChanged(string period)**: pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
