@@ -118,6 +118,12 @@ public class VersionService : IVersionService
         }
     }
 
+    /// <summary>
+    /// Compares only the SemVer core + pre-release, never build metadata. This must stay in step
+    /// with <c>HealthController.StripBuildMetadata</c> (FHQ-103): if the server ever strips MORE
+    /// than this does — the pre-release label, say — the two sides can never match, and every
+    /// reconnect re-triggers the banner and reload below.
+    /// </summary>
     private static bool VersionsMatch(string a, string b)
     {
         return string.Equals(StripBuildMetadata(a), StripBuildMetadata(b), StringComparison.OrdinalIgnoreCase);

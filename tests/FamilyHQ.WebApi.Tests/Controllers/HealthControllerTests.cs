@@ -66,6 +66,7 @@ public class HealthControllerTests
     [Theory]
     [InlineData("1.1.0+abc1234", "1.1.0")]
     [InlineData("1.1.0", "1.1.0")]
+    [InlineData("1.1.0+a+b", "1.1.0")]
     public void StripBuildMetadata_WithOrWithoutMetadata_ReturnsVersionWithoutIt(
         string informationalVersion, string expected)
     {

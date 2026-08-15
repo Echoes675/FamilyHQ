@@ -150,7 +150,7 @@ When the tab's "Override active" pill is on, a developer can tap any `WeatherCon
 Application version is a SemVer string (`MAJOR.MINOR.PATCH`) derived at build time by [MinVer](https://github.com/adamralph/minver). MAJOR/MINOR are pinned in `Directory.Build.props` via `<MinVerMinimumMajorMinor>`; PATCH auto-increments based on git tags pushed by Jenkins on master builds. See `.agent/docs/ci-cd.md` for the full pipeline mechanics and `.agent/skills/git-workflow/SKILL.md` for when to bump MAJOR/MINOR.
 
 Surfacing:
-- **`/api/health`** returns the WebApi version in a `version` field with `Cache-Control: no-store`.
+- **`/api/health`** returns the WebApi version in a `version` field with `Cache-Control: no-store`. The endpoint is anonymous, so it publishes the SemVer core (plus any pre-release label) with build metadata stripped — no commit SHA (FHQ-103). Deployed images build without a `.git` directory and so emit no metadata today; the strip keeps that true regardless. **The pre-release label must stay**: `VersionService.VersionsMatch` strips metadata only, so a server value stripped any further could never match the client and would re-trigger the reload below on every reconnect.
 - **WebUi footer** (`Components/Footer.razor`) renders `v{ClientVersion}` in the bottom-right corner. The version is read from `AssemblyInformationalVersionAttribute` on the WebUi assembly.
 
 Auto-reload of active clients on a new prod deploy:
@@ -158,7 +158,7 @@ Auto-reload of active clients on a new prod deploy:
 - On startup, `InitializeAsync()` fetches `/api/health` once.
 - `SignalRService` exposes a `Reconnected` event (via `ISignalRConnectionEvents`); `VersionService` subscribes and calls `CheckAsync()` on every reconnect. A WebApi deploy restarts the server, dropping the `CalendarHub` connection — when the auto-reconnect succeeds, `CheckAsync` runs and compares versions.
 - On a SemVer-core mismatch (build metadata stripped), `UpdateAvailable` fires (showing `<UpdateBanner />` with "New version available — reloading…"), then `IJSRuntime.InvokeVoidAsync("location.reload")` runs after a 5s delay (via `TimeProvider`, so testable with `FakeTimeProvider`).
-- A `_updateTriggered` flag enforces fire-once semantics so transient SignalR blips never trigger multiple banners or reload cycles.
+- A `_updateTriggered` flag enforces fire-once semantics so transient SignalR blips never trigger multiple banners or reload cycles. Note it is instance state on the WASM singleton, so `location.reload()` resets it — it bounds re-firing within one page life, not across reloads. A *permanent* version mismatch therefore loops, which is why the health endpoint and the client must strip exactly the same amount (above).
 
 ## Performance Targets
 - Responsiveness: API endpoints should target < 200ms response time.
