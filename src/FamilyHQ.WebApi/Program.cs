@@ -6,7 +6,6 @@ using FamilyHQ.Data.PostgreSQL;
 using FamilyHQ.Services;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
-using FamilyHQ.Services.Theme;
 using FamilyHQ.Core.Logging;
 using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Hubs;
@@ -67,22 +66,9 @@ builder.Services.AddFamilyHqRateLimiting(rateLimitingOptions);
 // Add our core business logic
 builder.Services.AddFamilyHqServices(builder.Configuration);
 
-// Register typed HttpClients for services that require an injected HttpClient
-var ipApiBaseUrl = builder.Configuration["Location:IpApiBaseUrl"] ?? "http://ip-api.com";
-builder.Services.AddHttpClient<ILocationService, LocationService>(client =>
-{
-    client.BaseAddress = new Uri(ipApiBaseUrl.TrimEnd('/') + "/");
-    client.Timeout = TimeSpan.FromSeconds(10);
-});
-
-var geocodingBaseUrl = builder.Configuration["Geocoding:BaseUrl"]
-    ?? "https://nominatim.openstreetmap.org";
-builder.Services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
-{
-    client.BaseAddress = new Uri(geocodingBaseUrl.TrimEnd('/') + "/");
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
-    client.Timeout = TimeSpan.FromSeconds(10);
-});
+// The ip-api (ILocationService) and Nominatim (IGeocodingService) typed clients are registered by
+// AddFamilyHqServices above, alongside Open-Meteo, so all three share one transient-fault retry
+// configuration (FHQ-114).
 
 // Add Data Protection with database key storage and certificate-based key encryption
 var dataProtectionBuilder = builder.Services.AddDataProtection()
