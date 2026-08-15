@@ -257,6 +257,70 @@ public class DomainExceptionHandlerTests
     }
 
     [Fact]
+    public async Task HttpTimeout_TaskCanceledWithTimeoutInner_MapsTo504WithoutRetryAfter()
+    {
+        // FHQ-100 drive-by (FHQ-91/FHQ-154 context): an exhausted foreground HTTP timeout surfaces as
+        // TaskCanceledException wrapping TimeoutException — a transient gateway timeout, not a 500.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException()),
+            CancellationToken.None);
+
+        handled.Should().BeTrue();
+        context.Response.StatusCode.Should().Be(StatusCodes.Status504GatewayTimeout);
+        context.Response.Headers.ContainsKey("Retry-After").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HttpTimeout_TitleAndDetail_AreFixedGenericStrings()
+    {
+        // FHQ-88 discipline: no upstream/internal exception text reaches the client payload.
+        ProblemDetailsContext? captured = null;
+        var (handler, context) = CreateSut(ctx => captured = ctx);
+
+        await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("internal-timeout-detail-SECRET", new TimeoutException()),
+            CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.ProblemDetails.Title.Should().Be("Upstream Timeout");
+        captured.ProblemDetails.Detail.Should().Be("An upstream service did not respond in time. Please retry shortly.");
+        JsonSerializer.Serialize(captured.ProblemDetails).Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task TaskCanceledException_WithoutTimeoutInner_IsDeclined()
+    {
+        // A plain cancellation carries no TimeoutException inner — it is not an HttpClient timeout,
+        // so it must not be dressed up as a gateway timeout.
+        var (handler, context) = CreateSut();
+
+        var handled = await handler.TryHandleAsync(
+            context, new TaskCanceledException("cancelled"), CancellationToken.None);
+
+        handled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HttpTimeout_WhenRequestAborted_IsDeclined()
+    {
+        // Client-abort cancellation must never become a 504 — when the caller is gone the framework's
+        // aborted-request handling applies, not a gateway-timeout response nobody will read.
+        var (handler, context) = CreateSut();
+        context.RequestAborted = new CancellationToken(canceled: true);
+
+        var handled = await handler.TryHandleAsync(
+            context,
+            new TaskCanceledException("canceled", new TimeoutException()),
+            CancellationToken.None);
+
+        handled.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task GoogleReauthRequiredException_MapsTo409()
     {
         var (handler, context) = CreateSut();
