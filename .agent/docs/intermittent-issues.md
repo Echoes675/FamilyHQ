@@ -14,6 +14,19 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 11. "Day view shows hourly temperatures" fails in the 23:00–00:00 UTC window — seed date vs view date diverge (FHQ-134 class)
+
+**Status:** root-cause **hypothesis** with a strong evidence chain; not yet reproduced on demand. Do not mark resolved off green daytime runs — only a green run *inside* the window (or the FHQ-134-class fix) counts.
+**Component:** E2E date plumbing — `tests-e2e/FamilyHQ.E2E.Steps/WeatherSteps.cs` (`GivenHourlyWeatherDataIsSeededFor` → `DateExpressionResolver.ResolveLondon`) vs the app/browser UTC "today"; related production-side ticket: FHQ-134 (`EnsureTodayAsync` server-local date key), Backlog-Priority Batch 5.
+**First seen:** Deploy-Dev **#656** (2026-08-14, E2E phase ~23:25–23:35 UTC), on a **docs-only** branch (`chore/FHQ-67-localstack-docs`) — the diff cannot have caused it.
+**Occurrences:** Deploy-Dev #656. This scenario had passed in all ~25 preceding gate runs (#610–#655), every one of which ran outside the window.
+
+**Symptom:** `ThenISeeHourlyTemperaturesInTheDayView` times out (30 s) waiting for `.day-hour-temp` — the day view renders zero hourly temperature labels.
+
+**Hypothesis (evidence-based):** the seed step resolves "today" via `ResolveLondon` — Europe/London local date, which at 23:xx UTC in summer is already the **next** day. The day view's selected date comes from the kiosk clock's local date in the CI browser/container, which is **UTC** — still the **previous** day until 00:00 UTC. For one hour per day the hourly rows are seeded under a date the day view never queries → empty forecast → no `.day-hour-temp`. Same 23:00–00:00 UTC divergence class as FHQ-134's theme-record bug.
+
+**If the symptom returns:** check the run's E2E-phase wall-clock first — inside 23:00–00:00 UTC supports this entry (update Occurrences, re-run the gate outside the window); outside it means a different cause — investigate fresh, do not attach it here. Real fix options when FHQ-134 (Batch 5) is picked up: make the E2E seed and the view derive "today" from the same zone source, and/or fix the production date-key derivation the ticket covers.
+
 ### 8. Recurring-event create 500s on a `GoogleEventId` unique-constraint race with the sync worker (FHQ-66)
 
 **Status:** root cause confirmed (local repro + real #505); fix implemented on branch `fix/FHQ-66-recurring-create-duplicate-key`, **pending the Deploy-Dev recurrence gate** (do not mark resolved off local runs alone — see issue #3-legacy).
