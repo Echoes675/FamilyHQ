@@ -12,6 +12,25 @@ public class OpenMeteoWeatherProviderTests
 {
     private static Mock<ILogger<OpenMeteoWeatherProvider>> CreateLogger() => new();
 
+    // The counts and codes are logged as structured collections so Seq can filter on them,
+    // which means the assertions read the log state rather than the rendered message.
+    private static bool ArrayLengthIs(object? state, string arrayName, int expected) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == "ArrayLengths"
+            && kv.Value is IReadOnlyDictionary<string, int> lengths
+            && lengths.TryGetValue(arrayName, out var actual)
+            && actual == expected);
+
+    private static bool UnmappedCodesAre(object? state, params int[] expected) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == "UnmappedWmoCodes"
+            && kv.Value is IReadOnlyList<int> codes
+            && codes.OrderBy(c => c).SequenceEqual(expected.OrderBy(c => c)));
+
+    private static bool PropertyIs(object? state, string name, object expected) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == name && Equals(kv.Value, expected));
+
     private static OpenMeteoWeatherProvider CreateProvider(
         FakeHttpHandler handler, Mock<ILogger<OpenMeteoWeatherProvider>>? logger = null)
     {
@@ -263,9 +282,9 @@ public class OpenMeteoWeatherProviderTests
             LogLevel.Warning,
             It.IsAny<EventId>(),
             It.Is<It.IsAnyType>((v, _) =>
-                v.ToString()!.Contains("hourly")
-                && v.ToString()!.Contains("time=3")
-                && v.ToString()!.Contains("temperature_2m=2")),
+                PropertyIs(v, "Section", "hourly")
+                && ArrayLengthIs(v, "time", 3)
+                && ArrayLengthIs(v, "temperature_2m", 2)),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once,
@@ -294,9 +313,9 @@ public class OpenMeteoWeatherProviderTests
             LogLevel.Warning,
             It.IsAny<EventId>(),
             It.Is<It.IsAnyType>((v, _) =>
-                v.ToString()!.Contains("daily")
-                && v.ToString()!.Contains("time=3")
-                && v.ToString()!.Contains("wind_speed_10m_max=1")),
+                PropertyIs(v, "Section", "daily")
+                && ArrayLengthIs(v, "time", 3)
+                && ArrayLengthIs(v, "wind_speed_10m_max", 1)),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
@@ -420,9 +439,7 @@ public class OpenMeteoWeatherProviderTests
         logger.Verify(l => l.Log(
             LogLevel.Warning,
             It.IsAny<EventId>(),
-            It.Is<It.IsAnyType>((v, _) =>
-                v.ToString()!.Contains("4")
-                && v.ToString()!.Contains("50")),
+            It.Is<It.IsAnyType>((v, _) => UnmappedCodesAre(v, 4, 50)),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once,
@@ -458,6 +475,80 @@ public class OpenMeteoWeatherProviderTests
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Never);
+    }
+
+    // An empty (rather than ragged) section is what the Simulator serves on every poll in
+    // dev/staging when no forecast rows are seeded, so it must not burn Warning-level signal.
+    [Fact]
+    public async Task GetWeatherAsync_EmptyHourlyAndDailyBlocks_ReturnsEmptySectionsAndLogsDebugNotWarning()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: new OpenMeteoHourlyData([], [], [], []),
+            Daily: new OpenMeteoDailyData([], [], [], [], [])));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.HourlyForecasts.Should().BeEmpty();
+        result.DailyForecasts.Should().BeEmpty();
+        result.CurrentTemperatureCelsius.Should().Be(14.5);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Debug,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => PropertyIs(v, "Section", "hourly")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+        logger.Verify(l => l.Log(
+            LogLevel.Debug,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => PropertyIs(v, "Section", "daily")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "an empty section is expected and handled on every dev/staging poll — logging it at Warning would drown the Seq signal");
+    }
+
+    // FHQ-115: an absent current block used to be reported as "Clear, 0 °C, 0 km/h", which
+    // the kiosk displayed as authoritative current conditions with nothing logged.
+    [Fact]
+    public async Task GetWeatherAsync_ResponseWithoutCurrentBlock_ReportsUnknownConditionAndWarns()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: null,
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00"],
+                [14.5],
+                [3],
+                [22.0]),
+            Daily: null));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.CurrentCondition.Should().Be(WeatherCondition.Unknown,
+            "a missing current block must never be presented as clear skies");
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("no current block")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once);
     }
 
     private class FakeHttpHandler(string responseJson) : HttpMessageHandler

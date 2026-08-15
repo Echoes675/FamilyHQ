@@ -43,7 +43,9 @@ public class OpenMeteoWeatherProvider(
 
         var unmappedCodes = new SortedSet<int>();
 
-        var currentCondition = WeatherCondition.Clear;
+        // FHQ-115: never fabricate Clear. An absent current block used to be reported as
+        // "clear, 0 °C, 0 km/h", which the kiosk then displayed as authoritative.
+        var currentCondition = WeatherCondition.Unknown;
         var currentTemp = 0.0;
         var currentWind = 0.0;
 
@@ -52,6 +54,11 @@ public class OpenMeteoWeatherProvider(
             currentCondition = MapCondition(apiResponse.Current.WeatherCode, unmappedCodes);
             currentTemp = apiResponse.Current.Temperature;
             currentWind = apiResponse.Current.WindSpeed;
+        }
+        else
+        {
+            logger.LogWarning(
+                "Open-Meteo returned no current block; current conditions are reported as Unknown with zeroed readings.");
         }
 
         var hourly = new List<WeatherHourlyItem>();
@@ -109,7 +116,7 @@ public class OpenMeteoWeatherProvider(
         {
             logger.LogWarning(
                 "Open-Meteo returned {UnmappedCodeCount} WMO weather code(s) with no mapping: {UnmappedWmoCodes}. Those entries are reported as the Unknown condition — add them to WmoCodeMapper.",
-                unmappedCodes.Count, string.Join(", ", unmappedCodes));
+                unmappedCodes.Count, unmappedCodes.ToArray());
         }
 
         return new WeatherResponse(currentCondition, currentTemp, currentWind, hourly, daily);
@@ -126,11 +133,13 @@ public class OpenMeteoWeatherProvider(
         {
             logger.LogWarning(
                 "Open-Meteo returned a ragged {Section} block; parsing the first {UsableCount} entries only. Array lengths: {ArrayLengths}.",
-                section, usable, string.Join(", ", arrays.Select(a => a.Name + "=" + a.Count)));
+                section, usable, arrays.ToDictionary(a => a.Name, a => a.Count));
         }
         else if (usable == 0)
         {
-            logger.LogWarning(
+            // Expected and handled: the Simulator serves empty hourly/daily arrays whenever
+            // no forecast rows are seeded, so dev/staging would emit this on every poll.
+            logger.LogDebug(
                 "Open-Meteo returned an empty {Section} block; no forecast entries will be stored for that section.",
                 section);
         }
