@@ -14,8 +14,11 @@ namespace FamilyHQ.WebApi.Middleware;
 
 /// <summary>
 /// The single point that maps typed domain exceptions to HTTP status codes (FHQ-39). The HTTP
-/// contract no longer depends on exception message text. Any exception this handler does not
-/// recognise is declined so the framework's default handling surfaces it as a 500.
+/// contract no longer depends on exception message text. Also maps an exhausted foreground HTTP
+/// timeout (TaskCanceledException wrapping TimeoutException, the FHQ-91 per-attempt timeout after
+/// FHQ-154 retries ran out) to a 504 — unless the request was aborted by the client, in which case
+/// cancellation is declined. Any exception this handler does not recognise is declined so the
+/// framework's default handling surfaces it as a 500.
 /// </summary>
 public sealed class DomainExceptionHandler(
     IProblemDetailsService problemDetailsService,
@@ -32,6 +35,11 @@ public sealed class DomainExceptionHandler(
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
+        // A cancellation while the client already aborted is not an upstream timeout — decline it so
+        // the framework's aborted-request handling applies instead of a 504 nobody will read.
+        if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
+            return false;
+
         if (Map(exception) is not { } mapping)
             return false; // not a domain exception → let the default pipeline produce a 500
 
@@ -125,6 +133,16 @@ public sealed class DomainExceptionHandler(
                 }),
 
         GoogleApiException e => MapGoogleApi(e),
+
+        // FHQ-91: an HttpClient per-attempt timeout is a TaskCanceledException wrapping a
+        // TimeoutException — after the FHQ-154 retries are exhausted it reaches here. The title is
+        // provider-neutral because every typed HttpClient (Google, location, geocoding) shares this
+        // signature. No Retry-After: that header belongs to 503/429 responses.
+        TaskCanceledException { InnerException: TimeoutException } =>
+            new Mapping(
+                StatusCodes.Status504GatewayTimeout,
+                "Upstream Timeout",
+                "An upstream service did not respond in time. Please retry shortly."),
 
         _ => null
     };
