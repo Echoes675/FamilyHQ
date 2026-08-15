@@ -11,6 +11,7 @@ using NodaTime.Text;
 
 public class OpenMeteoWeatherProvider(
     HttpClient httpClient,
+    IWmoCodeMapper wmoCodeMapper,
     ILogger<OpenMeteoWeatherProvider> logger) : IWeatherProvider
 {
     private const string HourlySection = "hourly";
@@ -40,13 +41,15 @@ public class OpenMeteoWeatherProvider(
             ? DateTimeZoneProviders.Tzdb.GetZoneOrNull(ianaTimeZone)
             : null;
 
+        var unmappedCodes = new SortedSet<int>();
+
         var currentCondition = WeatherCondition.Clear;
         var currentTemp = 0.0;
         var currentWind = 0.0;
 
         if (apiResponse.Current is not null)
         {
-            currentCondition = WmoCodeMapper.ToCondition(apiResponse.Current.WeatherCode);
+            currentCondition = MapCondition(apiResponse.Current.WeatherCode, unmappedCodes);
             currentTemp = apiResponse.Current.Temperature;
             currentWind = apiResponse.Current.WindSpeed;
         }
@@ -69,7 +72,7 @@ public class OpenMeteoWeatherProvider(
                 if (temp is null || code is null || wind is null) continue;
                 hourly.Add(new WeatherHourlyItem(
                     ToLocalDateTimeOffset(block.Time[i], zone),
-                    WmoCodeMapper.ToCondition(code.Value),
+                    MapCondition(code.Value, unmappedCodes),
                     temp.Value,
                     wind.Value));
             }
@@ -95,11 +98,18 @@ public class OpenMeteoWeatherProvider(
                 if (code is null || max is null || min is null || wind is null) continue;
                 daily.Add(new WeatherDailyItem(
                     DateOnly.Parse(block.Time[i], CultureInfo.InvariantCulture),
-                    WmoCodeMapper.ToCondition(code.Value),
+                    MapCondition(code.Value, unmappedCodes),
                     max.Value,
                     min.Value,
                     wind.Value));
             }
+        }
+
+        if (unmappedCodes.Count > 0)
+        {
+            logger.LogWarning(
+                "Open-Meteo returned {UnmappedCodeCount} WMO weather code(s) with no mapping: {UnmappedWmoCodes}. Those entries are reported as the Unknown condition — add them to WmoCodeMapper.",
+                unmappedCodes.Count, string.Join(", ", unmappedCodes));
         }
 
         return new WeatherResponse(currentCondition, currentTemp, currentWind, hourly, daily);
@@ -129,6 +139,17 @@ public class OpenMeteoWeatherProvider(
     }
 
     private static int CountOf<T>(List<T>? values) => values?.Count ?? 0;
+
+    // FHQ-115: collect the distinct unmapped codes for a single warning per parse instead
+    // of one per forecast entry — an unmapped code typically repeats across the whole
+    // 16-day forecast.
+    private WeatherCondition MapCondition(int wmoCode, SortedSet<int> unmappedCodes)
+    {
+        if (!wmoCodeMapper.TryGetCondition(wmoCode, out var condition))
+            unmappedCodes.Add(wmoCode);
+
+        return condition;
+    }
 
     private static DateTimeOffset ToLocalDateTimeOffset(string s, DateTimeZone? zone)
     {

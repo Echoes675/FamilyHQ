@@ -75,9 +75,12 @@
                 <line x1="16" y1="19" x2="15" y2="22"/>
             </svg>
             break;
+        case "unknown":
         default:
+            @* FHQ-115: a condition we cannot identify draws a dashed (indeterminate) cloud.
+               The previous fallback was a bare circle, which reads as the sun. *@
             <svg viewBox="0 0 24 24" width="@Size" height="@Size" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="5"/>
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" stroke-dasharray="3 3"/>
             </svg>
             break;
     }

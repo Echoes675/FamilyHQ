@@ -11,5 +11,9 @@ public enum WeatherCondition
     HeavyRain,
     Thunder,
     Snow,
-    Sleet
+    Sleet,
+
+    // Appended deliberately: WeatherDataPoint.Condition is persisted as an integer, so
+    // inserting a member anywhere above would re-label every stored weather row.
+    Unknown
 }

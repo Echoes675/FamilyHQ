@@ -16,7 +16,10 @@ public class OpenMeteoWeatherProviderTests
         FakeHttpHandler handler, Mock<ILogger<OpenMeteoWeatherProvider>>? logger = null)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://test.example.com") };
-        return new OpenMeteoWeatherProvider(httpClient, (logger ?? CreateLogger()).Object);
+        // The real mapper: the WMO-code → condition table is the behaviour under test here,
+        // not a collaborator to be stubbed.
+        return new OpenMeteoWeatherProvider(
+            httpClient, new WmoCodeMapper(), (logger ?? CreateLogger()).Object);
     }
 
     [Fact]
@@ -367,6 +370,94 @@ public class OpenMeteoWeatherProviderTests
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
         result.HourlyForecasts.Should().BeEmpty();
+    }
+
+    // FHQ-115 pins: an unmapped WMO code used to fall through to Clear, so unrecognised
+    // severe weather rendered as sunny. It now surfaces as Unknown and is logged.
+    [Fact]
+    public async Task GetWeatherAsync_UnmappedWmoCode_MapsToUnknownCondition()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 4, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00"],
+                [14.5],
+                [50],
+                [22.0]),
+            Daily: new OpenMeteoDailyData(
+                ["2026-06-15"],
+                [79],
+                [16.0],
+                [8.0],
+                [25.0])));
+
+        var provider = CreateProvider(new FakeHttpHandler(json));
+
+        var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        result.CurrentCondition.Should().Be(WeatherCondition.Unknown);
+        result.HourlyForecasts[0].Condition.Should().Be(WeatherCondition.Unknown);
+        result.DailyForecasts[0].Condition.Should().Be(WeatherCondition.Unknown);
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_UnmappedWmoCodes_LogsOneWarningNamingEveryCode()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 4, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00", "2026-06-15T13:00"],
+                [14.5, 15.0],
+                [50, 50],
+                [22.0, 18.0]),
+            Daily: null));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) =>
+                v.ToString()!.Contains("4")
+                && v.ToString()!.Contains("50")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "a 16-day forecast full of one unmapped code must not flood Seq — one warning per parse names every distinct code");
+    }
+
+    [Fact]
+    public async Task GetWeatherAsync_AllWmoCodesMapped_LogsNoUnmappedCodeWarning()
+    {
+        var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
+            Current: new OpenMeteoCurrentData("2026-06-15T12:00", 14.5, 3, 22.0),
+            Hourly: new OpenMeteoHourlyData(
+                ["2026-06-15T12:00"],
+                [14.5],
+                [95],
+                [22.0]),
+            Daily: new OpenMeteoDailyData(
+                ["2026-06-15"],
+                [61],
+                [16.0],
+                [8.0],
+                [25.0])));
+
+        var logger = CreateLogger();
+        var provider = CreateProvider(new FakeHttpHandler(json), logger);
+
+        await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never);
     }
 
     private class FakeHttpHandler(string responseJson) : HttpMessageHandler

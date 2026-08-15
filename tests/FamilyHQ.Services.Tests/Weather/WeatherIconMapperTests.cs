@@ -17,9 +17,31 @@ public class WeatherIconMapperTests
     [InlineData(WeatherCondition.Thunder, "thunder")]
     [InlineData(WeatherCondition.Snow, "snow")]
     [InlineData(WeatherCondition.Sleet, "sleet")]
+    [InlineData(WeatherCondition.Unknown, "unknown")]
     public void Maps_condition_to_icon_name(WeatherCondition condition, string expectedIcon)
     {
         var result = WeatherIconMapper.ToIconName(condition);
         result.Should().Be(expectedIcon);
+    }
+
+    // FHQ-115: the fallback arm used to return "clear", so any condition the mapper did
+    // not know about drew a sun on the dashboard.
+    [Fact]
+    public void ToIconName_ConditionOutsideTheEnum_ReturnsUnknownIcon()
+    {
+        var result = WeatherIconMapper.ToIconName((WeatherCondition)999);
+
+        result.Should().Be("unknown");
+    }
+
+    [Fact]
+    public void ToIconName_EveryDeclaredCondition_HasItsOwnIconName()
+    {
+        var conditions = Enum.GetValues<WeatherCondition>();
+
+        var iconNames = conditions.Select(WeatherIconMapper.ToIconName).ToList();
+
+        iconNames.Should().OnlyHaveUniqueItems(
+            "a new WeatherCondition that falls through to the unknown arm would silently render as another condition's icon");
     }
 }
