@@ -10,12 +10,16 @@ using Xunit;
 namespace FamilyHQ.Services.Tests.Http;
 
 /// <summary>
-/// FHQ-114. Every test runs on a <see cref="FakeTimeProvider"/> with <c>BaseDelay = 0</c>, so the
-/// exponential path is instant and no test ever waits out a real backoff.
+/// FHQ-114. Tests either run with <c>BaseDelay = 0</c> so the exponential path is instant, or park
+/// the handler on the <see cref="FakeTimeProvider"/> and release it by advancing virtual time — no
+/// test ever waits out a real backoff.
 /// </summary>
 public class TransientHttpRetryHandlerTests
 {
     private const string Url = "https://example.test/json";
+
+    /// <summary>Real time allowed for the handler to reach its (virtual) sleep. It does no I/O, so this is ~1000x headroom.</summary>
+    private static readonly TimeSpan SettleWindow = TimeSpan.FromMilliseconds(50);
 
     private static (HttpClient Client, StubHandler Inner, FakeTimeProvider Time) CreateClient(
         StubHandler inner,
@@ -56,22 +60,56 @@ public class TransientHttpRetryHandlerTests
 
     // ---- FHQ-114 AC3: a single 429 from ip-api is retried and resolves on the second attempt ----
     [Fact]
-    public async Task SendAsync_IpApiReturns429ThenSuccess_RetriesAndSucceeds()
+    public async Task SendAsync_IpApi429WithXTtl_SleepsOnTheInjectedClockThenSucceeds()
     {
-        var (client, inner, _) = CreateClient(new StubHandler(
-            () => Status(HttpStatusCode.TooManyRequests),
-            IpApiSuccess));
+        // ip-api's 429 always carries X-Ttl (seconds until its rate-limit window resets). This also
+        // pins that the wait happens on the INJECTED clock: nothing completes until virtual time moves.
+        var (client, inner, time) = CreateClient(
+            new StubHandler(
+                () => WithXTtl(Status(HttpStatusCode.TooManyRequests), 3),
+                IpApiSuccess),
+            maxRetryDelay: TimeSpan.FromSeconds(5));
 
-        var response = await client.GetAsync(Url);
+        var task = client.GetAsync(Url);
+        await Task.Delay(SettleWindow);
+
+        task.IsCompleted.Should().BeFalse("the handler must be asleep on the injected clock, not the wall clock");
+        inner.Calls.Should().Be(1);
+
+        time.Advance(TimeSpan.FromSeconds(3));
+        var response = await task.WaitAsync(TimeSpan.FromSeconds(5));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await response.Content.ReadAsStringAsync()).Should().Contain("success");
         inner.Calls.Should().Be(2);
     }
 
+    [Fact]
+    public async Task SendAsync_RetryAfterWithinCap_SleepsForExactlyThatLong()
+    {
+        var (client, inner, time) = CreateClient(
+            new StubHandler(
+                () => WithRetryAfter(Status(HttpStatusCode.ServiceUnavailable), TimeSpan.FromSeconds(3)),
+                () => Status(HttpStatusCode.OK)),
+            maxRetryDelay: TimeSpan.FromSeconds(5));
+
+        var task = client.GetAsync(Url);
+        await Task.Delay(SettleWindow);
+
+        task.IsCompleted.Should().BeFalse();
+        time.Advance(TimeSpan.FromSeconds(2));
+        await Task.Delay(SettleWindow);
+        task.IsCompleted.Should().BeFalse("2s is short of the 3s the server asked for");
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        var response = await task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        inner.Calls.Should().Be(2);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.RequestTimeout)]
-    [InlineData(HttpStatusCode.TooManyRequests)]
     [InlineData(HttpStatusCode.InternalServerError)]
     [InlineData(HttpStatusCode.BadGateway)]
     [InlineData(HttpStatusCode.ServiceUnavailable)]
@@ -104,6 +142,40 @@ public class TransientHttpRetryHandlerTests
     }
 
     [Fact]
+    public async Task SendAsync_429WithoutRetryHint_IsSurfacedForCallerLevelBackoff()
+    {
+        // Open-Meteo's 429 shape: {"error":true,"reason":"Minutely API request limit exceeded"} and no
+        // Retry-After. Replaying it in-request would spend more of the same exhausted quota during
+        // exactly the overload FHQ-109's poll backoff exists to end.
+        var (client, inner, _) = CreateClient(new StubHandler(
+            () => Status(HttpStatusCode.TooManyRequests),
+            () => Status(HttpStatusCode.OK)));
+
+        var response = await client.GetAsync(Url);
+
+        response.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        inner.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SendAsync_XTtlOnNon429Response_IsIgnoredAndTheRequestStillRetries()
+    {
+        // X-Ttl is ip-api's rate-limit WINDOW counter (paired with X-Rl, "requests remaining"), so it
+        // ships on non-throttled responses too. Treating it as a wait instruction on a plain 5xx would
+        // make the retry inert for the very client this handler was built around.
+        var (client, inner, _) = CreateClient(
+            new StubHandler(
+                () => WithXTtl(Status(HttpStatusCode.ServiceUnavailable), 47),
+                () => Status(HttpStatusCode.OK)),
+            maxRetryDelay: TimeSpan.FromSeconds(5));
+
+        var response = await client.GetAsync(Url);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        inner.Calls.Should().Be(2);
+    }
+
+    [Fact]
     public async Task SendAsync_NetworkFailure_IsRetried()
     {
         var (client, inner, _) = CreateClient(new StubHandler(
@@ -114,6 +186,24 @@ public class TransientHttpRetryHandlerTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         inner.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task SendAsync_NetworkFailureBackoffAboveCap_SurfacesImmediately()
+    {
+        // The exception path must respect the same ceiling as the response path, or the client's total
+        // budget (the whole point of not having a per-attempt timeout) can be blown from the catch block.
+        var (client, inner, _) = CreateClient(
+            new StubHandler(() => throw new HttpRequestException("connection refused")),
+            baseDelay: TimeSpan.FromSeconds(10),
+            maxRetryDelay: TimeSpan.FromSeconds(1));
+
+        // WaitAsync so an uncapped sleep fails the test instead of hanging it: the fake clock is
+        // never advanced here, so a 10s virtual sleep would otherwise never complete.
+        await client.Invoking(c => c.GetAsync(Url).WaitAsync(TimeSpan.FromSeconds(2)))
+            .Should().ThrowAsync<HttpRequestException>();
+
+        inner.Calls.Should().Be(1);
     }
 
     [Fact]
@@ -171,8 +261,6 @@ public class TransientHttpRetryHandlerTests
     [Fact]
     public async Task SendAsync_IpApiXTtlAboveCap_SurfacesResponseWithoutRetrying()
     {
-        // ip-api.com signals its 45-req/min rate-limit window with X-Ttl (seconds), never Retry-After;
-        // an X-Ttl longer than the cap must stop the retry instead of holding the request open.
         var (client, inner, _) = CreateClient(
             new StubHandler(
                 () => WithXTtl(Status(HttpStatusCode.TooManyRequests), 47),
@@ -185,50 +273,67 @@ public class TransientHttpRetryHandlerTests
         inner.Calls.Should().Be(1);
     }
 
-    // ---- Delay computation (internal seam: exact durations, no clock races) ----
+    // ---- Server-hint parsing ----
     [Fact]
-    public void ComputeRetryDelay_RetryAfterDelta_IsHonoured()
+    public void GetServerRetryHint_RetryAfterDelta_IsHonoured()
     {
         var (handler, _) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
 
-        var delay = handler.ComputeRetryDelay(
-            WithRetryAfter(Status(HttpStatusCode.TooManyRequests), TimeSpan.FromSeconds(3)), attempt: 1);
+        var hint = handler.GetServerRetryHint(
+            WithRetryAfter(Status(HttpStatusCode.TooManyRequests), TimeSpan.FromSeconds(3)));
 
-        delay.Should().Be(TimeSpan.FromSeconds(3));
+        hint.Should().Be(TimeSpan.FromSeconds(3));
     }
 
     [Fact]
-    public void ComputeRetryDelay_RetryAfterHttpDate_IsHonoured()
+    public void GetServerRetryHint_RetryAfterHttpDate_IsHonoured()
     {
         var (handler, time) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
         var response = Status(HttpStatusCode.ServiceUnavailable);
         response.Headers.RetryAfter = new RetryConditionHeaderValue(time.GetUtcNow().AddSeconds(4));
 
-        var delay = handler.ComputeRetryDelay(response, attempt: 1);
+        var hint = handler.GetServerRetryHint(response);
 
-        delay.Should().BeCloseTo(TimeSpan.FromSeconds(4), TimeSpan.FromMilliseconds(1100));
+        hint.Should().BeCloseTo(TimeSpan.FromSeconds(4), TimeSpan.FromMilliseconds(1100));
     }
 
     [Fact]
-    public void ComputeRetryDelay_XTtl_IsHonouredWhenRetryAfterAbsent()
+    public void GetServerRetryHint_XTtlOn429_IsHonouredWhenRetryAfterAbsent()
     {
         var (handler, _) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
 
-        var delay = handler.ComputeRetryDelay(
-            WithXTtl(Status(HttpStatusCode.TooManyRequests), 2), attempt: 1);
+        var hint = handler.GetServerRetryHint(WithXTtl(Status(HttpStatusCode.TooManyRequests), 2));
 
-        delay.Should().Be(TimeSpan.FromSeconds(2));
+        hint.Should().Be(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public void GetServerRetryHint_XTtlOnNon429_IsIgnored()
+    {
+        var (handler, _) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
+
+        var hint = handler.GetServerRetryHint(WithXTtl(Status(HttpStatusCode.ServiceUnavailable), 47));
+
+        hint.Should().BeNull("X-Ttl only means 'wait' on a throttled response");
+    }
+
+    [Fact]
+    public void GetServerRetryHint_NoHeaders_IsNull()
+    {
+        var (handler, _) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
+
+        handler.GetServerRetryHint(Status(HttpStatusCode.ServiceUnavailable)).Should().BeNull();
     }
 
     [Theory]
     [InlineData(1, 500, 1000)]
     [InlineData(2, 1000, 2000)]
     [InlineData(3, 2000, 4000)]
-    public void ComputeRetryDelay_NoServerHint_UsesExponentialFullJitter(int attempt, int minMs, int maxMs)
+    public void ComputeExponentialDelay_DoublesPerAttemptWithinJitterBounds(int attempt, int minMs, int maxMs)
     {
         var (handler, _) = CreateHandler(baseDelay: TimeSpan.FromMilliseconds(500));
 
-        var delay = handler.ComputeRetryDelay(Status(HttpStatusCode.ServiceUnavailable), attempt);
+        var delay = handler.ComputeExponentialDelay(attempt);
 
         delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(minMs));
         delay.Should().BeLessThan(TimeSpan.FromMilliseconds(maxMs));

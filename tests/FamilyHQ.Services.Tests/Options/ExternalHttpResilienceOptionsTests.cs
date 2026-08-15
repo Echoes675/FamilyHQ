@@ -28,6 +28,34 @@ public class ExternalHttpResilienceOptionsTests
         options.WeatherTimeout.Should().BeGreaterThan(worstCaseSleeps);
     }
 
+    [Fact]
+    public void Defaults_KeepTheInteractiveClientsCloseToTheirPreRetryCeiling()
+    {
+        var options = new ExternalHttpResilienceOptions();
+
+        // GET /api/settings/location and POST /api/settings/location are awaited by the kiosk with no
+        // client-side timeout, so their total budgets must stay near the 10s single-attempt ceiling
+        // they had before retries existed — not balloon to the background clients' budget.
+        options.LocationTimeout.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(15));
+        options.GeocodingTimeout.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void Validate_BaseDelayAboveMaxRetryDelay_Throws()
+    {
+        // Otherwise the very first backoff already exceeds the ceiling, so every retry degenerates
+        // into "surface immediately" and the configuration silently does nothing.
+        var options = new ExternalHttpResilienceOptions
+        {
+            BaseDelay = TimeSpan.FromSeconds(10),
+            MaxRetryDelay = TimeSpan.FromSeconds(5)
+        };
+
+        options.Invoking(o => o.Validate())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(ExternalHttpResilienceOptions.BaseDelay)}*");
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

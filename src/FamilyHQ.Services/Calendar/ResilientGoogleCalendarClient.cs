@@ -137,8 +137,9 @@ public sealed class ResilientGoogleCalendarClient(
 
     private TimeSpan ComputeExponentialDelay(int attempt)
     {
+        // Exponential backoff with jitter: uniform in [exp, 2*exp).
         var expMs = _options.BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
-        var jitterMs = expMs * Random.Shared.NextDouble(); // full jitter: [exp, 2*exp)
+        var jitterMs = expMs * Random.Shared.NextDouble();
         return TimeSpan.FromMilliseconds(expMs + jitterMs);
     }
 }

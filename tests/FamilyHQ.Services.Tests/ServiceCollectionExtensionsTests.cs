@@ -135,10 +135,11 @@ public class ServiceCollectionExtensionsTests
         var factory = provider.GetRequiredService<IHttpClientFactory>();
 
         // The retry handler sleeps INSIDE SendAsync, so each client's Timeout is the total budget
-        // for the whole attempt+backoff sequence, not a single attempt.
-        factory.CreateClient(nameof(ILocationService)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
-        factory.CreateClient(nameof(IGeocodingService)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
-        factory.CreateClient(nameof(IWeatherProvider)).Timeout.Should().Be(TimeSpan.FromSeconds(60));
+        // for the whole attempt+backoff sequence, not a single attempt. The two interactive clients
+        // stay near their pre-retry 10s ceiling; Open-Meteo keeps the 30s it always had.
+        factory.CreateClient(nameof(ILocationService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
+        factory.CreateClient(nameof(IGeocodingService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
+        factory.CreateClient(nameof(IWeatherProvider)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
     }
 
     [Fact]
