@@ -9,10 +9,11 @@ namespace FamilyHQ.WebApi.Middleware;
 /// Outermost catch-all (FHQ-100). Ordinary endpoint exceptions never reach this catch block:
 /// UseExceptionHandler terminates them itself (domain exceptions → 4xx via DomainExceptionHandler,
 /// everything else → framework ProblemDetails 500). This middleware only sees exceptions
-/// UseExceptionHandler rethrows — a response that has already started, or a failure inside
-/// exception handling itself. A started response can no longer be rewritten, so that case is
-/// logged and rethrown unmodified; the server then aborts the connection, which is the only
-/// honest signal to the client that the body is truncated.
+/// UseExceptionHandler rethrows — a response that has already started, a failure inside
+/// exception handling itself, or a mapped 404 whose ProblemDetails write was declined by content
+/// negotiation (the framework's 404 guard rethrows). A started response can no longer be
+/// rewritten, so that case is logged and rethrown unmodified; the server then aborts the
+/// connection, which is the only honest signal to the client that the body is truncated.
 /// </summary>
 public class GlobalExceptionMiddleware(
     RequestDelegate next,

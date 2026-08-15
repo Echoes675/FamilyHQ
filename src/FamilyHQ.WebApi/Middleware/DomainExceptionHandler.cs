@@ -35,8 +35,9 @@ public sealed class DomainExceptionHandler(
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        // A cancellation while the client already aborted is not an upstream timeout — decline it so
-        // the framework's aborted-request handling applies instead of a 504 nobody will read.
+        // Belt-and-braces for the abort race: the framework normally 499s aborted requests before
+        // handlers run, so this guard is only reachable when the abort lands mid-flight — decline
+        // rather than dress a dead-socket cancellation up as an upstream timeout.
         if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
             return false;
 

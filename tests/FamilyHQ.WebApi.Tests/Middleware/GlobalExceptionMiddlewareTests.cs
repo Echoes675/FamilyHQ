@@ -118,6 +118,7 @@ public class GlobalExceptionMiddlewareTests
 
         await act.Should().ThrowAsync<InvalidOperationException>();
         responseFeature.VerifySet(f => f.StatusCode = It.IsAny<int>(), Times.Never());
+        responseFeature.Object.Headers.Should().BeEmpty();
         ((MemoryStream)context.Response.Body).Length.Should().Be(0);
     }
 
@@ -180,6 +181,6 @@ public class GlobalExceptionMiddlewareTests
             LogLevel.Error,
             It.IsAny<EventId>(),
             It.IsAny<It.IsAnyType>(),
-            It.IsAny<Exception?>(),
+            It.IsNotNull<Exception>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), times);
 }

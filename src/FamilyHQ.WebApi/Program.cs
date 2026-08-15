@@ -196,8 +196,10 @@ app.UseMiddleware<GlobalExceptionMiddleware>();
 // Maps typed domain exceptions to ProblemDetails 4xx (FHQ-39). A declined (non-domain) exception does
 // NOT fall through outward: UseExceptionHandler terminates it itself with a framework ProblemDetails
 // 500 (verified on .NET 10, FHQ-100). GlobalExceptionMiddleware only ever receives exceptions
-// UseExceptionHandler rethrows — a response that has already started, or a failure inside exception
-// handling itself — and must never mutate a started response (it logs and rethrows instead).
+// UseExceptionHandler rethrows — a response that has already started, a failure inside exception
+// handling itself, or a mapped 404 whose ProblemDetails write was declined by content negotiation
+// (the framework's 404 guard synthesizes and rethrows an InvalidOperationException) — and must never
+// mutate a started response (it logs and rethrows instead).
 app.UseExceptionHandler();
 app.UseMiddleware<RequestTimingMiddleware>();
 
