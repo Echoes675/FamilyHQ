@@ -63,6 +63,67 @@ public class DayThemeSchedulerServiceTests
         logger.Records.Should().Contain(r => r.Level == LogLevel.Error && r.Message.Contains("loop iteration failed"));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task ExecuteAsync_WhenRecalculationTriggeredDuringBoundaryRead_ReReadsBoundariesWithoutError(int triggerCount)
+    {
+        // FHQ-108: a location change calls TriggerRecalculationAsync while the loop iteration that
+        // will consume the signal is already in flight (between reading the boundaries and entering
+        // the delay). The iteration must observe that trigger — if it picks up the freshly installed
+        // CancellationTokenSource instead, it sleeps on the boundaries it read BEFORE the location
+        // changed and the recalculation is silently lost, on exactly the operation the trigger exists
+        // to serve. triggerCount 2 covers two location changes racing into the same window.
+        //
+        // Determinism: the trigger is raised synchronously from inside the GetTodayAsync mock, so the
+        // interleaving is fixed, not raced. The next boundary is ~12.5 hours away on the fake clock,
+        // so the delay can only end by cancellation — never by the wall clock.
+        using var cts = new CancellationTokenSource();
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var dto = new DayThemeDto(
+            new DateOnly(2024, 6, 21),
+            new TimeOnly(5, 30), new TimeOnly(6, 0), new TimeOnly(20, 0), new TimeOnly(21, 30),
+            "Europe/Dublin",
+            "Daytime");
+
+        var getTodayCalls = 0;
+        Action triggerRecalculation = () => { };
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                var call = Interlocked.Increment(ref getTodayCalls);
+                // Call 1 is the startup read; call 2 is the first loop iteration's boundary read.
+                if (call == 2)
+                    for (var i = 0; i < triggerCount; i++) triggerRecalculation();
+                // Call 3 is the re-read the trigger must produce — stop the loop so the test terminates.
+                if (call >= 3) cts.Cancel();
+                return Task.FromResult(dto);
+            });
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+
+        var sut = CreateSut(dayThemeServiceMock.Object, new Mock<IThemeBroadcaster>().Object, logger, fakeTime);
+        // TriggerRecalculationAsync completes synchronously, so there is nothing to await here.
+        triggerRecalculation = () => _ = sut.TriggerRecalculationAsync();
+
+        var run = sut.RunExecuteAsync(cts.Token);
+        // The bound exists only to turn a regression's 12.5-hour sleep into a failure: on the correct
+        // path the loop runs to completion synchronously (every mock returns a completed task and the
+        // delay is pre-cancelled), so this deadline is never approached and cannot false-fail.
+        var completed = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(15)));
+        await cts.CancelAsync();
+
+        completed.Should().BeSameAs(run,
+            "the triggered recalculation must break the delay the in-flight iteration was about to enter");
+        getTodayCalls.Should().Be(3, "the trigger must cause exactly one fresh boundary re-read");
+        logger.Records.Should().NotContain(r => r.Level == LogLevel.Error,
+            "no iteration may fail — a disposed CancellationTokenSource read by the in-flight iteration "
+            + "would surface as a swallowed ObjectDisposedException logged as a failed iteration");
+        await run;
+    }
+
     [Fact]
     public void GetNextBoundaryDelay_WithNonUtcZone_UsesLocalTimeNotUtc()
     {

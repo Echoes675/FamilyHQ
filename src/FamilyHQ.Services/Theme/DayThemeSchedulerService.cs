@@ -22,8 +22,14 @@ public class DayThemeSchedulerService(
     public Task TriggerRecalculationAsync()
     {
         var old = Interlocked.Exchange(ref _delayCts, new CancellationTokenSource());
+        // FHQ-108: deliberately cancel WITHOUT disposing. A loop iteration may be holding this
+        // instance, and both CancellationTokenSource.Token and Cancel() throw ObjectDisposedException
+        // once disposed — the loop's ObjectDisposedException would be swallowed by its catch-all and
+        // the recalculation lost. The abandoned source owns nothing to release: it has no timer
+        // (CancelAfter is never used) and no wait handle (WaitHandle is never read), and cancelling it
+        // has already run and released its registrations, so it is a plain managed object the GC
+        // reclaims. Correctness beats tidiness.
         old.Cancel();
-        old.Dispose();
         return Task.CompletedTask;
     }
 
@@ -99,6 +105,14 @@ public class DayThemeSchedulerService(
 
     private async Task RunLoopIterationAsync(CancellationToken stoppingToken)
     {
+        // FHQ-108: snapshot the recalculation token ONCE, before any awaited work, and use that value
+        // for the rest of the iteration. Reading the field later (after the boundary read) would let a
+        // TriggerRecalculationAsync that landed mid-iteration install a fresh, uncancelled source that
+        // this iteration then waits on — sleeping on boundaries read before the location changed, so
+        // the recalculation is silently lost. A CancellationToken value stays usable no matter what
+        // happens to the field afterwards.
+        var recalculationToken = Volatile.Read(ref _delayCts).Token;
+
         using var scope = serviceProvider.CreateScope();
         var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
 
@@ -110,7 +124,7 @@ public class DayThemeSchedulerService(
 
         var nextBoundary = GetNextBoundaryDelay(dto);
 
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _delayCts.Token);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, recalculationToken);
         await Task.Delay(nextBoundary, linkedCts.Token);
 
         // The delay may have crossed midnight; ensure again before the post-delay read so the new
