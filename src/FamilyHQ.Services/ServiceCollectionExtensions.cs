@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Http;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
 using FamilyHQ.Services.Weather;
@@ -54,14 +55,51 @@ public static class ServiceCollectionExtensions
         services.AddHostedService(sp => sp.GetRequiredService<DayThemeSchedulerService>());
         services.AddSingleton<IDayThemeScheduler>(sp => sp.GetRequiredService<DayThemeSchedulerService>());
 
+        // FHQ-109: bind eagerly and fail-fast at boot — a poll interval or backoff cap that cannot
+        // work must surface here, not as a hot-looping (or never-waking) weather poller.
+        var weatherOptions = configuration
+            .GetSection(WeatherOptions.SectionName)
+            .Get<WeatherOptions>() ?? new WeatherOptions();
+        weatherOptions.Validate();
         services.Configure<WeatherOptions>(configuration.GetSection(WeatherOptions.SectionName));
 
-        services.AddHttpClient<IWeatherProvider, OpenMeteoWeatherProvider>((sp, client) =>
+        // FHQ-114: transient-fault retry for the three non-Google outbound clients. Each client's
+        // Timeout is the TOTAL budget for the attempt+backoff sequence, because the handler sleeps
+        // inside SendAsync — worst-case arithmetic lives on ExternalHttpResilienceOptions.
+        var externalResilience = configuration
+            .GetSection(ExternalHttpResilienceOptions.SectionName)
+            .Get<ExternalHttpResilienceOptions>() ?? new ExternalHttpResilienceOptions();
+        externalResilience.Validate();
+        services.Configure<ExternalHttpResilienceOptions>(
+            configuration.GetSection(ExternalHttpResilienceOptions.SectionName));
+        services.AddTransient<TransientHttpRetryHandler>();
+
+        // Stateless pure lookup — singleton. Injected into OpenMeteoWeatherProvider by the typed
+        // client below (FHQ-115).
+        services.AddSingleton<IWmoCodeMapper, WmoCodeMapper>();
+
+        services.AddHttpClient<IWeatherProvider, OpenMeteoWeatherProvider>(client =>
         {
-            var options = sp.GetRequiredService<IOptions<WeatherOptions>>().Value;
-            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
-            client.Timeout = TimeSpan.FromSeconds(30);
-        });
+            client.BaseAddress = new Uri(weatherOptions.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout = externalResilience.WeatherTimeout;
+        }).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+        // ip-api geolocation and Nominatim geocoding: service-layer HTTP clients, wired here rather
+        // than in WebApi/Program.cs so all three share one resilience configuration (FHQ-114).
+        var ipApiBaseUrl = configuration["Location:IpApiBaseUrl"] ?? "http://ip-api.com";
+        services.AddHttpClient<ILocationService, LocationService>(client =>
+        {
+            client.BaseAddress = new Uri(ipApiBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = externalResilience.LocationTimeout;
+        }).AddHttpMessageHandler<TransientHttpRetryHandler>();
+
+        var geocodingBaseUrl = configuration["Geocoding:BaseUrl"] ?? "https://nominatim.openstreetmap.org";
+        services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
+        {
+            client.BaseAddress = new Uri(geocodingBaseUrl.TrimEnd('/') + "/");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("FamilyHQ/1.0");
+            client.Timeout = externalResilience.GeocodingTimeout;
+        }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
         services.AddScoped<IWeatherService, WeatherService>();
         services.AddScoped<IWeatherRefreshService, WeatherRefreshService>();

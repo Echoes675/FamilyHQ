@@ -31,7 +31,7 @@
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
-- **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp.
+- **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp. `Condition` is persisted as the `WeatherCondition` **ordinal**, so new enum members must be appended — inserting one re-labels every stored row (pinned by `WeatherConditionTests`).
 - **WeatherSetting**: Stores weather preferences (Enabled, PollIntervalMinutes, TemperatureUnit, WindThresholdKmh). One row per UserId.
 - **WebhookRegistration**: Tracks Google Calendar push notification watch channel registrations. One row per CalendarInfo. Stores ChannelId (UUID sent to Google), ResourceId (returned by Google), ExpiresAt, RegisteredAt.
 
@@ -39,13 +39,15 @@
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
 - **IDayThemeService / DayThemeService**: Calculates and persists today's DayTheme boundaries.
 - **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists. Loops using Task.Delay to wake at each period boundary and broadcast `ThemeChanged(periodName)` to all SignalR clients via IHubContext<CalendarHub>.
-- **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback.
+- **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback. A `status != "success"` body is a hard failure, never retried: ip-api's three documented fail messages (`private range`, `reserved range`, `invalid query`) are all permanent for the querying IP. Its rate limiting is a separate HTTP 429 (+ `X-Ttl`) signal, absorbed by the retry handler below (FHQ-114).
 - **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required. Base URL is config-driven — Nominatim in production, simulator in dev/staging.
+- **TransientHttpRetryHandler** (`DelegatingHandler`, FHQ-114): retry for the three non-Google outbound clients — ip-api, Nominatim, Open-Meteo — all registered in `AddFamilyHqServices`. Retries idempotent (GET/HEAD) requests on 408/429/5xx and connection failures, honouring `Retry-After` (and ip-api's `X-Ttl`, **429 only** — `X-Ttl` is a rate-limit-window counter paired with `X-Rl` and ships on non-throttled responses too), otherwise exponential backoff with jitter. A **429 with no hint** (Open-Meteo's shape) is surfaced un-retried so caller-level backoff owns it rather than spending more of an exhausted quota. Every sleep is capped by `MaxRetryDelay` on **both** the response and the connection-failure path; anything longer surfaces immediately. Sleeps happen inside `SendAsync`, so each client's `Timeout` is the TOTAL budget for the attempt+backoff sequence — see `ExternalHttpResilienceOptions` for the worst-case arithmetic, and note the two interactive clients (ip-api, Nominatim — both awaited by `GET`/`POST /api/settings/location` with no client-side timeout) are budgeted near their pre-retry 10s ceiling rather than the background client's. (Contrast `ResilientGoogleCalendarClient`, which decorates an interface because the Google SDK is not a plain `HttpClient`.)
 - **IDisplaySettingService / DisplaySettingService** (Blazor WASM): Loads display preferences from `GET /api/settings/display` on startup and applies `--user-surface-multiplier` and `--theme-transition-duration` CSS custom properties via JS interop. Saves changes via `PUT /api/settings/display`.
-- **IWeatherProvider / OpenMeteoWeatherProvider**: Fetches weather data from Open-Meteo (or simulator). Base URL from config — same code in all environments.
+- **IWeatherProvider / OpenMeteoWeatherProvider**: Fetches weather data from Open-Meteo (or simulator). Base URL from config — same code in all environments. Open-Meteo's parallel value arrays are not guaranteed to match the length of `time`, so the hourly/daily loops run to the shortest array present (FHQ-110) and log one Warning per ragged section per parse.
+- **IWmoCodeMapper / WmoCodeMapper** (singleton, pure lookup): Maps Open-Meteo WMO weather codes to `WeatherCondition`. An unrecognised code yields `WeatherCondition.Unknown` — never `Clear` (FHQ-115) — and is reported back to `OpenMeteoWeatherProvider`, which emits a single aggregated Warning naming every distinct unmapped code per parse. `WeatherCondition.Unknown` maps to the `"unknown"` icon (a dashed cloud in `WeatherIcon.razor`) and shows no overlay animation.
 - **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
 - **IWeatherRefreshService**: Shared between WeatherPollerService and the refresh endpoint. Extracts the poll logic (fetch, store, broadcast) into a reusable service.
-- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving.
+- **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving. Each cycle refreshes only the users that are **due**; a user's interval doubles per consecutive failure up to `Weather:MaxFailureBackoffMinutes` and resets on the first success (FHQ-109), so a rate-limited Open-Meteo is no longer re-hit every 60s. Per-user state is pruned to the current enabled-user set each cycle, so it cannot grow with churn. The cycle sleep is clamped to `Weather:PollIntervalMinutes` so a backed-off user never stops the loop discovering someone who has just enabled weather. Only the escalation transition is logged at Error; once the interval plateaus at the cap it drops to Debug, with a Warning re-emitted every 10th consecutive failure so an ongoing outage stays visible in production.
 - **IWebhookRegistrationService / WebhookRegistrationService**: Registers Google Calendar push notification watch channels per-calendar. Called after login and periodically by WebhookRenewalService. Config-gated via `Sync:WebhookRegistrationEnabled`.
 - **WebhookRenewalService** (IHostedService, lives in WebApi): Background service that re-registers all webhook watch channels on startup (1-min delay) and every 6 days. Iterates all users via ITokenStore. Disabled when `Sync:WebhookRegistrationEnabled` is false.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
@@ -102,6 +104,15 @@ Distinct from the per-event `SyncEventFailure` subsystem (individual events that
 - `PUT  /api/settings/weather` → upserts user's weather settings; requires auth
 - `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
 
+### Rate limiting (FHQ-101)
+Four named fixed-window policies (`Configuration/RateLimitingConfiguration.cs`, applied via `[EnableRateLimiting]`; NO global limiter — kiosk polling and the SignalR hub must never be limited). Rejections return 429 + Retry-After + a ProblemDetails body, logged at Warning. All limits/windows configurable via the `RateLimiting` config section (env-var overridable per environment); defaults sized ≥5× over observed Deploy-Dev E2E peaks:
+- `auth-per-ip` — `GET /api/auth/login` + `GET /api/auth/callback`, per client IP (shared bucket), 300/min
+- `webhook-per-ip` — `POST /api/sync/webhook`, per client IP, 30/min
+- `sync-trigger-per-user` — `POST /api/sync/trigger`, per JWT `sub` (IP fallback when unauthenticated), 10/min
+- `weather-refresh-per-user` — `POST /api/weather/refresh`, per JWT `sub` (IP fallback), 15/min
+
+`UseRateLimiter` sits after `UseAuthentication` (per-user partitioning needs the `sub` claim) and before `UseAuthorization` (limits apply regardless of auth outcome).
+
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
 - **ThemeChanged(string period)**: pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
@@ -150,7 +161,7 @@ When the tab's "Override active" pill is on, a developer can tap any `WeatherCon
 Application version is a SemVer string (`MAJOR.MINOR.PATCH`) derived at build time by [MinVer](https://github.com/adamralph/minver). MAJOR/MINOR are pinned in `Directory.Build.props` via `<MinVerMinimumMajorMinor>`; PATCH auto-increments based on git tags pushed by Jenkins on master builds. See `.agent/docs/ci-cd.md` for the full pipeline mechanics and `.agent/skills/git-workflow/SKILL.md` for when to bump MAJOR/MINOR.
 
 Surfacing:
-- **`/api/health`** returns the WebApi version in a `version` field with `Cache-Control: no-store`.
+- **`/api/health`** returns the WebApi version in a `version` field with `Cache-Control: no-store`. The endpoint is anonymous, so it publishes the SemVer core (plus any pre-release label) with build metadata stripped — no commit SHA (FHQ-103). Deployed images build without a `.git` directory and so emit no metadata today; the strip keeps that true regardless. **The pre-release label must stay**: `VersionService.VersionsMatch` strips metadata only, so a server value stripped any further could never match the client and would re-trigger the reload below on every reconnect.
 - **WebUi footer** (`Components/Footer.razor`) renders `v{ClientVersion}` in the bottom-right corner. The version is read from `AssemblyInformationalVersionAttribute` on the WebUi assembly.
 
 Auto-reload of active clients on a new prod deploy:
@@ -158,7 +169,7 @@ Auto-reload of active clients on a new prod deploy:
 - On startup, `InitializeAsync()` fetches `/api/health` once.
 - `SignalRService` exposes a `Reconnected` event (via `ISignalRConnectionEvents`); `VersionService` subscribes and calls `CheckAsync()` on every reconnect. A WebApi deploy restarts the server, dropping the `CalendarHub` connection — when the auto-reconnect succeeds, `CheckAsync` runs and compares versions.
 - On a SemVer-core mismatch (build metadata stripped), `UpdateAvailable` fires (showing `<UpdateBanner />` with "New version available — reloading…"), then `IJSRuntime.InvokeVoidAsync("location.reload")` runs after a 5s delay (via `TimeProvider`, so testable with `FakeTimeProvider`).
-- A `_updateTriggered` flag enforces fire-once semantics so transient SignalR blips never trigger multiple banners or reload cycles.
+- A `_updateTriggered` flag enforces fire-once semantics so transient SignalR blips never trigger multiple banners or reload cycles. Note it is instance state on the WASM singleton, so `location.reload()` resets it — it bounds re-firing within one page life, not across reloads. A *permanent* version mismatch therefore loops, which is why the health endpoint and the client must strip exactly the same amount (above).
 
 ## Performance Targets
 - Responsiveness: API endpoints should target < 200ms response time.

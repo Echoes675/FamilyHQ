@@ -30,10 +30,43 @@ public class LocationServiceTests
             .WithMessage("*fail*");
     }
 
+    // FHQ-114: ip-api documents exactly three `status: "fail"` messages — "private range",
+    // "reserved range" and "invalid query" — and every one of them is permanent for the querying
+    // IP, so a retry can only ever return the same answer. Rate limiting is signalled separately as
+    // HTTP 429 (+ X-Ttl) and is handled by TransientHttpRetryHandler. The body-level failure
+    // therefore stays a clean, immediate failure — but it must say WHY.
+    [Fact]
+    public async Task GetEffectiveLocationAsync_IpApiStatusFails_ReportsTheDocumentedReason()
+    {
+        var sut = CreateSut(new HttpClient(new FakeIpApiFailureHandler()) { BaseAddress = new Uri("http://ip-api.com/") });
+
+        var act = () => sut.GetEffectiveLocationAsync();
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*private range*");
+    }
+
+    [Fact]
+    public async Task GetEffectiveLocationAsync_Request_AsksForTheFailureMessageField()
+    {
+        // API contract pin: ip-api only returns `message` when it is in the requested `fields` list,
+        // so omitting it leaves every failure diagnosed as a bare "fail" in Seq.
+        var handler = new FakeIpApiHandler();
+        var sut = CreateSut(new HttpClient(handler) { BaseAddress = new Uri("http://ip-api.com/") });
+
+        await sut.GetEffectiveLocationAsync();
+
+        handler.LastRequestUri.Should().NotBeNull();
+        handler.LastRequestUri!.Query.Should().Contain("message");
+    }
+
     private class FakeIpApiHandler : HttpMessageHandler
     {
+        public Uri? LastRequestUri { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            LastRequestUri = request.RequestUri;
             var json = """{"status":"success","city":"London","regionName":"England","country":"United Kingdom","lat":51.5074,"lon":-0.1278}""";
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {

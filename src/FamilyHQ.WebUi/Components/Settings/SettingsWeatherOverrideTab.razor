@@ -37,7 +37,7 @@
             </div>
 
             <div class="weather-override__condition-grid mt-2">
-                @foreach (var condition in AllConditions)
+                @foreach (var condition in AnimatableConditions)
                 {
                     var isSelected = OverrideService.ActiveCondition == condition;
                     <button type="button"
@@ -53,7 +53,10 @@
 </div>
 
 @code {
-    private static readonly WeatherCondition[] AllConditions = Enum.GetValues<WeatherCondition>();
+    // Unknown is excluded deliberately: it is the one condition that renders no animation,
+    // so a pill for it would be self-defeating in a tool whose purpose is previewing them.
+    private static readonly WeatherCondition[] AnimatableConditions =
+        [.. Enum.GetValues<WeatherCondition>().Where(c => c is not WeatherCondition.Unknown)];
 
     protected override void OnInitialized()
     {

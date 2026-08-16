@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Theme;
+using FamilyHQ.Services.Weather;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -122,6 +123,82 @@ public class ServiceCollectionExtensionsTests
             .WithMessage("*CalendarTimeout*");
     }
 
+    // ---- FHQ-114: ip-api / Nominatim / Open-Meteo transient-fault retry ----
+    [Fact]
+    public void AddFamilyHqServices_ExternalHttpClients_GetTheirTotalRetryBudgetAsTimeout()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder().Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        // The retry handler sleeps INSIDE SendAsync, so each client's Timeout is the total budget
+        // for the whole attempt+backoff sequence, not a single attempt. The two interactive clients
+        // stay near their pre-retry 10s ceiling; Open-Meteo keeps the 30s it always had.
+        factory.CreateClient(nameof(ILocationService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
+        factory.CreateClient(nameof(IGeocodingService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
+        factory.CreateClient(nameof(IWeatherProvider)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_ExternalHttpClients_AreRegisteredWithBaseAddresses()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("Location:IpApiBaseUrl", "https://ipapi.test"),
+                new KeyValuePair<string, string?>("Geocoding:BaseUrl", "https://nominatim.test"),
+                new KeyValuePair<string, string?>("Weather:BaseUrl", "https://openmeteo.test")
+            })
+            .Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+
+        factory.CreateClient(nameof(ILocationService)).BaseAddress.Should().Be(new Uri("https://ipapi.test/"));
+        factory.CreateClient(nameof(IGeocodingService)).BaseAddress.Should().Be(new Uri("https://nominatim.test/"));
+        factory.CreateClient(nameof(IWeatherProvider)).BaseAddress.Should().Be(new Uri("https://openmeteo.test/"));
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_InvalidExternalHttpResilienceConfig_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("ExternalHttpResilience:MaxAttempts", "0")
+            })
+            .Build();
+
+        services.Invoking(s => s.AddFamilyHqServices(configuration))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*MaxAttempts*");
+    }
+
+    // ---- FHQ-109: weather poll backoff options are fail-fast validated at boot ----
+    [Fact]
+    public void AddFamilyHqServices_InvalidWeatherConfig_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("Weather:MaxFailureBackoffMinutes", "0")
+            })
+            .Build();
+
+        services.Invoking(s => s.AddFamilyHqServices(configuration))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*MaxFailureBackoffMinutes*");
+    }
+
     [Fact]
     public void AddFamilyHqServices_IGoogleCalendarClient_ResolvesToResilientDecorator()
     {
@@ -143,5 +220,23 @@ public class ServiceCollectionExtensionsTests
         var client = scope.ServiceProvider.GetRequiredService<IGoogleCalendarClient>();
 
         client.Should().BeOfType<ResilientGoogleCalendarClient>();
+    }
+
+    // FHQ-115: OpenMeteoWeatherProvider gained an IWmoCodeMapper dependency. If its
+    // registration were dropped, the first resolve would happen inside WeatherPollerService
+    // 5s after startup and be swallowed by that service's per-user catch — weather would
+    // simply never appear, with nothing to point at the cause.
+    [Fact]
+    public void AddFamilyHqServices_IWeatherProvider_ResolvesWithItsWmoCodeMapper()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder().Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IWeatherProvider>().Should().BeOfType<OpenMeteoWeatherProvider>();
+        provider.GetRequiredService<IWmoCodeMapper>().Should().BeOfType<WmoCodeMapper>();
     }
 }

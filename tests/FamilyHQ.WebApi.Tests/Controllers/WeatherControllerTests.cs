@@ -1,10 +1,13 @@
+using System.Reflection;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Controllers;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Moq;
 
 namespace FamilyHQ.WebApi.Tests.Controllers;
@@ -201,6 +204,16 @@ public class WeatherControllerTests
         var result = await sut.GetForecast(0, CancellationToken.None);
 
         result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public void Refresh_HasWeatherRefreshPerUserRateLimitingPolicy()
+    {
+        // FHQ-101: each refresh fans out to open-meteo — limit per authenticated user (JWT sub).
+        var method = typeof(WeatherController).GetMethod(nameof(WeatherController.Refresh))!;
+        method.GetCustomAttribute<EnableRateLimitingAttribute>(inherit: false)
+            .Should().NotBeNull().And.Subject.As<EnableRateLimitingAttribute>()
+            .PolicyName.Should().Be(RateLimitPolicies.WeatherRefreshPerUser);
     }
 
     private static (WeatherController sut, Mock<IWeatherService> weatherServiceMock, Mock<IWeatherRefreshService> weatherRefreshServiceMock) CreateSut(string? userId)

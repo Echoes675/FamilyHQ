@@ -7,6 +7,7 @@ using FamilyHQ.WebApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -71,6 +72,7 @@ public class AuthController : ControllerBase
     /// </summary>
     [HttpGet("login")]
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.AuthPerIp)]
     public IActionResult Login()
     {
         var callbackUrl = $"{Request.Scheme}://{Request.Host}/api/auth/callback";
@@ -94,6 +96,7 @@ public class AuthController : ControllerBase
     /// </summary>
     [HttpGet("callback")]
     [AllowAnonymous]
+    [EnableRateLimiting(RateLimitPolicies.AuthPerIp)]
     public async Task<IActionResult> Callback([FromQuery] string code, [FromQuery] string? state)
     {
         var stateCookie = Request.Cookies["oauth_state"];

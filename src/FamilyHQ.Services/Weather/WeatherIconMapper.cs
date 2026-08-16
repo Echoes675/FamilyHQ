@@ -16,6 +16,9 @@ public static class WeatherIconMapper
         WeatherCondition.Thunder => "thunder",
         WeatherCondition.Snow => "snow",
         WeatherCondition.Sleet => "sleet",
-        _ => "clear"
+        WeatherCondition.Unknown => "unknown",
+        // FHQ-115: never fall back to "clear" — an unrecognised condition must not draw a
+        // sun on the dashboard.
+        _ => "unknown"
     };
 }

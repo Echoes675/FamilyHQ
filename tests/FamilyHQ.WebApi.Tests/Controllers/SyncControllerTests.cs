@@ -3,12 +3,14 @@ using System.Reflection;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
+using FamilyHQ.WebApi.Configuration;
 using FamilyHQ.WebApi.Controllers;
 using FamilyHQ.WebApi.Hubs;
 using FluentAssertions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -46,6 +48,27 @@ public class SyncControllerTests
             .Should().NotBeNull(
                 "TriggerSync must be [Authorize]-gated so unauthenticated requests return 401, " +
                 "not a silent 200 that masks reauth-marking failures (FHQ-31).");
+    }
+
+    [Fact]
+    public void TriggerSync_HasSyncTriggerPerUserRateLimitingPolicy()
+    {
+        // FHQ-101: manual sync forces a full Google sync — cap per user (JWT sub).
+        var method = typeof(SyncController).GetMethod(nameof(SyncController.TriggerSync))!;
+        method.GetCustomAttribute<EnableRateLimitingAttribute>(inherit: false)
+            .Should().NotBeNull().And.Subject.As<EnableRateLimitingAttribute>()
+            .PolicyName.Should().Be(RateLimitPolicies.SyncTriggerPerUser);
+    }
+
+    [Fact]
+    public void GooglePushWebhook_HasWebhookPerIpRateLimitingPolicy()
+    {
+        // FHQ-101: the webhook is unauthenticated (the FHQ-81 attack surface — hammering it
+        // forces full Google syncs), so it gets the tight per-IP policy.
+        var method = typeof(SyncController).GetMethod(nameof(SyncController.GooglePushWebhook))!;
+        method.GetCustomAttribute<EnableRateLimitingAttribute>(inherit: false)
+            .Should().NotBeNull().And.Subject.As<EnableRateLimitingAttribute>()
+            .PolicyName.Should().Be(RateLimitPolicies.WebhookPerIp);
     }
 
     [Fact]
