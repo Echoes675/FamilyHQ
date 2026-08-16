@@ -36,6 +36,35 @@ public class DayThemeRepositoryTests
     }
 
     [Fact]
+    public async Task GetMostRecentAsync_ReturnsTheRowWithTheGreatestDate()
+    {
+        // FHQ-134: the date key is derived from the zone on the most recent row, so "most recent"
+        // must be by Date, not by insertion order.
+        _db.Setup<DayTheme>(
+        [
+            new DayTheme { Date = new DateOnly(2024, 6, 21), IanaTimeZone = "Europe/Dublin" },
+            new DayTheme { Date = new DateOnly(2024, 6, 19), IanaTimeZone = "America/New_York" },
+            new DayTheme { Date = new DateOnly(2024, 6, 20), IanaTimeZone = "Europe/Paris" }
+        ]);
+
+        var result = await CreateSut().GetMostRecentAsync();
+
+        result.Should().NotBeNull();
+        result!.Date.Should().Be(new DateOnly(2024, 6, 21));
+        result.IanaTimeZone.Should().Be("Europe/Dublin");
+    }
+
+    [Fact]
+    public async Task GetMostRecentAsync_ReturnsNull_WhenNoRowsExist()
+    {
+        _db.Setup<DayTheme>();
+
+        var result = await CreateSut().GetMostRecentAsync();
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
     public async Task UpsertAsync_Update_CopiesIanaTimeZoneFromIncomingRecord()
     {
         // FHQ-160: a same-day cross-timezone move recalculates today's theme. Today's row already

@@ -16,6 +16,12 @@ public class DayThemeRepository : IDayThemeRepository
     public async Task<DayTheme?> GetByDateAsync(DateOnly date, CancellationToken ct = default)
         => await _context.DayThemes.FirstOrDefaultAsync(x => x.Date == date, ct);
 
+    public async Task<DayTheme?> GetMostRecentAsync(CancellationToken ct = default)
+        => await _context.DayThemes
+            .AsNoTracking()
+            .OrderByDescending(x => x.Date)
+            .FirstOrDefaultAsync(ct);
+
     public async Task<DayTheme> UpsertAsync(DayTheme dayTheme, CancellationToken ct = default)
     {
         var existing = await GetByDateAsync(dayTheme.Date, ct);
