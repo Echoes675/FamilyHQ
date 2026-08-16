@@ -1,4 +1,5 @@
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Helpers;
 using Microsoft.Playwright;
 using Reqnroll;
 
@@ -25,7 +26,16 @@ public class WarmupHooks
         var config = ConfigurationLoader.Load();
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = config.Headless });
-        var context = await browser.NewContextAsync(new() { IgnoreHTTPSErrors = true, BaseURL = config.BaseUrl });
+        // Same zone pin as the scenario contexts (PlaywrightDriver). This context only waits for the
+        // login button, so the zone is immaterial to what it asserts — but a warm-up that boots the
+        // app under a different clock than the scenarios then warms the wrong render path, and having
+        // exactly one answer to "what zone does our browser run in" is the point of BrowserClock.
+        var context = await browser.NewContextAsync(new()
+        {
+            IgnoreHTTPSErrors = true,
+            BaseURL = config.BaseUrl,
+            TimezoneId = BrowserClock.TimeZoneId
+        });
         var page = await context.NewPageAsync();
         try
         {

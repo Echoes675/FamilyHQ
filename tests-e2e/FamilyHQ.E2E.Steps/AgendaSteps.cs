@@ -75,7 +75,7 @@ public class AgendaSteps
     [When(@"I navigate the agenda to show a date in (\d+) days")]
     public async Task WhenINavigateTheAgendaToShowADateInDays(int days)
     {
-        var target = DateTime.Today.AddDays(days);
+        var target = BrowserClock.Today.AddDays(days);
         await NavigateAgendaToMonthAsync(target);
     }
 
@@ -96,7 +96,7 @@ public class AgendaSteps
     [Then(@"the agenda view shows the previous month")]
     public async Task ThenTheAgendaViewShowsThePreviousMonth()
     {
-        var expected = DateTime.Today.AddMonths(-1).ToString("MMMM yyyy");
+        var expected = BrowserClock.Today.AddMonths(-1).ToString("MMMM yyyy");
         // Web-first: the month-year label re-renders after navigation; ToHaveTextAsync auto-retries
         // against the live label rather than reading once and racing the re-render (FHQ-41).
         await Assertions.Expect(_page.GetByTestId("agenda-month-year-label"))
@@ -106,7 +106,7 @@ public class AgendaSteps
     [Then(@"the agenda view shows the next month")]
     public async Task ThenTheAgendaViewShowsTheNextMonth()
     {
-        var expected = DateTime.Today.AddMonths(1).ToString("MMMM yyyy");
+        var expected = BrowserClock.Today.AddMonths(1).ToString("MMMM yyyy");
         await Assertions.Expect(_page.GetByTestId("agenda-month-year-label"))
             .ToHaveTextAsync(expected, new() { Timeout = 30000 });
     }
@@ -279,7 +279,7 @@ public class AgendaSteps
     [Then(@"the modal start date contains today's date")]
     public async Task ThenTheModalStartDateContainsTodaysDate()
     {
-        var todayStr = DateTime.Today.ToString("yyyy-MM-dd");
+        var todayStr = BrowserClock.Today.ToString("yyyy-MM-dd");
         var value = await _dashboardPage.GetModalStartDateValueAsync();
         value.Should().Contain(todayStr, "The modal start datetime should contain today's date.");
     }

@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using FamilyHQ.E2E.Common.Configuration;
+using FamilyHQ.E2E.Common.Helpers;
 using Microsoft.Playwright;
 
 namespace FamilyHQ.E2E.Common.Pages;
@@ -584,7 +585,7 @@ public class DashboardPage : BasePage
 
     public async Task NavigateToNextMonthAsync()
     {
-        var nextMonth = DateTime.Today.AddMonths(1);
+        var nextMonth = BrowserClock.Today.AddMonths(1);
         var expectedMonthText = nextMonth.ToString("MMMM yyyy"); // e.g. "April 2026"
 
         await NextMonthBtn.ClickAsync();
@@ -602,7 +603,7 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task NavigateToShowDateIfNeededAsync(DateTime date)
     {
-        var today = DateTime.Today;
+        var today = BrowserClock.Today;
         var lastDayOfMonth = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
         var daysUntilSaturday = ((int)DayOfWeek.Saturday - (int)lastDayOfMonth.DayOfWeek + 7) % 7;
         var gridEnd = lastDayOfMonth.AddDays(daysUntilSaturday);

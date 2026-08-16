@@ -26,7 +26,7 @@ public class EventSteps
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
         
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
         
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -69,7 +69,7 @@ public class EventSteps
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
         
-        var eventDate = DateTime.Today.AddDays(days);
+        var eventDate = BrowserClock.Today.AddDays(days);
         
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -96,7 +96,7 @@ public class EventSteps
             throw new InvalidOperationException($"Calendar '{calendarName}' not found in template.");
         }
 
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
 
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -118,7 +118,7 @@ public class EventSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
                        ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
-        var eventDate = DateTime.Today.AddDays(days);
+        var eventDate = BrowserClock.Today.AddDays(days);
 
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -141,7 +141,7 @@ public class EventSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
                        ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
-        var date = DateTime.Today.AddDays(days);
+        var date = BrowserClock.Today.AddDays(days);
         var timeParts = timeStr.Split(':');
         var startTime = date.AddHours(int.Parse(timeParts[0])).AddMinutes(int.Parse(timeParts[1]));
 
@@ -150,8 +150,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendar.Id,
             Summary = eventName,
-            StartTime = startTime,
-            EndTime = startTime.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(startTime),
+            EndTime = BrowserClock.ToUtcInstant(startTime.AddHours(1)),
             IsAllDay = false
         });
 
@@ -165,7 +165,7 @@ public class EventSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
                        ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
-        var date = DateTime.Today.AddDays(days);
+        var date = BrowserClock.Today.AddDays(days);
 
         for (int i = 0; i < count; i++)
         {
@@ -175,8 +175,8 @@ public class EventSteps
                 Id = "evt_" + Guid.NewGuid().ToString("N"),
                 CalendarId = calendar.Id,
                 Summary = $"Event {i + 1}",
-                StartTime = startTime,
-                EndTime = startTime.AddHours(1),
+                StartTime = BrowserClock.ToUtcInstant(startTime),
+                EndTime = BrowserClock.ToUtcInstant(startTime.AddHours(1)),
                 IsAllDay = false
             });
         }
@@ -231,7 +231,7 @@ public class EventSteps
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
 
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
         var timeParts = timeStr.Split(':');
         var hour = int.Parse(timeParts[0]);
         var minute = int.Parse(timeParts[1]);
@@ -244,8 +244,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendarId,
             Summary = eventName,
-            StartTime = startTime,
-            EndTime = endTime,
+            StartTime = BrowserClock.ToUtcInstant(startTime),
+            EndTime = BrowserClock.ToUtcInstant(endTime),
             IsAllDay = false
         });
 
@@ -258,7 +258,7 @@ public class EventSteps
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
         
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
         
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -279,7 +279,7 @@ public class EventSteps
         var isolatedTemplate = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
 
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
         var timeParts = timeStr.Split(':');
         var hour = int.Parse(timeParts[0]);
         var minute = int.Parse(timeParts[1]);
@@ -292,8 +292,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendarId,
             Summary = eventName,
-            StartTime = startTime,
-            EndTime = endTime,
+            StartTime = BrowserClock.ToUtcInstant(startTime),
+            EndTime = BrowserClock.ToUtcInstant(endTime),
             IsAllDay = false
         });
 
@@ -317,8 +317,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendar.Id,
             Summary = eventName,
-            StartTime = startTime,
-            EndTime = startTime.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(startTime),
+            EndTime = BrowserClock.ToUtcInstant(startTime.AddHours(1)),
             IsAllDay = false
         });
 
@@ -362,7 +362,7 @@ public class EventSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
                        ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
-        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var firstOccurrence = BrowserClock.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
         var weekday = firstOccurrence.DayOfWeek;
         var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
 
@@ -371,8 +371,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendar.Id,
             Summary = eventName,
-            StartTime = firstOccurrence,
-            EndTime = firstOccurrence.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
+            EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
             RecurrenceRule = rrule
         });
@@ -405,7 +405,7 @@ public class EventSteps
         if (isolatedTemplate.Calendars.Find(c => c.Summary == memberCalendar2) == null)
             throw new InvalidOperationException($"Calendar '{memberCalendar2}' not found in template.");
 
-        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var firstOccurrence = BrowserClock.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
         var weekday = firstOccurrence.DayOfWeek;
         var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
 
@@ -414,8 +414,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = sharedCalendar.Id,
             Summary = eventName,
-            StartTime = firstOccurrence,
-            EndTime = firstOccurrence.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
+            EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
             RecurrenceRule = rrule,
             Description = $"[members: {memberCalendar1}, {memberCalendar2}]"
@@ -441,7 +441,7 @@ public class EventSteps
             throw new InvalidOperationException(
                 $"'{memberCalendar}' is the shared calendar; seed the single-member series on a personal calendar.");
 
-        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
+        var firstOccurrence = BrowserClock.Today.AddDays(1).AddHours(18); // tomorrow, 18:00 timed event
         var weekday = firstOccurrence.DayOfWeek;
         var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
 
@@ -450,8 +450,8 @@ public class EventSteps
             Id = "evt_" + Guid.NewGuid().ToString("N"),
             CalendarId = calendar.Id,
             Summary = eventName,
-            StartTime = firstOccurrence,
-            EndTime = firstOccurrence.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
+            EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
             RecurrenceRule = rrule
         });
@@ -472,7 +472,7 @@ public class EventSteps
         var calendar = isolatedTemplate.Calendars.Find(c => c.Summary == calendarName)
             ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
-        var firstOccurrence = DateTime.Today.AddDays(1).AddHours(18);
+        var firstOccurrence = BrowserClock.Today.AddDays(1).AddHours(18);
         var weekday = firstOccurrence.DayOfWeek;
         var rrule = $"RRULE:FREQ=WEEKLY;BYDAY={WeekdayCode(weekday)};COUNT={occurrences}";
         var masterId = "evt_" + Guid.NewGuid().ToString("N");
@@ -482,8 +482,8 @@ public class EventSteps
             Id = masterId,
             CalendarId = calendar.Id,
             Summary = eventName,
-            StartTime = firstOccurrence,
-            EndTime = firstOccurrence.AddHours(1),
+            StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
+            EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
             RecurrenceRule = rrule
         });
@@ -534,8 +534,8 @@ public class EventSteps
                 Id = "evt_" + Guid.NewGuid().ToString("N"),
                 CalendarId = calendar.Id,
                 Summary = $"Event {i + 1}",
-                StartTime = startTime,
-                EndTime = startTime.AddHours(1),
+                StartTime = BrowserClock.ToUtcInstant(startTime),
+                EndTime = BrowserClock.ToUtcInstant(startTime.AddHours(1)),
                 IsAllDay = false
             });
         }

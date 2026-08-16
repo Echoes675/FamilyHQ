@@ -145,7 +145,7 @@ public class WeatherSteps
 
         var dailyItems = table.Rows.Select(row => new
         {
-            Date = DateExpressionResolver.ResolveLondon(row["Date"]),
+            Date = DateExpressionResolver.Resolve(row["Date"]),
             WeatherCode = int.Parse(row["Code"]),
             TemperatureMax = double.Parse(row["High"]),
             TemperatureMin = double.Parse(row["Low"]),
@@ -165,7 +165,7 @@ public class WeatherSteps
     {
         var lat = _scenarioContext.Get<double>("WeatherLatitude");
         var lon = _scenarioContext.Get<double>("WeatherLongitude");
-        var resolvedDate = DateExpressionResolver.ResolveLondon(dateExpr);
+        var resolvedDate = DateExpressionResolver.Resolve(dateExpr);
 
         var hourlyItems = table.Rows.Select(row => new
         {
@@ -491,7 +491,7 @@ public class WeatherSteps
     [Then(@"the agenda row for ""([^""]*)"" shows weather temperatures")]
     public async Task ThenTheAgendaRowForShowsWeatherTemperatures(string dateExpr)
     {
-        var dateKey = DateExpressionResolver.ResolveLondon(dateExpr);
+        var dateKey = DateExpressionResolver.Resolve(dateExpr);
         await Assertions.Expect(_dashboardPage.AgendaWeatherTemps(dateKey))
             .ToBeVisibleAsync(new() { Timeout = 30000 });
     }
