@@ -83,6 +83,39 @@ public class DisplaySettingRepositoryTests
     }
 
     [Fact]
+    public async Task UpsertAsync_Update_CopiesIsTimeZoneAutoDetectedFromIncomingSetting()
+    {
+        // FHQ-160 sibling: IsTimeZoneAutoDetected is half of the timezone state — it decides whether a
+        // later location change may re-derive the zone (RepersistAutoIfNotExplicitAsync). The UPDATE
+        // branch copied IanaTimeZone but not this flag, so a detached setting could move the zone while
+        // leaving the auto/explicit flag stale. The two fields must travel together.
+        var existing = new DisplaySetting
+        {
+            UserId = "user-1",
+            IanaTimeZone = "Europe/London",
+            IsTimeZoneAutoDetected = true,
+            UpdatedAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+        var mockSet = _db.Setup<DisplaySetting>([existing]);
+        var sut = CreateSut();
+
+        var update = new DisplaySetting
+        {
+            IanaTimeZone = "America/New_York",
+            IsTimeZoneAutoDetected = false,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var result = await sut.UpsertAsync("user-1", update);
+
+        result.IanaTimeZone.Should().Be("America/New_York");
+        result.IsTimeZoneAutoDetected.Should().BeFalse(
+            "an explicitly-set zone must not stay flagged as auto-detected");
+        mockSet.Verify(s => s.Add(It.IsAny<DisplaySetting>()), Times.Never);
+        _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task UpsertAsync_Update_ClearsIanaTimeZoneWhenCallerPassesNull()
     {
         // Verify the timezone-reset path (ResetTimeZone endpoint) continues to work: when the
