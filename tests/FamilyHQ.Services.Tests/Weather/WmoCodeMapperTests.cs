@@ -6,6 +6,8 @@ using FluentAssertions;
 
 public class WmoCodeMapperTests
 {
+    private static WmoCodeMapper CreateSut() => new();
+
     [Theory]
     [InlineData(0, WeatherCondition.Clear)]
     [InlineData(1, WeatherCondition.PartlyCloudy)]
@@ -35,19 +37,27 @@ public class WmoCodeMapperTests
     [InlineData(95, WeatherCondition.Thunder)]
     [InlineData(96, WeatherCondition.Thunder)]
     [InlineData(99, WeatherCondition.Thunder)]
-    public void Maps_wmo_code_to_correct_condition(int wmoCode, WeatherCondition expected)
+    public void TryGetCondition_MappedWmoCode_ReturnsTrueWithCorrectCondition(int wmoCode, WeatherCondition expected)
     {
-        var result = WmoCodeMapper.ToCondition(wmoCode);
-        result.Should().Be(expected);
+        var mapped = CreateSut().TryGetCondition(wmoCode, out var condition);
+
+        mapped.Should().BeTrue();
+        condition.Should().Be(expected);
     }
 
+    // FHQ-115: an unmapped code used to fall through to Clear, so an unrecognised
+    // severe-weather code rendered as sunny on the family dashboard.
     [Theory]
     [InlineData(-1)]
-    [InlineData(100)]
+    [InlineData(4)]
     [InlineData(50)]
-    public void Unknown_wmo_code_returns_clear(int wmoCode)
+    [InlineData(100)]
+    public void TryGetCondition_UnmappedWmoCode_ReturnsFalseWithUnknown(int wmoCode)
     {
-        var result = WmoCodeMapper.ToCondition(wmoCode);
-        result.Should().Be(WeatherCondition.Clear);
+        var mapped = CreateSut().TryGetCondition(wmoCode, out var condition);
+
+        mapped.Should().BeFalse();
+        condition.Should().Be(WeatherCondition.Unknown,
+            "an unrecognised code must never be presented as clear skies");
     }
 }

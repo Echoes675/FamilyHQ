@@ -74,6 +74,10 @@ public static class ServiceCollectionExtensions
             configuration.GetSection(ExternalHttpResilienceOptions.SectionName));
         services.AddTransient<TransientHttpRetryHandler>();
 
+        // Stateless pure lookup — singleton. Injected into OpenMeteoWeatherProvider by the typed
+        // client below (FHQ-115).
+        services.AddSingleton<IWmoCodeMapper, WmoCodeMapper>();
+
         services.AddHttpClient<IWeatherProvider, OpenMeteoWeatherProvider>(client =>
         {
             client.BaseAddress = new Uri(weatherOptions.BaseUrl.TrimEnd('/') + "/");

@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Theme;
+using FamilyHQ.Services.Weather;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -219,5 +220,23 @@ public class ServiceCollectionExtensionsTests
         var client = scope.ServiceProvider.GetRequiredService<IGoogleCalendarClient>();
 
         client.Should().BeOfType<ResilientGoogleCalendarClient>();
+    }
+
+    // FHQ-115: OpenMeteoWeatherProvider gained an IWmoCodeMapper dependency. If its
+    // registration were dropped, the first resolve would happen inside WeatherPollerService
+    // 5s after startup and be swallowed by that service's per-user catch — weather would
+    // simply never appear, with nothing to point at the cause.
+    [Fact]
+    public void AddFamilyHqServices_IWeatherProvider_ResolvesWithItsWmoCodeMapper()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder().Build();
+        services.AddFamilyHqServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IWeatherProvider>().Should().BeOfType<OpenMeteoWeatherProvider>();
+        provider.GetRequiredService<IWmoCodeMapper>().Should().BeOfType<WmoCodeMapper>();
     }
 }

@@ -5,7 +5,9 @@ export function setWeatherOverlay(condition, isWindy) {
     // Clear existing classes
     overlay.className = '';
 
-    if (!condition || condition === 'Clear') {
+    // FHQ-115: 'Unknown' means we could not identify the weather, so show no animation
+    // rather than guessing at one.
+    if (!condition || condition === 'Clear' || condition === 'Unknown') {
         overlay.innerHTML = '';
         return;
     }
