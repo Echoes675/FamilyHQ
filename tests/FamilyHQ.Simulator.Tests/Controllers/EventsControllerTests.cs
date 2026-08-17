@@ -584,6 +584,36 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task GetEvent_WhenMasterHasStartTimeZone_ReturnsItOnStart()
+    {
+        // FHQ-161: events.get on the master is where the app reads the zone the recurrence is
+        // anchored to. Google returns it on start.timeZone for a timed event; omitting it made every
+        // synced series look zone-less to CalendarEventService's split count.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            StartTimeZone = "Europe/London",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.GetEvent("cal-alice", "evt-series");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        doc.RootElement.GetProperty("start").GetProperty("timeZone").GetString().Should().Be("Europe/London");
+    }
+
+    [Fact]
     public async Task ListEvents_SingleEvents_MasterWithoutTimeZone_ExpandsAtFixedUtcInstants()
     {
         // Documented fallback: a master with no stored zone (all-day, or a seed that omitted it)

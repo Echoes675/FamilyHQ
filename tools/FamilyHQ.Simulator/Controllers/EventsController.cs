@@ -544,8 +544,16 @@ public class EventsController : ControllerBase
         summary     = e.Id.StartsWith(PoisonEventIdPrefix) ? new string('X', PoisonSummaryLength) : e.Summary,
         location    = e.Location,
         description = e.Description,
-        start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
-        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }   : new { dateTime = e.EndTime.ToString("O") },
+        // FHQ-161: Google returns start.timeZone on a timed event, and events.get on a series master
+        // is where the app reads the zone its recurrence is anchored to (GetSeriesMasterAsync).
+        // Omitting it made every synced series look zone-less and silently took production's
+        // not-DST-aware fallback. All-day events carry a date and no zone, as Google emits them.
+        start = e.IsAllDay
+            ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") }
+            : new { dateTime = e.StartTime.ToString("O"), timeZone = e.StartTimeZone },
+        end   = e.IsAllDay
+            ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }
+            : new { dateTime = e.EndTime.ToString("O"), timeZone = e.StartTimeZone },
         organizer   = new { email = e.CalendarId, self = true },
         attendees = attendeeCalendarIds.Count > 0
             ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
