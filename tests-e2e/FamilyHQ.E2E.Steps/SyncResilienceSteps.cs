@@ -156,15 +156,15 @@ public class SyncResilienceSteps
         try
         {
             apiResp = await page.EvaluateAsync<string>(@"
-                async () => {
+                async (apiOrigin) => {
                     try {
-                        const r = await fetch('/api/calendars/connection-status', { credentials: 'include' });
+                        const r = await fetch(`${apiOrigin}/api/calendars/connection-status`, { credentials: 'include' });
                         const body = await r.text();
                         return JSON.stringify({ status: r.status, body });
                     } catch (e) {
                         return JSON.stringify({ error: String(e) });
                     }
-                }");
+                }", ApiOrigin.Url);
         }
         catch (Exception ex)
         {

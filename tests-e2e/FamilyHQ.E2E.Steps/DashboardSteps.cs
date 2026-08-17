@@ -109,7 +109,7 @@ public class DashboardSteps
     [When(@"I navigate the month view to show a date in (\d+) days")]
     public async Task WhenINavigateTheMonthViewToShowDateInDays(int days)
     {
-        await _dashboardPage.NavigateToShowDateIfNeededAsync(DateTime.Today.AddDays(days));
+        await _dashboardPage.NavigateToShowDateIfNeededAsync(BrowserClock.Today.AddDays(days));
     }
 
     [Given(@"I change the event ""([^""]*)"" to calendar ""([^""]*)""")]
@@ -259,7 +259,7 @@ public class DashboardSteps
     [When(@"^I click the ""\+n more"" link for tomorrow$")]
     public async Task WhenIClickTheMoreEventsLinkForTomorrow()
     {
-        var dateYyyyMmDd = DateTime.Today.AddDays(1).ToString("yyyy-MM-dd");
+        var dateYyyyMmDd = BrowserClock.Today.AddDays(1).ToString("yyyy-MM-dd");
         await _dashboardPage.ClickMoreEventsLinkAsync(dateYyyyMmDd);
     }
 
@@ -324,7 +324,7 @@ public class DashboardSteps
         // runner) uses a different ICU build whose en-GB LongDatePattern omits the comma
         // ("Wednesday 8 April 2026").  Rather than reproduce the browser's exact format,
         // assert on the semantic content: weekday name, day number, month name and year.
-        var today   = DateTime.Today;
+        var today   = BrowserClock.Today;
         var culture = new System.Globalization.CultureInfo("en-GB");
         var weekday = today.ToString("dddd", culture);
         var month   = today.ToString("MMMM", culture);

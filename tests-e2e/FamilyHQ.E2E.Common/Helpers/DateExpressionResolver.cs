@@ -6,30 +6,19 @@ using System.Text.RegularExpressions;
 /// <summary>
 /// Resolves relative date expressions like "tomorrow", "today", "in N days"
 /// to yyyy-MM-dd date strings. Also passes through absolute yyyy-MM-dd values unchanged.
+/// <para>
+/// "Today" always means today in <see cref="BrowserClock"/>'s zone — the zone the browser under test
+/// is pinned to. There used to be a second entry point (<c>ResolveLondon</c>) that answered with the
+/// Europe/London date while this one answered with the test HOST's date; during BST those disagree
+/// for the hour between 23:00 and 00:00 UTC, and a seed written through one and asserted through the
+/// other silently missed (intermittent-issues #11). The two are now the same method, so the
+/// divergence cannot be reintroduced by picking the wrong overload.
+/// </para>
 /// </summary>
 public static partial class DateExpressionResolver
 {
     public static string Resolve(string expression)
-        => Resolve(expression, DateOnly.FromDateTime(DateTime.Today));
-
-    /// <summary>
-    /// Resolves the expression using Europe/London local time.
-    /// Use this for weather scenarios where the server queries daily data by BST date.
-    /// </summary>
-    public static string ResolveLondon(string expression)
-    {
-        TimeZoneInfo londonZone;
-        try
-        {
-            londonZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            londonZone = TimeZoneInfo.FindSystemTimeZoneById("GMT Standard Time");
-        }
-        var londonToday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, londonZone));
-        return Resolve(expression, londonToday);
-    }
+        => Resolve(expression, BrowserClock.TodayDate);
 
     private static string Resolve(string expression, DateOnly today)
     {
