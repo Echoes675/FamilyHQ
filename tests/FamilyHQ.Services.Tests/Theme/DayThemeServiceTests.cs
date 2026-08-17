@@ -10,6 +10,14 @@ namespace FamilyHQ.Services.Tests.Theme;
 
 public class DayThemeServiceTests
 {
+    /// <summary>
+    /// A clock pinned to midday UTC and the date it implies. Midday so the UTC and any local date
+    /// agree, and one source so the test's expectation and the service's date key cannot diverge.
+    /// </summary>
+    private static (FakeTimeProvider Clock, DateOnly Today) PinnedToday()
+        => (new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 12, 0, 0, TimeSpan.Zero)),
+            new DateOnly(2024, 6, 21));
+
     private static DayThemeService CreateSut(
         IDayThemeRepository dayThemeRepo,
         ILocationService locationService,
@@ -23,14 +31,18 @@ public class DayThemeServiceTests
     [Fact]
     public async Task EnsureTodayAsync_DoesNotRecalculate_WhenRecordExists()
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        // FHQ-158: the date key comes from the injected clock, not a second read of the host's
+        // calendar. Two independent reads of "today" disagree for the instant either side of local
+        // midnight — the divergence class that produced FHQ-134 and tracker issue 11.
+        var (fakeTime, today) = PinnedToday();
         var repoMock = new Mock<IDayThemeRepository>();
         repoMock.Setup(x => x.GetByDateAsync(today, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayTheme { Date = today });
         var locationMock = new Mock<ILocationService>();
         var sunCalcMock = new Mock<ISunCalculatorService>();
 
-        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).EnsureTodayAsync();
+        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object, timeProvider: fakeTime)
+            .EnsureTodayAsync();
 
         sunCalcMock.Verify(x => x.CalculateBoundariesAsync(It.IsAny<double>(), It.IsAny<double>(), It.IsAny<DateOnly>(), It.IsAny<string?>()), Times.Never);
     }
@@ -38,7 +50,7 @@ public class DayThemeServiceTests
     [Fact]
     public async Task EnsureTodayAsync_Calculates_WhenNoRecordExists()
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var (fakeTime, today) = PinnedToday();
         var repoMock = new Mock<IDayThemeRepository>();
         repoMock.Setup(x => x.GetByDateAsync(today, It.IsAny<CancellationToken>()))
             .ReturnsAsync((DayTheme?)null);
@@ -52,7 +64,8 @@ public class DayThemeServiceTests
             .ReturnsAsync(new DayThemeBoundaries(
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30)));
 
-        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).EnsureTodayAsync();
+        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object, timeProvider: fakeTime)
+            .EnsureTodayAsync();
 
         sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()), Times.Once);
     }
@@ -60,7 +73,7 @@ public class DayThemeServiceTests
     [Fact]
     public async Task RecalculateForTodayAsync_AlwaysRecalculates_EvenWhenRecordExists()
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
+        var (fakeTime, today) = PinnedToday();
         var repoMock = new Mock<IDayThemeRepository>();
         // Record EXISTS — but RecalculateForToday should still call CalculateBoundariesAsync
         repoMock.Setup(x => x.GetByDateAsync(today, It.IsAny<CancellationToken>()))
@@ -76,7 +89,8 @@ public class DayThemeServiceTests
             .ReturnsAsync(new DayThemeBoundaries(
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30)));
 
-        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object).RecalculateForTodayAsync();
+        await CreateSut(repoMock.Object, locationMock.Object, sunCalcMock.Object, timeProvider: fakeTime)
+            .RecalculateForTodayAsync();
 
         sunCalcMock.Verify(x => x.CalculateBoundariesAsync(55.0, -3.0, today, It.IsAny<string?>()), Times.Once);
     }

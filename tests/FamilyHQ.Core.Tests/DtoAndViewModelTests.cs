@@ -5,6 +5,11 @@ namespace FamilyHQ.Core.Tests.DTOs;
 
 public class DtoAndViewModelTests
 {
+    // FHQ-158: fixed instants rather than DateTimeOffset.Now. Nothing here branches on the value,
+    // but .Now renders in the host's local zone, and the CI runtime is globalization-invariant —
+    // so the only thing the ambient read contributed was a dependency on where the test runs.
+    private static readonly DateTimeOffset Start = new(2026, 3, 9, 14, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public void CalendarEventDto_Initialization_SetPropertiesCorrectly()
     {
@@ -12,8 +17,8 @@ public class DtoAndViewModelTests
         var id = Guid.NewGuid();
         var googleEventId = "google-id";
         var title = "Test Event";
-        var start = DateTimeOffset.Now;
-        var end = DateTimeOffset.Now.AddHours(1);
+        var start = Start;
+        var end = Start.AddHours(1);
         var isAllDay = true;
         var location = "Test Location";
         var description = "Test Description";
@@ -45,7 +50,7 @@ public class DtoAndViewModelTests
         var month = 3;
         var calendarDto = new CalendarEventDto(
             Guid.NewGuid(), "google-id", "Test Event",
-            DateTimeOffset.Now, DateTimeOffset.Now.AddHours(1),
+            Start, Start.AddHours(1),
             false, null, null, []);
         var days = new Dictionary<string, List<CalendarEventDto>>
         {
