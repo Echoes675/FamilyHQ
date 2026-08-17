@@ -1,5 +1,6 @@
 using System.Globalization;
 using FamilyHQ.Core.Calendar.Recurrence;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
@@ -18,13 +19,20 @@ public class EventsController : ControllerBase
     private readonly ILogger<EventsController> _logger;
     private readonly SyncFailureModeStore _failureStore;
     private readonly OutboundWriteCountStore _writeCountStore;
+    private readonly IRecurrenceTimeZoneFactory _recurrenceTimeZones;
 
-    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore, OutboundWriteCountStore writeCountStore)
+    public EventsController(
+        SimContext db,
+        ILogger<EventsController> logger,
+        SyncFailureModeStore failureStore,
+        OutboundWriteCountStore writeCountStore,
+        IRecurrenceTimeZoneFactory recurrenceTimeZones)
     {
         _db = db;
         _logger = logger;
         _failureStore = failureStore;
         _writeCountStore = writeCountStore;
+        _recurrenceTimeZones = recurrenceTimeZones;
     }
 
     [HttpGet]
@@ -575,11 +583,23 @@ public class EventsController : ControllerBase
                 .ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture),
             o => o);
 
+        // FHQ-161: Google anchors a recurrence to the master's start.timeZone and holds the WALL CLOCK
+        // across a DST transition — a 19:00 weekly event stays 19:00 and its UTC instant moves. Expand
+        // in that zone so the Simulator emits the same instants Google would. A master with no stored
+        // zone (all-day, or a seed that omitted it) expands at fixed UTC instants as before.
+        var seriesZone = _recurrenceTimeZones.TryCreate(master.StartTimeZone);
+        if (seriesZone is null && !string.IsNullOrWhiteSpace(master.StartTimeZone))
+        {
+            _logger.LogWarning(
+                "[SIM] Master {EventId} carries an unknown IANA time zone {TimeZone}; expanding at fixed UTC instants instead.",
+                master.Id, master.StartTimeZone);
+        }
+
         IReadOnlyList<DateTimeOffset> occurrences;
         try
         {
             occurrences = RecurrenceRuleBuilder
-                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd)
+                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd, seriesZone)
                 .ToList();
         }
         catch (ArgumentException ex)

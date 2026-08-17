@@ -62,7 +62,8 @@ public class SimulatorConfigController : ControllerBase
                 EndTime = e.EndTime,
                 IsAllDay = e.IsAllDay,
                 UserId = config.UserName,
-                RecurrenceRule = e.RecurrenceRule
+                RecurrenceRule = e.RecurrenceRule,
+                StartTimeZone = e.StartTimeZone
             });
 
             foreach (var attendeeCalendarId in e.AttendeeCalendarIds)

@@ -24,4 +24,13 @@ public class SimulatorEventModel
     /// serves the rule on events.get. Null for ordinary (non-recurring) events.
     /// </summary>
     public string? RecurrenceRule { get; set; }
+
+    /// <summary>
+    /// FHQ-161: the IANA zone a seeded recurring master is anchored to (Google's start.timeZone).
+    /// The Simulator expands the series holding this zone's WALL CLOCK across a DST transition, as
+    /// Google does — so a 19:00 weekly series stays 19:00 in the browser all year. Seeds must set it
+    /// to <c>BrowserClock.TimeZoneId</c>; leaving it null reinstates fixed-UTC expansion, which makes
+    /// uniform-time assertions fail for the ~2 weeks around each UK transition (intermittent-issues #12).
+    /// </summary>
+    public string? StartTimeZone { get; set; }
 }
