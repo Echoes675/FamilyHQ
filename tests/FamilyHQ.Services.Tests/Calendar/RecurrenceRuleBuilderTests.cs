@@ -10,6 +10,17 @@ public class RecurrenceRuleBuilderTests
     private static readonly DateTimeOffset UntilMoment =
         new(2026, 6, 12, 23, 59, 59, TimeSpan.Zero);
 
+    /// <summary>
+    /// Hang tripwire for the enumeration-cap tests. Not a settle and not a timing assertion: the
+    /// expansion is synchronous, CPU-bound and capped at
+    /// <see cref="RecurrenceRuleBuilder.MaxEnumeratedOccurrences"/> occurrences, so on the correct
+    /// path it finishes in microseconds and never approaches this. The only thing this measures is
+    /// "the loop never terminated", which it turns into a prompt failure instead of a hung CI run
+    /// (FHQ-158: a real-clock bound is unavoidable when the failure mode under test is an infinite
+    /// loop, and one that can only fire on a genuine hang cannot flake).
+    /// </summary>
+    private static readonly TimeSpan RunawayEnumerationTripwire = TimeSpan.FromSeconds(5);
+
     // --- ToRRuleString: daily ---
 
     [Fact]
@@ -648,9 +659,8 @@ public class RecurrenceRuleBuilderTests
         var work = Task.Run(() => RecurrenceRuleBuilder.CountOccurrencesBefore(
             "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30", DailyStart, DailyStart.AddYears(5)));
 
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
-        finished.Should().BeSameAs(work, "a never-emitting rule must not loop forever");
-        (await work).Should().Be(0);
+        var count = await work.WaitAsync(RunawayEnumerationTripwire); // throws if it loops forever
+        count.Should().Be(0, "a never-emitting rule must terminate at the cap and report nothing");
     }
 
     [Fact]
@@ -666,9 +676,8 @@ public class RecurrenceRuleBuilderTests
         var work = Task.Run(() => RecurrenceRuleBuilder.CountOccurrencesBefore(
             "RRULE:FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=12", aprilStart, aprilStart.AddYears(5)));
 
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
-        finished.Should().BeSameAs(work, "a never-emitting monthly rule must terminate within the cap");
-        (await work).Should().Be(0);
+        var count = await work.WaitAsync(RunawayEnumerationTripwire); // throws if it loops forever
+        count.Should().Be(0, "a never-emitting monthly rule must terminate within the cap");
     }
 
     // --- Expand: window-bounded occurrence enumeration (FHQ-18.11) ---
@@ -749,8 +758,8 @@ public class RecurrenceRuleBuilderTests
         var work = Task.Run(() => RecurrenceRuleBuilder
             .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd).Count());
 
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
-        finished.Should().BeSameAs(work, "an unbounded daily rule must terminate within the hard cap");
-        (await work).Should().BeLessThanOrEqualTo(RecurrenceRuleBuilder.MaxEnumeratedOccurrences);
+        var count = await work.WaitAsync(RunawayEnumerationTripwire); // throws if it loops forever
+        count.Should().BeLessThanOrEqualTo(RecurrenceRuleBuilder.MaxEnumeratedOccurrences,
+            "an unbounded daily rule must terminate within the hard cap");
     }
 }

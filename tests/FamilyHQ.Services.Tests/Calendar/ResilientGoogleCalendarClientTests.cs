@@ -4,6 +4,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -17,7 +18,7 @@ public class ResilientGoogleCalendarClientTests
 {
     private static readonly CalendarEvent SampleEvent = new() { Title = "x" };
 
-    private static (ResilientGoogleCalendarClient sut, Mock<IGoogleCalendarClient> inner, FakeTimeProvider time) CreateSut(
+    private static (ResilientGoogleCalendarClient sut, Mock<IGoogleCalendarClient> inner, TimerArmedTimeProvider time) CreateSut(
         int maxAttempts = 3, TimeSpan? baseDelay = null, TimeSpan? cap = null)
     {
         var inner = new Mock<IGoogleCalendarClient>();
@@ -27,7 +28,7 @@ public class ResilientGoogleCalendarClientTests
             BaseDelay = baseDelay ?? TimeSpan.Zero,          // 0 → exponential path is instant + deterministic
             RetryAfterInRequestCap = cap ?? TimeSpan.FromSeconds(5)
         });
-        var time = new FakeTimeProvider();
+        var time = new TimerArmedTimeProvider(new FakeTimeProvider());
         var sut = new ResilientGoogleCalendarClient(inner.Object, options, time, NullLogger<ResilientGoogleCalendarClient>.Instance);
         return (sut, inner, time);
     }
@@ -193,8 +194,8 @@ public class ResilientGoogleCalendarClientTests
             .ThrowsAsync(Api(HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(2)))
             .ReturnsAsync(Array.Empty<CalendarInfo>());
 
-        var task = sut.GetCalendarsAsync();          // first call throws, then awaits Task.Delay(2s, fakeTime)
-        time.Advance(TimeSpan.FromSeconds(2));         // release the delay
+        var task = sut.GetCalendarsAsync();               // first call throws, then awaits Task.Delay(2s, fakeTime)
+        await time.AdvanceOnNextTimerAsync(TimeSpan.FromSeconds(2)); // release the delay, once it is armed
         var result = await task;
 
         result.Should().BeEmpty();
