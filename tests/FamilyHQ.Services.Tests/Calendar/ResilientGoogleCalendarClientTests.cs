@@ -194,7 +194,7 @@ public class ResilientGoogleCalendarClientTests
             .ThrowsAsync(Api(HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(2)))
             .ReturnsAsync(Array.Empty<CalendarInfo>());
 
-        var task = sut.GetCalendarsAsync();               // first call throws, then awaits Task.Delay(2s, fakeTime)
+        var task = sut.GetCalendarsAsync();               // first call throws, then sleeps 2s on the fake clock
         await time.AdvanceOnNextTimerAsync(TimeSpan.FromSeconds(2)); // release the delay, once it is armed
         var result = await task;
 
