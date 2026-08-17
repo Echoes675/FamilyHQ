@@ -34,17 +34,17 @@ public class WeatherSteps
         // Use the authenticated browser session so the request carries the JWT.
         // WebApiClient has no auth token and the endpoint now requires authentication.
         var page = _scenarioContext.Get<IPage>();
-        await page.EvaluateAsync(@"async () => {
+        await page.EvaluateAsync(@"async (apiOrigin) => {
             const token = localStorage.getItem('familyhq_auth_token');
             const headers = { 'Content-Type': 'application/json' };
             if (token) headers['Authorization'] = `Bearer ${token}`;
 
-            const resp = await fetch('/api/settings/weather', { headers });
+            const resp = await fetch(`${apiOrigin}/api/settings/weather`, { headers });
             if (!resp.ok) return;
             const settings = await resp.json();
             if (settings.enabled) return;
 
-            await fetch('/api/settings/weather', {
+            await fetch(`${apiOrigin}/api/settings/weather`, {
                 method: 'PUT',
                 headers,
                 body: JSON.stringify({
@@ -54,7 +54,7 @@ public class WeatherSteps
                     windThresholdKmh: settings.windThresholdKmh
                 })
             });
-        }");
+        }", ApiOrigin.Url);
     }
 
     [Given(@"the user has a saved location ""([^""]*)"" at ([^,]+), (.+)")]
@@ -215,9 +215,9 @@ public class WeatherSteps
         //     that can't find a row SettingsController CAN find.
         // The pre-check is silent on the happy path — it is only appended to
         // the failure message below.
-        var preCheck = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
+        var preCheck = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async (apiOrigin) => {
             const token = localStorage.getItem('familyhq_auth_token');
-            const resp = await fetch('/api/settings/location', {
+            const resp = await fetch(`${apiOrigin}/api/settings/location`, {
                 headers: token ? { 'Authorization': `Bearer ${token}` } : {}
             });
             const body = await resp.text();
@@ -226,7 +226,7 @@ public class WeatherSteps
                 body,
                 tokenPrefix: token ? token.substring(0, 16) : ''
             };
-        }");
+        }", ApiOrigin.Url);
         var preCheckStatus = preCheck.GetProperty("status").GetInt32();
         var preCheckBody = preCheck.GetProperty("body").GetString() ?? string.Empty;
         var tokenPrefix = preCheck.GetProperty("tokenPrefix").GetString() ?? string.Empty;
@@ -258,15 +258,15 @@ public class WeatherSteps
             // structured 409/503 bodies describing why it skipped or why the
             // data isn't visible, and echoing those into the test error lets us
             // root-cause a failing run from the test report alone.
-            var refreshResult = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async () => {
+            var refreshResult = await page.EvaluateAsync<System.Text.Json.JsonElement>(@"async (apiOrigin) => {
                 const token = localStorage.getItem('familyhq_auth_token');
-                const resp = await fetch('/api/weather/refresh', {
+                const resp = await fetch(`${apiOrigin}/api/weather/refresh`, {
                     method: 'POST',
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}
                 });
                 const body = await resp.text();
                 return { status: resp.status, body };
-            }");
+            }", ApiOrigin.Url);
 
             refreshStatus = refreshResult.GetProperty("status").GetInt32();
             refreshBody = refreshResult.GetProperty("body").GetString() ?? string.Empty;
@@ -285,12 +285,12 @@ public class WeatherSteps
             var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
             while (DateTimeOffset.UtcNow < deadline)
             {
-                status = await page.EvaluateAsync<int>(@"async () => {
+                status = await page.EvaluateAsync<int>(@"async (apiOrigin) => {
                     const token = localStorage.getItem('familyhq_auth_token');
                     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
-                    const resp = await fetch('/api/weather/current', { headers });
+                    const resp = await fetch(`${apiOrigin}/api/weather/current`, { headers });
                     return resp.status;
-                }");
+                }", ApiOrigin.Url);
                 if (status == 200) break;
                 await Task.Delay(500);
             }

@@ -21,17 +21,17 @@ public static class SyncSettle
         while (DateTime.UtcNow < deadline)
         {
             var active = await page.EvaluateAsync<int>(@"
-                async () => {
+                async (apiOrigin) => {
                     try {
                         const t = localStorage.getItem('familyhq_auth_token');
                         if (!t) return -2; // no auth context on this page yet
-                        const r = await fetch('/api/diagnostics/sync-queue-depth', { headers: { 'Authorization': 'Bearer ' + t } });
+                        const r = await fetch(`${apiOrigin}/api/diagnostics/sync-queue-depth`, { headers: { 'Authorization': 'Bearer ' + t } });
                         if (r.status === 401) return -2;
                         if (!r.ok) return -1; // transient — keep polling
                         const b = await r.json();
                         return (b && typeof b.active === 'number') ? b.active : -1;
                     } catch (e) { return -1; }
-                }");
+                }", ApiOrigin.Url);
 
             if (active == 0)
                 return; // this user's queue has drained — sync applied
@@ -60,11 +60,11 @@ public static class SyncSettle
     public static async Task ThrowIfLoginSyncFailedAsync(IPage page)
     {
         var failure = await page.EvaluateAsync<string?>(@"
-            async () => {
+            async (apiOrigin) => {
                 try {
                     const t = localStorage.getItem('familyhq_auth_token');
                     if (!t) return null;
-                    const r = await fetch('/api/diagnostics/failed-sync-runs?limit=20', { headers: { 'Authorization': 'Bearer ' + t } });
+                    const r = await fetch(`${apiOrigin}/api/diagnostics/failed-sync-runs?limit=20`, { headers: { 'Authorization': 'Bearer ' + t } });
                     if (!r.ok) return null;
                     const rows = await r.json();
                     if (!Array.isArray(rows)) return null;
@@ -72,7 +72,7 @@ public static class SyncSettle
                     if (!login) return null;
                     return 'attempts=' + login.attemptCount + ' lastError=' + (login.lastError || '(none)');
                 } catch (e) { return null; }
-            }");
+            }", ApiOrigin.Url);
 
         if (!string.IsNullOrEmpty(failure))
             throw new InvalidOperationException($"[FHQ-46] Initial login sync failed (terminal): {failure}");
