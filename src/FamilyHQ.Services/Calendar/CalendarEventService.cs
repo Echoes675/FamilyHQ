@@ -15,6 +15,7 @@ public class CalendarEventService(
     IMemberTagParser memberTagParser,
     IOutboundWriteHashCache outboundCache,
     ICurrentUserService currentUserService,
+    IRecurrenceTimeZoneFactory recurrenceTimeZoneFactory,
     ILogger<CalendarEventService> logger) : ICalendarEventService
 {
     public async Task<CalendarEvent> CreateAsync(CreateEventRequest request, CancellationToken ct = default)
@@ -513,7 +514,7 @@ public class CalendarEventService(
         // origin date; an unchanged save moves nothing). (FHQ-144 follow-up.)
         var seriesId = calendarEvent.GoogleRecurringEventId!;
         var seriesRows = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
-        var masterStart = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, calendarEvent.Start, ct);
+        var (masterStart, _) = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, calendarEvent.Start, ct);
 
         var startShift = request.Start - calendarEvent.Start;
         var newMasterStart = masterStart + startShift;
@@ -612,6 +613,12 @@ public class CalendarEventService(
     // when the master predates the synced window the earliest LOCAL row under-counts the occurrences
     // before the split, leaving the forward series too long (Major 3). If the master cannot be
     // resolved (404/transient), fall back to the earliest local row — the best-available proxy.
+    //
+    // FHQ-161: the count must also enumerate IN THE SERIES' OWN ZONE. Both inputs are true
+    // wall-clock-anchored instants (the master DTSTART from Google, the instance start as synced),
+    // so a fixed-UTC enumeration between them drifts once the series crosses a DST transition. Across
+    // a fall-back the enumerated twin of the split occurrence lands an hour early, is wrongly counted
+    // as "before", and the forward series silently loses its last occurrence.
     private async Task<string> ReshapeRuleAsync(
         CalendarInfo owner, string seriesId, string rrule,
         IReadOnlyList<CalendarEvent> seriesRows, DateTimeOffset splitStart, CancellationToken ct)
@@ -621,8 +628,9 @@ public class CalendarEventService(
         if (spec.End.Kind != RecurrenceEndKind.Count)
             return RecurrenceRuleBuilder.ToRRuleString(spec); // Never/Until preserved as-is.
 
-        var anchor = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
-        var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor, splitStart);
+        var (anchor, anchorTimeZoneId) = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
+        var seriesZone = ResolveSeriesZone(seriesId, anchorTimeZoneId);
+        var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor, splitStart, seriesZone);
         var remaining = spec.End.Occurrences!.Value - before;
 
         if (remaining < 1)
@@ -633,10 +641,11 @@ public class CalendarEventService(
         return RecurrenceRuleBuilder.ToRRuleString(spec with { End = RecurrenceEnd.Count(remaining) });
     }
 
-    // The true master DTSTART when the master is resolvable; otherwise the earliest local row, or the
-    // split instant when no rows exist. A transient master-fetch failure degrades to the local proxy
-    // rather than aborting the whole split.
-    private async Task<DateTimeOffset> ResolveSeriesAnchorAsync(
+    // The true master DTSTART (and the IANA zone it is anchored to) when the master is resolvable;
+    // otherwise the earliest local row, or the split instant when no rows exist. A transient
+    // master-fetch failure degrades to the local proxy rather than aborting the whole split — the
+    // local rows carry no zone of their own, so that path enumerates zone-less (see ResolveSeriesZone).
+    private async Task<(DateTimeOffset Anchor, string? TimeZoneId)> ResolveSeriesAnchorAsync(
         CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows, DateTimeOffset splitStart, CancellationToken ct)
     {
         var localAnchor = seriesRows.Count > 0 ? seriesRows.Min(r => r.Start) : splitStart;
@@ -647,10 +656,30 @@ public class CalendarEventService(
             logger.LogWarning(
                 "Series master {SeriesId} on calendar {CalendarId} returned no start; anchoring COUNT split at the earliest local row instead.",
                 seriesId, owner.GoogleCalendarId);
-            return localAnchor;
+            return (localAnchor, null);
         }
 
-        return master.Start;
+        return (master.Start, master.TimeZone);
+    }
+
+    // FHQ-161: the zone the split count enumerates in. When Google supplies no usable zone we fall
+    // back DELIBERATELY to the legacy fixed-UTC enumeration rather than rejecting the edit:
+    //   * all-day masters carry no start.timeZone and are date-anchored, so fixed-UTC is EXACT there
+    //     — the dominant real null case;
+    //   * a missing or unrecognised zone id must not fail a legitimate user edit, and the fallback is
+    //     no worse than the behaviour that shipped before this fix.
+    // It is NOT DST-aware, so it is logged at Warning and named in the log for diagnosis.
+    private IRecurrenceTimeZone? ResolveSeriesZone(string seriesId, string? ianaTimeZoneId)
+    {
+        var zone = recurrenceTimeZoneFactory.TryCreate(ianaTimeZoneId);
+        if (zone is null)
+        {
+            logger.LogWarning(
+                "Series {SeriesId} supplied no usable IANA time zone ({TimeZoneId}); counting the COUNT split with fixed-UTC recurrence enumeration, which is not DST-aware.",
+                seriesId, ianaTimeZoneId);
+        }
+
+        return zone;
     }
 
     private async Task RemoveSeriesRowsFromSplitAsync(string seriesId, DateTimeOffset? splitFrom, CancellationToken ct)
