@@ -16,7 +16,8 @@ namespace FamilyHQ.WebUi.Tests.Services;
 /// <para>
 /// Duplicated (rather than shared) with the copy in <c>FamilyHQ.Services.Tests</c>: there is no
 /// shared test-infra assembly, and the CI unit-test stage runs <c>tests/*/*.csproj</c>, so adding one
-/// would change the build shape for ~40 lines.
+/// would change the build shape for ~40 lines. Keep the two byte-identical apart from the namespace
+/// and these comments; extracting them into a shared assembly is tracked as FHQ-163.
 /// </para>
 /// </summary>
 internal sealed class TimerArmedTimeProvider(FakeTimeProvider inner) : TimeProvider
@@ -104,7 +105,10 @@ internal sealed class TimerArmedTimeProvider(FakeTimeProvider inner) : TimeProvi
             {
                 if (_created > _observed)
                 {
-                    _observed = _created;
+                    // One call consumes exactly ONE registration. Consuming the whole outstanding
+                    // count would let a single wait swallow two timers armed in the same gap, and
+                    // the next wait would then block for a third that the test never expects.
+                    _observed++;
                     return;
                 }
 
