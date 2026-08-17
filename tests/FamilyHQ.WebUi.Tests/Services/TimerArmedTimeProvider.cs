@@ -28,6 +28,24 @@ internal sealed class TimerArmedTimeProvider(FakeTimeProvider inner) : TimeProvi
     private TaskCompletionSource _armed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _created;
     private int _observed;
+    private TimeSpan _lastDueTime = Timeout.InfiniteTimeSpan;
+
+    /// <summary>
+    /// How long the most recently armed timer was set for — i.e. what the code under test asked to
+    /// sleep. Lets a test assert the requested duration outright instead of inferring it from how
+    /// far the clock can be advanced without the operation completing, which is only observable
+    /// through a queued continuation.
+    /// </summary>
+    public TimeSpan LastTimerDueTime
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastDueTime;
+            }
+        }
+    }
 
     public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
 
@@ -47,6 +65,7 @@ internal sealed class TimerArmedTimeProvider(FakeTimeProvider inner) : TimeProvi
         lock (_gate)
         {
             _created++;
+            _lastDueTime = dueTime;
             _armed.TrySetResult();
         }
 
