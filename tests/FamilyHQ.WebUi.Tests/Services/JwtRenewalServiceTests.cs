@@ -402,8 +402,10 @@ public class JwtRenewalServiceTests
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            _calls.Record();
+            // Record LAST: it releases WaitForCallsAsync, so anything captured after it is a race
+            // with whatever the waiter goes on to assert.
             AuthorizationHeaders.Add(request.Headers.Authorization?.ToString());
+            _calls.Record();
 
             if (_throwException is not null)
             {

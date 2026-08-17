@@ -11,8 +11,11 @@ namespace FamilyHQ.Services.Tests.Theme;
 public class DayThemeServiceTests
 {
     /// <summary>
-    /// A clock pinned to midday UTC and the date it implies. Midday so the UTC and any local date
-    /// agree, and one source so the test's expectation and the service's date key cannot diverge.
+    /// A clock pinned to midday UTC and the date it implies. <see cref="FakeTimeProvider"/> leaves
+    /// <c>LocalTimeZone</c> at UTC, so the service's <c>GetLocalNow()</c> date and this UTC instant
+    /// are the same date by construction — midday is simply a value far from either boundary, not a
+    /// guard against a divergence that exists here. What the pin buys is the single source: the
+    /// test's expectation and the service's date key are derived from one instant and cannot drift.
     /// </summary>
     private static (FakeTimeProvider Clock, DateOnly Today) PinnedToday()
         => (new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 12, 0, 0, TimeSpan.Zero)),

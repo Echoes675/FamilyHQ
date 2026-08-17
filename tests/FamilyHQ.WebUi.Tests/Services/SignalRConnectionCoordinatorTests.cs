@@ -387,9 +387,14 @@ public class SignalRConnectionCoordinatorTests
 
         sut.OnClosed(new InvalidOperationException("first outage"));
         await time.AdvanceOnNextTimerAsync(InitialDelay);
-        // ConnectionRestored is the loop's last action before it exits, and the counter hands the
-        // waiter back asynchronously — so the loop has finished (and released its "a loop is
-        // running" guard) by the time the second outage below is reported.
+        // ConnectionRestored is the loop's last action before it returns, but the "a loop is
+        // running" guard is cleared afterwards, in the loop's finally. Nothing observable is
+        // written after that, so this wait rests on the scheduler resuming the loop's own
+        // continuation ahead of ours — NOT on RunContinuationsAsynchronously, which only keeps the
+        // waiter off the signaller's thread and orders nothing.
+        // If that window ever does open, the second outage below is swallowed by the still-set
+        // guard, no timer is armed, and AdvanceOnNextTimerAsync says so at its 5s deadline: a loud
+        // failure naming the cause, never a silent wrong pass.
         await restored.WaitForAsync(1);
         calls.Count.Should().Be(1);
 
