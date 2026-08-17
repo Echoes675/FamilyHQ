@@ -22,6 +22,11 @@ description: A set of rules and best practices that guide on how to write, struc
 - Naming: [MethodName]_[Scenario]_[ExpectedResult].
 - Isolation: Mock any external dependency using Moq. Tests should not hit real databases or external APIs.
 -- Do not use databases, files, or environment state unless explicitly required
+-- **Accepted exception (architecture tests only):** `tests/FamilyHQ.Core.Tests/UnitTestPurityGuardTests.cs`
+   reads the `tests/**/*.cs` sources from disk. Its subject *is* the test sources, so there is nothing to
+   substitute; it touches no product state, database or network, and it is deterministic. This is not
+   precedent for file I/O in a behavioural unit test — a test that reads a file to obtain data *about the
+   system under test* is still a violation.
 - Coverage: Aim for 80% coverage on new business logic in FamilyHQ.Services.
 - Deterministic Tests: No DateTime.Now (use TimeProvider) and no Guid.NewGuid() (use static, predictable GUIDs).
 - Verification Rule: Use mock.Verify() only when the interaction itself is the behavior being tested. Otherwise, use state verification.
