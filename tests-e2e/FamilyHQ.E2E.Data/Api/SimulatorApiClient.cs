@@ -42,9 +42,17 @@ public class SimulatorApiClient : IDisposable
     /// Adds a new event directly to the Simulator via the back-door endpoint.
     /// Returns the newly created event's ID.
     /// </summary>
+    /// <param name="startTimeZone">
+    /// FHQ-161: the IANA zone a seeded recurring master is anchored to (Google's
+    /// <c>start.timeZone</c>). The Simulator expands the series holding this zone's WALL CLOCK
+    /// across a DST transition, as Google does. Any recurring seed must pass
+    /// <c>BrowserClock.TimeZoneId</c>; leaving it null reinstates fixed-UTC expansion, which makes
+    /// uniform-time assertions fail for the ~2 weeks around each UK transition.
+    /// </param>
     public async Task<string> AddEventAsync(
         string userId, string calendarId, string summary,
-        DateTime start, DateTime end, bool isAllDay, string? description = null, string? recurrenceRule = null)
+        DateTime start, DateTime end, bool isAllDay, string? description = null, string? recurrenceRule = null,
+        string? startTimeZone = null)
     {
         var body = new
         {
@@ -55,7 +63,8 @@ public class SimulatorApiClient : IDisposable
             Start = start,
             End = end,
             IsAllDay = isAllDay,
-            RecurrenceRule = recurrenceRule
+            RecurrenceRule = recurrenceRule,
+            StartTimeZone = startTimeZone
         };
         var response = await _httpClient.PostAsJsonAsync("api/simulator/backdoor/events", body);
         response.EnsureSuccessStatusCode();
