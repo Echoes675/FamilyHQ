@@ -374,7 +374,10 @@ public class EventSteps
             StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
             EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
-            RecurrenceRule = rrule
+            RecurrenceRule = rrule,
+            // FHQ-161: anchor the series to the browser's zone so the Simulator expands it holding
+            // the local wall clock across a DST transition, exactly as Google does.
+            StartTimeZone = BrowserClock.TimeZoneId
         });
 
         // Surface derived expectations so view-specific Then steps stay weekday-agnostic.
@@ -418,6 +421,9 @@ public class EventSteps
             EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
             RecurrenceRule = rrule,
+            // FHQ-161: anchor the series to the browser's zone so the Simulator expands it holding
+            // the local wall clock across a DST transition, exactly as Google does.
+            StartTimeZone = BrowserClock.TimeZoneId,
             Description = $"[members: {memberCalendar1}, {memberCalendar2}]"
         });
 
@@ -453,7 +459,10 @@ public class EventSteps
             StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
             EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
-            RecurrenceRule = rrule
+            RecurrenceRule = rrule,
+            // FHQ-161: anchor the series to the browser's zone so the Simulator expands it holding
+            // the local wall clock across a DST transition, exactly as Google does.
+            StartTimeZone = BrowserClock.TimeZoneId
         });
 
         _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;
@@ -485,7 +494,10 @@ public class EventSteps
             StartTime = BrowserClock.ToUtcInstant(firstOccurrence),
             EndTime = BrowserClock.ToUtcInstant(firstOccurrence.AddHours(1)),
             IsAllDay = false,
-            RecurrenceRule = rrule
+            RecurrenceRule = rrule,
+            // FHQ-161: anchor the series to the browser's zone so the Simulator expands it holding
+            // the local wall clock across a DST transition, exactly as Google does.
+            StartTimeZone = BrowserClock.TimeZoneId
         });
 
         _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = firstOccurrence.Date;

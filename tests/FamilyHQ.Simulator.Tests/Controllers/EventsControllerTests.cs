@@ -540,6 +540,147 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task ListEvents_SingleEvents_MasterWithTimeZone_HoldsLocalWallClockAcrossTheAutumnTransition()
+    {
+        // FHQ-161: Google anchors a recurrence to start.timeZone and holds the WALL CLOCK across a
+        // DST transition — a 19:00 weekly event stays 19:00 and its UTC instant moves. The UK clocks
+        // go back on Sun 25 Oct 2026, so a Tuesday 19:00 Europe/London series starting Tue 13 Oct
+        // must emit 18:00Z, 18:00Z, then 19:00Z. Expanding at fixed UTC instants (all 18:00Z) makes
+        // the dashboard render the third occurrence an hour early.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc); // Tue 19:00 BST
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            StartTimeZone = "Europe/London",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-10-01T00:00:00Z",
+            timeMax: "2026-12-01T00:00:00Z");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3);
+        items[0].GetProperty("id").GetString().Should().Be("evt-series_20261013T180000Z");
+        items[1].GetProperty("id").GetString().Should().Be("evt-series_20261020T180000Z");
+        items[2].GetProperty("id").GetString().Should().Be("evt-series_20261027T190000Z");
+
+        // The instance end shifts with the start, keeping the one-hour duration.
+        items[2].GetProperty("end").GetProperty("dateTime").GetString()
+            .Should().StartWith("2026-10-27T20:00:00");
+    }
+
+    [Fact]
+    public async Task GetEvent_WhenMasterHasStartTimeZone_ReturnsItOnStart()
+    {
+        // FHQ-161: events.get on the master is where the app reads the zone the recurrence is
+        // anchored to. Google returns it on start.timeZone for a timed event; omitting it made every
+        // synced series look zone-less to CalendarEventService's split count.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            StartTimeZone = "Europe/London",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.GetEvent("cal-alice", "evt-series");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        doc.RootElement.GetProperty("start").GetProperty("timeZone").GetString().Should().Be("Europe/London");
+    }
+
+    [Fact]
+    public async Task ListEvents_SingleEvents_MasterWithoutTimeZone_ExpandsAtFixedUtcInstants()
+    {
+        // Documented fallback: a master with no stored zone (all-day, or a seed that omitted it)
+        // keeps the pre-FHQ-161 fixed-instant expansion rather than guessing a zone.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-10-01T00:00:00Z",
+            timeMax: "2026-12-01T00:00:00Z");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items[2].GetProperty("id").GetString().Should().Be("evt-series_20261027T180000Z");
+    }
+
+    [Fact]
+    public async Task ListEvents_SingleEvents_MasterWithUnknownTimeZone_FallsBackToFixedUtcInstants()
+    {
+        // An unrecognised IANA id must not fail the whole listing for the calendar.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            StartTimeZone = "Not/AZone",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-10-01T00:00:00Z",
+            timeMax: "2026-12-01T00:00:00Z");
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3);
+        items[2].GetProperty("id").GetString().Should().Be("evt-series_20261027T180000Z");
+    }
+
+    [Fact]
     public async Task ListEvents_SingleEvents_ClipsOccurrencesToTheSyncWindow()
     {
         // Arrange — unbounded weekly series; only the occurrences inside the window are emitted.
@@ -1308,7 +1449,8 @@ public class EventsControllerTests
         var logger = new Mock<ILogger<EventsController>>().Object;
         var controller = new EventsController(
             db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore(),
-            writeCounts ?? new FamilyHQ.Simulator.State.OutboundWriteCountStore());
+            writeCounts ?? new FamilyHQ.Simulator.State.OutboundWriteCountStore(),
+            new FamilyHQ.Simulator.Services.NodaTimeRecurrenceTimeZoneFactory());
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";

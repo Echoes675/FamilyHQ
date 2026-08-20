@@ -456,7 +456,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         var start = ParseEventStart(apiEvent!.Start);
         if (start is null) return null;
 
-        return new SeriesMaster(rrule, start.Value);
+        // start.timeZone carries the zone the recurrence is anchored to; the split-count enumeration
+        // needs it to hold the series' wall clock across a DST transition (FHQ-161).
+        return new SeriesMaster(rrule, start.Value, apiEvent.Start?.TimeZone);
     }
 
     // Resolves an event's start instant from either a timed (dateTime) or all-day (date) field.

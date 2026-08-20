@@ -9,6 +9,12 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- FHQ-161: the Simulator must expand a recurring master anchored to its start.timeZone, as
+         Google does. NodaTime's bundled tzdb is the project's standard zone source (the CI/test
+         runtime is globalization-invariant, so TimeZoneInfo is not available). Already pinned
+         centrally in Directory.Packages.props for FamilyHQ.Services / FamilyHQ.Data; the Simulator
+         is a tools/ test double and is never referenced by the deployed WebUi/WebApi. -->
+    <PackageReference Include="NodaTime" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Serilog.AspNetCore" />
   </ItemGroup>

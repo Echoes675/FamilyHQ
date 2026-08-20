@@ -1,8 +1,10 @@
+using System.Runtime.CompilerServices;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -188,6 +190,181 @@ public class CalendarEventServiceRecurringTests
 
         f.Google.Verify(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
         capturedNewRule.Should().Contain("COUNT=5");
+    }
+
+    // ── FHQ-161: the split count must enumerate in the SERIES' zone ────────────────────────────
+    //
+    // Both inputs to the count are true wall-clock-anchored instants — the master DTSTART Google
+    // returns, and the split instance's Start as synced into the DB. Enumerating between them at
+    // fixed UTC instants drifts against the real occurrence boundaries once the series crosses a DST
+    // transition, and the forward series silently loses occurrences.
+    //
+    // Worked example (the ticket's): weekly Tuesday 19:00 Europe/London, COUNT=5, from Tue
+    // 13 Oct 2026. The UK clocks go back on Sun 25 Oct, so Google's occurrences are
+    //   13 Oct 18:00Z · 20 Oct 18:00Z · 27 Oct 19:00Z · 3 Nov 19:00Z · 10 Nov 19:00Z.
+
+    private const string LondonZoneId = "Europe/London";
+    private const string WeeklyTuesdayCount5 = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5";
+    private static readonly DateTimeOffset AutumnSeriesStart = new(2026, 10, 13, 18, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesAcrossAutumnTransition_KeepsEveryOccurrence()
+    {
+        // Split at occurrence 4 (Tue 3 Nov, 19:00 GMT). Three occurrences precede it, so the forward
+        // series must carry COUNT = 5 − 3 = 2. Counting at fixed UTC instants places occurrence 4's
+        // twin at 18:00Z — before the 19:00Z split — giving before = 4 and COUNT = 1, which DELETES
+        // occurrence 5 from the family's calendar.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        var capturedNewRule = ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, LondonZoneId, splitStart);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        capturedNewRule.Value.Should().Contain("COUNT=2");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_SplitAtFinalOccurrenceAcrossAutumnTransition_IsNotFalselyRejected()
+    {
+        // COUNT=4, split at the LAST occurrence (Tue 3 Nov, 19:00 GMT): before = 3, remaining = 1 —
+        // a legitimate split. The fixed-UTC count returns before = 4 → remaining = 0 →
+        // InvalidSeriesSplitException, rejecting a valid edit with a false explanation.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        var capturedNewRule = ArrangeCountSplit(
+            f, "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", AutumnSeriesStart, LondonZoneId, splitStart);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().NotThrowAsync<InvalidSeriesSplitException>();
+        capturedNewRule.Value.Should().Contain("COUNT=1");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesAcrossSpringTransition_KeepsEveryOccurrence()
+    {
+        // The spring transition is benign for this path: the enumerated twin lands an hour LATE and
+        // is correctly excluded either way. Pinned so a future change cannot silently break the
+        // direction that already worked. Weekly Tue 19:00 from 17 Mar 2026; clocks forward 29 Mar.
+        var f = new Fixture();
+        var seriesStart = new DateTimeOffset(2026, 3, 17, 19, 0, 0, TimeSpan.Zero); // 19:00 GMT
+        var splitStart = new DateTimeOffset(2026, 4, 7, 18, 0, 0, TimeSpan.Zero);   // occurrence 4, 19:00 BST
+
+        var capturedNewRule = ArrangeCountSplit(f, WeeklyTuesdayCount5, seriesStart, LondonZoneId, splitStart);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        capturedNewRule.Value.Should().Contain("COUNT=2");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Not/AZone")]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TimedCountSeriesWithNoUsableZone_WarnsAndUsesTheFixedUtcFallback(string? timeZoneId)
+    {
+        // DELIBERATE fallback, pinned here so it cannot change silently. When Google supplies no
+        // usable zone the count degrades to the legacy fixed-UTC enumeration rather than rejecting
+        // the edit — no worse than the pre-FHQ-161 behaviour. On a TIMED series that is not
+        // DST-aware and is the one case genuinely worth a Warning.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        var capturedNewRule = ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, timeZoneId, splitStart);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        capturedNewRule.Value.Should().Contain("COUNT=1", "the zone-less count over-counts by one across a fall-back transition");
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Warning
+            && r.Message.Contains("no usable IANA time zone")
+            && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_AllDayCountSeriesWithNoZone_DoesNotWarn()
+    {
+        // An all-day master carries no start.timeZone BY DESIGN and is date-anchored, so fixed-UTC
+        // enumeration is exact for it — expected and handled, which the logging standard keeps out
+        // of Warning. Warning here would bury the timed case above, the only one that matters.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero);
+
+        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, masterTimeZone: null, splitStart, isAllDay: true);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, Req("Bin day", splitStart, "Body", isAllDay: true), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug
+            && r.Message.Contains("fixed-UTC recurrence enumeration")
+            && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesWithAResolvableZone_DoesNotWarn()
+    {
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, LondonZoneId, splitStart);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains("no usable IANA time zone"));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesWithAnUnresolvableMaster_WarnsOnlyAboutTheAnchor()
+    {
+        // The degraded local-row anchor cannot carry a zone, so the fixed-UTC fallback is a
+        // CONSEQUENCE of the already-reported anchor failure, not a second incident. One Warning per
+        // incident, and it names the real cause.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, LondonZoneId, splitStart);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SeriesMaster?)null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
+            .Which.Message.Should().Contain("returned no start");
+    }
+
+    // Arranges a "this and following" split of a COUNT-bounded series whose master carries the given
+    // RRULE, DTSTART and IANA zone, and captures the RRULE the forward series is created with.
+    private static StrongBox<string?> ArrangeCountSplit(
+        Fixture f, string rrule, DateTimeOffset masterStart, string? masterTimeZone, DateTimeOffset splitStart,
+        bool isAllDay = false)
+    {
+        var instance = f.RecurringInstance(EventId, "inst-split", splitStart);
+        instance.RecurrenceRule = rrule;
+        instance.IsAllDay = isAllDay;
+        f.ArrangeEvent(instance);
+
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([instance]);
+
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster(rrule, masterStart, masterTimeZone));
+
+        var captured = new StrongBox<string?>(null);
+        f.Google.Setup(g => g.CreateRecurringEventAsync(
+                GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) =>
+            {
+                captured.Value = r;
+                e.GoogleEventId = "new-series-id";
+            })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+
+        f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", splitStart, recurringId: "new-series-id")]);
+        return captured;
     }
 
     [Fact]
@@ -883,8 +1060,8 @@ public class CalendarEventServiceRecurringTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description) =>
-        new(title, start, start.AddHours(1), false, "Loc", description);
+    private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description, bool isAllDay = false) =>
+        new(title, start, start.AddHours(1), isAllDay, "Loc", description);
 
     private static UpdateEventRequest ReqRecurrence(string title, DateTimeOffset start, string? description, string? recurrenceRule, bool clear) =>
         new(title, start, start.AddHours(1), false, "Loc", description, recurrenceRule, clear);
@@ -900,6 +1077,7 @@ public class CalendarEventServiceRecurringTests
         public readonly Mock<IMemberTagParser> TagParser = new();
         public readonly Mock<IOutboundWriteHashCache> Cache = new();
         public readonly Mock<ICurrentUserService> CurrentUser = new();
+        public readonly RecordingLogger<CalendarEventService> Logger = new();
         public readonly CalendarEventService Sut;
 
         public readonly CalendarInfo Alice = new() { Id = AliceCalId, GoogleCalendarId = GoogleCalId, DisplayName = "Alice" };
@@ -936,8 +1114,10 @@ public class CalendarEventServiceRecurringTests
             Google.Setup(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
 
+            // Real zone factory: a tzdb lookup is pure, deterministic computation (no I/O, no clock),
+            // and substituting it would mean asserting DST behaviour against fake DST rules.
             Sut = new CalendarEventService(Google.Object, Repo.Object, Migration.Object, TagParser.Object, Cache.Object,
-                CurrentUser.Object, new Mock<ILogger<CalendarEventService>>().Object);
+                CurrentUser.Object, new NodaTimeRecurrenceTimeZoneFactory(), Logger);
         }
 
         public CalendarEvent RecurringInstance(Guid id, string googleEventId, DateTimeOffset start) => new()

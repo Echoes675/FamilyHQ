@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using FamilyHQ.Core.Interfaces;
 
 namespace FamilyHQ.Core.Calendar.Recurrence;
 
@@ -145,19 +146,29 @@ public static class RecurrenceRuleBuilder
     /// <see cref="MaxEnumeratedOccurrences"/> (for UNTIL/Never rules) so a Never rule cannot loop
     /// forever. For an UNTIL rule, enumeration also stops once occurrences pass the UNTIL instant.
     /// Pure: no I/O, no async.
+    ///
+    /// <paramref name="zone"/> anchors the rule to the series' own wall clock — see
+    /// <see cref="Expand(RecurrenceSpec, DateTimeOffset, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>.
+    /// It is REQUIRED: passing <see cref="FixedUtcRecurrenceTimeZone.Instance"/> enumerates at fixed
+    /// UTC instants, which OVER-COUNTS by one when the series crosses a fall-back transition before
+    /// the boundary, so that choice has to be made deliberately (FHQ-161).
     /// </remarks>
     /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
-    public static int CountOccurrencesBefore(string rrule, DateTimeOffset dtStart, DateTimeOffset boundary) =>
-        CountOccurrencesBefore(ParseRRuleString(rrule), dtStart, boundary);
+    /// <exception cref="ArgumentNullException">When <paramref name="zone"/> is null.</exception>
+    public static int CountOccurrencesBefore(
+        string rrule, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone zone) =>
+        CountOccurrencesBefore(ParseRRuleString(rrule), dtStart, boundary, zone);
 
     /// <summary>
-    /// Spec-based overload of <see cref="CountOccurrencesBefore(string, DateTimeOffset, DateTimeOffset)"/>
+    /// Spec-based overload of <see cref="CountOccurrencesBefore(string, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>
     /// for callers that have already parsed the rule, avoiding a redundant re-parse.
     /// </summary>
-    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
-    public static int CountOccurrencesBefore(RecurrenceSpec spec, DateTimeOffset dtStart, DateTimeOffset boundary)
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> or <paramref name="zone"/> is null.</exception>
+    public static int CountOccurrencesBefore(
+        RecurrenceSpec spec, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone zone)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(zone);
 
         var hardCap = spec.End.Kind == RecurrenceEndKind.Count
             ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
@@ -170,7 +181,7 @@ public static class RecurrenceRuleBuilder
         var boundaryUtc = boundary.ToUniversalTime();
         var before = 0;
 
-        foreach (var occurrence in EnumerateOccurrences(spec, dtStart.ToUniversalTime(), hardCap))
+        foreach (var occurrence in EnumerateOccurrences(spec, dtStart, hardCap, zone))
         {
             if (untilUtc is { } until && occurrence > until)
             {
@@ -204,21 +215,33 @@ public static class RecurrenceRuleBuilder
     /// before <paramref name="windowStart"/> are skipped without being yielded but still count
     /// against COUNT (so a COUNT-bounded series whose early occurrences precede the window yields
     /// only the in-window remainder). Pure: no I/O, no async, invariant-culture.
+    ///
+    /// <paramref name="zone"/> is the series' own time zone (Google's <c>start.timeZone</c>), and it
+    /// is REQUIRED. Supply the real zone and the rule steps in WALL-CLOCK terms, so a 19:00 weekly
+    /// event stays 19:00 across a DST transition and its UTC instant moves — exactly what Google
+    /// emits. Pass <see cref="FixedUtcRecurrenceTimeZone.Instance"/> and the rule steps at fixed UTC
+    /// instants instead, so the local time shifts by an hour across a transition; that is exact for
+    /// a date-anchored all-day series and wrong for any other, which is why it must be named rather
+    /// than defaulted (FHQ-161).
     /// </remarks>
     /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="zone"/> is null.</exception>
     public static IEnumerable<DateTimeOffset> Expand(
-        string rrule, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd) =>
-        Expand(ParseRRuleString(rrule), seriesStart, windowStart, windowEnd);
+        string rrule, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd,
+        IRecurrenceTimeZone zone) =>
+        Expand(ParseRRuleString(rrule), seriesStart, windowStart, windowEnd, zone);
 
     /// <summary>
-    /// Spec-based overload of <see cref="Expand(string, DateTimeOffset, DateTimeOffset, DateTimeOffset)"/>
+    /// Spec-based overload of <see cref="Expand(string, DateTimeOffset, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>
     /// for callers that have already parsed the rule, avoiding a redundant re-parse.
     /// </summary>
-    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> or <paramref name="zone"/> is null.</exception>
     public static IEnumerable<DateTimeOffset> Expand(
-        RecurrenceSpec spec, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd)
+        RecurrenceSpec spec, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd,
+        IRecurrenceTimeZone zone)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(zone);
 
         var hardCap = spec.End.Kind == RecurrenceEndKind.Count
             ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
@@ -231,7 +254,7 @@ public static class RecurrenceRuleBuilder
         var windowStartUtc = windowStart.ToUniversalTime();
         var windowEndUtc = windowEnd.ToUniversalTime();
 
-        foreach (var occurrence in EnumerateOccurrences(spec, seriesStart.ToUniversalTime(), hardCap))
+        foreach (var occurrence in EnumerateOccurrences(spec, seriesStart, hardCap, zone))
         {
             if (untilUtc is { } until && occurrence > until)
             {
@@ -252,24 +275,36 @@ public static class RecurrenceRuleBuilder
         }
     }
 
-    // Lazily yields up to maxOccurrences occurrence start instants (UTC, monotonically increasing)
-    // for the supported frequency shapes. Anchored at dtStart; weekly BYDAY expands each week to its
-    // selected weekdays. Pure and side-effect-free.
+    // Lazily yields up to maxOccurrences occurrence start instants (monotonically increasing) for the
+    // supported frequency shapes.
+    //
+    // FHQ-161: the rule STEPS IN WALL-CLOCK TERMS inside the series' zone and only then maps each
+    // reading to an instant, which is how Google anchors a recurrence to start.timeZone — a 19:00
+    // weekly event stays 19:00 across a DST transition and its UTC instant moves. Stepping instants
+    // directly (the previous behaviour) silently shifted the local time by an hour instead.
+    // Pure and side-effect-free: the injected zone does the only non-arithmetic work.
     private static IEnumerable<DateTimeOffset> EnumerateOccurrences(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences, IRecurrenceTimeZone zone)
     {
-        return spec.Frequency switch
+        var localStart = zone.ToWallClock(dtStart);
+
+        var localOccurrences = spec.Frequency switch
         {
-            RecurrenceFrequency.Daily => EnumerateDaily(spec, dtStart, maxOccurrences),
-            RecurrenceFrequency.Weekly => EnumerateWeekly(spec, dtStart, maxOccurrences),
-            RecurrenceFrequency.Monthly => EnumerateMonthly(spec, dtStart, maxOccurrences),
-            RecurrenceFrequency.Yearly => EnumerateYearly(spec, dtStart, maxOccurrences),
+            RecurrenceFrequency.Daily => EnumerateDaily(spec, localStart, maxOccurrences),
+            RecurrenceFrequency.Weekly => EnumerateWeekly(spec, localStart, maxOccurrences),
+            RecurrenceFrequency.Monthly => EnumerateMonthly(spec, localStart, maxOccurrences),
+            RecurrenceFrequency.Yearly => EnumerateYearly(spec, localStart, maxOccurrences),
             _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Frequency, "Unknown frequency.")
         };
+
+        foreach (var localOccurrence in localOccurrences)
+        {
+            yield return zone.ToInstant(localOccurrence);
+        }
     }
 
-    private static IEnumerable<DateTimeOffset> EnumerateDaily(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    private static IEnumerable<DateTime> EnumerateDaily(
+        RecurrenceSpec spec, DateTime dtStart, int maxOccurrences)
     {
         var current = dtStart;
         for (var emitted = 0; emitted < maxOccurrences; emitted++)
@@ -279,8 +314,8 @@ public static class RecurrenceRuleBuilder
         }
     }
 
-    private static IEnumerable<DateTimeOffset> EnumerateWeekly(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    private static IEnumerable<DateTime> EnumerateWeekly(
+        RecurrenceSpec spec, DateTime dtStart, int maxOccurrences)
     {
         // Weekdays this rule fires on within each week. No BYDAY → anchored to the start's weekday.
         var weekdays = spec.ByDay is { Count: > 0 }
@@ -314,10 +349,10 @@ public static class RecurrenceRuleBuilder
         }
     }
 
-    private static IEnumerable<DateTimeOffset> EnumerateMonthly(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    private static IEnumerable<DateTime> EnumerateMonthly(
+        RecurrenceSpec spec, DateTime dtStart, int maxOccurrences)
     {
-        var anchorMonth = new DateTimeOffset(dtStart.Year, dtStart.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var anchorMonth = new DateTime(dtStart.Year, dtStart.Month, 1);
         var timeOfDay = dtStart.TimeOfDay;
 
         // Independent iteration bound: a rule that never produces an occurrence (e.g.
@@ -338,7 +373,7 @@ public static class RecurrenceRuleBuilder
 
             // Stop before advancing would exceed the representable date range (a never-emitting rule
             // would otherwise overflow AddMonths long before the period cap is reached).
-            if (DateTime.MaxValue.AddMonths(-spec.Interval) < anchorMonth.UtcDateTime)
+            if (DateTime.MaxValue.AddMonths(-spec.Interval) < anchorMonth)
             {
                 yield break;
             }
@@ -347,8 +382,8 @@ public static class RecurrenceRuleBuilder
         }
     }
 
-    private static IEnumerable<DateTimeOffset> EnumerateYearly(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences)
+    private static IEnumerable<DateTime> EnumerateYearly(
+        RecurrenceSpec spec, DateTime dtStart, int maxOccurrences)
     {
         var month = spec.ByMonth ?? dtStart.Month;
         var day = spec.ByMonthDay ?? dtStart.Day;
@@ -381,19 +416,19 @@ public static class RecurrenceRuleBuilder
 
     // Returns the given day-of-month in the given month, or null when the month is too short
     // (e.g. day 31 in February) so the occurrence is skipped rather than rolling into the next month.
-    private static DateTimeOffset? DayOfMonthOrNull(int year, int month, int day, TimeSpan timeOfDay)
+    private static DateTime? DayOfMonthOrNull(int year, int month, int day, TimeSpan timeOfDay)
     {
         if (day > DateTime.DaysInMonth(year, month))
         {
             return null;
         }
 
-        return new DateTimeOffset(year, month, day, 0, 0, 0, TimeSpan.Zero) + timeOfDay;
+        return new DateTime(year, month, day) + timeOfDay;
     }
 
     // Resolves an ordinal weekday (e.g. 2nd Tuesday, last Friday) within a month, or null when the
     // ordinal does not exist (e.g. a 5th Monday in a month with only four).
-    private static DateTimeOffset? OrdinalWeekdayInMonth(int year, int month, OrdinalWeekday ow, TimeSpan timeOfDay)
+    private static DateTime? OrdinalWeekdayInMonth(int year, int month, OrdinalWeekday ow, TimeSpan timeOfDay)
     {
         var daysInMonth = DateTime.DaysInMonth(year, month);
         var matching = new List<int>();
@@ -411,7 +446,7 @@ public static class RecurrenceRuleBuilder
             return null;
         }
 
-        return new DateTimeOffset(year, month, matching[index], 0, 0, 0, TimeSpan.Zero) + timeOfDay;
+        return new DateTime(year, month, matching[index]) + timeOfDay;
     }
 
     private static void AppendByParts(RecurrenceSpec spec, List<string> parts)
