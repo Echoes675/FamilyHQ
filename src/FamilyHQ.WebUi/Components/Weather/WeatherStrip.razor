@@ -3,20 +3,31 @@
 @implements IDisposable
 @inject IWeatherUiService WeatherService
 
-@if (WeatherService.IsEnabled && WeatherService.CurrentWeather is not null)
+@* FHQ-159: current and forecast are independently retained, so they are independently rendered.
+   Tying the whole strip to CurrentWeather meant a current reading hidden at its 1-hour window took
+   a forecast still inside its 6-hour window down with it. The strip itself disappears only when
+   there is nothing fresh to show, which is the same reflow as weather being unconfigured. *@
+@if (WeatherService.IsEnabled && (Current is not null || ForecastDays.Count > 0))
 {
     <div class="weather-strip glass-surface">
-        <div class="weather-strip__current">
-            <WeatherIcon IconName="@WeatherService.CurrentWeather.IconName"
-                         IsWindy="@WeatherService.CurrentWeather.IsWindy"
-                         Size="22" />
-            <span class="weather-strip__temp">@FormatTemp(WeatherService.CurrentWeather.Temperature)</span>
-            <span class="weather-strip__condition">@FormatCondition(WeatherService.CurrentWeather.Condition)</span>
-        </div>
+        @if (Current is not null)
+        {
+            <div class="weather-strip__current">
+                <WeatherIcon IconName="@Current.IconName"
+                             IsWindy="@Current.IsWindy"
+                             Size="22" />
+                <span class="weather-strip__temp">@FormatTemp(Current.Temperature)</span>
+                <span class="weather-strip__condition">@FormatCondition(Current.Condition)</span>
+            </div>
+        }
 
         @if (ForecastDays.Count > 0)
         {
-            <div class="weather-strip__divider"></div>
+            @* The divider separates two sections; with only one rendered there is nothing to divide. *@
+            @if (Current is not null)
+            {
+                <div class="weather-strip__divider"></div>
+            }
             <div class="weather-strip__forecast" data-testid="weather-strip-forecast">
                 @foreach (var day in ForecastDays.Take(5))
                 {
@@ -34,6 +45,8 @@
 }
 
 @code {
+    private FamilyHQ.Core.DTOs.CurrentWeatherDto? Current => WeatherService.CurrentWeather;
+
     private List<FamilyHQ.Core.DTOs.DailyForecastItemDto> ForecastDays => WeatherService.DailyForecast;
 
     protected override void OnInitialized()
