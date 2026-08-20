@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Data.Api;
 using FamilyHQ.E2E.Data.Models;
