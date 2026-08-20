@@ -514,10 +514,10 @@ public class CalendarEventService(
         // origin date; an unchanged save moves nothing). (FHQ-144 follow-up.)
         var seriesId = calendarEvent.GoogleRecurringEventId!;
         var seriesRows = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
-        var (masterStart, _) = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, calendarEvent.Start, ct);
+        var masterAnchor = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, calendarEvent.Start, ct);
 
         var startShift = request.Start - calendarEvent.Start;
-        var newMasterStart = masterStart + startShift;
+        var newMasterStart = masterAnchor.Start + startShift;
         var newMasterEnd = newMasterStart + (request.End - request.Start);
 
         var master = new CalendarEvent
@@ -628,9 +628,9 @@ public class CalendarEventService(
         if (spec.End.Kind != RecurrenceEndKind.Count)
             return RecurrenceRuleBuilder.ToRRuleString(spec); // Never/Until preserved as-is.
 
-        var (anchor, anchorTimeZoneId) = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
-        var seriesZone = ResolveSeriesZone(seriesId, anchorTimeZoneId);
-        var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor, splitStart, seriesZone);
+        var anchor = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
+        var seriesZone = ResolveSeriesZone(seriesId, anchor, seriesRows);
+        var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor.Start, splitStart, seriesZone);
         var remaining = spec.End.Occurrences!.Value - before;
 
         if (remaining < 1)
@@ -641,11 +641,16 @@ public class CalendarEventService(
         return RecurrenceRuleBuilder.ToRRuleString(spec with { End = RecurrenceEnd.Count(remaining) });
     }
 
+    // Where a COUNT split's enumeration anchor came from. MasterResolved distinguishes the true
+    // Google DTSTART from the DEGRADED local-row proxy, which has already been reported at Warning —
+    // so the zone fallback that inevitably follows it is not reported a second time (FHQ-161).
+    private readonly record struct SeriesAnchor(DateTimeOffset Start, string? TimeZoneId, bool MasterResolved);
+
     // The true master DTSTART (and the IANA zone it is anchored to) when the master is resolvable;
     // otherwise the earliest local row, or the split instant when no rows exist. A transient
     // master-fetch failure degrades to the local proxy rather than aborting the whole split — the
     // local rows carry no zone of their own, so that path enumerates zone-less (see ResolveSeriesZone).
-    private async Task<(DateTimeOffset Anchor, string? TimeZoneId)> ResolveSeriesAnchorAsync(
+    private async Task<SeriesAnchor> ResolveSeriesAnchorAsync(
         CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows, DateTimeOffset splitStart, CancellationToken ct)
     {
         var localAnchor = seriesRows.Count > 0 ? seriesRows.Min(r => r.Start) : splitStart;
@@ -656,31 +661,54 @@ public class CalendarEventService(
             logger.LogWarning(
                 "Series master {SeriesId} on calendar {CalendarId} returned no start; anchoring COUNT split at the earliest local row instead.",
                 seriesId, owner.GoogleCalendarId);
-            return (localAnchor, null);
+            return new SeriesAnchor(localAnchor, null, MasterResolved: false);
         }
 
-        return (master.Start, master.TimeZone);
+        return new SeriesAnchor(master.Start, master.TimeZone, MasterResolved: true);
     }
 
     // FHQ-161: the zone the split count enumerates in. When Google supplies no usable zone we fall
-    // back DELIBERATELY to the legacy fixed-UTC enumeration rather than rejecting the edit:
-    //   * all-day masters carry no start.timeZone and are date-anchored, so fixed-UTC is EXACT there
-    //     — the dominant real null case;
-    //   * a missing or unrecognised zone id must not fail a legitimate user edit, and the fallback is
-    //     no worse than the behaviour that shipped before this fix.
-    // It is NOT DST-aware, so it is logged at Warning and named in the log for diagnosis.
-    private IRecurrenceTimeZone ResolveSeriesZone(string seriesId, string? ianaTimeZoneId)
+    // back DELIBERATELY to the legacy fixed-UTC enumeration rather than rejecting the edit: a missing
+    // or unrecognised zone id must not fail a legitimate user edit, and the fallback is no worse than
+    // the behaviour that shipped before this fix.
+    private IRecurrenceTimeZone ResolveSeriesZone(
+        string seriesId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
     {
-        var zone = recurrenceTimeZoneFactory.TryCreate(ianaTimeZoneId);
-        if (zone is null)
+        if (recurrenceTimeZoneFactory.TryCreate(anchor.TimeZoneId) is { } zone)
+            return zone;
+
+        LogFixedUtcFallback(seriesId, anchor, seriesRows);
+        return FixedUtcRecurrenceTimeZone.Instance;
+    }
+
+    // The fixed-UTC fallback is only a PROBLEM for a timed series, where it is not DST-aware — that
+    // is the one case worth a Warning, and it stays useful only if the benign cases stay out of it
+    // (logging standard: expected-and-handled conditions are not Warnings). Two are benign:
+    //   * an all-day series carries no start.timeZone by design and is date-anchored, so fixed-UTC
+    //     enumeration is EXACT for it — the dominant real null case;
+    //   * a degraded local-row anchor cannot carry a zone at all, and was already reported at
+    //     Warning by ResolveSeriesAnchorAsync — warning again would double-count one incident and
+    //     misattribute its cause.
+    private void LogFixedUtcFallback(string seriesId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+    {
+        if (!anchor.MasterResolved || IsAllDaySeries(seriesRows))
         {
-            logger.LogWarning(
-                "Series {SeriesId} supplied no usable IANA time zone ({TimeZoneId}); counting the COUNT split with fixed-UTC recurrence enumeration, which is not DST-aware.",
-                seriesId, ianaTimeZoneId);
+            logger.LogDebug(
+                "Series {SeriesId} has no IANA time zone to count its COUNT split in ({TimeZoneId}); using fixed-UTC recurrence enumeration, which is exact for this series.",
+                seriesId, anchor.TimeZoneId);
+            return;
         }
 
-        return zone ?? FixedUtcRecurrenceTimeZone.Instance;
+        logger.LogWarning(
+            "Timed series {SeriesId} supplied no usable IANA time zone ({TimeZoneId}); counting the COUNT split with fixed-UTC recurrence enumeration, which is not DST-aware.",
+            seriesId, anchor.TimeZoneId);
     }
+
+    // Every instance of a series shares its master's all-day flag, so the local rows are a faithful
+    // reading of it. No rows means nothing to read: treat the series as timed so the diagnostic is
+    // not suppressed on a guess.
+    private static bool IsAllDaySeries(IReadOnlyList<CalendarEvent> seriesRows) =>
+        seriesRows.Count > 0 && seriesRows.All(r => r.IsAllDay);
 
     private async Task RemoveSeriesRowsFromSplitAsync(string seriesId, DateTimeOffset? splitFrom, CancellationToken ct)
     {

@@ -263,13 +263,12 @@ public class CalendarEventServiceRecurringTests
     [Theory]
     [InlineData(null)]
     [InlineData("Not/AZone")]
-    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesWithNoUsableZone_WarnsAndUsesTheFixedUtcFallback(string? timeZoneId)
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TimedCountSeriesWithNoUsableZone_WarnsAndUsesTheFixedUtcFallback(string? timeZoneId)
     {
         // DELIBERATE fallback, pinned here so it cannot change silently. When Google supplies no
         // usable zone the count degrades to the legacy fixed-UTC enumeration rather than rejecting
-        // the edit: that is EXACT for date-anchored all-day masters (which carry no zone at all —
-        // the dominant real null case) and no worse than the pre-FHQ-161 behaviour otherwise. It is
-        // not DST-aware, so it must be logged.
+        // the edit — no worse than the pre-FHQ-161 behaviour. On a TIMED series that is not
+        // DST-aware and is the one case genuinely worth a Warning.
         var f = new Fixture();
         var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
 
@@ -281,6 +280,27 @@ public class CalendarEventServiceRecurringTests
         f.Logger.Records.Should().Contain(r =>
             r.Level == LogLevel.Warning
             && r.Message.Contains("no usable IANA time zone")
+            && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_AllDayCountSeriesWithNoZone_DoesNotWarn()
+    {
+        // An all-day master carries no start.timeZone BY DESIGN and is date-anchored, so fixed-UTC
+        // enumeration is exact for it — expected and handled, which the logging standard keeps out
+        // of Warning. Warning here would bury the timed case above, the only one that matters.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero);
+
+        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, masterTimeZone: null, splitStart, isAllDay: true);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, Req("Bin day", splitStart, "Body", isAllDay: true), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug
+            && r.Message.Contains("fixed-UTC recurrence enumeration")
             && r.Message.Contains(SeriesId));
     }
 
@@ -297,13 +317,34 @@ public class CalendarEventServiceRecurringTests
         f.Logger.Records.Should().NotContain(r => r.Message.Contains("no usable IANA time zone"));
     }
 
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesWithAnUnresolvableMaster_WarnsOnlyAboutTheAnchor()
+    {
+        // The degraded local-row anchor cannot carry a zone, so the fixed-UTC fallback is a
+        // CONSEQUENCE of the already-reported anchor failure, not a second incident. One Warning per
+        // incident, and it names the real cause.
+        var f = new Fixture();
+        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, LondonZoneId, splitStart);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SeriesMaster?)null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
+            .Which.Message.Should().Contain("returned no start");
+    }
+
     // Arranges a "this and following" split of a COUNT-bounded series whose master carries the given
     // RRULE, DTSTART and IANA zone, and captures the RRULE the forward series is created with.
     private static StrongBox<string?> ArrangeCountSplit(
-        Fixture f, string rrule, DateTimeOffset masterStart, string? masterTimeZone, DateTimeOffset splitStart)
+        Fixture f, string rrule, DateTimeOffset masterStart, string? masterTimeZone, DateTimeOffset splitStart,
+        bool isAllDay = false)
     {
         var instance = f.RecurringInstance(EventId, "inst-split", splitStart);
         instance.RecurrenceRule = rrule;
+        instance.IsAllDay = isAllDay;
         f.ArrangeEvent(instance);
 
         f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
@@ -1019,8 +1060,8 @@ public class CalendarEventServiceRecurringTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description) =>
-        new(title, start, start.AddHours(1), false, "Loc", description);
+    private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description, bool isAllDay = false) =>
+        new(title, start, start.AddHours(1), isAllDay, "Loc", description);
 
     private static UpdateEventRequest ReqRecurrence(string title, DateTimeOffset start, string? description, string? recurrenceRule, bool clear) =>
         new(title, start, start.AddHours(1), false, "Loc", description, recurrenceRule, clear);
