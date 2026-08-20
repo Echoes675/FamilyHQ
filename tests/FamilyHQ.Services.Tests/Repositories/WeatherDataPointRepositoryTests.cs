@@ -33,6 +33,19 @@ public class WeatherDataPointRepositoryTests
             IsWindy = false
         };
 
+    private WeatherDataPoint MakeCurrent(int locationId) =>
+        new()
+        {
+            LocationSettingId = locationId,
+            Timestamp = _fakeTime.GetUtcNow(),
+            DataType = WeatherDataType.Current,
+            RetrievedAt = _fakeTime.GetUtcNow(),
+            Condition = WeatherCondition.Clear,
+            TemperatureCelsius = 18,
+            WindSpeedKmh = 7,
+            IsWindy = false
+        };
+
     private WeatherDataPoint MakeDaily(int locationId, DateTimeOffset timestamp) =>
         new()
         {
@@ -165,5 +178,121 @@ public class WeatherDataPointRepositoryTests
 
         result.Should().ContainSingle();
         result[0].Timestamp.Should().Be(y.Timestamp);
+    }
+
+    // ── FHQ-159: which stored rows a refresh replaces ────────────────────────────────────────────
+    //
+    // ReplaceSectionsAsync is SectionsReplacedBy + RowsReplacedBy + "delete, insert, commit". The
+    // first two ARE the retention rule: before FHQ-159 the delete matched on LocationSettingId
+    // alone, so a response whose hourly block came back empty wiped the stored hourly rows as a
+    // side effect of rewriting daily. These tests compose the two exactly as the repository does
+    // and assert which stored rows a given incoming payload removes. ExecuteDeleteAsync needs a
+    // real provider, so the statement itself is not exercised here.
+
+    private static List<WeatherDataPoint> RemovedBy(
+        IEnumerable<WeatherDataPoint> stored, int locationSettingId, params WeatherDataPoint[] incoming)
+    {
+        var sections = WeatherDataPointRepository.SectionsReplacedBy([.. incoming]);
+        var predicate = WeatherDataPointRepository.RowsReplacedBy(locationSettingId, sections).Compile();
+        return stored.Where(predicate).ToList();
+    }
+
+    [Fact]
+    public void ReplacedRows_RefreshCarryingOnlyDaily_LeavesStoredHourlyIntact()
+    {
+        var storedHourly = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero));
+        var storedDaily = MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+
+        var removed = RemovedBy([storedHourly, storedDaily], 1,
+            MakeDaily(1, new DateTimeOffset(2026, 6, 19, 0, 0, 0, TimeSpan.Zero)));
+
+        removed.Should().ContainSingle("only the daily section was carried").Which
+            .Should().BeSameAs(storedDaily);
+        removed.Should().NotContain(storedHourly,
+            "an empty incoming hourly section must not wipe the stored hourly rows");
+    }
+
+    [Fact]
+    public void ReplacedRows_RefreshCarryingOnlyHourly_LeavesStoredDailyAndCurrentIntact()
+    {
+        var storedHourly = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero));
+        var storedDaily = MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+        var storedCurrent = MakeCurrent(1);
+
+        var removed = RemovedBy([storedHourly, storedDaily, storedCurrent], 1,
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero)));
+
+        removed.Should().Equal(storedHourly);
+    }
+
+    [Fact]
+    public void ReplacedRows_RefreshWithoutACurrentBlock_LeavesTheStoredCurrentReadingIntact()
+    {
+        // Pairs with BuildDataPoints writing no Current row for an absent current block: the
+        // previous reading must survive the refresh so it can stand for its retention window.
+        var storedCurrent = MakeCurrent(1);
+        var storedDaily = MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+
+        var removed = RemovedBy([storedCurrent, storedDaily], 1,
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero)),
+            MakeDaily(1, new DateTimeOffset(2026, 6, 19, 0, 0, 0, TimeSpan.Zero)));
+
+        removed.Should().NotContain(storedCurrent);
+        removed.Should().Equal(storedDaily);
+    }
+
+    [Fact]
+    public void ReplacedRows_RefreshCarryingEverySection_ReplacesEverySection()
+    {
+        var storedHourly = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero));
+        var storedDaily = MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+        var storedCurrent = MakeCurrent(1);
+
+        var removed = RemovedBy([storedHourly, storedDaily, storedCurrent], 1,
+            MakeCurrent(1),
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero)),
+            MakeDaily(1, new DateTimeOffset(2026, 6, 19, 0, 0, 0, TimeSpan.Zero)));
+
+        removed.Should().HaveCount(3, "a full response still replaces the location's data wholesale");
+    }
+
+    [Fact]
+    public void ReplacedRows_RefreshCarryingNothing_RemovesNothing()
+    {
+        // The whole-response failure mode: a payload with no rows at all must leave every stored
+        // section standing rather than blanking the location.
+        var stored = new List<WeatherDataPoint>
+        {
+            MakeCurrent(1),
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero)),
+            MakeDaily(1, new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero))
+        };
+
+        RemovedBy(stored, 1).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ReplacedRows_NeverTouchesAnotherLocation()
+    {
+        var mine = MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero));
+        var theirs = MakeHourly(2, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero));
+
+        var removed = RemovedBy([mine, theirs], 1,
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero)));
+
+        removed.Should().Equal(mine);
+    }
+
+    [Fact]
+    public void SectionsReplacedBy_PayloadCarryingOneSectionTwice_NamesItOnce()
+    {
+        var sections = WeatherDataPointRepository.SectionsReplacedBy([
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero)),
+            MakeHourly(1, new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero))
+        ]);
+
+        sections.Should().ContainSingle(
+            "the delete is one set-based statement, so the section list is a parameter, not a loop")
+            .Which.Should().Be(WeatherDataType.Hourly);
     }
 }

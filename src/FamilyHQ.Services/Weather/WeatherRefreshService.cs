@@ -54,7 +54,7 @@ public class WeatherRefreshService(
 
         var dataPoints = BuildDataPoints(location.Id, weatherResponse, now, windThreshold, ianaTimeZone);
 
-        await weatherDataPointRepo.ReplaceAllAsync(location.Id, dataPoints, ct);
+        await weatherDataPointRepo.ReplaceSectionsAsync(location.Id, dataPoints, ct);
 
         await weatherBroadcaster.BroadcastWeatherUpdatedAsync(ct);
 
@@ -74,17 +74,24 @@ public class WeatherRefreshService(
     {
         var dataPoints = new List<WeatherDataPoint>();
 
-        dataPoints.Add(new WeatherDataPoint
+        // FHQ-159: a response with no current block writes NO Current row. It used to write one
+        // carrying a fabricated 0 °C / 0 km/h, so the kiosk could show "Unknown, 0°, 0 km/h" as a
+        // reading about now. Writing nothing leaves the previous reading in place, and
+        // WeatherService stops showing that once it passes WeatherOptions.CurrentStaleAfterMinutes.
+        if (response.Current is not null)
         {
-            LocationSettingId = locationSettingId,
-            Timestamp = retrievedAt,
-            Condition = response.CurrentCondition,
-            TemperatureCelsius = response.CurrentTemperatureCelsius,
-            WindSpeedKmh = response.CurrentWindSpeedKmh,
-            IsWindy = response.CurrentWindSpeedKmh >= windThresholdKmh,
-            DataType = WeatherDataType.Current,
-            RetrievedAt = retrievedAt
-        });
+            dataPoints.Add(new WeatherDataPoint
+            {
+                LocationSettingId = locationSettingId,
+                Timestamp = retrievedAt,
+                Condition = response.Current.Condition,
+                TemperatureCelsius = response.Current.TemperatureCelsius,
+                WindSpeedKmh = response.Current.WindSpeedKmh,
+                IsWindy = response.Current.WindSpeedKmh >= windThresholdKmh,
+                DataType = WeatherDataType.Current,
+                RetrievedAt = retrievedAt
+            });
+        }
 
         foreach (var hourly in response.HourlyForecasts)
         {

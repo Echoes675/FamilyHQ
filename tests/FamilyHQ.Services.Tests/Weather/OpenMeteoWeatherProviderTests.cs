@@ -63,9 +63,10 @@ public class OpenMeteoWeatherProviderTests
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
-        result.CurrentCondition.Should().Be(WeatherCondition.Cloudy);
-        result.CurrentTemperatureCelsius.Should().Be(14.5);
-        result.CurrentWindSpeedKmh.Should().Be(22.0);
+        result.Current.Should().NotBeNull();
+        result.Current!.Condition.Should().Be(WeatherCondition.Cloudy);
+        result.Current.TemperatureCelsius.Should().Be(14.5);
+        result.Current.WindSpeedKmh.Should().Be(22.0);
         result.HourlyForecasts.Should().HaveCount(2);
         result.DailyForecasts.Should().HaveCount(2);
         result.DailyForecasts[0].HighCelsius.Should().Be(16.0);
@@ -370,7 +371,7 @@ public class OpenMeteoWeatherProviderTests
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
         result.HourlyForecasts.Should().BeEmpty();
-        result.CurrentTemperatureCelsius.Should().Be(14.5,
+        result.Current!.TemperatureCelsius.Should().Be(14.5,
             "a degraded hourly block must not cost us the current conditions");
     }
 
@@ -414,7 +415,7 @@ public class OpenMeteoWeatherProviderTests
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
-        result.CurrentCondition.Should().Be(WeatherCondition.Unknown);
+        result.Current!.Condition.Should().Be(WeatherCondition.Unknown);
         result.HourlyForecasts[0].Condition.Should().Be(WeatherCondition.Unknown);
         result.DailyForecasts[0].Condition.Should().Be(WeatherCondition.Unknown);
     }
@@ -494,7 +495,7 @@ public class OpenMeteoWeatherProviderTests
 
         result.HourlyForecasts.Should().BeEmpty();
         result.DailyForecasts.Should().BeEmpty();
-        result.CurrentTemperatureCelsius.Should().Be(14.5);
+        result.Current!.TemperatureCelsius.Should().Be(14.5);
 
         logger.Verify(l => l.Log(
             LogLevel.Debug,
@@ -520,10 +521,12 @@ public class OpenMeteoWeatherProviderTests
             "an empty section is expected and handled on every dev/staging poll — logging it at Warning would drown the Seq signal");
     }
 
-    // FHQ-115: an absent current block used to be reported as "Clear, 0 °C, 0 km/h", which
-    // the kiosk displayed as authoritative current conditions with nothing logged.
+    // FHQ-115: an absent current block used to be reported as "Clear, 0 °C, 0 km/h", which the
+    // kiosk displayed as authoritative current conditions with nothing logged. FHQ-159: reporting
+    // it as "Unknown, 0 °C, 0 km/h" was still an invented reading, so the absence is now modelled
+    // as an absence and the refresh writes no Current row for it at all.
     [Fact]
-    public async Task GetWeatherAsync_ResponseWithoutCurrentBlock_ReportsUnknownConditionAndWarns()
+    public async Task GetWeatherAsync_ResponseWithoutCurrentBlock_ReportsNoCurrentReadingAndWarns()
     {
         var json = JsonSerializer.Serialize(new OpenMeteoApiResponse(
             Current: null,
@@ -539,8 +542,10 @@ public class OpenMeteoWeatherProviderTests
 
         var result = await provider.GetWeatherAsync(53.35, -6.26, ianaTimeZone: null);
 
-        result.CurrentCondition.Should().Be(WeatherCondition.Unknown,
-            "a missing current block must never be presented as clear skies");
+        result.Current.Should().BeNull(
+            "a missing current block must be reported as missing, not as a condition carrying invented zeroes");
+        result.HourlyForecasts.Should().ContainSingle(
+            "the sections that DID arrive are unaffected by the missing current block");
 
         logger.Verify(l => l.Log(
             LogLevel.Warning,

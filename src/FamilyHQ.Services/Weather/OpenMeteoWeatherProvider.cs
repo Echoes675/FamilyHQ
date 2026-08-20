@@ -43,22 +43,22 @@ public class OpenMeteoWeatherProvider(
 
         var unmappedCodes = new SortedSet<int>();
 
-        // FHQ-115: never fabricate Clear. An absent current block used to be reported as
-        // "clear, 0 °C, 0 km/h", which the kiosk then displayed as authoritative.
-        var currentCondition = WeatherCondition.Unknown;
-        var currentTemp = 0.0;
-        var currentWind = 0.0;
+        // FHQ-115 stopped an absent current block being reported as "clear, 0 °C, 0 km/h".
+        // FHQ-159 finishes the job: report the absence itself rather than an Unknown condition
+        // carrying invented zeroes, so the refresh can decline to write a current reading at all.
+        WeatherCurrentItem? current = null;
 
         if (apiResponse.Current is not null)
         {
-            currentCondition = MapCondition(apiResponse.Current.WeatherCode, unmappedCodes);
-            currentTemp = apiResponse.Current.Temperature;
-            currentWind = apiResponse.Current.WindSpeed;
+            current = new WeatherCurrentItem(
+                MapCondition(apiResponse.Current.WeatherCode, unmappedCodes),
+                apiResponse.Current.Temperature,
+                apiResponse.Current.WindSpeed);
         }
         else
         {
             logger.LogWarning(
-                "Open-Meteo returned no current block; current conditions are reported as Unknown with zeroed readings.");
+                "Open-Meteo returned no current block; no current reading will be stored and the previously stored one stands until it ages out.");
         }
 
         var hourly = new List<WeatherHourlyItem>();
@@ -119,7 +119,7 @@ public class OpenMeteoWeatherProvider(
                 unmappedCodes.Count, unmappedCodes.ToArray());
         }
 
-        return new WeatherResponse(currentCondition, currentTemp, currentWind, hourly, daily);
+        return new WeatherResponse(current, hourly, daily);
     }
 
     // FHQ-110: Open-Meteo does not guarantee that the parallel value arrays are the same
