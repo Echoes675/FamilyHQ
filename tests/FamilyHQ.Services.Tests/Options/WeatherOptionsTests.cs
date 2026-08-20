@@ -53,4 +53,42 @@ public class WeatherOptionsTests
             .Should().Throw<InvalidOperationException>()
             .WithMessage($"*{nameof(WeatherOptions.FailureBackoffMultiplier)}*");
     }
+
+    // FHQ-159, signed off 2026-08-17. The two numbers are the policy, so they are pinned here
+    // rather than left to whatever an unconfigured deployment happens to inherit: 6 h of forecast
+    // retention is 12 consecutive missed polls at the 30-minute production interval, and the
+    // Current row gets 1 h because it asserts something about now.
+    [Fact]
+    public void ForecastStaleAfterMinutes_DefaultsToSixHours()
+    {
+        new WeatherOptions().ForecastStaleAfterMinutes.Should().Be(360);
+    }
+
+    [Fact]
+    public void CurrentStaleAfterMinutes_DefaultsToOneHour()
+    {
+        new WeatherOptions().CurrentStaleAfterMinutes.Should().Be(60);
+    }
+
+    [Fact]
+    public void Validate_ForecastStaleAfterMinutesBelowOne_Throws()
+    {
+        // Zero would hide every forecast the instant it was written — the kiosk would read as
+        // permanently broken, so this must surface at boot rather than as blank weather.
+        var options = new WeatherOptions { ForecastStaleAfterMinutes = 0 };
+
+        options.Invoking(o => o.Validate())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(WeatherOptions.ForecastStaleAfterMinutes)}*");
+    }
+
+    [Fact]
+    public void Validate_CurrentStaleAfterMinutesBelowOne_Throws()
+    {
+        var options = new WeatherOptions { CurrentStaleAfterMinutes = 0 };
+
+        options.Invoking(o => o.Validate())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(WeatherOptions.CurrentStaleAfterMinutes)}*");
+    }
 }

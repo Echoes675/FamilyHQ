@@ -31,6 +31,23 @@ public class WeatherOptions
     /// </summary>
     public int MaxFailureBackoffMinutes { get; set; } = 60;
 
+    /// <summary>
+    /// FHQ-159: how long a stored forecast section (<c>Hourly</c>, <c>Daily</c>) keeps being shown
+    /// after the refresh that produced it. Past this it is hidden entirely — no stale marker, no
+    /// "last updated" indicator. 360 minutes is 12 consecutive missed polls at the 30-minute
+    /// production interval, so no realistic upstream blip can blank the kiosk, while nothing
+    /// visibly wrong survives long enough to mislead.
+    /// </summary>
+    public int ForecastStaleAfterMinutes { get; set; } = 360;
+
+    /// <summary>
+    /// FHQ-159: how long the stored <c>Current</c> reading keeps being shown after the refresh that
+    /// produced it. Deliberately tighter than <see cref="ForecastStaleAfterMinutes"/> because,
+    /// unlike a forecast, it asserts something about <i>now</i> — an hours-old temperature is wrong
+    /// rather than merely old. 60 minutes is 2 missed polls at the production interval.
+    /// </summary>
+    public int CurrentStaleAfterMinutes { get; set; } = 60;
+
     /// <summary>Fail-fast guard, called at startup so bad config surfaces at boot.</summary>
     public void Validate()
     {
@@ -60,5 +77,15 @@ public class WeatherOptions
                 $"{nameof(WeatherOptions)}.{nameof(MaxFailureBackoffMinutes)} must be between " +
                 $"{nameof(MinPollIntervalMinutes)} ({MinPollIntervalMinutes}) and " +
                 $"{MaxFailureBackoffCeilingMinutes} (was {MaxFailureBackoffMinutes}).");
+
+        // Zero or negative would hide every section the instant it was written, which reads on the
+        // kiosk as "weather is broken" — surface it at boot instead.
+        if (ForecastStaleAfterMinutes < 1)
+            throw new InvalidOperationException(
+                $"{nameof(WeatherOptions)}.{nameof(ForecastStaleAfterMinutes)} must be at least 1 (was {ForecastStaleAfterMinutes}).");
+
+        if (CurrentStaleAfterMinutes < 1)
+            throw new InvalidOperationException(
+                $"{nameof(WeatherOptions)}.{nameof(CurrentStaleAfterMinutes)} must be at least 1 (was {CurrentStaleAfterMinutes}).");
     }
 }
