@@ -161,7 +161,7 @@ public class DayThemeSchedulerServiceTests
         var sut = CreateSut(dayThemeServiceMock.Object, broadcasterMock.Object, logger, clock);
 
         var run = sut.RunExecuteAsync(cts.Token);
-        await clock.TimerArmed;                          // the loop is now waiting on the boundary
+        await clock.WaitForNextTimerAsync();             // the loop is now waiting on the boundary
         fakeTime.Advance(TimeSpan.FromHours(13));        // cross the boundary — this is what ends the wait
         await run.WaitAsync(TimeSpan.FromSeconds(15));   // tripwire only; the loop completes inline
 

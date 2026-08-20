@@ -12,6 +12,13 @@ namespace FamilyHQ.WebUi.Tests.Services;
 
 public class VersionServiceTests
 {
+    /// <summary>
+    /// Real-clock tripwire on the failure path only. A bare <c>await checkTask</c> on a fake clock
+    /// hangs forever when an advance is lost, which costs a CI job's whole timeout and reports
+    /// nothing; this turns that into a fast, legible failure (FHQ-158).
+    /// </summary>
+    private static readonly TimeSpan TripwireDeadline = TimeSpan.FromSeconds(5);
+
     [Fact]
     public void Constructor_ReadsClientVersion_FromOwnAssembly()
     {
@@ -99,16 +106,19 @@ public class VersionServiceTests
         using var handler = FakeHttpMessageHandler.RespondingWithFunc((_, _) =>
             BuildHealthResponse(version: serverVersion));
 
-        var fakeTime = new FakeTimeProvider();
+        var time = new TimerArmedTimeProvider(new FakeTimeProvider());
         var jsRuntime = new RecordingJsRuntime();
-        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: fakeTime);
+        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: time);
         var raised = 0;
         sut.UpdateAvailable += () => raised++;
 
-        // Act — kick off the check; it will be parked at the 5s reload delay
+        // Act — kick off the check; it will be parked at the 5s reload delay. CheckAsync awaits the
+        // health fetch BEFORE arming that delay, so the advance is held until the timer is provably
+        // armed (FHQ-158) — a plain Advance here is silently dropped when the fetch has not yet
+        // resumed, and the await below would then never complete.
         var checkTask = sut.CheckAsync();
-        fakeTime.Advance(TimeSpan.FromSeconds(6));
-        await checkTask;
+        await time.AdvanceOnNextTimerAsync(TimeSpan.FromSeconds(6));
+        await checkTask.WaitAsync(TripwireDeadline);
 
         // Assert
         raised.Should().Be(1);
@@ -122,19 +132,23 @@ public class VersionServiceTests
         using var handler = FakeHttpMessageHandler.RespondingWithFunc((_, _) =>
             BuildHealthResponse(version: serverVersion));
 
-        var fakeTime = new FakeTimeProvider();
+        var time = new TimerArmedTimeProvider(new FakeTimeProvider());
         var jsRuntime = new RecordingJsRuntime();
-        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: fakeTime);
+        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: time);
         var raised = 0;
         sut.UpdateAvailable += () => raised++;
 
-        // Act — first call triggers the update flow; advance time so it completes
+        // Act — first call triggers the update flow; hold the advance until the reload delay is
+        // armed, then let it complete (FHQ-158)
         var first = sut.CheckAsync();
-        fakeTime.Advance(TimeSpan.FromSeconds(6));
-        await first;
+        await time.AdvanceOnNextTimerAsync(TimeSpan.FromSeconds(6));
+        await first.WaitAsync(TripwireDeadline);
 
-        await sut.CheckAsync();
-        await sut.CheckAsync();
+        // The later calls short-circuit on the already-triggered flag, so they arm no timer. If that
+        // guard ever regresses they park on the fake clock instead, and the tripwire says so in 5s
+        // rather than hanging the run.
+        await sut.CheckAsync().WaitAsync(TripwireDeadline);
+        await sut.CheckAsync().WaitAsync(TripwireDeadline);
 
         // Assert — idempotent: only one fire
         raised.Should().Be(1);
@@ -148,22 +162,27 @@ public class VersionServiceTests
         using var handler = FakeHttpMessageHandler.RespondingWithFunc((_, _) =>
             BuildHealthResponse(version: serverVersion));
 
-        var fakeTime = new FakeTimeProvider();
+        var time = new TimerArmedTimeProvider(new FakeTimeProvider());
         var jsRuntime = new RecordingJsRuntime();
 
-        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: fakeTime);
+        var sut = CreateSut(handler: handler, jsRuntime: jsRuntime, timeProvider: time);
 
         // Act — kick off the check (do not await; reload waits on TimeProvider.Delay)
         var checkTask = sut.CheckAsync();
 
-        // Just before the 5s mark — no reload yet
-        fakeTime.Advance(TimeSpan.FromMilliseconds(4990));
+        // Just before the 5s mark — no reload yet. The advance is held until the reload delay has
+        // actually been armed; the health fetch is awaited first, so a plain Advance here can land
+        // on a clock with no timer registered and be silently lost (FHQ-158).
+        await time.AdvanceOnNextTimerAsync(TimeSpan.FromMilliseconds(4990));
+        // Negative assertion: a scheduling budget can only ever produce a false PASS here, never a
+        // false failure, and no finite wait can prove a negative.
         await Task.Yield();
         jsRuntime.InvokedIdentifiers.Should().NotContain("location.reload");
 
-        // Cross the 5s mark — reload fires
-        fakeTime.Advance(TimeSpan.FromMilliseconds(20));
-        await checkTask;
+        // Cross the 5s mark — reload fires. Plain, non-waiting advance: this pair splits ONE armed
+        // timer across TWO advances, so there is no second timer to wait for.
+        time.Advance(TimeSpan.FromMilliseconds(20));
+        await checkTask.WaitAsync(TripwireDeadline);
 
         // Assert
         jsRuntime.InvokedIdentifiers.Should().ContainSingle(id => id == "location.reload");

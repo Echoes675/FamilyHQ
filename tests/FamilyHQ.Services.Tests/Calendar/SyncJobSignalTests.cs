@@ -22,6 +22,10 @@ public class SyncJobSignalTests
         var signal = new SyncJobSignal();
 
         // No release: returns when the (short) timeout elapses, without throwing.
+        // The timeout is the behaviour under test and SemaphoreSlim owns it internally — there is no
+        // TimeProvider seam to inject — so this necessarily waits out 50ms of real time. It asserts
+        // nothing about how long it took, only that the wait returns instead of throwing, so load
+        // can make it slower but can never make it fail (FHQ-158).
         await signal.WaitAsync(TimeSpan.FromMilliseconds(50), CancellationToken.None);
     }
 
@@ -35,9 +39,15 @@ public class SyncJobSignalTests
 
         await signal.WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None); // first wait consumes the signal
 
-        // Second wait must now time out (only one logical signal was pending).
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await signal.WaitAsync(TimeSpan.FromMilliseconds(50), CancellationToken.None);
-        sw.Elapsed.Should().BeGreaterThan(TimeSpan.FromMilliseconds(30));
+        // A second wait must now find nothing pending. SemaphoreSlim completes synchronously when a
+        // permit is available and only returns an incomplete task when it has to queue the caller,
+        // so this reads the outcome directly instead of timing how long the wait blocked for.
+        var second = signal.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+        second.IsCompleted.Should().BeFalse("only one logical signal was pending, and the first wait consumed it");
+
+        // Drain the queued waiter so the test leaves nothing pending — and prove it was a real
+        // waiter that a later release wakes, not a dead task.
+        signal.Release();
+        await second.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }

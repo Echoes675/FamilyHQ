@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using FamilyHQ.Services.Http;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -13,15 +14,18 @@ namespace FamilyHQ.Services.Tests.Http;
 /// FHQ-114. Tests either run with <c>BaseDelay = 0</c> so the exponential path is instant, or park
 /// the handler on the <see cref="FakeTimeProvider"/> and release it by advancing virtual time — no
 /// test ever waits out a real backoff.
+/// <para>
+/// FHQ-158: a test that needs the handler to have REACHED its virtual sleep waits for the timer
+/// registration itself (<see cref="TimerArmedTimeProvider"/>) rather than sleeping a real "settle"
+/// interval. A settle interval that expires early advances a clock with no timer armed, which the
+/// fake clock drops silently — the same lost-advance class as intermittent-issues issue 10.
+/// </para>
 /// </summary>
 public class TransientHttpRetryHandlerTests
 {
     private const string Url = "https://example.test/json";
 
-    /// <summary>Real time allowed for the handler to reach its (virtual) sleep. It does no I/O, so this is ~1000x headroom.</summary>
-    private static readonly TimeSpan SettleWindow = TimeSpan.FromMilliseconds(50);
-
-    private static (HttpClient Client, StubHandler Inner, FakeTimeProvider Time) CreateClient(
+    private static (HttpClient Client, StubHandler Inner, TimerArmedTimeProvider Time) CreateClient(
         StubHandler inner,
         int maxAttempts = 3,
         TimeSpan? baseDelay = null,
@@ -32,7 +36,7 @@ public class TransientHttpRetryHandlerTests
         return (new HttpClient(handler), inner, time);
     }
 
-    private static (TransientHttpRetryHandler Handler, FakeTimeProvider Time) CreateHandler(
+    private static (TransientHttpRetryHandler Handler, TimerArmedTimeProvider Time) CreateHandler(
         int maxAttempts = 3,
         TimeSpan? baseDelay = null,
         TimeSpan? maxRetryDelay = null)
@@ -43,7 +47,8 @@ public class TransientHttpRetryHandlerTests
             BaseDelay = baseDelay ?? TimeSpan.Zero,
             MaxRetryDelay = maxRetryDelay ?? TimeSpan.FromSeconds(5)
         });
-        var time = new FakeTimeProvider(new DateTimeOffset(2026, 8, 13, 12, 0, 0, TimeSpan.Zero));
+        var time = new TimerArmedTimeProvider(
+            new FakeTimeProvider(new DateTimeOffset(2026, 8, 13, 12, 0, 0, TimeSpan.Zero)));
         return (new TransientHttpRetryHandler(options, time, NullLogger<TransientHttpRetryHandler>.Instance), time);
     }
 
@@ -71,7 +76,7 @@ public class TransientHttpRetryHandlerTests
             maxRetryDelay: TimeSpan.FromSeconds(5));
 
         var task = client.GetAsync(Url);
-        await Task.Delay(SettleWindow);
+        await time.WaitForNextTimerAsync();
 
         task.IsCompleted.Should().BeFalse("the handler must be asleep on the injected clock, not the wall clock");
         inner.Calls.Should().Be(1);
@@ -94,11 +99,16 @@ public class TransientHttpRetryHandlerTests
             maxRetryDelay: TimeSpan.FromSeconds(5));
 
         var task = client.GetAsync(Url);
-        await Task.Delay(SettleWindow);
+        await time.WaitForNextTimerAsync();
 
         task.IsCompleted.Should().BeFalse();
+        // The armed timer's due time IS the sleep the handler asked for, so this pins the duration
+        // outright. The "still not complete after 2s" check below says the same thing behaviourally
+        // but can only observe it through a queued continuation, so it is a supporting assertion.
+        time.LastTimerDueTime.Should().Be(TimeSpan.FromSeconds(3));
+
         time.Advance(TimeSpan.FromSeconds(2));
-        await Task.Delay(SettleWindow);
+        await YieldAsync();
         task.IsCompleted.Should().BeFalse("2s is short of the 3s the server asked for");
 
         time.Advance(TimeSpan.FromSeconds(1));
@@ -337,6 +347,20 @@ public class TransientHttpRetryHandlerTests
 
         delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(minMs));
         delay.Should().BeLessThan(TimeSpan.FromMilliseconds(maxMs));
+    }
+
+    /// <summary>
+    /// Lets thread-pool continuations of an already-completed fake delay run. Uses only
+    /// <see cref="Task.Yield"/> — no real timers or sleeps. Backs NEGATIVE assertions only
+    /// ("the request has still not completed"), where a budget exhausted under load can produce a
+    /// false pass but never a false failure — and no finite wait can prove a negative anyway.
+    /// </summary>
+    private static async Task YieldAsync()
+    {
+        for (var i = 0; i < 20; i++)
+        {
+            await Task.Yield();
+        }
     }
 
     private static HttpResponseMessage WithRetryAfter(HttpResponseMessage response, TimeSpan delta)
