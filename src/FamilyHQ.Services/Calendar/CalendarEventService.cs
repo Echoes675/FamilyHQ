@@ -669,7 +669,7 @@ public class CalendarEventService(
     //   * a missing or unrecognised zone id must not fail a legitimate user edit, and the fallback is
     //     no worse than the behaviour that shipped before this fix.
     // It is NOT DST-aware, so it is logged at Warning and named in the log for diagnosis.
-    private IRecurrenceTimeZone? ResolveSeriesZone(string seriesId, string? ianaTimeZoneId)
+    private IRecurrenceTimeZone ResolveSeriesZone(string seriesId, string? ianaTimeZoneId)
     {
         var zone = recurrenceTimeZoneFactory.TryCreate(ianaTimeZoneId);
         if (zone is null)
@@ -679,7 +679,7 @@ public class CalendarEventService(
                 seriesId, ianaTimeZoneId);
         }
 
-        return zone;
+        return zone ?? FixedUtcRecurrenceTimeZone.Instance;
     }
 
     private async Task RemoveSeriesRowsFromSplitAsync(string seriesId, DateTimeOffset? splitFrom, CancellationToken ct)

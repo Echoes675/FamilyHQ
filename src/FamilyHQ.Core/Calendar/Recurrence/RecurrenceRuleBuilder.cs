@@ -133,12 +133,6 @@ public static class RecurrenceRuleBuilder
     public const int MaxEnumeratedOccurrences = 10_000;
 
     /// <summary>
-    /// The zone used when a caller supplies no series time zone: fixed UTC, no DST rules.
-    /// See <see cref="FixedOffsetRecurrenceTimeZone"/> for why that fallback is deliberate.
-    /// </summary>
-    private static readonly IRecurrenceTimeZone UtcFallbackZone = new FixedOffsetRecurrenceTimeZone(TimeSpan.Zero);
-
-    /// <summary>
     /// Counts how many occurrences of <paramref name="rrule"/>, generated forward from
     /// <paramref name="dtStart"/>, start STRICTLY before <paramref name="boundary"/>.
     /// </summary>
@@ -155,23 +149,26 @@ public static class RecurrenceRuleBuilder
     ///
     /// <paramref name="zone"/> anchors the rule to the series' own wall clock — see
     /// <see cref="Expand(RecurrenceSpec, DateTimeOffset, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>.
-    /// Passing null enumerates at fixed UTC instants, which OVER-COUNTS by one when the series
-    /// crosses a fall-back transition before the boundary (FHQ-161).
+    /// It is REQUIRED: passing <see cref="FixedUtcRecurrenceTimeZone.Instance"/> enumerates at fixed
+    /// UTC instants, which OVER-COUNTS by one when the series crosses a fall-back transition before
+    /// the boundary, so that choice has to be made deliberately (FHQ-161).
     /// </remarks>
     /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="zone"/> is null.</exception>
     public static int CountOccurrencesBefore(
-        string rrule, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone? zone = null) =>
+        string rrule, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone zone) =>
         CountOccurrencesBefore(ParseRRuleString(rrule), dtStart, boundary, zone);
 
     /// <summary>
     /// Spec-based overload of <see cref="CountOccurrencesBefore(string, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>
     /// for callers that have already parsed the rule, avoiding a redundant re-parse.
     /// </summary>
-    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> or <paramref name="zone"/> is null.</exception>
     public static int CountOccurrencesBefore(
-        RecurrenceSpec spec, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone? zone = null)
+        RecurrenceSpec spec, DateTimeOffset dtStart, DateTimeOffset boundary, IRecurrenceTimeZone zone)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(zone);
 
         var hardCap = spec.End.Kind == RecurrenceEndKind.Count
             ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
@@ -219,28 +216,32 @@ public static class RecurrenceRuleBuilder
     /// against COUNT (so a COUNT-bounded series whose early occurrences precede the window yields
     /// only the in-window remainder). Pure: no I/O, no async, invariant-culture.
     ///
-    /// <paramref name="zone"/> is the series' own time zone (Google's <c>start.timeZone</c>). Supply
-    /// it and the rule steps in WALL-CLOCK terms, so a 19:00 weekly event stays 19:00 across a DST
-    /// transition and its UTC instant moves — exactly what Google emits. Pass null and the rule steps
-    /// at fixed UTC instants instead, so the local time shifts by an hour across a transition
-    /// (FHQ-161).
+    /// <paramref name="zone"/> is the series' own time zone (Google's <c>start.timeZone</c>), and it
+    /// is REQUIRED. Supply the real zone and the rule steps in WALL-CLOCK terms, so a 19:00 weekly
+    /// event stays 19:00 across a DST transition and its UTC instant moves — exactly what Google
+    /// emits. Pass <see cref="FixedUtcRecurrenceTimeZone.Instance"/> and the rule steps at fixed UTC
+    /// instants instead, so the local time shifts by an hour across a transition; that is exact for
+    /// a date-anchored all-day series and wrong for any other, which is why it must be named rather
+    /// than defaulted (FHQ-161).
     /// </remarks>
     /// <exception cref="ArgumentException">When <paramref name="rrule"/> is empty or has no valid FREQ.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="zone"/> is null.</exception>
     public static IEnumerable<DateTimeOffset> Expand(
         string rrule, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd,
-        IRecurrenceTimeZone? zone = null) =>
+        IRecurrenceTimeZone zone) =>
         Expand(ParseRRuleString(rrule), seriesStart, windowStart, windowEnd, zone);
 
     /// <summary>
     /// Spec-based overload of <see cref="Expand(string, DateTimeOffset, DateTimeOffset, DateTimeOffset, IRecurrenceTimeZone)"/>
     /// for callers that have already parsed the rule, avoiding a redundant re-parse.
     /// </summary>
-    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> is null.</exception>
+    /// <exception cref="ArgumentNullException">When <paramref name="spec"/> or <paramref name="zone"/> is null.</exception>
     public static IEnumerable<DateTimeOffset> Expand(
         RecurrenceSpec spec, DateTimeOffset seriesStart, DateTimeOffset windowStart, DateTimeOffset windowEnd,
-        IRecurrenceTimeZone? zone = null)
+        IRecurrenceTimeZone zone)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(zone);
 
         var hardCap = spec.End.Kind == RecurrenceEndKind.Count
             ? Math.Min(spec.End.Occurrences!.Value, MaxEnumeratedOccurrences)
@@ -283,10 +284,9 @@ public static class RecurrenceRuleBuilder
     // directly (the previous behaviour) silently shifted the local time by an hour instead.
     // Pure and side-effect-free: the injected zone does the only non-arithmetic work.
     private static IEnumerable<DateTimeOffset> EnumerateOccurrences(
-        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences, IRecurrenceTimeZone? zone)
+        RecurrenceSpec spec, DateTimeOffset dtStart, int maxOccurrences, IRecurrenceTimeZone zone)
     {
-        var seriesZone = zone ?? UtcFallbackZone;
-        var localStart = seriesZone.ToWallClock(dtStart);
+        var localStart = zone.ToWallClock(dtStart);
 
         var localOccurrences = spec.Frequency switch
         {
@@ -299,7 +299,7 @@ public static class RecurrenceRuleBuilder
 
         foreach (var localOccurrence in localOccurrences)
         {
-            yield return seriesZone.ToInstant(localOccurrence);
+            yield return zone.ToInstant(localOccurrence);
         }
     }
 

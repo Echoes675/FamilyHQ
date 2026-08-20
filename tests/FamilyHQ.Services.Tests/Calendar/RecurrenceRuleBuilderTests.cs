@@ -1,5 +1,6 @@
 using System.Globalization;
 using FamilyHQ.Core.Calendar.Recurrence;
+using FamilyHQ.Core.Interfaces;
 using FluentAssertions;
 using Xunit;
 
@@ -510,16 +511,22 @@ public class RecurrenceRuleBuilderTests
     // the split instance becomes occurrence #1 of the forward series, so everything before it
     // stays in the truncated original. boundary is exclusive; an occurrence landing exactly on
     // the boundary is NOT counted (it is the split instance itself).
+    //
+    // These cases are about the RULE SHAPE, not about DST, so they enumerate in the explicit
+    // fixed-UTC zone (FHQ-161 made the zone a required argument). The DST behaviour lives in
+    // RecurrenceRuleBuilderZoneAnchorTests.
 
     private static readonly DateTimeOffset DailyStart =
         new(2026, 3, 2, 9, 0, 0, TimeSpan.Zero); // a Monday
+
+    private static readonly IRecurrenceTimeZone Utc = FixedUtcRecurrenceTimeZone.Instance;
 
     [Fact]
     public void CountOccurrencesBefore_Daily_CountsDaysStrictlyBeforeBoundary()
     {
         // Occurrences: Mar 2, 3, 4, 5, ... The boundary is Mar 5 09:00 → Mar 2,3,4 are before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY", DailyStart, DailyStart.AddDays(3));
+            "RRULE:FREQ=DAILY", DailyStart, DailyStart.AddDays(3), Utc);
 
         count.Should().Be(3);
     }
@@ -529,7 +536,7 @@ public class RecurrenceRuleBuilderTests
     {
         // boundary exactly on the start → zero occurrences strictly before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY", DailyStart, DailyStart);
+            "RRULE:FREQ=DAILY", DailyStart, DailyStart, Utc);
 
         count.Should().Be(0);
     }
@@ -539,7 +546,7 @@ public class RecurrenceRuleBuilderTests
     {
         // Every 2 days from Mar 2: Mar 2, 4, 6, 8, ... boundary Mar 8 09:00 → Mar 2,4,6 before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY;INTERVAL=2", DailyStart, DailyStart.AddDays(6));
+            "RRULE:FREQ=DAILY;INTERVAL=2", DailyStart, DailyStart.AddDays(6), Utc);
 
         count.Should().Be(3);
     }
@@ -549,7 +556,7 @@ public class RecurrenceRuleBuilderTests
     {
         // COUNT=4 → only 4 occurrences exist (Mar 2,3,4,5). A boundary far in the future counts all 4.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY;COUNT=4", DailyStart, DailyStart.AddYears(1));
+            "RRULE:FREQ=DAILY;COUNT=4", DailyStart, DailyStart.AddYears(1), Utc);
 
         count.Should().Be(4);
     }
@@ -560,7 +567,7 @@ public class RecurrenceRuleBuilderTests
         // FREQ=WEEKLY anchored to its start day (Monday): Mar 2, 9, 16, 23 ...
         // boundary Mar 23 → Mar 2, 9, 16 before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=WEEKLY", DailyStart, DailyStart.AddDays(21));
+            "RRULE:FREQ=WEEKLY", DailyStart, DailyStart.AddDays(21), Utc);
 
         count.Should().Be(3);
     }
@@ -572,7 +579,7 @@ public class RecurrenceRuleBuilderTests
         // Occurrences: Mon Mar 2, Wed Mar 4, Fri Mar 6, Mon Mar 9, Wed Mar 11, ...
         // boundary Mar 9 09:00 → Mar 2, 4, 6 before it (Mar 9 excluded).
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR", DailyStart, DailyStart.AddDays(7));
+            "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR", DailyStart, DailyStart.AddDays(7), Utc);
 
         count.Should().Be(3);
     }
@@ -583,7 +590,7 @@ public class RecurrenceRuleBuilderTests
         // FREQ=MONTHLY;BYMONTHDAY=2 from Mar 2: Mar 2, Apr 2, May 2, Jun 2 ...
         // boundary Jun 2 → Mar, Apr, May before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=MONTHLY;BYMONTHDAY=2", DailyStart, DailyStart.AddMonths(3));
+            "RRULE:FREQ=MONTHLY;BYMONTHDAY=2", DailyStart, DailyStart.AddMonths(3), Utc);
 
         count.Should().Be(3);
     }
@@ -597,7 +604,7 @@ public class RecurrenceRuleBuilderTests
         var firstMonMay = new DateTimeOffset(2026, 5, 4, 9, 0, 0, TimeSpan.Zero);
 
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=MONTHLY;BYDAY=1MO", firstMonMarch, firstMonMay);
+            "RRULE:FREQ=MONTHLY;BYDAY=1MO", firstMonMarch, firstMonMay, Utc);
 
         count.Should().Be(2);
     }
@@ -608,7 +615,7 @@ public class RecurrenceRuleBuilderTests
         // FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=2 from Mar 2 2026: 2026, 2027, 2028 ...
         // boundary Mar 2 2028 → 2026, 2027 before it.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=2", DailyStart, DailyStart.AddYears(2));
+            "RRULE:FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=2", DailyStart, DailyStart.AddYears(2), Utc);
 
         count.Should().Be(2);
     }
@@ -619,7 +626,7 @@ public class RecurrenceRuleBuilderTests
         // A Never rule with a boundary far enough out to exceed the defensive cap must terminate
         // and return the cap rather than loop forever.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY", DailyStart, DailyStart.AddYears(100));
+            "RRULE:FREQ=DAILY", DailyStart, DailyStart.AddYears(100), Utc);
 
         count.Should().BeLessThanOrEqualTo(10_000);
         count.Should().BeGreaterThan(0);
@@ -633,7 +640,7 @@ public class RecurrenceRuleBuilderTests
         // following" split this is the remaining<=0 case the caller (ReshapeRule) then rejects: the
         // builder itself clamps rather than throwing.
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=DAILY;COUNT=3", DailyStart, DailyStart.AddDays(10));
+            "RRULE:FREQ=DAILY;COUNT=3", DailyStart, DailyStart.AddDays(10), Utc);
 
         count.Should().Be(3);
     }
@@ -646,7 +653,7 @@ public class RecurrenceRuleBuilderTests
         // advance the year forever (emitted never increments). It must terminate (returning 0) rather
         // than hang. The timeout race is the regression guard against the infinite loop (Major 4).
         var work = Task.Run(() => RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30", DailyStart, DailyStart.AddYears(5)));
+            "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30", DailyStart, DailyStart.AddYears(5), Utc));
 
         var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
         finished.Should().BeSameAs(work, "a never-emitting rule must not loop forever");
@@ -664,7 +671,7 @@ public class RecurrenceRuleBuilderTests
         // 30-day month only ever revisits that same 30-day month → never emits.
         var aprilStart = new DateTimeOffset(2026, 4, 15, 9, 0, 0, TimeSpan.Zero);
         var work = Task.Run(() => RecurrenceRuleBuilder.CountOccurrencesBefore(
-            "RRULE:FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=12", aprilStart, aprilStart.AddYears(5)));
+            "RRULE:FREQ=MONTHLY;BYMONTHDAY=31;INTERVAL=12", aprilStart, aprilStart.AddYears(5), Utc));
 
         var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
         finished.Should().BeSameAs(work, "a never-emitting monthly rule must terminate within the cap");
@@ -681,7 +688,7 @@ public class RecurrenceRuleBuilderTests
         var windowEnd = seriesStart.AddMonths(2);
 
         var occurrences = RecurrenceRuleBuilder
-            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, seriesStart, windowEnd)
+            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, seriesStart, windowEnd, Utc)
             .ToList();
 
         occurrences.Should().HaveCount(4);
@@ -702,7 +709,7 @@ public class RecurrenceRuleBuilderTests
         var windowEnd = seriesStart.AddDays(18);
 
         var occurrences = RecurrenceRuleBuilder
-            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, windowStart, windowEnd)
+            .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4", seriesStart, windowStart, windowEnd, Utc)
             .ToList();
 
         occurrences.Should().ContainSingle()
@@ -716,7 +723,7 @@ public class RecurrenceRuleBuilderTests
         var windowEnd = seriesStart.AddDays(5);
 
         var occurrences = RecurrenceRuleBuilder
-            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd)
+            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd, Utc)
             .ToList();
 
         // Days 0..4 are inside [start, start+5); day 5 equals windowEnd and is excluded.
@@ -731,7 +738,7 @@ public class RecurrenceRuleBuilderTests
         var windowEnd = seriesStart.AddMonths(1);
 
         var occurrences = RecurrenceRuleBuilder
-            .Expand("RRULE:FREQ=DAILY;UNTIL=20260603T090000Z", seriesStart, seriesStart, windowEnd)
+            .Expand("RRULE:FREQ=DAILY;UNTIL=20260603T090000Z", seriesStart, seriesStart, windowEnd, Utc)
             .ToList();
 
         // Jun 1, 2, 3 (UNTIL is inclusive of the matching instant).
@@ -747,7 +754,7 @@ public class RecurrenceRuleBuilderTests
         var windowEnd = seriesStart.AddYears(500);
 
         var work = Task.Run(() => RecurrenceRuleBuilder
-            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd).Count());
+            .Expand("RRULE:FREQ=DAILY", seriesStart, seriesStart, windowEnd, Utc).Count());
 
         var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
         finished.Should().BeSameAs(work, "an unbounded daily rule must terminate within the hard cap");

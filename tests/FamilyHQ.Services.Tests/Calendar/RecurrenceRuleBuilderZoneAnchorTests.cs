@@ -211,17 +211,31 @@ public class RecurrenceRuleBuilderZoneAnchorTests
     // ── The unknown/absent-zone fallback is deliberate, and pinned ────────────────────────────
 
     [Fact]
-    public void Expand_WithNoZone_StepsFixedUtcInstantsAndShiftsTheLocalWallClock()
+    public void FixedUtcZone_RoundTripsAWallClockReadingAtZeroOffset()
     {
-        // Documented fallback (FixedOffsetRecurrenceTimeZone): a caller that supplies no series zone
-        // gets EXACTLY the pre-FHQ-161 fixed-UTC enumeration. That is exact for date-anchored all-day
-        // series and NOT DST-aware for anything else — production logs a Warning when it lands here.
+        // The named fallback is public API (FHQ-161 made the zone a required argument, so callers
+        // must state fixed-UTC intent). It has no transitions: every reading maps to exactly one
+        // instant at +00:00 and back.
+        var zone = FixedUtcRecurrenceTimeZone.Instance;
+
+        zone.Id.Should().Be("UTC");
+        zone.ToWallClock(Utc(2026, 10, 27, 19, 0)).Should().Be(new DateTime(2026, 10, 27, 19, 0, 0));
+        zone.ToInstant(new DateTime(2026, 10, 27, 19, 0, 0)).Should().Be(Utc(2026, 10, 27, 19, 0));
+    }
+
+    [Fact]
+    public void Expand_WithTheFixedUtcZone_StepsFixedUtcInstantsAndShiftsTheLocalWallClock()
+    {
+        // Documented fallback (FixedUtcRecurrenceTimeZone): a caller that names the fixed-UTC zone
+        // gets EXACTLY the pre-FHQ-161 enumeration. That is exact for date-anchored all-day series
+        // and NOT DST-aware for anything else — production logs a Warning when a TIMED series lands
+        // here.
         var zone = LondonZone();
         var seriesStart = Utc(2026, 10, 13, 18, 0);
 
         var occurrences = RecurrenceRuleBuilder
             .Expand("RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5", seriesStart,
-                Utc(2026, 10, 1, 0, 0), Utc(2026, 12, 1, 0, 0), zone: null)
+                Utc(2026, 10, 1, 0, 0), Utc(2026, 12, 1, 0, 0), FixedUtcRecurrenceTimeZone.Instance)
             .ToList();
 
         occurrences.Should().Equal(
@@ -254,15 +268,15 @@ public class RecurrenceRuleBuilderZoneAnchorTests
     }
 
     [Fact]
-    public void CountOccurrencesBefore_SplitAfterAnAutumnTransitionWithNoZone_OverCountsByOne()
+    public void CountOccurrencesBefore_SplitAfterAnAutumnTransitionWithTheFixedUtcZone_OverCountsByOne()
     {
-        // Pins the fallback's known limitation: without the zone the enumerated twin of the split
-        // occurrence lands an hour early (18:00Z < 19:00Z) and is wrongly counted as "before".
+        // Pins the fallback's known limitation: without the series zone the enumerated twin of the
+        // split occurrence lands an hour early (18:00Z < 19:00Z) and is wrongly counted as "before".
         var count = RecurrenceRuleBuilder.CountOccurrencesBefore(
             "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5",
             Utc(2026, 10, 13, 18, 0),
             Utc(2026, 11, 3, 19, 0),
-            zone: null);
+            FixedUtcRecurrenceTimeZone.Instance);
 
         count.Should().Be(4);
     }
@@ -271,14 +285,15 @@ public class RecurrenceRuleBuilderZoneAnchorTests
     public void CountOccurrencesBefore_SplitAfterASpringTransition_IsUnaffected()
     {
         // The spring transition is benign for this path — the twin lands an hour LATE and is
-        // correctly excluded — so the zone-aware and zone-less counts agree. Pinned so a future
+        // correctly excluded — so the zone-aware and fixed-UTC counts agree. Pinned so a future
         // change cannot silently break the direction that already worked.
         const string Rule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5";
         var anchor = Utc(2026, 3, 17, 19, 0);   // Tue 17 Mar, 19:00 GMT
         var split = Utc(2026, 4, 7, 18, 0);     // occurrence 4, 19:00 BST
 
         RecurrenceRuleBuilder.CountOccurrencesBefore(Rule, anchor, split, LondonZone()).Should().Be(3);
-        RecurrenceRuleBuilder.CountOccurrencesBefore(Rule, anchor, split, zone: null).Should().Be(3);
+        RecurrenceRuleBuilder.CountOccurrencesBefore(
+            Rule, anchor, split, FixedUtcRecurrenceTimeZone.Instance).Should().Be(3);
     }
 
     // ── Termination guards still hold with a zone injected ────────────────────────────────────
@@ -305,7 +320,7 @@ public class RecurrenceRuleBuilderZoneAnchorTests
             Utc(3000, 1, 1, 0, 0),
             LondonZone()));
 
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(10)));
+        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
 
         finished.Should().BeSameAs(work, "a never-emitting rule must terminate on the period cap");
         (await work).Should().Be(0);

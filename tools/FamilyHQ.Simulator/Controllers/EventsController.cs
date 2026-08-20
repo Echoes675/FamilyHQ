@@ -603,11 +603,13 @@ public class EventsController : ControllerBase
                 master.Id, master.StartTimeZone);
         }
 
+        var expansionZone = seriesZone ?? FixedUtcRecurrenceTimeZone.Instance;
+
         IReadOnlyList<DateTimeOffset> occurrences;
         try
         {
             occurrences = RecurrenceRuleBuilder
-                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd, seriesZone)
+                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd, expansionZone)
                 .ToList();
         }
         catch (ArgumentException ex)
