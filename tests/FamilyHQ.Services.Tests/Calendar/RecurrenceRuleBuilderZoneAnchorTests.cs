@@ -20,6 +20,17 @@ public class RecurrenceRuleBuilderZoneAnchorTests
 {
     private const string London = "Europe/London";
 
+    /// <summary>
+    /// Upper bound on a bounded enumeration, used only as a runaway-loop tripwire. The enumerators
+    /// stop at <see cref="RecurrenceRuleBuilder.MaxEnumeratedOccurrences"/>, so on the correct path
+    /// they finish in microseconds and never approach this. The only thing it measures is "the loop
+    /// never terminated", turning that into a prompt failure instead of a hung CI run (FHQ-158: a
+    /// real-clock bound is unavoidable when the failure mode under test is an infinite loop, and one
+    /// that can only fire on a genuine hang cannot flake). Matches the sibling constant in
+    /// <c>RecurrenceRuleBuilderTests</c>.
+    /// </summary>
+    private static readonly TimeSpan RunawayEnumerationTripwire = TimeSpan.FromSeconds(5);
+
     private static IRecurrenceTimeZone LondonZone() =>
         new NodaTimeRecurrenceTimeZoneFactory().TryCreate(London)
         ?? throw new InvalidOperationException($"tzdb has no zone '{London}'.");
@@ -320,9 +331,8 @@ public class RecurrenceRuleBuilderZoneAnchorTests
             Utc(3000, 1, 1, 0, 0),
             LondonZone()));
 
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(5)));
+        var count = await work.WaitAsync(RunawayEnumerationTripwire); // throws if it loops forever
 
-        finished.Should().BeSameAs(work, "a never-emitting rule must terminate on the period cap");
-        (await work).Should().Be(0);
+        count.Should().Be(0, "a never-emitting rule must terminate on the period cap");
     }
 }
