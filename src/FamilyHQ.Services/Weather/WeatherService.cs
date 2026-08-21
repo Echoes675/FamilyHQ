@@ -119,25 +119,29 @@ public class WeatherService(
     private List<WeatherDataPoint> FreshOnly(
         List<WeatherDataPoint> dataPoints, WeatherDataType section, int locationSettingId)
     {
-        var fresh = dataPoints
-            .Where(dp => !IsStale(dp.RetrievedAt, _options.ForecastStaleAfterMinutes))
-            .ToList();
+        var byStaleness = dataPoints.ToLookup(
+            dp => IsStale(dp.RetrievedAt, _options.ForecastStaleAfterMinutes));
+        var dropped = byStaleness[true].ToList();
 
-        if (fresh.Count < dataPoints.Count)
+        if (dropped.Count > 0)
         {
+            // The newest DROPPED row — the most recent refresh that is nonetheless past the window.
+            // Taking the max over every row would name one that is not stale at all whenever a
+            // section holds rows of mixed ages, contradicting the message's own claim.
             LogSectionHidden(section, locationSettingId,
-                dataPoints.Max(dp => dp.RetrievedAt), _options.ForecastStaleAfterMinutes);
+                dropped.Max(dp => dp.RetrievedAt), _options.ForecastStaleAfterMinutes);
         }
 
-        return fresh;
+        return [.. byStaleness[false]];
     }
 
     private bool IsStale(DateTimeOffset retrievedAt, int staleAfterMinutes)
         => timeProvider.GetUtcNow() - retrievedAt > TimeSpan.FromMinutes(staleAfterMinutes);
 
-    // Debug, not Warning: the poller already reports the upstream failure that caused the gap, and
-    // this fires on every dashboard read for as long as the gap lasts. The location id is an opaque
-    // key, never a place name.
+    // Debug, not Warning: this fires on every dashboard read for as long as the gap lasts, and a
+    // gap wide enough to reach a retention window has already been reported once per refresh at
+    // Information by WeatherRefreshService (a degraded response is a 200, so the poller does NOT
+    // report it as a failure). The location id is an opaque key, never a place name.
     private void LogSectionHidden(
         WeatherDataType section, int locationSettingId, DateTimeOffset retrievedAt, int staleAfterMinutes)
         => logger.LogDebug(

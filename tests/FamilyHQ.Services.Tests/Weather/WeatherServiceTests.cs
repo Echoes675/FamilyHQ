@@ -7,6 +7,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Weather;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
@@ -16,13 +17,19 @@ public class WeatherServiceTests
     /// <summary>Fixed "now" for every staleness test — nothing here reads the wall clock.</summary>
     private static readonly DateTimeOffset Now = new(2026, 6, 18, 12, 0, 0, TimeSpan.Zero);
 
+    /// <summary>Reads a structured log property rather than the rendered message.</summary>
+    private static bool PropertyIs(object? state, string name, object expected) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == name && Equals(kv.Value, expected));
+
     private static WeatherService CreateSut(
         Mock<IWeatherDataPointRepository> dataRepo,
         Mock<ILocationSettingRepository> locationRepo,
         Mock<ITimeZoneLookup> tzLookup,
         string userId = "user-1",
         WeatherOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        Mock<ILogger<WeatherService>>? logger = null)
     {
         var weatherSettingRepoMock = new Mock<IWeatherSettingRepository>();
         weatherSettingRepoMock
@@ -40,7 +47,7 @@ public class WeatherServiceTests
             tzLookup.Object,
             Microsoft.Extensions.Options.Options.Create(options ?? new WeatherOptions()),
             timeProvider ?? new FakeTimeProvider(Now),
-            NullLogger<WeatherService>.Instance);
+            logger?.Object ?? NullLogger<WeatherService>.Instance);
     }
 
     private static Mock<ILocationSettingRepository> LocationRepoReturningDublin() =>
@@ -267,6 +274,21 @@ public class WeatherServiceTests
     }
 
     [Fact]
+    public async Task GetDailyForecastAsync_SectionExactlyAtTheSixHourWindow_IsStillShown()
+    {
+        // The boundary is the same "clears PAST the window" rule the Current row is pinned at, so
+        // both windows are asserted at exactly their edge, not only either side of it.
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        dataRepo.Setup(x => x.GetDailyAsync(1, It.IsAny<int>(), "Europe/Dublin", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Point(WeatherDataType.Daily, Now.AddMinutes(-360))]);
+
+        var result = await CreateSut(dataRepo, LocationRepoReturningDublin(), DublinZoneLookup())
+            .GetDailyForecastAsync(days: 7);
+
+        result.Should().ContainSingle("the window is inclusive at its boundary — it clears PAST 360 minutes");
+    }
+
+    [Fact]
     public async Task GetDailyForecastAsync_SectionPastTheSixHourWindow_IsHidden()
     {
         var dataRepo = new Mock<IWeatherDataPointRepository>();
@@ -319,6 +341,57 @@ public class WeatherServiceTests
             .GetHourlyAsync(new DateOnly(2026, 6, 18));
 
         result.Should().ContainSingle("only the row from the 7-hour-old refresh is past the window");
+    }
+
+    [Fact]
+    public async Task GetHourlyAsync_MixedAges_NamesTheNewestHiddenRefreshInTheLog()
+    {
+        // The message asserts the row it names is "past the retention window". Reporting the max
+        // over EVERY row names the freshest one — which is not past the window at all — so an
+        // operator reading Seq during an outage is told the section aged out at a time when it
+        // demonstrably had not.
+        var newestHidden = Now.AddHours(-7);
+        var logger = new Mock<ILogger<WeatherService>>();
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        dataRepo.Setup(x => x.GetHourlyAsync(1, It.IsAny<DateOnly>(), "Europe/Dublin", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                Point(WeatherDataType.Hourly, Now.AddHours(-1)),
+                Point(WeatherDataType.Hourly, newestHidden),
+                Point(WeatherDataType.Hourly, Now.AddHours(-9))
+            ]);
+
+        await CreateSut(dataRepo, LocationRepoReturningDublin(), DublinZoneLookup(), logger: logger)
+            .GetHourlyAsync(new DateOnly(2026, 6, 18));
+
+        logger.Verify(l => l.Log(
+            LogLevel.Debug,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => PropertyIs(v, "RetrievedAt", newestHidden)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "the log must name the newest refresh that IS hidden, not the newest row present");
+    }
+
+    [Fact]
+    public async Task GetHourlyAsync_EverySectionFresh_LogsNothing()
+    {
+        var logger = new Mock<ILogger<WeatherService>>();
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        dataRepo.Setup(x => x.GetHourlyAsync(1, It.IsAny<DateOnly>(), "Europe/Dublin", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Point(WeatherDataType.Hourly, Now.AddHours(-1))]);
+
+        await CreateSut(dataRepo, LocationRepoReturningDublin(), DublinZoneLookup(), logger: logger)
+            .GetHourlyAsync(new DateOnly(2026, 6, 18));
+
+        logger.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "nothing was hidden, so a healthy dashboard read must be silent");
     }
 
     // Configurability is asserted in BOTH directions per window, so that a hard-coded constant that

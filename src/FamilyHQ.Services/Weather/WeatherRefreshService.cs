@@ -4,6 +4,7 @@ using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Weather;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 
@@ -14,8 +15,13 @@ public class WeatherRefreshService(
     IWeatherDataPointRepository weatherDataPointRepo,
     IWeatherBroadcaster weatherBroadcaster,
     ITimeZoneLookup timeZoneLookup,
+    TimeProvider timeProvider,
     ILogger<WeatherRefreshService> logger) : IWeatherRefreshService
 {
+    /// <summary>Every section a healthy Open-Meteo response carries.</summary>
+    private static readonly WeatherDataType[] AllSections =
+        [WeatherDataType.Current, WeatherDataType.Hourly, WeatherDataType.Daily];
+
     public async Task<WeatherRefreshResult> RefreshAsync(string userId, CancellationToken ct = default)
     {
         logger.LogInformation("Weather refresh requested for user {UserId}.", userId);
@@ -49,7 +55,10 @@ public class WeatherRefreshService(
         var weatherResponse = await weatherProvider.GetWeatherAsync(
             location.Latitude, location.Longitude, ianaTimeZone, ct);
 
-        var now = DateTimeOffset.UtcNow;
+        // Every row this refresh writes carries the same RetrievedAt, and WeatherService measures
+        // the retention windows against it — so both ends of the window must read the same clock
+        // (FHQ-159). DateTimeOffset.UtcNow here made half of it untestable.
+        var now = timeProvider.GetUtcNow();
         var windThreshold = weatherSetting.WindThresholdKmh;
 
         var dataPoints = BuildDataPoints(location.Id, weatherResponse, now, windThreshold, ianaTimeZone);
@@ -61,6 +70,8 @@ public class WeatherRefreshService(
         logger.LogInformation(
             "Weather data updated for user {UserId}, location {LocationId} ({PlaceName} @ {Lat}, {Lon}). Wrote {DataPointsWritten} data points.",
             userId, location.Id, location.PlaceName, location.Latitude, location.Longitude, dataPoints.Count);
+
+        LogDegradedResponse(userId, location.Id, dataPoints);
 
         return new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, location.Id, dataPoints.Count);
     }
@@ -126,6 +137,25 @@ public class WeatherRefreshService(
         }
 
         return dataPoints;
+    }
+
+    /// <summary>
+    /// FHQ-159: the production signal for the failure this ticket exists for. A degraded Open-Meteo
+    /// response is a well-formed 200, so <see cref="WeatherPollerService"/> records it as a success
+    /// and the empty-section detail is Debug (off in production) — without this, a section could
+    /// quietly age out of its retention window and vanish from the kiosk with nothing in Seq above
+    /// Debug to explain it. Information, once per refresh: at most every
+    /// <see cref="Options.WeatherOptions.PollIntervalMinutes"/> per user, not once per read.
+    /// </summary>
+    private void LogDegradedResponse(string userId, int locationSettingId, List<WeatherDataPoint> dataPoints)
+    {
+        var carried = WeatherRetention.SectionsReplacedBy(dataPoints);
+        if (carried.Count == AllSections.Length)
+            return;
+
+        logger.LogInformation(
+            "Weather refresh for user {UserId}, location {LocationId} succeeded but carried no {MissingSections} data. Those sections keep their stored values until their retention window expires.",
+            userId, locationSettingId, AllSections.Where(s => !carried.Contains(s)).ToArray());
     }
 
     private static DateTimeOffset BuildDailyTimestamp(DateOnly date, string? ianaTimeZone)

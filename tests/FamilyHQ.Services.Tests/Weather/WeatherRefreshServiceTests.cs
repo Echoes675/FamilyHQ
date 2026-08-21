@@ -2,12 +2,24 @@ namespace FamilyHQ.Services.Tests.Weather;
 
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
+using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Weather;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
+using Moq;
 
 public class WeatherRefreshServiceTests
 {
+    private const string UserId = "user-1";
     private static readonly DateTimeOffset RetrievedAt = new(2026, 6, 18, 8, 0, 0, TimeSpan.Zero);
+
+    private static bool MissingSectionsAre(object? state, params WeatherDataType[] expected) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == "MissingSections"
+            && kv.Value is IReadOnlyList<WeatherDataType> sections
+            && sections.OrderBy(s => s).SequenceEqual(expected.OrderBy(s => s)));
 
     private static WeatherCurrentItem Current() =>
         new(WeatherCondition.Clear, TemperatureCelsius: 15, WindSpeedKmh: 5);
@@ -22,6 +34,54 @@ public class WeatherRefreshServiceTests
 
     private static WeatherResponse BuildMinimalResponse(List<WeatherDailyItem> daily) =>
         new(Current: Current(), HourlyForecasts: [], DailyForecasts: daily);
+
+    /// <summary>
+    /// Builds the service over substituted collaborators. Returns the data-point repository so a
+    /// test can read the rows the refresh actually handed it, and the logger so a test can read the
+    /// production signal the refresh emitted.
+    /// </summary>
+    private static (WeatherRefreshService Sut,
+                    Mock<IWeatherDataPointRepository> DataRepo,
+                    Mock<ILogger<WeatherRefreshService>> Logger) CreateSut(
+        WeatherResponse response, DateTimeOffset? now = null)
+    {
+        var settingRepo = new Mock<IWeatherSettingRepository>();
+        settingRepo.Setup(x => x.GetOrCreateAsync(UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherSetting { Enabled = true, WindThresholdKmh = 30 });
+
+        var locationRepo = new Mock<ILocationSettingRepository>();
+        locationRepo.Setup(x => x.GetAsync(UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LocationSetting { Id = 1, UserId = UserId, Latitude = 53.35, Longitude = -6.26 });
+
+        var provider = new Mock<IWeatherProvider>();
+        provider.Setup(x => x.GetWeatherAsync(53.35, -6.26, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        var dataRepo = new Mock<IWeatherDataPointRepository>();
+        var logger = new Mock<ILogger<WeatherRefreshService>>();
+
+        var sut = new WeatherRefreshService(
+            settingRepo.Object,
+            locationRepo.Object,
+            provider.Object,
+            dataRepo.Object,
+            new Mock<IWeatherBroadcaster>().Object,
+            new Mock<ITimeZoneLookup>().Object,
+            new FakeTimeProvider(now ?? RetrievedAt),
+            logger.Object);
+
+        return (sut, dataRepo, logger);
+    }
+
+    private static void VerifyDegradedLog(
+        Mock<ILogger<WeatherRefreshService>> logger, Times times, params WeatherDataType[] missing) =>
+        logger.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => MissingSectionsAre(v, missing)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times);
 
     [Fact]
     public void BuildDataPoints_DailyTimestamp_WithBstZone_AnchoredToLocalMidnight()
@@ -177,5 +237,74 @@ public class WeatherRefreshServiceTests
 
         dataPoints.Should().BeEmpty(
             "a wholly empty response replaces nothing, so every stored section survives it");
+    }
+
+    // ── FHQ-159: the production signal for a degraded-but-200 response ───────────────────────────
+    //
+    // A ragged Open-Meteo payload arrives as a well-formed 200, so WeatherPollerService counts it a
+    // SUCCESS (only exceptions are failures) and the empty-section detail is Debug, which is off in
+    // production. Without an Information-level record here, a section could age out of its
+    // retention window and vanish from the kiosk with nothing in Seq to explain it.
+
+    [Fact]
+    public async Task RefreshAsync_ResponseMissingTheHourlySection_ReportsTheGapAtInformation()
+    {
+        var (sut, _, logger) = CreateSut(
+            new WeatherResponse(Current: Current(), HourlyForecasts: [], DailyForecasts: [Day(18)]));
+
+        await sut.RefreshAsync(UserId);
+
+        VerifyDegradedLog(logger, Times.Once(), WeatherDataType.Hourly);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ResponseCarryingNothing_NamesEverySectionAsMissing()
+    {
+        var (sut, _, logger) = CreateSut(
+            new WeatherResponse(Current: null, HourlyForecasts: [], DailyForecasts: []));
+
+        await sut.RefreshAsync(UserId);
+
+        VerifyDegradedLog(logger, Times.Once(),
+            WeatherDataType.Current, WeatherDataType.Hourly, WeatherDataType.Daily);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_HealthyResponse_ReportsNoGap()
+    {
+        var (sut, _, logger) = CreateSut(
+            new WeatherResponse(Current: Current(), HourlyForecasts: [Hour(9)], DailyForecasts: [Day(18)]));
+
+        await sut.RefreshAsync(UserId);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("carried no")),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "a complete response is not a degradation, so the kiosk's every-poll path stays quiet");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_StampsRetrievedAtFromTheInjectedClock()
+    {
+        // WeatherService measures both retention windows against RetrievedAt through its injected
+        // TimeProvider. Writing it from the ambient DateTimeOffset.UtcNow left one end of the
+        // window on a clock no test could move (FHQ-159).
+        var now = new DateTimeOffset(2026, 6, 18, 15, 30, 0, TimeSpan.Zero);
+        var (sut, dataRepo, _) = CreateSut(
+            new WeatherResponse(Current: Current(), HourlyForecasts: [Hour(9)], DailyForecasts: []),
+            now);
+
+        await sut.RefreshAsync(UserId);
+
+        dataRepo.Verify(x => x.ReplaceSectionsAsync(
+            1,
+            It.Is<List<WeatherDataPoint>>(points => points.Count > 0 && points.All(p => p.RetrievedAt == now)),
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "every row a refresh writes is stamped with that refresh's clock reading");
     }
 }
