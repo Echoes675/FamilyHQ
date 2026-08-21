@@ -20,8 +20,14 @@ public static class ServiceCollectionExtensions
         // FHQ-166: the log-seam redactor. Singleton — the salt is read once at boot and the redactor
         // is stateless thereafter, so every consumer must share the instance or the same calendar
         // would hash differently in different scopes.
+        //
+        // Validated eagerly here (the FHQ-91 precedent above): the factory below does not run until
+        // something first resolves IPiiRedactor, which in practice is GoogleCalendarClient on the
+        // first sync — a salt too short to be worth having must fail the deployment, not a sync.
+        var redactionSalt = configuration[Core.Logging.SaltedHashPiiRedactor.SaltConfigurationKey];
+        Core.Logging.SaltedHashPiiRedactor.ValidateSalt(redactionSalt);
         services.AddSingleton<IPiiRedactor>(sp => new Core.Logging.SaltedHashPiiRedactor(
-            configuration[Core.Logging.SaltedHashPiiRedactor.SaltConfigurationKey],
+            redactionSalt,
             sp.GetRequiredService<ILogger<Core.Logging.SaltedHashPiiRedactor>>()));
 
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));

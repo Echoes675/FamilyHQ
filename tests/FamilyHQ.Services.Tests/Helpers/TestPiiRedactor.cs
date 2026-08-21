@@ -17,7 +17,12 @@ namespace FamilyHQ.Services.Tests.Helpers;
 /// </summary>
 internal static class TestPiiRedactor
 {
-    internal const string Salt = "fhq-166-unit-test-salt";
+    /// <summary>
+    /// At least <see cref="SaltedHashPiiRedactor.MinimumSaltLength"/> characters, because the
+    /// production type rejects a shorter one — a test fixture that could not be configured in
+    /// production would be testing something production cannot do.
+    /// </summary>
+    internal const string Salt = "fhq-166-unit-test-salt-long-enough-to-be-a-salt";
 
     internal static IPiiRedactor Instance { get; } =
         new SaltedHashPiiRedactor(Salt, new Mock<ILogger<SaltedHashPiiRedactor>>().Object);

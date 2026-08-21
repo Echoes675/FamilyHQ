@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using FamilyHQ.Core.Logging;
 using FluentAssertions;
@@ -13,7 +15,10 @@ namespace FamilyHQ.Core.Tests.Logging;
 /// </summary>
 public class SaltedHashPiiRedactorTests
 {
-    private const string Salt = "a-deployment-salt";
+    // Long enough to satisfy SaltedHashPiiRedactor.MinimumSaltLength — a shorter one would be
+    // rejected in production, so a fixture using one would be testing a configuration that cannot
+    // exist.
+    private const string Salt = "a-deployment-salt-that-is-long-enough";
 
     // A Google PRIMARY calendar's id is the account's email address — the exact shape this exists for.
     private const string PrimaryCalendarId = "a.family.member@example.com";
@@ -97,8 +102,26 @@ public class SaltedHashPiiRedactorTests
     {
         // If the salt did not participate, the token would be a plain hash — and a plain hash of an
         // address drawn from a handful of candidates is confirmable by hashing the candidates.
-        CreateSut("salt-one").Redact(PrimaryCalendarId)
-            .Should().NotBe(CreateSut("salt-two").Redact(PrimaryCalendarId));
+        CreateSut("salt-one-padded-to-the-minimum-length").Redact(PrimaryCalendarId)
+            .Should().NotBe(CreateSut("salt-two-padded-to-the-minimum-length").Redact(PrimaryCalendarId));
+    }
+
+    [Fact]
+    public void Redact_TakesTheSaltAsTheHmacKeyAndTheValueAsTheMessage_NotTheOtherWayRound()
+    {
+        // HMAC is not symmetric in its arguments, but swapping them still yields a stable,
+        // non-reversible, fixed-length token — so every other test in this class would go on
+        // passing while the construction quietly became "keyed by the address, salted by the salt".
+        // That is the weaker arrangement: the key is what an attacker must not be able to supply,
+        // and the address is the thing they are guessing.
+        var token = CreateSut().Redact(PrimaryCalendarId);
+        var saltAsKey = Convert.ToHexStringLower(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(Salt), Encoding.UTF8.GetBytes(PrimaryCalendarId)));
+        var valueAsKey = Convert.ToHexStringLower(
+            HMACSHA256.HashData(Encoding.UTF8.GetBytes(PrimaryCalendarId), Encoding.UTF8.GetBytes(Salt)));
+
+        saltAsKey.Should().StartWith(token, "the salt is the key and the value is the message");
+        valueAsKey.Should().NotStartWith(token, "swapping the arguments must fail this test");
     }
 
     [Theory]
@@ -148,6 +171,58 @@ public class SaltedHashPiiRedactorTests
         first.Redact(PrimaryCalendarId).Should().Be(first.Redact(PrimaryCalendarId),
             "a per-process salt still correlates within its own process");
         first.Redact(PrimaryCalendarId).Should().NotBe(second.Redact(PrimaryCalendarId));
+    }
+
+    [Theory]
+    [InlineData("a")]
+    [InlineData("short-salt")]
+    [InlineData("0123456789abcdef0123456789abcde")] // one character under the minimum
+    public void Constructor_WithASuppliedSaltShorterThanTheMinimum_Throws(string salt)
+    {
+        // A one-character salt is guessed in a single pass over the alphabet, which puts the
+        // household candidate list straight back in play — the very attack the salt exists to
+        // defeat. Accepting it silently is worse than having no salt: it claims a protection it
+        // does not provide, and unlike the absent case nothing warns anyone.
+        var construct = () => CreateSut(salt);
+
+        construct.Should().Throw<ArgumentException>()
+            .WithMessage($"*{SaltedHashPiiRedactor.MinimumSaltLength}*");
+    }
+
+    [Fact]
+    public void Constructor_WithASuppliedSaltOfExactlyTheMinimumLength_IsAccepted()
+    {
+        var minimumLengthSalt = new string('s', SaltedHashPiiRedactor.MinimumSaltLength);
+
+        CreateSut(minimumLengthSalt).Redact(PrimaryCalendarId).Should().MatchRegex("^[0-9a-f]{16}$");
+    }
+
+    [Fact]
+    public void Constructor_WhenRejectingAShortSalt_DoesNotPutTheSaltItselfInTheMessage()
+    {
+        // The exception reaches Seq via whatever logs the failed startup, and a rejected salt is
+        // still a secret someone intended to use. Name the key and the length, never the value.
+        const string rejectedSalt = "hunter2";
+
+        var construct = () => CreateSut(rejectedSalt);
+
+        construct.Should().Throw<ArgumentException>()
+            .Which.Message.Should().NotContain(rejectedSalt)
+            .And.Contain(SaltedHashPiiRedactor.SaltConfigurationKey);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateSalt_WithNoSuppliedSalt_DoesNotThrow(string? salt)
+    {
+        // Absent is the documented degraded mode, not a misconfiguration: the app boots, still
+        // redacts, and warns that correlation is now per-process. Only a salt that was SUPPLIED and
+        // is too short to work is a failure.
+        var validate = () => SaltedHashPiiRedactor.ValidateSalt(salt);
+
+        validate.Should().NotThrow();
     }
 
     [Fact]
