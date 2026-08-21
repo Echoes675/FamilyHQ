@@ -37,7 +37,8 @@ public class BackdoorEventsController : ControllerBase
             EndTime = body.End,
             IsAllDay = body.IsAllDay,
             UserId = body.UserId,
-            RecurrenceRule = body.RecurrenceRule
+            RecurrenceRule = body.RecurrenceRule,
+            StartTimeZone = body.StartTimeZone
         };
 
         _db.Events.Add(newEvent);

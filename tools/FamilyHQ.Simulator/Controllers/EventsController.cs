@@ -1,5 +1,6 @@
 using System.Globalization;
 using FamilyHQ.Core.Calendar.Recurrence;
+using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
@@ -18,13 +19,20 @@ public class EventsController : ControllerBase
     private readonly ILogger<EventsController> _logger;
     private readonly SyncFailureModeStore _failureStore;
     private readonly OutboundWriteCountStore _writeCountStore;
+    private readonly IRecurrenceTimeZoneFactory _recurrenceTimeZones;
 
-    public EventsController(SimContext db, ILogger<EventsController> logger, SyncFailureModeStore failureStore, OutboundWriteCountStore writeCountStore)
+    public EventsController(
+        SimContext db,
+        ILogger<EventsController> logger,
+        SyncFailureModeStore failureStore,
+        OutboundWriteCountStore writeCountStore,
+        IRecurrenceTimeZoneFactory recurrenceTimeZones)
     {
         _db = db;
         _logger = logger;
         _failureStore = failureStore;
         _writeCountStore = writeCountStore;
+        _recurrenceTimeZones = recurrenceTimeZones;
     }
 
     [HttpGet]
@@ -529,28 +537,43 @@ public class EventsController : ControllerBase
     private static object MapEventResponse(
         SimulatedEvent e,
         IReadOnlyList<string> attendeeCalendarIds,
-        bool includeRecurrence = false) => new
+        bool includeRecurrence = false)
     {
-        id          = e.Id,
-        status      = e.IsDeleted ? "cancelled" : "confirmed",
-        summary     = e.Id.StartsWith(PoisonEventIdPrefix) ? new string('X', PoisonSummaryLength) : e.Summary,
-        location    = e.Location,
-        description = e.Description,
-        start = e.IsAllDay ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") } : new { dateTime = e.StartTime.ToString("O") },
-        end   = e.IsAllDay ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }   : new { dateTime = e.EndTime.ToString("O") },
-        organizer   = new { email = e.CalendarId, self = true },
-        attendees = attendeeCalendarIds.Count > 0
-            ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
-            : null,
-        extendedProperties = e.ContentHash != null
-            ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = e.ContentHash } }
-            : null,
-        // FHQ-18.11: only the master fetch (events.get) carries the recurrence array. Listing
-        // instances never do — they reference the master via recurringEventId instead.
-        recurrence = includeRecurrence && !string.IsNullOrWhiteSpace(e.RecurrenceRule)
-            ? (object)new[] { e.RecurrenceRule }
-            : null
-    };
+        // FHQ-161: Google returns start.timeZone on a timed event, and events.get on a series master
+        // is where the app reads the zone its recurrence is anchored to (GetSeriesMasterAsync).
+        // Omitting it made every synced series look zone-less and silently took production's
+        // not-DST-aware fallback. Google reports the SAME zone on both ends of an event, which is
+        // why the one stored value serves both. All-day events carry a date and no zone, as Google
+        // emits them.
+        var eventZone = e.StartTimeZone;
+
+        return new
+        {
+            id          = e.Id,
+            status      = e.IsDeleted ? "cancelled" : "confirmed",
+            summary     = e.Id.StartsWith(PoisonEventIdPrefix) ? new string('X', PoisonSummaryLength) : e.Summary,
+            location    = e.Location,
+            description = e.Description,
+            start = e.IsAllDay
+                ? (object)new { date = e.StartTime.ToString("yyyy-MM-dd") }
+                : new { dateTime = e.StartTime.ToString("O"), timeZone = eventZone },
+            end   = e.IsAllDay
+                ? (object)new { date = e.EndTime.ToString("yyyy-MM-dd") }
+                : new { dateTime = e.EndTime.ToString("O"), timeZone = eventZone },
+            organizer   = new { email = e.CalendarId, self = true },
+            attendees = attendeeCalendarIds.Count > 0
+                ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
+                : null,
+            extendedProperties = e.ContentHash != null
+                ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = e.ContentHash } }
+                : null,
+            // FHQ-18.11: only the master fetch (events.get) carries the recurrence array. Listing
+            // instances never do — they reference the master via recurringEventId instead.
+            recurrence = includeRecurrence && !string.IsNullOrWhiteSpace(e.RecurrenceRule)
+                ? (object)new[] { e.RecurrenceRule }
+                : null
+        };
+    }
 
     // FHQ-18.11: expands a series master into the per-occurrence INSTANCES that fall inside the
     // sync window [windowStart, windowEnd). Each instance mirrors what Google emits with
@@ -575,11 +598,25 @@ public class EventsController : ControllerBase
                 .ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture),
             o => o);
 
+        // FHQ-161: Google anchors a recurrence to the master's start.timeZone and holds the WALL CLOCK
+        // across a DST transition — a 19:00 weekly event stays 19:00 and its UTC instant moves. Expand
+        // in that zone so the Simulator emits the same instants Google would. A master with no stored
+        // zone (all-day, or a seed that omitted it) expands at fixed UTC instants as before.
+        var seriesZone = _recurrenceTimeZones.TryCreate(master.StartTimeZone);
+        if (seriesZone is null && !string.IsNullOrWhiteSpace(master.StartTimeZone))
+        {
+            _logger.LogWarning(
+                "[SIM] Master {EventId} carries an unknown IANA time zone {TimeZone}; expanding at fixed UTC instants instead.",
+                master.Id, master.StartTimeZone);
+        }
+
+        var expansionZone = seriesZone ?? FixedUtcRecurrenceTimeZone.Instance;
+
         IReadOnlyList<DateTimeOffset> occurrences;
         try
         {
             occurrences = RecurrenceRuleBuilder
-                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd)
+                .Expand(master.RecurrenceRule!, masterStart, windowStart, windowEnd, expansionZone)
                 .ToList();
         }
         catch (ArgumentException ex)
@@ -618,7 +655,8 @@ public class EventsController : ControllerBase
                     attendeeCalendarIds: attendeeCalendarIds,
                     contentHash: ovr.ContentHash ?? master.ContentHash,
                     recurringEventId: master.Id,
-                    originalStartTimeUtc: occurrenceUtc.UtcDateTime);
+                    originalStartTimeUtc: occurrenceUtc.UtcDateTime,
+                    timeZone: ovr.StartTimeZone ?? master.StartTimeZone);
                 continue;
             }
 
@@ -633,8 +671,12 @@ public class EventsController : ControllerBase
                 summary     = master.Summary,
                 location    = master.Location,
                 description = master.Description,
-                start = master.IsAllDay ? (object)new { date = instanceStart.ToString("yyyy-MM-dd") } : new { dateTime = instanceStart.ToString("O") },
-                end   = master.IsAllDay ? (object)new { date = instanceEnd.ToString("yyyy-MM-dd") }   : new { dateTime = instanceEnd.ToString("O") },
+                // FHQ-161: Google reports start.timeZone on expanded instances too, not just on the
+                // master — an instance is a timed event like any other. Nothing reads it on this
+                // path today (the app resolves the series zone from the master), so it is emitted
+                // for fidelity.
+                start = master.IsAllDay ? (object)new { date = instanceStart.ToString("yyyy-MM-dd") } : new { dateTime = instanceStart.ToString("O"), timeZone = master.StartTimeZone },
+                end   = master.IsAllDay ? (object)new { date = instanceEnd.ToString("yyyy-MM-dd") }   : new { dateTime = instanceEnd.ToString("O"), timeZone = master.StartTimeZone },
                 organizer = new { email = master.CalendarId, self = true },
                 attendees = attendeeCalendarIds.Count > 0
                     ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
@@ -663,15 +705,17 @@ public class EventsController : ControllerBase
         IReadOnlyList<string> attendeeCalendarIds,
         string? contentHash,
         string recurringEventId,
-        DateTime originalStartTimeUtc) => new
+        DateTime originalStartTimeUtc,
+        string? timeZone) => new
     {
         id,
         status      = "confirmed",
         summary,
         location,
         description,
-        start = isAllDay ? (object)new { date = start.ToString("yyyy-MM-dd") } : new { dateTime = start.ToString("O") },
-        end   = isAllDay ? (object)new { date = end.ToString("yyyy-MM-dd") }   : new { dateTime = end.ToString("O") },
+        // FHQ-161: a timed instance carries start.timeZone exactly as a timed master does.
+        start = isAllDay ? (object)new { date = start.ToString("yyyy-MM-dd") } : new { dateTime = start.ToString("O"), timeZone },
+        end   = isAllDay ? (object)new { date = end.ToString("yyyy-MM-dd") }   : new { dateTime = end.ToString("O"), timeZone },
         organizer = new { email = calendarId, self = true },
         attendees = attendeeCalendarIds.Count > 0
             ? (object)attendeeCalendarIds.Select(cal => new { email = cal, responseStatus = "accepted" }).ToArray()
@@ -790,7 +834,8 @@ public class EventsController : ControllerBase
             attendeeCalendarIds: Array.Empty<string>(),
             contentHash: existingOverride.ContentHash ?? master.ContentHash,
             recurringEventId: master.Id,
-            originalStartTimeUtc: originalStartUtc));
+            originalStartTimeUtc: originalStartUtc,
+            timeZone: existingOverride.StartTimeZone ?? master.StartTimeZone));
     }
 
     // FHQ-18.11 (Pass 4): cancels a single occurrence of a series ("This event" delete). Stores (or

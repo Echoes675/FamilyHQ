@@ -186,7 +186,8 @@ public class CalendarEventServiceEchoGuardTests
                  .Returns((string d) => d ?? string.Empty);
 
         var sut = new CalendarEventService(
-            google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object, logger.Object);
+            google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object,
+            new NodaTimeRecurrenceTimeZoneFactory(), logger.Object);
         return (google, repo, migration, tagParser, cache, sut);
     }
 }

@@ -1,3 +1,4 @@
+using FamilyHQ.E2E.Common.Helpers;
 using System;
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Common.Pages;
@@ -60,7 +61,7 @@ public class RecurringEchoGuardSteps
     public async Task WhenICreateAWeeklyRecurringEventTrackingOutboundWrites(string eventName, string calendarName)
     {
         await _dashboardPage.CreateWeeklyRecurringEventAsync(eventName, calendarName);
-        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = DateTime.Today;
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = BrowserClock.Today;
     }
 
     // Triggers an explicit webhook so the Simulator fires the echo path in the WebApi, then waits the

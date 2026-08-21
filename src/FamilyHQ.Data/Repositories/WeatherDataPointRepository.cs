@@ -3,6 +3,7 @@ namespace FamilyHQ.Data.Repositories;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Weather;
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
 
@@ -67,15 +68,24 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
             .ToListAsync(ct);
     }
 
-    public async Task ReplaceAllAsync(int locationSettingId, List<WeatherDataPoint> dataPoints, CancellationToken ct = default)
+    public async Task ReplaceSectionsAsync(int locationSettingId, List<WeatherDataPoint> dataPoints, CancellationToken ct = default)
     {
+        // The sections this refresh may replace are a Core domain rule (FHQ-159), not a query
+        // detail: everything the payload did NOT carry keeps the rows it already had.
+        var sections = WeatherRetention.SectionsReplacedBy(dataPoints);
+
+        // Pure optimisation, not a behaviour: an empty section list already matches no rows, so
+        // this only avoids opening a transaction to run a delete that can never match.
+        if (sections.Count == 0)
+            return;
+
         // Set-based delete (one statement, no per-row params) instead of loading + RemoveRange,
         // which produced a multi-thousand-parameter DELETE whose EF command-log event exceeded
         // Seq's 256 KB limit (FHQ-52). The transaction wraps the delete + insert for atomicity,
         // since ExecuteDeleteAsync runs immediately, outside SaveChanges.
         await using var tx = await context.Database.BeginTransactionAsync(ct);
         await context.WeatherDataPoints
-            .Where(x => x.LocationSettingId == locationSettingId)
+            .Where(WeatherRetention.RowsReplacedBy(locationSettingId, sections))
             .ExecuteDeleteAsync(ct);
         context.WeatherDataPoints.AddRange(dataPoints);
         await context.SaveChangesAsync(ct);

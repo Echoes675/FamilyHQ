@@ -26,6 +26,7 @@ public class DisplaySettingRepository(FamilyHqDbContext context) : IDisplaySetti
         existing.TransitionDurationSecs = setting.TransitionDurationSecs;
         existing.ThemeSelection = setting.ThemeSelection;
         existing.IanaTimeZone = setting.IanaTimeZone;
+        existing.IsTimeZoneAutoDetected = setting.IsTimeZoneAutoDetected;
         existing.UpdatedAt = setting.UpdatedAt;
         await context.SaveChangesAsync(ct);
         return existing;

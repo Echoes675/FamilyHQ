@@ -25,4 +25,11 @@ public class EventModel
     /// ordinary events.
     /// </summary>
     public string? RecurrenceRule { get; set; }
+
+    /// <summary>
+    /// FHQ-161: the IANA zone a seeded recurring master is anchored to (Google's start.timeZone),
+    /// e.g. "Europe/London". Expansion holds this zone's WALL CLOCK across a DST transition, as
+    /// Google does. Null seeds a master with no zone, which expands at fixed UTC instants.
+    /// </summary>
+    public string? StartTimeZone { get; set; }
 }

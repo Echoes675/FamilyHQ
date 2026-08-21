@@ -257,7 +257,9 @@ public class CalendarEventServiceTests
         tagParser.Setup(p => p.StripMemberTag(It.IsAny<string>()))
                  .Returns((string d) => d ?? string.Empty);
 
-        var sut = new CalendarEventService(google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object, logger.Object);
+        var sut = new CalendarEventService(
+            google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object,
+            new NodaTimeRecurrenceTimeZoneFactory(), logger.Object);
         return (google, repo, migration, tagParser, sut);
     }
 }

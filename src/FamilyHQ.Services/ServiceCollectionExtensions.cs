@@ -109,6 +109,9 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IAccessTokenCache, AccessTokenCache>();
         services.TryAddSingleton<ITimeZoneLookup, GeoTimeZoneLookup>();
+        // FHQ-161: stateless tzdb lookup behind an interface so recurrence enumeration can be
+        // zone-anchored in production and substituted in unit tests.
+        services.TryAddSingleton<IRecurrenceTimeZoneFactory, Calendar.NodaTimeRecurrenceTimeZoneFactory>();
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();
 

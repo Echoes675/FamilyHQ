@@ -27,7 +27,7 @@ public class WebhookDataSteps
     {
         var template = _scenarioContext.Get<SimulatorConfigurationModel>("UserTemplate");
         var calendarId = _scenarioContext.GetCurrentCalendarId();
-        var tomorrow = DateTime.Today.AddDays(1);
+        var tomorrow = BrowserClock.Today.AddDays(1);
 
         var eventId = await _simulatorApi.AddEventAsync(
             userId: template.UserName,

@@ -1,3 +1,4 @@
+using FamilyHQ.E2E.Common.Helpers;
 using System;
 using System.Threading.Tasks;
 using FamilyHQ.E2E.Common.Pages;
@@ -91,7 +92,7 @@ public class RecurringEventSteps
     public async Task WhenICreateAWeeklyRecurringEvent(string eventName, string calendarName)
     {
         await _dashboardPage.CreateWeeklyRecurringEventAsync(eventName, calendarName);
-        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = System.DateTime.Today;
+        _scenarioContext["RecurringSeriesFirstOccurrenceDate"] = BrowserClock.Today;
     }
 
     // Creates a recurring event repeating weekly on a specific weekday: the weekday that falls
@@ -100,7 +101,7 @@ public class RecurringEventSteps
     [When(@"I create a recurring event ""([^""]*)"" in ""([^""]*)"" repeating weekly on the day in (\d+) days")]
     public async Task WhenICreateARecurringEventOnAChosenWeekday(string eventName, string calendarName, int days)
     {
-        var targetDate = System.DateTime.Today.AddDays(days);
+        var targetDate = BrowserClock.Today.AddDays(days);
         await _dashboardPage.CreateCustomWeeklyRecurringEventAsync(
             eventName, calendarName, new[] { targetDate.DayOfWeek.ToString() });
         _scenarioContext["ChosenWeekdayFirstOccurrenceDate"] = targetDate;
@@ -111,7 +112,7 @@ public class RecurringEventSteps
     [Then(@"the event ""([^""]*)"" appears weekly starting in (\d+) days for (\d+) occurrences")]
     public async Task ThenTheEventAppearsWeeklyStartingInDays(string eventName, int days, int occurrences)
     {
-        var firstOccurrence = System.DateTime.Today.AddDays(days);
+        var firstOccurrence = BrowserClock.Today.AddDays(days);
         await _dashboardPage.AssertWeeklyOccurrencesEachVisibleInDayViewAsync(
             eventName, firstOccurrence, occurrences);
     }
@@ -130,7 +131,7 @@ public class RecurringEventSteps
     public async Task ThenOnlyASingleNonRecurringEventRemains(string eventName)
     {
         await _dashboardPage.AssertSingleNonRecurringOccurrenceInDayViewAsync(
-            eventName, System.DateTime.Today);
+            eventName, BrowserClock.Today);
     }
 
     // ── FHQ-18.11 Pass 3: edit-scope (This event / This and following / All events) ───────────

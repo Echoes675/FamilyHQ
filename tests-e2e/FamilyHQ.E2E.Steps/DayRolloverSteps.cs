@@ -1,3 +1,4 @@
+using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using Microsoft.Playwright;
 using Reqnroll;
@@ -57,7 +58,7 @@ public class DayRolloverSteps
         // Capture today's header before navigating forward so the snap-back assertion can
         // compare against it.
         _dayHeaderBeforeRollover = (await _dashboard.GetDayHeaderTextAsync()).Trim();
-        var target = DateTime.Today.AddDays(days).ToString(
+        var target = BrowserClock.Today.AddDays(days).ToString(
             "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         await _dashboard.OpenDayPickerAndGoAsync(target);
     }

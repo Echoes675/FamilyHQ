@@ -253,14 +253,14 @@ public class JwtRenewalServiceTests
         await using var sut = CreateSut(tokenStore, handler, timeProvider: fakeTime);
         await sut.InitializeAsync();
 
-        // Act — advance past the daily interval so the PeriodicTimer ticks
+        // Act — advance past the daily interval so the PeriodicTimer ticks. No advance can be lost
+        // here (FHQ-158): the loop's PeriodicTimer is armed in its constructor, before
+        // InitializeAsync returns, and it repeats — it is never re-armed per tick.
         fakeTime.Advance(TimeSpan.FromDays(1));
 
-        // Assert — bounded wait for the tick continuation to run
-        for (var i = 0; i < 200 && handler.CallCount < 2; i++)
-        {
-            await Task.Delay(10);
-        }
+        // Assert — the wait is signalled from inside the handler the tick calls, so it ends the
+        // moment the check runs instead of after a fixed polling budget
+        await handler.WaitForCallsAsync(2);
         handler.CallCount.Should().Be(2);
     }
 
@@ -284,10 +284,10 @@ public class JwtRenewalServiceTests
     public async Task LoopTick_WhenCheckThrows_LoopKeepsTicking()
     {
         // Arrange — every check throws; the loop must log and keep ticking, not die
-        var calls = 0;
+        var calls = new AwaitableCounter();
         var tokenStore = new Mock<IAuthTokenStore>();
         tokenStore.Setup(s => s.GetTokenAsync())
-            .Callback(() => calls++)
+            .Callback(calls.Record)
             .ThrowsAsync(new InvalidOperationException("localStorage unavailable"));
         var handler = CreateSuccessHandler();
         var fakeTime = new FakeTimeProvider(TestNow);
@@ -296,39 +296,30 @@ public class JwtRenewalServiceTests
 
         // Act — first tick (throws, must be caught) then a second tick (must still happen)
         fakeTime.Advance(TimeSpan.FromDays(1));
-        for (var i = 0; i < 200 && calls < 2; i++)
-        {
-            await Task.Delay(10);
-        }
-        calls.Should().Be(2, "the first tick should have run its check");
+        await calls.WaitForAsync(2);
+        calls.Count.Should().Be(2, "the first tick should have run its check");
 
         fakeTime.Advance(TimeSpan.FromDays(1));
-        for (var i = 0; i < 200 && calls < 3; i++)
-        {
-            await Task.Delay(10);
-        }
+        await calls.WaitForAsync(3);
 
         // Assert — the loop survived the first tick's exception
-        calls.Should().Be(3);
+        calls.Count.Should().Be(3);
     }
 
     [Fact]
     public async Task DisposeAsync_AfterFailingTicks_DoesNotThrow()
     {
         // Arrange
-        var calls = 0;
+        var calls = new AwaitableCounter();
         var tokenStore = new Mock<IAuthTokenStore>();
         tokenStore.Setup(s => s.GetTokenAsync())
-            .Callback(() => calls++)
+            .Callback(calls.Record)
             .ThrowsAsync(new InvalidOperationException("localStorage unavailable"));
         var fakeTime = new FakeTimeProvider(TestNow);
         var sut = CreateSut(tokenStore, CreateSuccessHandler(), timeProvider: fakeTime);
         await sut.InitializeAsync();
         fakeTime.Advance(TimeSpan.FromDays(1));
-        for (var i = 0; i < 200 && calls < 2; i++)
-        {
-            await Task.Delay(10);
-        }
+        await calls.WaitForAsync(2);
 
         // Act
         var act = () => sut.DisposeAsync().AsTask();
@@ -388,8 +379,9 @@ public class JwtRenewalServiceTests
         private readonly HttpStatusCode _status;
         private readonly string _json;
         private readonly Exception? _throwException;
+        private readonly AwaitableCounter _calls = new();
 
-        public int CallCount { get; private set; }
+        public int CallCount => _calls.Count;
         public List<string?> AuthorizationHeaders { get; } = new();
 
         private FakeHttpMessageHandler(HttpStatusCode status, string json, Exception? throwException)
@@ -405,10 +397,15 @@ public class JwtRenewalServiceTests
         public static FakeHttpMessageHandler Throwing(Exception ex)
             => new(HttpStatusCode.OK, "{}", ex);
 
+        /// <summary>Completes once the loop under test has driven at least this many requests through.</summary>
+        public Task WaitForCallsAsync(int count) => _calls.WaitForAsync(count);
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            CallCount++;
+            // Record LAST: it releases WaitForCallsAsync, so anything captured after it is a race
+            // with whatever the waiter goes on to assert.
             AuthorizationHeaders.Add(request.Headers.Authorization?.ToString());
+            _calls.Record();
 
             if (_throwException is not null)
             {

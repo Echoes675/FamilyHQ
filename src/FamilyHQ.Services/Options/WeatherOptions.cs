@@ -7,6 +7,15 @@ public class WeatherOptions
     /// <summary>Hard ceiling on <see cref="MaxFailureBackoffMinutes"/>: one day.</summary>
     private const int MaxFailureBackoffCeilingMinutes = 1440;
 
+    /// <summary>
+    /// Hard ceiling on both retention windows: one day, matching
+    /// <see cref="MaxFailureBackoffCeilingMinutes"/>. Without an upper bound a typo such as 525600
+    /// validates cleanly and silently disables retention altogether — the kiosk would then show a
+    /// year-old forecast rather than hiding it, which is the failure this setting exists to prevent.
+    /// Nothing this feature does is served by keeping weather for longer than a day.
+    /// </summary>
+    private const int StaleAfterCeilingMinutes = 1440;
+
     public string BaseUrl { get; set; } = "https://api.open-meteo.com";
     public int PollIntervalMinutes { get; set; } = 30;
     public int MinPollIntervalMinutes { get; set; } = 1;
@@ -30,6 +39,23 @@ public class WeatherOptions
     /// exactly the spin this setting exists to remove.
     /// </summary>
     public int MaxFailureBackoffMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// FHQ-159: how long a stored forecast section (<c>Hourly</c>, <c>Daily</c>) keeps being shown
+    /// after the refresh that produced it. Past this it is hidden entirely — no stale marker, no
+    /// "last updated" indicator. 360 minutes is 12 consecutive missed polls at the 30-minute
+    /// production interval, so no realistic upstream blip can blank the kiosk, while nothing
+    /// visibly wrong survives long enough to mislead.
+    /// </summary>
+    public int ForecastStaleAfterMinutes { get; set; } = 360;
+
+    /// <summary>
+    /// FHQ-159: how long the stored <c>Current</c> reading keeps being shown after the refresh that
+    /// produced it. Deliberately tighter than <see cref="ForecastStaleAfterMinutes"/> because,
+    /// unlike a forecast, it asserts something about <i>now</i> — an hours-old temperature is wrong
+    /// rather than merely old. 60 minutes is 2 missed polls at the production interval.
+    /// </summary>
+    public int CurrentStaleAfterMinutes { get; set; } = 60;
 
     /// <summary>Fail-fast guard, called at startup so bad config surfaces at boot.</summary>
     public void Validate()
@@ -60,5 +86,18 @@ public class WeatherOptions
                 $"{nameof(WeatherOptions)}.{nameof(MaxFailureBackoffMinutes)} must be between " +
                 $"{nameof(MinPollIntervalMinutes)} ({MinPollIntervalMinutes}) and " +
                 $"{MaxFailureBackoffCeilingMinutes} (was {MaxFailureBackoffMinutes}).");
+
+        // Zero or negative would hide every section the instant it was written, which reads on the
+        // kiosk as "weather is broken"; anything past the ceiling disables retention entirely and
+        // leaves stale data on the wall. Surface both at boot instead.
+        if (ForecastStaleAfterMinutes is < 1 or > StaleAfterCeilingMinutes)
+            throw new InvalidOperationException(
+                $"{nameof(WeatherOptions)}.{nameof(ForecastStaleAfterMinutes)} must be between 1 and " +
+                $"{StaleAfterCeilingMinutes} (was {ForecastStaleAfterMinutes}).");
+
+        if (CurrentStaleAfterMinutes is < 1 or > StaleAfterCeilingMinutes)
+            throw new InvalidOperationException(
+                $"{nameof(WeatherOptions)}.{nameof(CurrentStaleAfterMinutes)} must be between 1 and " +
+                $"{StaleAfterCeilingMinutes} (was {CurrentStaleAfterMinutes}).");
     }
 }

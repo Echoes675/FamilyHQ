@@ -295,7 +295,7 @@ the Deploy-Dev E2E execution wall-clock:
 
 ## Current Test Coverage
 
-The suite currently contains **22 feature files (~166 scenarios / 168 executed tests)**
+The suite currently contains **22 feature files (~167 scenarios / 169 executed tests)**
 under `tests-e2e/FamilyHQ.E2E.Features/WebUi/`. The per-file tables below are a
 historical snapshot of the earliest features and are **not exhaustive** — treat the
 `WebUi/` directory as the source of truth for current coverage.
@@ -439,4 +439,6 @@ Update E2E tests in these scenarios:
 - **Keep scenarios focused** - One scenario per behavior being tested
 - **Update templates carefully** - User templates affect multiple scenarios
 - **Never use hardcoded dates** - Use relative expressions (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month. The `DateExpressionResolver` class in `FamilyHQ.E2E.Steps` converts these expressions to `yyyy-MM-dd` at runtime. All step definitions that accept date parameters already support both formats.
+- **Never call `DateTime.Today` / `DateTime.Now` in E2E code** - use `BrowserClock` (`FamilyHQ.E2E.Common/Helpers/BrowserClock.cs`). It owns the single timezone the whole suite agrees on (`Europe/London`, pinned onto the Playwright context by `PlaywrightDriver`) and is what `DateExpressionResolver` resolves against. A bare `DateTime.Today` is the **test host's** date, which is not the browser's during the 23:00–00:00 UTC window in BST — seeding or asserting through it puts the test on a different calendar day from the app for one hour a night (intermittent-issues #11). `DateTime.UtcNow` for a polling deadline is fine; it is not a date.
+- **Seed timed events as instants, dates as dates** - a timed seed must go on the wire through `BrowserClock.ToUtcInstant(...)` so it means the same wall-clock time regardless of the server's zone (a naive `DateTime` is silently stamped with the Simulator container's zone). All-day seeds stay naive midnight — the Simulator serialises them as `date`-only, and converting them would shift the date.
 - **Create modal has no default calendar (FHQ-32)** - The "Add new event" modal no longer pre-selects a calendar; the user must pick one and Save is blocked until they do. `DashboardPage.FillAndSaveEventAsync` therefore selects the first available calendar chip when none is active, and `CreateEventInCalendarAsync` selects a named chip. Day/agenda slot taps that pass an explicit `calendarId` keep their chip pre-selected, so those flows are unaffected.

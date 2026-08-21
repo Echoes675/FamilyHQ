@@ -105,18 +105,18 @@ public class WeatherControllerTests
     }
 
     [Fact]
-    public async Task Refresh_WhenRefreshSucceedsButDataNotVisible_ReturnsServiceUnavailable()
+    public async Task Refresh_WhenRefreshSucceedsButWroteNothingAndNothingIsVisible_ReturnsServiceUnavailable()
     {
         // Arrange — this is the exact intermittent failure mode we are guarding
-        // against.  RefreshAsync reports success, but a follow-up read of
-        // /current returns null (no current data point).  Previously this
-        // produced a misleading 200 on /refresh and a 204 on /current.  We now
-        // verify visibility server-side and return 503 Service Unavailable so
-        // the client sees a single clear failure instead of silently polling.
+        // against.  RefreshAsync reports success, but nothing was written and a
+        // follow-up read of /current returns null.  Previously this produced a
+        // misleading 200 on /refresh and a 204 on /current.  We now verify
+        // visibility server-side and return 503 Service Unavailable so the
+        // client sees a single clear failure instead of silently polling.
         var (sut, weatherServiceMock, weatherRefreshServiceMock) = CreateSut(TestUserId);
         weatherRefreshServiceMock
             .Setup(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 7, DataPointsWritten: 42));
+            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 7, DataPointsWritten: 0));
         weatherServiceMock
             .Setup(x => x.GetCurrentAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((CurrentWeatherDto?)null);
@@ -127,6 +127,25 @@ public class WeatherControllerTests
         // Assert
         var status = result.Should().BeOfType<ObjectResult>().Subject;
         status.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task Refresh_WhenForecastWasWrittenButNoCurrentReadingIsVisible_ReturnsOk()
+    {
+        // FHQ-159: sections are independently retained, so "no current reading" is not "the refresh
+        // failed".  A response that omitted the current block still writes a fresh 14-day forecast;
+        // calling that a total outage contradicts the retention policy this endpoint fronts.
+        var (sut, weatherServiceMock, weatherRefreshServiceMock) = CreateSut(TestUserId);
+        weatherRefreshServiceMock
+            .Setup(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 7, DataPointsWritten: 14));
+        weatherServiceMock
+            .Setup(x => x.GetCurrentAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CurrentWeatherDto?)null);
+
+        var result = await sut.Refresh(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>();
     }
 
     [Fact]
