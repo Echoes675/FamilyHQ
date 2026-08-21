@@ -24,6 +24,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     private readonly GoogleCalendarOptions _options;
     private readonly ILogger<GoogleCalendarClient> _logger;
     private readonly ITimeZoneService _timeZoneService;
+    private readonly IPiiRedactor _piiRedactor;
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -37,7 +38,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         IAccessTokenCache accessTokenCache,
         IOptions<GoogleCalendarOptions> options,
         ILogger<GoogleCalendarClient> logger,
-        ITimeZoneService timeZoneService)
+        ITimeZoneService timeZoneService,
+        IPiiRedactor piiRedactor)
     {
         _httpClient = httpClient;
         _authService = authService;
@@ -47,6 +49,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         _options = options.Value;
         _logger = logger;
         _timeZoneService = timeZoneService;
+        _piiRedactor = piiRedactor;
     }
 
     public const int MaxSyncPages = 20;
@@ -290,9 +293,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             pageCount++;
             if (pageCount >= MaxSyncPages && !string.IsNullOrEmpty(pageToken))
             {
+                // FHQ-166: a Google PRIMARY calendar's id IS the account's email address, so it
+                // never goes to Seq verbatim. This client is the one place with no FamilyHQ-side
+                // calendar row to name instead, so it logs the redactor's stable token.
                 _logger.LogWarning(
-                    "GetEventsAsync reached the {MaxPages}-page cap for calendar {CalendarId}. Returning {EventCount} events collected so far.",
-                    MaxSyncPages, googleCalendarId, events.Count);
+                    "GetEventsAsync reached the {MaxPages}-page cap for calendar {CalendarIdToken}. Returning {EventCount} events collected so far.",
+                    MaxSyncPages, _piiRedactor.Redact(googleCalendarId), events.Count);
                 break;
             }
         } while (!string.IsNullOrEmpty(pageToken));

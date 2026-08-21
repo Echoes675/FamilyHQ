@@ -4,6 +4,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -198,7 +199,8 @@ public class GoogleCalendarClientWatchTests
             accessTokenCache,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
     }

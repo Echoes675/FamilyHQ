@@ -71,8 +71,11 @@ public class CalendarEventService(
         await calendarRepository.AddEventAsync(calendarEvent, ct);
         await calendarRepository.SaveChangesAsync(ct);
 
-        logger.LogInformation("Event {GoogleEventId} created on calendar {CalendarId}.",
-            calendarEvent.GoogleEventId, targetCalendar.GoogleCalendarId);
+        // FHQ-166: the Google calendar id is an email address for a primary calendar. The owning
+        // CalendarInfo's own id identifies the same calendar, correlates with every other
+        // {CalendarInfoId} in the sync path, and carries nothing personal.
+        logger.LogInformation("Event {GoogleEventId} created on calendar {CalendarInfoId}.",
+            calendarEvent.GoogleEventId, targetCalendar.Id);
 
         return calendarEvent;
     }
@@ -95,8 +98,8 @@ public class CalendarEventService(
             new Dictionary<string, string> { [created.GoogleEventId] = canonicalRule },
             ct);
 
-        logger.LogInformation("Recurring event {GoogleEventId} created on calendar {CalendarId}.",
-            created.GoogleEventId, targetCalendar.GoogleCalendarId);
+        logger.LogInformation("Recurring event {GoogleEventId} created on calendar {CalendarInfoId}.",
+            created.GoogleEventId, targetCalendar.Id);
 
         // Return a persisted, reconciled recurring instance (consistent with the non-recurring path,
         // which returns the persisted row) rather than the unpersisted Google master object.
@@ -659,8 +662,8 @@ public class CalendarEventService(
         if (master is null)
         {
             logger.LogWarning(
-                "Series master {SeriesId} on calendar {CalendarId} returned no start; anchoring COUNT split at the earliest local row instead.",
-                seriesId, owner.GoogleCalendarId);
+                "Series master {SeriesId} on calendar {CalendarInfoId} returned no start; anchoring COUNT split at the earliest local row instead.",
+                seriesId, owner.Id);
             return new SeriesAnchor(localAnchor, null, MasterResolved: false);
         }
 

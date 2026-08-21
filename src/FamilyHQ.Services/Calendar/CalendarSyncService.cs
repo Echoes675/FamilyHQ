@@ -131,12 +131,14 @@ public class CalendarSyncService(
         if (calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
-            var firstCalendarName = calendarsAfterSync.First(c => c.Id == firstCalendarId).DisplayName;
             await calendarRepository.MarkCalendarAsSharedAsync(firstCalendarId, ct);
             changeCount += await calendarRepository.SaveChangesAsync(ct);
+            // FHQ-166: a calendar's display name is its Google `summary`, which for a PRIMARY
+            // calendar is the account's email address — and for a member calendar is a child's
+            // name. Neither belongs in Seq; the calendar's own id says the same thing.
             logger.LogInformation(
-                "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
-                firstCalendarName);
+                "Auto-designated calendar {CalendarInfoId} as the shared calendar (no prior designation).",
+                firstCalendarId);
         }
 
         logger.LogInformation("Finished syncing all calendars.");
@@ -165,7 +167,7 @@ public class CalendarSyncService(
 
         bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken);
 
-        logger.LogInformation("Syncing {CalendarName}. FullSync={IsFullSync}", calendar.DisplayName, isFullSync);
+        logger.LogInformation("Syncing calendar {CalendarInfoId}. FullSync={IsFullSync}", calendar.Id, isFullSync);
 
         int changeCount = 0;
 
@@ -217,7 +219,7 @@ public class CalendarSyncService(
             // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the
             // pass-1 instances and cache it for this sync run, so each unknown master is fetched
             // at most once. Cancelled tombstones and self-echoes are excluded (see the resolver).
-            var rruleCache = await ResolveSeriesRecurrenceRulesAsync(calendar.GoogleCalendarId, events, ct);
+            var rruleCache = await ResolveSeriesRecurrenceRulesAsync(calendar, events, ct);
 
             if (isFullSync)
             {
@@ -370,12 +372,12 @@ public class CalendarSyncService(
 
             // Bookkeeping only — excluded from the material change count (FHQ-44).
             await calendarRepository.SaveChangesAsync(ct);
-            logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
+            logger.LogInformation("Synced {Count} events for calendar {CalendarInfoId}.", events.Count(), calendar.Id);
             return changeCount;
         }
         catch (SyncTokenExpiredException) when (!isRetry)
         {
-            logger.LogWarning("Sync token expired for {CalendarName}. Restarting full sync.", calendar.DisplayName);
+            logger.LogWarning("Sync token expired for calendar {CalendarInfoId}. Restarting full sync.", calendar.Id);
             syncState.SyncToken = null;
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
@@ -402,8 +404,13 @@ public class CalendarSyncService(
     /// instances persist with a null RRULE and the next sync retries; a reauth failure
     /// propagates so the user is prompted to reconnect.
     /// </summary>
+    /// <remarks>
+    /// Takes the whole <see cref="CalendarInfo"/> rather than just its Google id so the degraded
+    /// paths below can name the calendar by FamilyHQ's own id: the Google id is an email address
+    /// for a primary calendar and must not reach Seq (FHQ-166).
+    /// </remarks>
     private async Task<IReadOnlyDictionary<string, string>> ResolveSeriesRecurrenceRulesAsync(
-        string googleCalendarId, IEnumerable<CalendarEvent> events, CancellationToken ct)
+        CalendarInfo calendar, IEnumerable<CalendarEvent> events, CancellationToken ct)
     {
         // Cancelled tombstones reuse the recurring id but are being deleted, so they need no RRULE.
         // Self-echoes (FHQ-30) are short-circuited in the persistence loop and never stored, so
@@ -426,21 +433,21 @@ public class CalendarSyncService(
         {
             try
             {
-                var master = await googleCalendarClient.GetSeriesMasterAsync(googleCalendarId, seriesId, ct);
+                var master = await googleCalendarClient.GetSeriesMasterAsync(calendar.GoogleCalendarId, seriesId, ct);
                 if (master is not null)
                     cache[seriesId] = master.Rrule;
                 else
                     logger.LogWarning(
-                        "Series master {SeriesId} on calendar {GoogleCalendarId} returned no RRULE; instances persisted without one and will retry next sync.",
-                        seriesId, googleCalendarId);
+                        "Series master {SeriesId} on calendar {CalendarInfoId} returned no RRULE; instances persisted without one and will retry next sync.",
+                        seriesId, calendar.Id);
             }
             catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
             {
                 // Transient API failure: degrade gracefully, retry the series next sync.
                 logger.LogWarning(
                     ex,
-                    "Failed to fetch series master {SeriesId} on calendar {GoogleCalendarId}; instances persisted without an RRULE and will retry next sync.",
-                    seriesId, googleCalendarId);
+                    "Failed to fetch series master {SeriesId} on calendar {CalendarInfoId}; instances persisted without an RRULE and will retry next sync.",
+                    seriesId, calendar.Id);
             }
         }
 
