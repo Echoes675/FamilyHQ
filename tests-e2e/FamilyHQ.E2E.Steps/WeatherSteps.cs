@@ -323,6 +323,21 @@ public class WeatherSteps
         }
     }
 
+    [When(@"the next weather update carries no hourly forecast")]
+    public async Task WhenTheNextWeatherUpdateCarriesNoHourlyForecast()
+    {
+        // FHQ-159. Clearing only the hourly section leaves the Simulator serving a well-formed 200
+        // whose hourly block is empty while current and daily are intact — the degraded Open-Meteo
+        // response that used to wipe the stored hourly rows as a side effect of rewriting daily.
+        // Nothing can put those rows back, so the day view can only still show them if the refresh
+        // replaced sections rather than the whole location.
+        var lat = _scenarioContext.Get<double>("WeatherLatitude");
+        var lon = _scenarioContext.Get<double>("WeatherLongitude");
+        await _simulatorApi.ClearWeatherAsync(lat, lon, dataType: "hourly");
+
+        await WhenIWaitForWeatherDataToLoad();
+    }
+
     [When(@"I navigate to weather settings")]
     public async Task WhenINavigateToWeatherSettings()
     {

@@ -160,12 +160,18 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
-    /// Clears seeded weather data for a location via the Simulator backdoor.
+    /// Clears seeded weather data for a location via the Simulator backdoor. Pass
+    /// <paramref name="dataType"/> ("current" | "hourly" | "daily") to clear a single section and
+    /// leave the others seeded — the next poll then returns a well-formed response whose block for
+    /// that section is empty, which is the degraded Open-Meteo payload FHQ-159 is about.
     /// </summary>
-    public async Task ClearWeatherAsync(double latitude, double longitude)
+    public async Task ClearWeatherAsync(double latitude, double longitude, string? dataType = null)
     {
-        var response = await _httpClient.DeleteAsync(
-            $"api/simulator/backdoor/weather?latitude={latitude}&longitude={longitude}");
+        var url = $"api/simulator/backdoor/weather?latitude={latitude}&longitude={longitude}";
+        if (dataType is not null)
+            url += $"&dataType={Uri.EscapeDataString(dataType)}";
+
+        var response = await _httpClient.DeleteAsync(url);
         response.EnsureSuccessStatusCode();
     }
 

@@ -363,7 +363,7 @@ E2E tests run against the simulator, not real external APIs. All external servic
 | `POST /api/simulator/backdoor/location` | Seed geocoding result for a place name |
 | `DELETE /api/simulator/backdoor/location?placeName=X` | Clear geocoding result |
 | `POST /api/simulator/backdoor/weather` | Seed weather data for a lat/lon |
-| `DELETE /api/simulator/backdoor/weather?latitude=X&longitude=Y` | Clear weather data |
+| `DELETE /api/simulator/backdoor/weather?latitude=X&longitude=Y[&dataType=hourly]` | Clear weather data — all sections, or one (`current`/`hourly`/`daily`). A section-scoped clear makes the next poll a well-formed 200 whose block for that section is empty: a degraded Open-Meteo response (FHQ-159). |
 | `POST /api/simulator/configure` | Configure user template |
 | `POST /api/simulator/backdoor/events` | Seed calendar event |
 

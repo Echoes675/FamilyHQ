@@ -82,13 +82,23 @@ public class BackdoorWeatherController(SimContext db) : ControllerBase
         return Ok(new { message = "Weather data set" });
     }
 
+    /// <summary>
+    /// Clears seeded weather for a location. <paramref name="dataType"/> ("current" | "hourly" |
+    /// "daily") scopes the clear to one section, which is how an E2E scenario reproduces a degraded
+    /// Open-Meteo response: <see cref="ForecastController"/> emits empty arrays for a section with
+    /// no seeded rows, so a section-scoped clear turns the next poll into a well-formed 200 whose
+    /// hourly (or daily) block is empty while its neighbours are intact — the FHQ-159 failure.
+    /// Omitting it clears every section.
+    /// </summary>
     [HttpDelete]
     public async Task<IActionResult> ClearWeather(
-        [FromQuery] double latitude, [FromQuery] double longitude, CancellationToken ct)
+        [FromQuery] double latitude, [FromQuery] double longitude,
+        [FromQuery] string? dataType, CancellationToken ct)
     {
         var existing = await db.SimulatedWeather
             .Where(w => Math.Abs(w.Latitude - latitude) < 0.001
-                     && Math.Abs(w.Longitude - longitude) < 0.001)
+                     && Math.Abs(w.Longitude - longitude) < 0.001
+                     && (dataType == null || w.DataType == dataType))
             .ToListAsync(ct);
         db.SimulatedWeather.RemoveRange(existing);
         await db.SaveChangesAsync(ct);
