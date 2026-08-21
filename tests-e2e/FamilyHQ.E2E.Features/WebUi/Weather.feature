@@ -81,6 +81,17 @@ Feature: Weather Integration
     And I switch to the Day View tab
     Then I see hourly temperatures in the day view
 
+  Scenario: A weather update carrying no hourly data leaves the stored hourly forecast in place
+    Given hourly weather data is seeded for "today":
+      | Hour  | Code | Temp | Wind |
+      | 08:00 | 3    | 10   | 12   |
+      | 09:00 | 3    | 11   | 11   |
+      | 10:00 | 61   | 12   | 15   |
+    When I wait for weather data to load
+    And the next weather update carries no hourly forecast
+    And I switch to the Day View tab
+    Then I see hourly temperatures in the day view
+
   Scenario: Disabling weather hides the weather strip
     When I wait for weather data to load
     Then the weather strip is visible

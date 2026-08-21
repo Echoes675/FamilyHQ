@@ -45,8 +45,15 @@ public class WeatherController(
         // is RefreshAsync reporting success while /current sees no current
         // data point.  By checking visibility here we turn an obscure
         // downstream 204 into a single clear 503 on the refresh call itself.
+        //
+        // FHQ-159 narrowed this to "nothing was written AND nothing is visible".
+        // Sections are now independently retained, so a refresh that wrote a
+        // fresh 14-day forecast but no current row (Open-Meteo omitted the
+        // current block, or the previous reading has aged past its 1-hour
+        // window) is a partial success, not a total failure — reporting 503
+        // would contradict the retention policy this endpoint sits in front of.
         var current = await weatherService.GetCurrentAsync(ct);
-        if (current is null)
+        if (current is null && result.DataPointsWritten == 0)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {

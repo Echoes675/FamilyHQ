@@ -166,4 +166,10 @@ public class WeatherDataPointRepositoryTests
         result.Should().ContainSingle();
         result[0].Timestamp.Should().Be(y.Timestamp);
     }
+
+    // FHQ-159: which stored rows a refresh replaces is a Core domain rule
+    // (FamilyHQ.Core.Weather.WeatherRetention) — see WeatherRetentionTests for the rule itself, and
+    // the "A weather update carrying no hourly data leaves the stored hourly forecast in place"
+    // E2E scenario for the repository actually applying it against PostgreSQL. ExecuteDeleteAsync
+    // needs a real provider, so ReplaceSectionsAsync is not exercised here.
 }

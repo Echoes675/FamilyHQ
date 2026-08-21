@@ -4,15 +4,33 @@ using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NodaTime;
 
+/// <summary>
+/// Read side of the weather feature — and the single place the FHQ-159 retention windows are
+/// applied. They live here, on the read, rather than in the repository or a background sweep,
+/// because: this is the only funnel every family-facing weather read passes through, so one check
+/// covers the kiosk, the API and any future caller; the windows are configuration, and
+/// <see cref="WeatherOptions"/> belongs to the service layer, not to a Data-layer repository; and
+/// filtering rather than deleting means a section is hidden the instant it ages out (a sweep hides
+/// it only when the sweep next runs) while the stored rows stay available to be overwritten by the
+/// next successful poll for that section.
+/// </summary>
 public class WeatherService(
     IWeatherDataPointRepository weatherDataPointRepository,
     IWeatherSettingRepository weatherSettingRepository,
     ILocationSettingRepository locationSettingRepository,
     ICurrentUserService currentUserService,
-    ITimeZoneLookup timeZoneLookup) : IWeatherService
+    ITimeZoneLookup timeZoneLookup,
+    IOptions<WeatherOptions> weatherOptions,
+    TimeProvider timeProvider,
+    ILogger<WeatherService> logger) : IWeatherService
 {
+    private readonly WeatherOptions _options = weatherOptions.Value;
+
     public async Task<CurrentWeatherDto?> GetCurrentAsync(CancellationToken ct = default)
     {
         var location = await GetLocationSettingAsync(ct);
@@ -23,6 +41,13 @@ public class WeatherService(
         var dataPoint = await weatherDataPointRepository.GetCurrentAsync(location.Id, ct);
         if (dataPoint is null)
             return null;
+
+        if (IsStale(dataPoint.RetrievedAt, _options.CurrentStaleAfterMinutes))
+        {
+            LogSectionHidden(WeatherDataType.Current, location.Id, dataPoint.RetrievedAt,
+                _options.CurrentStaleAfterMinutes);
+            return null;
+        }
 
         return MapToCurrentDto(dataPoint, setting.TemperatureUnit);
     }
@@ -37,7 +62,7 @@ public class WeatherService(
         var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
         var dataPoints = await weatherDataPointRepository.GetHourlyAsync(location.Id, date, ianaTimeZone, ct);
 
-        return dataPoints
+        return FreshOnly(dataPoints, WeatherDataType.Hourly, location.Id)
             .Select(dp => MapToHourlyDto(dp, setting.TemperatureUnit))
             .ToList();
     }
@@ -55,7 +80,7 @@ public class WeatherService(
             : null;
         var dataPoints = await weatherDataPointRepository.GetDailyAsync(location.Id, days, ianaTimeZone, ct);
 
-        return dataPoints
+        return FreshOnly(dataPoints, WeatherDataType.Daily, location.Id)
             .Select(dp => MapToDailyDto(dp, setting.TemperatureUnit, zone))
             .ToList();
     }
@@ -85,6 +110,43 @@ public class WeatherService(
 
     private async Task<LocationSetting?> GetLocationSettingAsync(CancellationToken ct)
         => await locationSettingRepository.GetAsync(currentUserService.UserId!, ct);
+
+    /// <summary>
+    /// Drops forecast rows whose refresh is past <see cref="WeatherOptions.ForecastStaleAfterMinutes"/>.
+    /// Every row a refresh writes carries that refresh's <c>RetrievedAt</c>, so this is a per-section
+    /// decision even though it is expressed per row.
+    /// </summary>
+    private List<WeatherDataPoint> FreshOnly(
+        List<WeatherDataPoint> dataPoints, WeatherDataType section, int locationSettingId)
+    {
+        var byStaleness = dataPoints.ToLookup(
+            dp => IsStale(dp.RetrievedAt, _options.ForecastStaleAfterMinutes));
+        var dropped = byStaleness[true].ToList();
+
+        if (dropped.Count > 0)
+        {
+            // The newest DROPPED row — the most recent refresh that is nonetheless past the window.
+            // Taking the max over every row would name one that is not stale at all whenever a
+            // section holds rows of mixed ages, contradicting the message's own claim.
+            LogSectionHidden(section, locationSettingId,
+                dropped.Max(dp => dp.RetrievedAt), _options.ForecastStaleAfterMinutes);
+        }
+
+        return [.. byStaleness[false]];
+    }
+
+    private bool IsStale(DateTimeOffset retrievedAt, int staleAfterMinutes)
+        => timeProvider.GetUtcNow() - retrievedAt > TimeSpan.FromMinutes(staleAfterMinutes);
+
+    // Debug, not Warning: this fires on every dashboard read for as long as the gap lasts, and a
+    // gap wide enough to reach a retention window has already been reported once per refresh at
+    // Information by WeatherRefreshService (a degraded response is a 200, so the poller does NOT
+    // report it as a failure). The location id is an opaque key, never a place name.
+    private void LogSectionHidden(
+        WeatherDataType section, int locationSettingId, DateTimeOffset retrievedAt, int staleAfterMinutes)
+        => logger.LogDebug(
+            "Hiding {WeatherSection} weather for location {LocationSettingId}: last retrieved at {RetrievedAt}, past the {StaleAfterMinutes}-minute retention window.",
+            section, locationSettingId, retrievedAt, staleAfterMinutes);
 
     private static CurrentWeatherDto MapToCurrentDto(WeatherDataPoint dp, TemperatureUnit unit) =>
         new(

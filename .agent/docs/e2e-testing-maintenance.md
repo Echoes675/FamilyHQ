@@ -295,7 +295,7 @@ the Deploy-Dev E2E execution wall-clock:
 
 ## Current Test Coverage
 
-The suite currently contains **22 feature files (~166 scenarios / 168 executed tests)**
+The suite currently contains **22 feature files (~167 scenarios / 169 executed tests)**
 under `tests-e2e/FamilyHQ.E2E.Features/WebUi/`. The per-file tables below are a
 historical snapshot of the earliest features and are **not exhaustive** — treat the
 `WebUi/` directory as the source of truth for current coverage.
