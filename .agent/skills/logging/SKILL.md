@@ -39,9 +39,23 @@ So `{CalendarId}`, `{GoogleCalendarId}` and `{CalendarName}` are all PII placeho
 1. **Prefer FamilyHQ's own id.** Log `CalendarInfo.Id` as `{CalendarInfoId}`. It correlates with every other `{CalendarInfoId}` in the sync path, it is already in scope at nearly every call site, and it carries nothing personal.
 2. **Otherwise redact.** Where the caller genuinely holds only the Google value (`GoogleCalendarClient` has no FamilyHQ calendar row), inject `IPiiRedactor` and log `redactor.Redact(googleCalendarId)`. That yields a stable, non-reversible token, so one calendar can still be followed across log lines in Seq.
 
-The redactor's salt comes from configuration key `Logging:Redaction:Salt` — an environment variable in deployed environments, user secrets locally, **never a literal in the repo**. If it is absent the app still boots and still redacts, using a random per-process salt, and logs a Warning saying correlation is degraded to one process.
+#### The redaction salt
 
-**Guard:** `tests/FamilyHQ.Core.Tests/PiiInLogsGuardTests.cs` scans `src/` and fails the build when one of these values is passed to a log call or an exception constructor. There is deliberately no allow-list — `IPiiRedactor.Redact(…)` is the only escape hatch.
+Configuration key **`Security:RedactionSalt`** — an environment variable (`Security__RedactionSalt`) in deployed environments, user secrets locally, **never a literal in the repo**. Generate one with:
+
+```
+openssl rand -base64 32
+```
+
+- **Absent** → the app still boots and still redacts, using a random per-process salt, and logs a Warning at startup saying correlation is degraded to one process. This is a supported degraded mode.
+- **Supplied but shorter than 32 characters** → startup fails. A short salt is guessable, which puts a household-sized candidate list straight back in play; accepting it would claim a protection it does not provide, and unlike the absent case nothing would warn anyone.
+- **Changing it** re-tokenises everything: log lines written before the change no longer correlate with lines written after it.
+
+**Guard:** `tests/FamilyHQ.Core.Tests/PiiInLogsGuardTests.cs` scans `src/` and fails the build when one of these values is passed to a log call, a `BeginScope`, or an exception constructor. There is deliberately no allow-list — `IPiiRedactor.Redact(…)` is the only escape hatch. It is a lexical tripwire, not a proof: its XML doc lists what a green run does **not** cover (aliasing, plural locals, values reached through an expression, `[LoggerMessage]`), so never read a passing guard as "audited".
+
+#### Why `tools/FamilyHQ.Simulator` is exempt
+
+The Simulator logs calendar ids and event summaries at Information, and it **is** deployed to dev and staging — so the exemption needs stating rather than assuming. It stands because the Simulator is a Google stand-in whose data is entirely synthetic: `DataSeeder` generates its own calendar ids (`simulated_calendar_family…`) and summaries, and it never holds the family's real account address or their events. If that ever stops being true — a Simulator that proxied or replayed real Google data — the exemption dies with it and the guard must be pointed at `tools/` too.
 
 ### Exception messages are a log sink too
 An address in an exception message reaches Seq via whatever logs the unhandled exception, and can reach the client through `ProblemDetails.Detail` (`DomainExceptionHandler` surfaces `DomainValidationException.Message`). Apply the same rules to `throw new …($"…")` as to a log template.
