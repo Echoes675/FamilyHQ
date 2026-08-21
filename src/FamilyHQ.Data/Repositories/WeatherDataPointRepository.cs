@@ -1,9 +1,9 @@
 namespace FamilyHQ.Data.Repositories;
 
-using System.Linq.Expressions;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Weather;
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
 
@@ -70,7 +70,9 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
 
     public async Task ReplaceSectionsAsync(int locationSettingId, List<WeatherDataPoint> dataPoints, CancellationToken ct = default)
     {
-        var sections = SectionsReplacedBy(dataPoints);
+        // The sections this refresh may replace are a Core domain rule (FHQ-159), not a query
+        // detail: everything the payload did NOT carry keeps the rows it already had.
+        var sections = WeatherRetention.SectionsReplacedBy(dataPoints);
 
         // Pure optimisation, not a behaviour: an empty section list already matches no rows, so
         // this only avoids opening a transaction to run a delete that can never match.
@@ -83,36 +85,12 @@ public class WeatherDataPointRepository(FamilyHqDbContext context, TimeProvider 
         // since ExecuteDeleteAsync runs immediately, outside SaveChanges.
         await using var tx = await context.Database.BeginTransactionAsync(ct);
         await context.WeatherDataPoints
-            .Where(RowsReplacedBy(locationSettingId, sections))
+            .Where(WeatherRetention.RowsReplacedBy(locationSettingId, sections))
             .ExecuteDeleteAsync(ct);
         context.WeatherDataPoints.AddRange(dataPoints);
         await context.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
     }
-
-    /// <summary>
-    /// The sections a refresh replaces: exactly those its payload carried rows for. A section whose
-    /// Open-Meteo block came back empty contributes no rows, so it is not replaced — and a payload
-    /// carrying nothing at all replaces nothing (FHQ-159).
-    /// </summary>
-    public static List<WeatherDataType> SectionsReplacedBy(List<WeatherDataPoint> dataPoints) =>
-        [.. dataPoints.Select(x => x.DataType).Distinct()];
-
-    /// <summary>
-    /// The stored rows that a refresh carrying <paramref name="sections"/> replaces: this location's
-    /// rows in those sections and no others.
-    /// <para>
-    /// FHQ-159: the predicate used to match on <c>LocationSettingId</c> alone, so a payload whose
-    /// <c>hourly</c> block came back empty wiped the stored hourly rows as a side effect of
-    /// rewriting <c>daily</c> — one degraded Open-Meteo response blanked forecast the kiosk was
-    /// showing correctly. Narrowing it to the sections actually carried is the whole fix; it stays a
-    /// single set-based statement (<c>data_type = ANY(...)</c>), preserving the FHQ-52 shape.
-    /// </para>
-    /// Public because it IS the retention rule, and asserting it must not require a database.
-    /// </summary>
-    public static Expression<Func<WeatherDataPoint, bool>> RowsReplacedBy(
-        int locationSettingId, List<WeatherDataType> sections) =>
-        x => x.LocationSettingId == locationSettingId && sections.Contains(x.DataType);
 
     private static (DateTimeOffset Start, DateTimeOffset End) ToUtcRange(DateOnly date, DateTimeZone? zone)
     {
