@@ -23,8 +23,28 @@ Never log, in the message or any structured property:
 - Full `Authorization` headers or raw OAuth token-endpoint response bodies — parse and log the OAuth `error`/`error_description` codes instead (see `GoogleAuthService.ParseOAuthError`).
 - Connection strings.
 - PII: email addresses, account display names.
-Log stable identifiers instead: `{UserId}`, Google `sub`, job ids.
+- The family's home location: `LocationSetting.PlaceName`, `Latitude`, `Longitude`. A place name plus coordinates is the home address to within a few metres. `{LocationId}` correlates just as well (FHQ-166).
+
+Log stable identifiers instead: `{UserId}`, Google `sub`, job ids, `{CalendarInfoId}`, `{LocationId}`.
 Cross-references: the `security` and `fail-fast-standard` skills.
+
+### A Google calendar id IS an email address
+Nothing about the type `string GoogleCalendarId` says so, which is exactly why it went unnoticed until FHQ-166:
+
+- A Google **primary** calendar's id **is the account's email address** — that is how the Calendar API identifies it.
+- `CalendarInfo.DisplayName` is the calendar's Google `summary`, which is **also the email address** for a primary calendar (and a family member's name for a member calendar).
+
+So `{CalendarId}`, `{GoogleCalendarId}` and `{CalendarName}` are all PII placeholders. Instead:
+
+1. **Prefer FamilyHQ's own id.** Log `CalendarInfo.Id` as `{CalendarInfoId}`. It correlates with every other `{CalendarInfoId}` in the sync path, it is already in scope at nearly every call site, and it carries nothing personal.
+2. **Otherwise redact.** Where the caller genuinely holds only the Google value (`GoogleCalendarClient` has no FamilyHQ calendar row), inject `IPiiRedactor` and log `redactor.Redact(googleCalendarId)`. That yields a stable, non-reversible token, so one calendar can still be followed across log lines in Seq.
+
+The redactor's salt comes from configuration key `Logging:Redaction:Salt` — an environment variable in deployed environments, user secrets locally, **never a literal in the repo**. If it is absent the app still boots and still redacts, using a random per-process salt, and logs a Warning saying correlation is degraded to one process.
+
+**Guard:** `tests/FamilyHQ.Core.Tests/PiiInLogsGuardTests.cs` scans `src/` and fails the build when one of these values is passed to a log call or an exception constructor. There is deliberately no allow-list — `IPiiRedactor.Redact(…)` is the only escape hatch.
+
+### Exception messages are a log sink too
+An address in an exception message reaches Seq via whatever logs the unhandled exception, and can reach the client through `ProblemDetails.Detail` (`DomainExceptionHandler` surfaces `DomainValidationException.Message`). Apply the same rules to `throw new …($"…")` as to a log template.
 
 ## Log on failure
 - No silent `catch { }`. Every catch / handled-error / fallback path emits at least:
