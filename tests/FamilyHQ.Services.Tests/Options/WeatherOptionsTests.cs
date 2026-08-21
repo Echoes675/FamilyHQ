@@ -91,4 +91,35 @@ public class WeatherOptionsTests
             .Should().Throw<InvalidOperationException>()
             .WithMessage($"*{nameof(WeatherOptions.CurrentStaleAfterMinutes)}*");
     }
+
+    [Fact]
+    public void Validate_ForecastStaleAfterMinutesBeyondADay_Throws()
+    {
+        // A year of "retention" is retention switched off: the kiosk would show a year-old forecast
+        // rather than hiding it, which is the exact failure the window exists to prevent. Like
+        // MaxFailureBackoffMinutes, the setting is bounded at both ends so a typo fails at boot.
+        var options = new WeatherOptions { ForecastStaleAfterMinutes = 525600 };
+
+        options.Invoking(o => o.Validate())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(WeatherOptions.ForecastStaleAfterMinutes)}*");
+    }
+
+    [Fact]
+    public void Validate_CurrentStaleAfterMinutesBeyondADay_Throws()
+    {
+        var options = new WeatherOptions { CurrentStaleAfterMinutes = 1441 };
+
+        options.Invoking(o => o.Validate())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(WeatherOptions.CurrentStaleAfterMinutes)}*");
+    }
+
+    [Fact]
+    public void Validate_RetentionWindowsOfExactlyOneDay_AreAllowed()
+    {
+        var options = new WeatherOptions { ForecastStaleAfterMinutes = 1440, CurrentStaleAfterMinutes = 1440 };
+
+        options.Invoking(o => o.Validate()).Should().NotThrow();
+    }
 }

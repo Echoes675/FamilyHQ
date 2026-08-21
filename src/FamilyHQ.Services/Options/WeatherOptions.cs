@@ -7,6 +7,15 @@ public class WeatherOptions
     /// <summary>Hard ceiling on <see cref="MaxFailureBackoffMinutes"/>: one day.</summary>
     private const int MaxFailureBackoffCeilingMinutes = 1440;
 
+    /// <summary>
+    /// Hard ceiling on both retention windows: one day, matching
+    /// <see cref="MaxFailureBackoffCeilingMinutes"/>. Without an upper bound a typo such as 525600
+    /// validates cleanly and silently disables retention altogether — the kiosk would then show a
+    /// year-old forecast rather than hiding it, which is the failure this setting exists to prevent.
+    /// Nothing this feature does is served by keeping weather for longer than a day.
+    /// </summary>
+    private const int StaleAfterCeilingMinutes = 1440;
+
     public string BaseUrl { get; set; } = "https://api.open-meteo.com";
     public int PollIntervalMinutes { get; set; } = 30;
     public int MinPollIntervalMinutes { get; set; } = 1;
@@ -79,13 +88,16 @@ public class WeatherOptions
                 $"{MaxFailureBackoffCeilingMinutes} (was {MaxFailureBackoffMinutes}).");
 
         // Zero or negative would hide every section the instant it was written, which reads on the
-        // kiosk as "weather is broken" — surface it at boot instead.
-        if (ForecastStaleAfterMinutes < 1)
+        // kiosk as "weather is broken"; anything past the ceiling disables retention entirely and
+        // leaves stale data on the wall. Surface both at boot instead.
+        if (ForecastStaleAfterMinutes is < 1 or > StaleAfterCeilingMinutes)
             throw new InvalidOperationException(
-                $"{nameof(WeatherOptions)}.{nameof(ForecastStaleAfterMinutes)} must be at least 1 (was {ForecastStaleAfterMinutes}).");
+                $"{nameof(WeatherOptions)}.{nameof(ForecastStaleAfterMinutes)} must be between 1 and " +
+                $"{StaleAfterCeilingMinutes} (was {ForecastStaleAfterMinutes}).");
 
-        if (CurrentStaleAfterMinutes < 1)
+        if (CurrentStaleAfterMinutes is < 1 or > StaleAfterCeilingMinutes)
             throw new InvalidOperationException(
-                $"{nameof(WeatherOptions)}.{nameof(CurrentStaleAfterMinutes)} must be at least 1 (was {CurrentStaleAfterMinutes}).");
+                $"{nameof(WeatherOptions)}.{nameof(CurrentStaleAfterMinutes)} must be between 1 and " +
+                $"{StaleAfterCeilingMinutes} (was {CurrentStaleAfterMinutes}).");
     }
 }
