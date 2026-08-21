@@ -17,6 +17,13 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddFamilyHqServices(this IServiceCollection services, IConfiguration configuration)
     {
+        // FHQ-166: the log-seam redactor. Singleton — the salt is read once at boot and the redactor
+        // is stateless thereafter, so every consumer must share the instance or the same calendar
+        // would hash differently in different scopes.
+        services.AddSingleton<IPiiRedactor>(sp => new Core.Logging.SaltedHashPiiRedactor(
+            configuration[Core.Logging.SaltedHashPiiRedactor.SaltConfigurationKey],
+            sp.GetRequiredService<ILogger<Core.Logging.SaltedHashPiiRedactor>>()));
+
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));
 
         // FHQ-91: bind eagerly and fail-fast at boot (JwtSessionOptions precedent) — a bad timeout

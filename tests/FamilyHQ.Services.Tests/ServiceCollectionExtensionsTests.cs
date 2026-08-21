@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Theme;
@@ -7,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -238,5 +240,34 @@ public class ServiceCollectionExtensionsTests
 
         provider.GetRequiredService<IWeatherProvider>().Should().BeOfType<OpenMeteoWeatherProvider>();
         provider.GetRequiredService<IWmoCodeMapper>().Should().BeOfType<WmoCodeMapper>();
+    }
+
+    // FHQ-166: the redactor must be a SINGLETON reading the configured salt. Registered per-scope it
+    // would still redact, but the same calendar would carry a different token in every request, and
+    // the correlation the redaction exists to preserve would be silently gone.
+    [Fact]
+    public void AddFamilyHqServices_IPiiRedactor_IsASingletonUsingTheConfiguredSalt()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>(SaltedHashPiiRedactor.SaltConfigurationKey, "a-configured-salt")
+            })
+            .Build();
+        services.AddFamilyHqServices(configuration);
+
+        services.Should().Contain(sd =>
+            sd.ServiceType == typeof(IPiiRedactor) && sd.Lifetime == ServiceLifetime.Singleton);
+
+        using var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<IPiiRedactor>();
+
+        resolved.Should().BeOfType<SaltedHashPiiRedactor>();
+        resolved.Redact("a.family.member@example.com").Should().Be(
+            new SaltedHashPiiRedactor("a-configured-salt", Mock.Of<ILogger<SaltedHashPiiRedactor>>())
+                .Redact("a.family.member@example.com"),
+            "the registration must actually read Logging:Redaction:Salt, not ignore it");
     }
 }
