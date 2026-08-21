@@ -438,7 +438,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         if (apiEvent is null) return null;
 
         var contentHash = apiEvent.ExtendedProperties?.Private?.ContentHash;
-        return new GoogleEventDetail(apiEvent.Id, apiEvent.Organizer?.Email, contentHash);
+        return new GoogleEventDetail(apiEvent.Id, contentHash);
     }
 
     public async Task<SeriesMaster?> GetSeriesMasterAsync(

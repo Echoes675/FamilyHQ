@@ -7,10 +7,10 @@ internal record GoogleApiEventDateTime(
     [property: JsonPropertyName("date")]     string?         Date,
     [property: JsonPropertyName("timeZone")] string?         TimeZone);
 
-internal record GoogleApiOrganizer(
-    [property: JsonPropertyName("email")] string? Email,
-    [property: JsonPropertyName("self")]  bool    Self);
-
+// FHQ-166: there is deliberately no `organizer` binding. Google sends one on every event and its
+// `email` is a live address; binding it would materialise that address in memory on every fetch for
+// nothing, since no caller reads it. System.Text.Json ignores JSON members with no corresponding
+// property, so the field simply never leaves the response stream.
 internal record GoogleApiPrivateExtendedProperties(
     [property: JsonPropertyName("content-hash")] string? ContentHash);
 
@@ -27,7 +27,6 @@ internal record GoogleApiEvent(
     [property: JsonPropertyName("location")]             string?                  Location,
     [property: JsonPropertyName("start")]                GoogleApiEventDateTime?  Start,
     [property: JsonPropertyName("end")]                  GoogleApiEventDateTime?  End,
-    [property: JsonPropertyName("organizer")]            GoogleApiOrganizer?      Organizer,
     [property: JsonPropertyName("extendedProperties")]   GoogleApiExtendedProperties? ExtendedProperties,
     // Recurring-series metadata. recurringEventId links an instance to its series master;
     // originalStartTime is set only on exception instances (moved/modified occurrences);

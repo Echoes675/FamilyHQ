@@ -54,7 +54,10 @@ public class CalendarSyncService(
 
         foreach (var cal in obsolete)
         {
-            logger.LogInformation("Removing obsolete calendar {CalendarId}", cal.Id);
+            // FHQ-166: {CalendarInfoId}, not {CalendarId}. The value has always been FamilyHQ's own
+            // Guid and is perfectly safe, but SKILL.md now lists {CalendarId} as a PII placeholder —
+            // a Seq user following the rule would distrust a field that is fine.
+            logger.LogInformation("Removing obsolete calendar {CalendarInfoId}", cal.Id);
             await calendarRepository.RemoveCalendarAsync(cal.Id, ct);
         }
 
@@ -153,7 +156,7 @@ public class CalendarSyncService(
         var calendar = await calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
         {
-            logger.LogWarning("Calendar {CalendarId} not found. Skipping sync.", calendarInfoId);
+            logger.LogWarning("Calendar {CalendarInfoId} not found. Skipping sync.", calendarInfoId);
             return 0;
         }
 
