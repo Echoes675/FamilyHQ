@@ -126,3 +126,39 @@ Report back to the user:
 - Any follow-up items surfaced during the process
 
 The branch is now ready for a PR targeting `dev`.
+
+---
+
+## What this gate does NOT cover (FHQ-168)
+
+A green gate means **this branch is good against the `dev` it was cut from**. It does not mean the branch is safe to merge, because it was never built against whatever else merged in the meantime.
+
+Two branches can each be legitimately green, merge cleanly with no textual conflict, and still leave `dev` red. This happened on 2026-08-20: PR #192 added a purity guard banning `Task.Delay` under `tests/`; PR #193, branched before that guard existed, added a test file containing one. Both gates were valid. Git merged both without complaint. `dev` went red 8 minutes later.
+
+It is not specific to that guard. Any change that constrains what *other* code may do has the same shape — an analyser, an architecture test, a new required interface member, a renamed shared helper. The more open PRs, the likelier it is.
+
+**The project has accepted this risk rather than paying to prevent it** (2026-08-21). Preventing it means either requiring every branch to be current with `dev` — which forces a re-gate of every other open PR each time one merges, a ~10-minute tax that lands hardest exactly when a batch is in flight — or building merge commits, which is real Jenkins work. For a single-maintainer project the cost outweighs a rare, quickly-fixed breakage. **Detect and fix forward instead.**
+
+### After every merge to `dev`: check the `dev` branch build
+
+The multibranch job builds `dev` on its own, automatically, within a few minutes of a merge. This signal already exists and costs nothing. The only failure in 2026-08-20's incident was that nobody looked at it — `FamilyHQ/dev` build **#136** caught the breakage, named the exact file and line, and sat unread.
+
+```bash
+jk run ls FamilyHQ/dev --limit 1
+```
+
+Do this after merging a PR, and **especially** when more than one PR was open at the same time. If it is red:
+
+```bash
+jk log FamilyHQ/dev <run-number>
+```
+
+### Fix-forward procedure for a red `dev`
+
+`dev` being red is not cosmetic here: a `dev` merge auto-triggers Deploy-Staging, so a broken `dev` blocks the release chain, and **any branch cut from red `dev` inherits the failure** and cannot pass its own gate.
+
+1. **Read the failure before assuming a culprit.** A semantic conflict names a file that neither PR's author touched — that is the signature. Do not assume the most recent merge is at fault.
+2. **Branch from `dev`** — never commit the fix directly (see `git-workflow`).
+3. **Prefer converging on the constraint over exempting from it.** In the 2026-08-20 case the fix was to convert the offending tripwire to the `WaitAsync` form the constraining PR had already established elsewhere — not to add an allow-list entry. An exemption added under time pressure widens the guard's blind spot permanently, on the day it lands.
+4. **Gate the fix normally**, then merge it ahead of anything else queued.
+5. **Tell anyone with an open branch**, and have them merge `dev` in — their gate results are void until they do, and a re-run against the old base will keep passing while `dev` stays broken.
