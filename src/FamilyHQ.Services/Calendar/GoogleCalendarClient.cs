@@ -197,7 +197,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         {
             GoogleCalendarId = item.Id,
             DisplayName = item.SummaryOverride ?? item.Summary ?? string.Empty,
-            Color = item.BackgroundColor
+            Color = item.BackgroundColor,
+            // FHQ-164: the calendar's default zone, carried so the series-zone ladder's last
+            // Google-supplied rung costs no extra call at split time.
+            IanaTimeZone = item.TimeZone
         }) ?? Array.Empty<CalendarInfo>();
     }
 
@@ -279,6 +282,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         Location = item.Location,
                         Description = item.Description,
                         ContentHash = item.ExtendedProperties?.Private?.ContentHash,
+                        // FHQ-164/FHQ-170: Google reports start.timeZone on expanded instances as
+                        // well as on masters, so the series' anchor zone arrives with the list
+                        // response at no extra cost. This is the lazy backfill's main feeder — an
+                        // ordinary window sync populates the column for every event it touches.
+                        IanaTimeZone = item.Start?.TimeZone,
                         // Series link from pass 1. RecurrenceRule is filled in pass 2 by the
                         // two-pass master fetch in CalendarSyncService.
                         GoogleRecurringEventId = item.RecurringEventId,
@@ -313,8 +321,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
-        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone);
+        // FHQ-170: correct as it stands. A brand-new event has no prior zone to preserve, so the
+        // family's configured zone is the right answer here (ResolveOutboundZone still defers to an
+        // explicit zone if a caller ever supplies one).
+        var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, familyZone: familyZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -333,8 +344,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
-        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
-        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, ianaZone);
+        var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, familyZone);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -381,10 +392,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CancellationToken ct = default)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
-        var ianaZone = await _timeZoneService.GetSendZoneAsync(ct);
+        var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
         // MapToGoogleEvent emits no `recurrence` key when given no rrule (WhenWritingNull), and PATCH
         // merges — so the master's existing RRULE, attendees and reminders survive the write.
-        var body = MapToGoogleEvent(calendarEvent, contentHash, ianaZone: ianaZone, clearCounterpartWhenFields: true);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, familyZone: familyZone, clearCounterpartWhenFields: true);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -438,7 +449,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         if (apiEvent is null) return null;
 
         var contentHash = apiEvent.ExtendedProperties?.Private?.ContentHash;
-        return new GoogleEventDetail(apiEvent.Id, contentHash);
+        // FHQ-164: start.timeZone makes this the ladder's "any surviving instance" rung — a
+        // recurring instance carries the zone its series is anchored to.
+        return new GoogleEventDetail(apiEvent.Id, contentHash, apiEvent.Start?.TimeZone);
     }
 
     public async Task<SeriesMaster?> GetSeriesMasterAsync(
@@ -501,7 +514,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     }
 
     private object MapToGoogleEvent(
-        CalendarEvent evt, string contentHash, string? rrule = null, string? ianaZone = null,
+        CalendarEvent evt, string contentHash, string? rrule = null, string? familyZone = null,
         bool clearCounterpartWhenFields = false)
     {
         var extendedProperties = new
@@ -530,25 +543,34 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
             startDate = evt.Start.ToString("yyyy-MM-dd");
             endDate = exclusiveEndDate.ToString("yyyy-MM-dd");
-        }
-        else if (!string.IsNullOrWhiteSpace(ianaZone))
-        {
-            // When the user's IANA zone is known, send the wall-clock time in that zone so recurring
-            // series don't drift across DST transitions (FHQ-43). The timeZone field tells Google
-            // how to interpret the dateTime and how to expand future occurrences.
-            startDateTime = _timeZoneService.ToZonedWallClock(evt.Start, ianaZone);
-            startZone = ianaZone;
-            endDateTime = _timeZoneService.ToZonedWallClock(evt.End, ianaZone);
-            endZone = ianaZone;
+
+            // An all-day event carries no start.timeZone by design (it is date-anchored, so DST
+            // cannot move it). Nothing to preserve and nothing to substitute — this branch is
+            // unaffected by FHQ-170.
         }
         else
         {
-            // UTC fallback — preserves FHQ-42 behaviour when no zone is resolved. Google REQUIRES a
-            // timeZone on start/end for a recurring event, so send timeZone=UTC with the UTC instant.
-            startDateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
-            startZone = "UTC";
-            endDateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
-            endZone = "UTC";
+            var outboundZone = ResolveOutboundZone(evt, familyZone);
+
+            if (!string.IsNullOrWhiteSpace(outboundZone))
+            {
+                // Send the wall-clock time in the anchor zone so recurring series don't drift across
+                // DST transitions (FHQ-43). The timeZone field tells Google how to interpret the
+                // dateTime and how to expand future occurrences.
+                startDateTime = _timeZoneService.ToZonedWallClock(evt.Start, outboundZone);
+                startZone = outboundZone;
+                endDateTime = _timeZoneService.ToZonedWallClock(evt.End, outboundZone);
+                endZone = outboundZone;
+            }
+            else
+            {
+                // UTC fallback — preserves FHQ-42 behaviour when no zone is resolved. Google REQUIRES
+                // a timeZone on start/end for a recurring event, so send timeZone=UTC with the UTC instant.
+                startDateTime = evt.Start.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
+                startZone = "UTC";
+                endDateTime = evt.End.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssK");
+                endZone = "UTC";
+            }
         }
 
         return new
@@ -561,6 +583,36 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             recurrence,
             extendedProperties
         };
+    }
+
+    /// <summary>
+    /// FHQ-170: the zone this write anchors the event to. The event's OWN zone — the value Google
+    /// supplied for it — wins over <paramref name="familyZone"/>, which is a FALLBACK for events
+    /// Google gave no zone for (a brand-new event, or a single timed event with no explicit zone),
+    /// never a replacement for one it did.
+    /// <para>
+    /// Sending the family's configured zone on an event created elsewhere preserves the edited
+    /// occurrence's instant but silently re-anchors the SERIES, moving every future occurrence by an
+    /// hour at the next transition where the two zones differ — on the phone, for everyone the
+    /// calendar is shared with. FHQ-43's reason for sending an explicit zone still holds; only the
+    /// choice of WHICH zone changes.
+    /// </para>
+    /// </summary>
+    private string? ResolveOutboundZone(CalendarEvent evt, string? familyZone)
+    {
+        if (string.IsNullOrWhiteSpace(evt.IanaTimeZone))
+            return familyZone;
+
+        if (_timeZoneService.IsValidZone(evt.IanaTimeZone))
+            return evt.IanaTimeZone;
+
+        // A stored id the tz database does not recognise cannot be converted to a wall clock and
+        // would be rejected by Google. Degrade to the family's zone rather than failing the user's
+        // write, and say so — an unrecognised id means the stored value is stale or corrupt.
+        _logger.LogWarning(
+            "Event {GoogleEventId} carries an unrecognised IANA time zone {IanaTimeZone}; anchoring this write to the family's configured zone instead.",
+            evt.GoogleEventId, evt.IanaTimeZone);
+        return familyZone;
     }
 
     // On events.patch (merge), the unused sub-field must be sent as an explicit JSON null to clear a

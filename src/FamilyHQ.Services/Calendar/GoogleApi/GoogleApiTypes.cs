@@ -40,13 +40,17 @@ internal record GoogleApiEventList(
     [property: JsonPropertyName("nextPageToken")] string? NextPageToken,
     [property: JsonPropertyName("nextSyncToken")] string? NextSyncToken);
 
+// FHQ-164: `timeZone` is the calendar's own default zone — the zone Google applies to an event on
+// this calendar that carries none of its own. Marked optional on Google's calendar resource, which
+// is why the discovery ladder states a terminal behaviour rather than assuming it is always present.
 internal record GoogleApiCalendarListEntry(
     [property: JsonPropertyName("id")]              string  Id,
     [property: JsonPropertyName("summary")]         string? Summary,
     [property: JsonPropertyName("summaryOverride")] string? SummaryOverride,
     [property: JsonPropertyName("backgroundColor")] string? BackgroundColor,
     [property: JsonPropertyName("foregroundColor")] string? ForegroundColor,
-    [property: JsonPropertyName("accessRole")]      string? AccessRole);
+    [property: JsonPropertyName("accessRole")]      string? AccessRole,
+    [property: JsonPropertyName("timeZone")]        string? TimeZone = null);
 
 internal record GoogleApiCalendarList(
     [property: JsonPropertyName("items")]         IReadOnlyList<GoogleApiCalendarListEntry> Items,
