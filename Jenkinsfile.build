@@ -31,7 +31,11 @@ pipeline {
         stage('Unit Tests') {
             steps {
                 echo '======= Unit Tests ======='
-                sh 'for proj in tests/*/*.csproj; do dotnet test "$proj" -c Release --logger "trx;LogFileName=test-results.trx"; done'
+                // Jenkins runs `sh` as `#!/bin/sh -xe`, so without the accumulator the loop aborts at
+                // the FIRST failing project: the build fails correctly, but the remaining projects never
+                // run and never report, so a run with two broken suites only ever shows one of them.
+                // `|| rc=1` keeps every project running and still fails the stage (FHQ-169).
+                sh 'rc=0; for proj in tests/*/*.csproj; do dotnet test "$proj" -c Release --logger "trx;LogFileName=test-results.trx" || rc=1; done; exit $rc'
             }
             post {
                 always {
