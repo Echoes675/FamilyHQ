@@ -11,38 +11,37 @@ Dashboard app that displays a family calendar events
 > whatever changes we make must be **fully compatible**. The consideration of **existing events** is
 > also a real concern: the production application is in use and has many calendars and events.
 
-Google is the system of record. **FamilyHQ is one client among several**, and usually not the one
-the family actually uses to make changes. The kiosk is a *view* over their calendar, not the owner
-of it.
+Google is the system of record. **FamilyHQ is one client among several** — a full read-write one:
+the touchscreen kiosk creates, edits and deletes events just as the phone app does. It is simply not
+the *majority* path, and it does not own the data.
+
+That combination is precisely what makes this dangerous. A read-only kiosk could not corrupt
+anything. Because FamilyHQ writes, **an edit made on the kiosk can damage an event created on a
+phone** — and the family will see the damage in the Google Calendar app, not here. Compatibility has
+to hold in both directions:
+
+- what FamilyHQ **writes** must be what the Google app expects to read, and
+- what the Google app **wrote** must survive FamilyHQ touching it.
+
+The second is the one that gets missed.
 
 ### Why this is easy to get wrong
 
-It is natural to reason as though FamilyHQ owns the data — its database has the events, so its
-settings feel authoritative. They are not. That assumption has produced real defects:
-
-- **FHQ-170** — `UpdateEventAsync` sends the *family's* configured zone as `start.timeZone` on every
-  edit, silently discarding the zone the phone set when it created the series. The edited
-  occurrence's instant survives, but the series is re-anchored, so **every future occurrence moves
-  an hour** at the next divergent DST transition — on every device the calendar is shared with.
-- **FHQ-161** — recurrence expansion stepped fixed UTC instants while Google holds wall-clock across
-  a transition. A COUNT-bounded series split across an autumn transition silently lost its last
-  occurrence.
-
-Both were correct-looking code that quietly diverged from what Google does.
+It is natural to reason as though FamilyHQ owns the data — its database has the events, so its settings feel authoritative. They are not. That assumption has produced real defects.
 
 ### What this requires in practice
 
 - **Round-trip, don't substitute.** Before changing any Google write path, ask what the value was
-  *before* FamilyHQ touched it and whether the change preserves it. Prefer sending back the value
-  Google gave us over a locally-derived equivalent.
+*before* FamilyHQ touched it and whether the change preserves it. Prefer sending back the value
+Google gave us over a locally-derived equivalent.
 - **FamilyHQ settings are a fallback, not an override.** Use them for data Google did not supply
-  (e.g. a brand-new event's zone). Never use them to replace data it did.
+(e.g. a brand-new event's zone). Never use them to replace data it did.
 - **A change correct for events FamilyHQ created may be wrong for events it merely synced.** Check
-  both origins — the synced ones are the majority.
+both origins — the synced ones are the majority.
 - **Match Google's semantics, not merely a reasonable interpretation.** Where behaviour is
-  observable (DST handling, recurrence expansion, all-day boundaries, full-replace PUT semantics),
-  the standard is what Google actually does. Note the Simulator does not model everything — see
-  `.agent/docs/intermittent-issues.md`.
+observable (DST handling, recurrence expansion, all-day boundaries, full-replace PUT semantics),
+the standard is what Google actually does. Note the Simulator does not model everything — see
+`.agent/docs/intermittent-issues.md`.
 
 ### Existing production data is a first-class concern
 
@@ -71,7 +70,6 @@ Schema changes require explicit approval (see Rules of Engagement below).
 -- Run single unit test
 -- Search codebase, read documentation
 -- Create git branches and commits
-
 - Operations That Require Approval
 -- Installing new packages or dependencies
 -- Modifying configuration files (package.json, tsconfig.json, etc.)
@@ -84,12 +82,15 @@ Schema changes require explicit approval (see Rules of Engagement below).
 -- Making commits directly on the 'dev' or 'main' branches
 
 ## Progressive Disclosure Links
+
 Refer to these files in the .agent/ directory for specific implementation details:
-- Project Architecture & Structure: `.agent/docs/architecture.md`
+
+- Project Architecture &amp; Structure: `.agent/docs/architecture.md`
 - UI Design System (themes, CSS variables, layer model, touch rules): `.agent/docs/ui-design-system.md`
 - Intermittent / flaky issues tracker (read before dismissing a CI failure as flake): `.agent/docs/intermittent-issues.md`
 
 ## Skills
+
 Read the relevant skill file before starting any task of that type:
 
 - **Git commits**: Read `.agent/skills/git-commit-formatter/SKILL.md`
@@ -120,8 +121,11 @@ All FamilyHQ work is tracked in the Obsidian vault at `D:\Obsidian Vault\FamilyH
 See `.agent/skills/obsidian-tickets/SKILL.md` for the full trigger → action playbook.
 
 ### Skill Registration Rule
+
 When creating a new skill:
+
 1. Create the skill directory and `SKILL.md` file in `.agent/skills/`.
 2. Update this "## Skills" section to include the new skill.
 3. Ensure the skill follows the standard format with clear triggers and instructions.
 4. Skills are automatically discovered at runtime using `list_files(".agent/skills", recursive=true)`.
+
