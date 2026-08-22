@@ -60,6 +60,29 @@ public class CalendarsControllerTests
     }
 
     [Fact]
+    public async Task GetCalendarList_ReportsTheCalendarsOwnDefaultTimeZone()
+    {
+        // FHQ-164: Google returns the calendar resource's `timeZone` on every calendarList entry, and
+        // the app stores it as the last Google-supplied rung of its series-zone discovery ladder. A
+        // Simulator that never reports one leaves that rung unexercised in every environment that
+        // runs against it.
+        using var db = CreateDb();
+        db.Calendars.Add(new SimulatedCalendar
+        {
+            Id = "cal-alice", Summary = "Alice Cal", UserId = "alice", TimeZone = "Europe/London"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.GetCalendarList();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("\"timeZone\":\"Europe/London\"");
+    }
+
+    [Fact]
     public async Task GetCalendarList_WhenNoTokenPresent_ReturnsEmptyList()
     {
         // Arrange

@@ -24,6 +24,18 @@ public class CalendarEvent
     // represents part of a recurring series (i.e. whenever GoogleRecurringEventId is set).
     public string? RecurrenceRule { get; set; }
 
+    // The IANA zone Google reports as this event's start.timeZone (e.g. "America/New_York").
+    //
+    // For a recurring instance this is the zone the SERIES is anchored to — the zone Google expands
+    // future occurrences in — so it must be sent back unchanged on an edit rather than replaced with
+    // the family's configured zone (FHQ-170), and it is the zone a "this and following" COUNT split
+    // must enumerate in (FHQ-164).
+    //
+    // Null when Google supplied none: an all-day event carries no zone by design, and start.timeZone
+    // is optional on a single timed event. Existing rows are also null until a fetch actually reports
+    // one — the backfill is lazy and opportunistic (FHQ-164 Decision 4), never defaulted.
+    public string? IanaTimeZone { get; set; }
+
     // True when this event belongs to a recurring series.
     public bool IsRecurring => GoogleRecurringEventId is not null;
 

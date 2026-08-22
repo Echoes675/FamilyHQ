@@ -11,6 +11,15 @@ namespace FamilyHQ.Core.Models;
 /// <see cref="ContentHash"/>.
 /// </para>
 /// </summary>
+/// <param name="Id">The Google event id.</param>
+/// <param name="ContentHash">The <c>extendedProperties.private["content-hash"]</c> echo marker.</param>
+/// <param name="IanaTimeZone">
+/// FHQ-164: Google's <c>start.timeZone</c> for this event. A recurring INSTANCE carries the zone its
+/// series is anchored to, which makes any surviving instance a Google-supplied answer for the
+/// series' zone when the master itself cannot be fetched. Null when Google supplied none (an all-day
+/// event, or a single timed event with no explicit zone).
+/// </param>
 public record GoogleEventDetail(
     string Id,
-    string? ContentHash);
+    string? ContentHash,
+    string? IanaTimeZone = null);

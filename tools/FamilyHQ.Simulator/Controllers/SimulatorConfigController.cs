@@ -46,7 +46,8 @@ public class SimulatorConfigController : ControllerBase
                 Id = c.Id,
                 Summary = c.Summary,
                 BackgroundColor = c.BackgroundColor ?? "#9e9e9e",
-                UserId = config.UserName
+                UserId = config.UserName,
+                TimeZone = c.TimeZone
             });
         }
 

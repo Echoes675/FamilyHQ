@@ -52,6 +52,19 @@
 - **WebhookRenewalService** (IHostedService, lives in WebApi): Background service that re-registers all webhook watch channels on startup (1-min delay) and every 6 days. Iterates all users via ITokenStore. Disabled when `Sync:WebhookRegistrationEnabled` is false.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
+## Google write paths — an event carries its own time zone (FHQ-170)
+
+**Rule: a `CalendarEvent` handed to a Google write must carry the zone Google anchored it to. The family's configured zone (`DisplaySetting.IanaTimeZone`, via `ITimeZoneService.GetSendZoneAsync`) is a fallback for data Google never supplied — never a replacement for data it did.**
+
+`GoogleCalendarClient.MapToGoogleEvent` sends an explicit `start.timeZone`/`end.timeZone` on every timed write, because that is the zone Google expands a series' future occurrences in (FHQ-43). `ResolveOutboundZone` therefore prefers the event's own `IanaTimeZone` and reaches for the family's only when the event has none. That makes the property the whole invariant: an event that arrives at a write without it does not fail — it is silently re-anchored, and every future occurrence moves by an hour at the next transition where the two zones differ, in the Google Calendar app, for everyone the calendar is shared with.
+
+What that means for anyone touching these paths:
+
+- **Any newly-built `CalendarEvent` bound for `CreateEventAsync`, `CreateRecurringEventAsync` or `PatchEventFieldsAsync` must state a zone** — the one the event or its series already carries, or an explicit `null` where there genuinely is no prior zone to preserve (a brand-new event, in `CalendarEventService.CreateAsync`). `tests/FamilyHQ.Core.Tests/OutboundZoneGuardTests.cs` fails the build on a construction that states neither. It is a lexical tripwire, not a proof — its XML doc lists what it cannot see.
+- **A row loaded from the database already carries it**, so an in-place edit needs nothing extra. The hazard is specifically the freshly-constructed object: a patched series master, the forward half of a "this and following" split, a series moved between calendars.
+- **All-day events carry no zone by design** (they are date-anchored, so DST cannot move them) and that branch never reads one.
+- **Where the value comes from**: sync stores Google's `start.timeZone` for every event it touches and adopts each calendar's own default zone from the calendar list, so the backfill is lazy and costs no extra API call. When a series' row still has none, `CalendarEventService` asks Google rather than guessing — stored → series master → surviving instance → calendar default → fixed-UTC enumeration with a Warning (FHQ-164 Decision 2). A candidate the tz database cannot resolve is skipped rather than accepted, because the outbound write would reject it too.
+
 ## Webhook echo guard
 
 FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigrationService`. Each write computes a SHA256 over `(title, start, end, isAllDay, description)` via `EventContentHash` and stores the hex hash as `extendedProperties.private["content-hash"]` on the Google event. Google's resulting push notification then arrives at `SyncController.GooglePushWebhook`, which enqueues a durable sync job; `CalendarSyncWorker` later dispatches it to `CalendarSyncService.SyncAsync` / `SyncAllAsync` (see "Durable calendar sync queue" below).

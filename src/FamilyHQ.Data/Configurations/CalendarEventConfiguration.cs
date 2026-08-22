@@ -43,6 +43,13 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.Property(e => e.RecurrenceRule)
             .HasMaxLength(1000);
 
+        // FHQ-170/FHQ-164: the IANA id Google reports as start.timeZone. A zone id is a plain
+        // varchar with no timestamp semantics — nothing for Postgres to convert — so it does not
+        // re-open the DateTimeOffset/UTC problem. 64 matches DayTheme.IanaTimeZone and
+        // DisplaySetting.IanaTimeZone; the longest id in the tz database is comfortably inside it.
+        builder.Property(e => e.IanaTimeZone)
+            .HasMaxLength(64);
+
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
         builder.HasIndex(e => e.End);
