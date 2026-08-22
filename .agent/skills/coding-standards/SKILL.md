@@ -57,7 +57,13 @@ description: A set of rules and best practices that guide on how to write, struc
 - Urls and other settings (eg: number of retries, number of days to sync etc...) should be delivered via configuration
 - Passwords and secrets should be delivered by environment variables in deployed environments and via user secrets when working locally
 
+## Wrapping static calls
+
+Static calls must be wrapped in an injectable interface with the correct DI lifetime, so a unit test can substitute them. `DateTime.Now`, `Guid.NewGuid()`, file/network/environment access and any other source of ambient non-determinism all fall under this rule.
+
+**Exemption — pure framework functions.** A static call that is a pure function of its arguments (crypto primitives such as `HMACSHA256.HashData`, `Convert.ToHexStringLower`, `Encoding.UTF8.GetBytes`) is exempt. It introduces no ambient non-determinism, so there is nothing for a seam to control; and mocking it would let a test hand back a fixed digest and assert the opposite of what production computes — the substitution would remove the only property worth testing. Assert the real output instead (see `SaltedHashPiiRedactor`, FHQ-166). `RandomNumberGenerator` is not pure, but is exempt at the same call site for the same reason: the observable contract there is "two instances do not agree", and a substitutable RNG could only be used to assert that they do.
+
 ## Logging
 - Use structured logging (e.g., _logger.LogInformation("Processing event {EventId}", eventId)).
 - Never use string interpolation inside log templates.
-- Log sensitive data (PII, tokens).
+- **Never** log sensitive data (PII, tokens, the family's home location). See skill @logging — the full rule, the redaction seam and the CI guard live there.

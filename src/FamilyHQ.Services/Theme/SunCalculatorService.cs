@@ -15,24 +15,30 @@ public class SunCalculatorService : ISunCalculatorService
 
         var sunTimes = SunCalc.GetSunPhases(utcDate, latitude, longitude);
 
+        // FHQ-166: these messages carry the phase name and the date only — never the coordinates
+        // they were computed from. Those are the family's home LocationSetting values, passed down
+        // by DayThemeService, and an exception message is a log sink: DayThemeSchedulerService logs
+        // this at Error, so the home address would land in Seq on every polar-edge failure. The
+        // caller supplied the coordinates and already knows them; the phase and the date are the
+        // whole of the diagnostic content.
         var dawnPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Dawn.Value)
             ?? throw new InvalidOperationException(
-                $"Sun phase 'Dawn' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                $"Sun phase 'Dawn' is not available for the configured location on {date}. " +
                 "This may occur for polar locations where the sun does not rise or set.");
 
         var sunrisePhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Sunrise.Value)
             ?? throw new InvalidOperationException(
-                $"Sun phase 'Sunrise' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                $"Sun phase 'Sunrise' is not available for the configured location on {date}. " +
                 "This may occur for polar locations where the sun does not rise or set.");
 
         var sunsetPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Sunset.Value)
             ?? throw new InvalidOperationException(
-                $"Sun phase 'Sunset' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                $"Sun phase 'Sunset' is not available for the configured location on {date}. " +
                 "This may occur for polar locations where the sun does not rise or set.");
 
         var duskPhase = sunTimes.Cast<SunPhase?>().FirstOrDefault(x => x!.Value.Name.Value == SunPhaseName.Dusk.Value)
             ?? throw new InvalidOperationException(
-                $"Sun phase 'Dusk' is not available for lat={latitude}, lon={longitude}, date={date}. " +
+                $"Sun phase 'Dusk' is not available for the configured location on {date}. " +
                 "This may occur for polar locations where the sun does not rise or set.");
 
         var civilDawn = ToLocalTimeOnly(dawnPhase.PhaseTime, ianaTimeZone);

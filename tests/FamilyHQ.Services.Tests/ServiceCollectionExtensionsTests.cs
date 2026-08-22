@@ -1,4 +1,5 @@
 using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Logging;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Theme;
@@ -7,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -14,6 +16,12 @@ namespace FamilyHQ.Services.Tests;
 
 public class ServiceCollectionExtensionsTests
 {
+    /// <summary>
+    /// FHQ-166. At least <see cref="SaltedHashPiiRedactor.MinimumSaltLength"/> characters, because
+    /// registration now rejects anything shorter.
+    /// </summary>
+    private const string ConfiguredSalt = "a-configured-salt-of-sufficient-length";
+
     [Fact]
     public void AddFamilyHqServices_RegistersAllRequiredServices()
     {
@@ -238,5 +246,71 @@ public class ServiceCollectionExtensionsTests
 
         provider.GetRequiredService<IWeatherProvider>().Should().BeOfType<OpenMeteoWeatherProvider>();
         provider.GetRequiredService<IWmoCodeMapper>().Should().BeOfType<WmoCodeMapper>();
+    }
+
+    // FHQ-166: the redactor must be a SINGLETON reading the configured salt. Registered per-scope it
+    // would still redact, but the same calendar would carry a different token in every request, and
+    // the correlation the redaction exists to preserve would be silently gone.
+    [Fact]
+    public void AddFamilyHqServices_IPiiRedactor_IsASingletonUsingTheConfiguredSalt()
+    {
+        var services = CreateServicesWithSalt(ConfiguredSalt);
+
+        // ContainSingle, not Contain: a later scoped registration of the same service type would
+        // win at resolution while leaving a singleton descriptor behind for a weaker assertion to
+        // find, and the per-request tokens this test exists to prevent would be back.
+        services.Should().ContainSingle(sd => sd.ServiceType == typeof(IPiiRedactor))
+            .Which.Lifetime.Should().Be(ServiceLifetime.Singleton);
+
+        using var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<IPiiRedactor>();
+
+        resolved.Should().BeOfType<SaltedHashPiiRedactor>();
+        resolved.Redact("a.family.member@example.com").Should().Be(
+            new SaltedHashPiiRedactor(ConfiguredSalt, Mock.Of<ILogger<SaltedHashPiiRedactor>>())
+                .Redact("a.family.member@example.com"),
+            $"the registration must actually read {SaltedHashPiiRedactor.SaltConfigurationKey}, not ignore it");
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_IPiiRedactor_IsTheSameInstanceInEveryScope()
+    {
+        // The lifetime assertion above is about the descriptor; this is about what callers get. Two
+        // scopes, one instance — otherwise the same calendar redacts to a different token in every
+        // request and nothing in Seq joins up.
+        using var provider = CreateServicesWithSalt(ConfiguredSalt).BuildServiceProvider();
+        using var first = provider.CreateScope();
+        using var second = provider.CreateScope();
+
+        ReferenceEquals(
+            first.ServiceProvider.GetRequiredService<IPiiRedactor>(),
+            second.ServiceProvider.GetRequiredService<IPiiRedactor>())
+            .Should().BeTrue("every scope must share one redactor, and therefore one salt");
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_WithASaltTooShortToBeWorthHaving_FailsAtRegistrationNotAtFirstUse()
+    {
+        // FHQ-91 precedent: bad configuration must break the deployment, not the first sync. The
+        // factory alone would defer this until GoogleCalendarClient was first resolved, hours later.
+        var register = () => CreateServicesWithSalt("short");
+
+        register.Should().Throw<ArgumentException>()
+            .WithMessage($"*{SaltedHashPiiRedactor.SaltConfigurationKey}*");
+    }
+
+    private static ServiceCollection CreateServicesWithSalt(string salt)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>(SaltedHashPiiRedactor.SaltConfigurationKey, salt)
+            })
+            .Build();
+        services.AddFamilyHqServices(configuration);
+
+        return services;
     }
 }

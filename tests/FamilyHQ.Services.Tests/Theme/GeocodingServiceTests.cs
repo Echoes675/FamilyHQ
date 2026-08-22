@@ -33,6 +33,22 @@ public class GeocodingServiceTests
             .WithMessage("*No geocoding results found*");
     }
 
+    // FHQ-166. An address in an exception message reaches the same sink as one in a log template —
+    // via whatever logs the unhandled exception — and can reach the client through ProblemDetails.
+    // The caller already knows what the user typed, so the message does not need to repeat it.
+    [Fact]
+    public async Task GeocodeAsync_WhenNoResultsFound_TheExceptionMessageDoesNotRepeatThePlaceName()
+    {
+        const string placeName = "Sentinelford, Nowhereshire";
+        var sut = CreateSut(new EmptyResultsHandler());
+
+        var act = () => sut.GeocodeAsync(placeName);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .And.Message.Should().NotContainEquivalentOf("Sentinelford",
+                "the place name being searched for is the family's home address");
+    }
+
     private class FakeNominatimHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

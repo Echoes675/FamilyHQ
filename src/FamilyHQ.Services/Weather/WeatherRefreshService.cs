@@ -67,9 +67,13 @@ public class WeatherRefreshService(
 
         await weatherBroadcaster.BroadcastWeatherUpdatedAsync(ct);
 
+        // FHQ-166: no place name and no coordinates. Together they are the family's home address to
+        // within a few metres, and this line is emitted at Information on every successful refresh —
+        // once per user every WeatherOptions.PollIntervalMinutes, in every environment. LocationId
+        // is the correlation key an investigation actually uses and it is already here.
         logger.LogInformation(
-            "Weather data updated for user {UserId}, location {LocationId} ({PlaceName} @ {Lat}, {Lon}). Wrote {DataPointsWritten} data points.",
-            userId, location.Id, location.PlaceName, location.Latitude, location.Longitude, dataPoints.Count);
+            "Weather data updated for user {UserId}, location {LocationId}. Wrote {DataPointsWritten} data points.",
+            userId, location.Id, dataPoints.Count);
 
         LogDegradedResponse(userId, location.Id, dataPoints);
 

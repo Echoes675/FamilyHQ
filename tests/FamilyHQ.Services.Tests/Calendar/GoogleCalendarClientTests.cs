@@ -7,6 +7,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -1807,22 +1808,39 @@ public class GoogleCalendarClientTests
 
         var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
 
+        // A Google PRIMARY calendar's id IS the account's email address (FHQ-166), so this is the
+        // shape the client must be able to log about without disclosing it.
+        const string primaryCalendarId = "a.family.member@example.com";
+
         // Act
-        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+        var result = await systemUnderTest.GetEventsAsync(primaryCalendarId, now.AddDays(-1), now.AddDays(1));
 
         // Assert — loop stopped at cap
         eventsCallCount.Should().Be(GoogleCalendarClient.MaxSyncPages);
         result.Events.Should().HaveCount(GoogleCalendarClient.MaxSyncPages);
 
-        // Assert — warning logged mentioning the calendar ID and the cap
+        // Assert — the warning names the cap and a redacted token, never the address itself
         loggerMock.Verify(
             x => x.Log(
                 LogLevel.Warning,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("cal1") && v.ToString()!.Contains(GoogleCalendarClient.MaxSyncPages.ToString())),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains(TestPiiRedactor.TokenFor(primaryCalendarId))
+                    && v.ToString()!.Contains(GoogleCalendarClient.MaxSyncPages.ToString())),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.Once,
+            "the page-cap warning must stay correlatable to one calendar");
+
+        loggerMock.Verify(
+            x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains(primaryCalendarId)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "the raw calendar id is an email address and must never reach Seq");
     }
 
     [Fact]
@@ -1915,7 +1933,8 @@ public class GoogleCalendarClientTests
             accessTokenCache,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
     }
@@ -1957,7 +1976,8 @@ public class GoogleCalendarClientTests
             accessTokenCache,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, loggerMock, systemUnderTest);
     }
@@ -2007,7 +2027,8 @@ public class GoogleCalendarClientTests
             cacheMock.Object,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, cacheMock, systemUnderTest);
     }
