@@ -585,6 +585,35 @@ public class CalendarEventServiceRecurringTests
         split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
     }
 
+    // ── The reconcile is a Google fetch like any other, so it backfills too ───────────────────
+
+    [Theory]
+    [InlineData(LondonZoneId, null, LondonZoneId)]        // Google reports one → stored
+    [InlineData(LondonZoneId, NewYorkZoneId, LondonZoneId)]  // Google is the system of record
+    [InlineData(null, LondonZoneId, LondonZoneId)]        // all-day / absent: the stored value survives
+    [InlineData("", LondonZoneId, LondonZoneId)]          // blank is absent, not a new value
+    public async Task UpdateRecurringAsync_ThisOnly_ReconcileBackfillsTheAnchorZoneWithoutEverBlankingIt(
+        string? fetchedZone, string? storedZone, string? expectedZone)
+    {
+        // Blanking here would be invisible until the NEXT edit, which would then find no zone and
+        // hand the write to the family-zone fallback — FHQ-170, one step removed from its cause.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var storedRow = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        storedRow.IanaTimeZone = storedZone;
+        f.ArrangeExistingRow(storedRow);
+
+        var fetched = f.GoogleInstance("inst-2", InstanceStart, isException: true);
+        fetched.IanaTimeZone = fetchedZone;
+        f.ArrangeReconcileWindow([fetched]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated Title", InstanceStart, "Lunch"), RecurrenceScope.ThisOnly);
+
+        storedRow.IanaTimeZone.Should().Be(expectedZone);
+    }
+
     // ── Every rung is filtered for usability ──────────────────────────────────────────────────
     //
     // Google's zone names run ahead of a bundled tz database (Europe/Kyiv, America/Ciudad_Juarez are
@@ -1345,6 +1374,34 @@ public class CalendarEventServiceRecurringTests
         // The conflicting inserts are detached and converted to updates of the concurrently-stored rows.
         f.Repo.Verify(r => r.DetachEventAsync(It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"), It.IsAny<CancellationToken>()), Times.Once);
         f.Repo.Verify(r => r.UpdateEventAsync(It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_RecurringSeries_WhenConcurrentSyncInsertsSameInstances_DoesNotBlankTheStoredZone()
+    {
+        // The re-resolve folds this operation's fields onto the row the concurrent sync stored. That
+        // row may already carry the zone Google reported for the series; an insert that carries none
+        // (or a blank one) must not overwrite it, or the race would quietly cost the series its anchor.
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+
+        var fetched = f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master");
+        fetched.IanaTimeZone = "";
+        f.ArrangeReconcileWindow([fetched]);
+
+        f.Repo.SetupSequence(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("23505: duplicate key value violates unique constraint \"IX_Events_GoogleEventId\""))
+            .ReturnsAsync(1);
+
+        var stored = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart);
+        stored.IanaTimeZone = LondonZoneId;
+        f.Repo.SetupSequence(r => r.GetEventByGoogleEventIdAsync("inst-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null).ReturnsAsync(stored);
+
+        await f.Sut.CreateAsync(CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+        stored.IanaTimeZone.Should().Be(LondonZoneId);
     }
 
     [Fact]

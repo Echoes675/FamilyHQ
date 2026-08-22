@@ -437,6 +437,7 @@ public class CalendarSyncServiceTests
     [InlineData("America/New_York", null, "America/New_York")]  // stored null, Google reports one → backfilled
     [InlineData("America/New_York", "Europe/Dublin", "America/New_York")]  // Google is authoritative
     [InlineData(null, "Europe/Dublin", "Europe/Dublin")]  // all-day: no zone reported, stored value survives
+    [InlineData("", "Europe/Dublin", "Europe/Dublin")]  // blank is absent, not a new value
     public async Task SyncAsync_ExistingEvent_BackfillsTheAnchorZoneWithoutEverBlankingIt(
         string? fetchedZone, string? storedZone, string? expected)
     {
