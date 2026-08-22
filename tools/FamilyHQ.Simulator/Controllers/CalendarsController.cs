@@ -41,7 +41,12 @@ public class CalendarsController : ControllerBase
             {
                 id = c.Id,
                 summary = c.Summary,
-                backgroundColor = c.BackgroundColor
+                backgroundColor = c.BackgroundColor,
+                // FHQ-164: Google reports the calendar's own default zone on every calendarList
+                // entry, and the app stores it as the last Google-supplied rung of its series-zone
+                // discovery ladder. Omitted when the calendar has none configured, which is what an
+                // unset value means here — Google's field is optional on the resource.
+                timeZone = c.TimeZone
             })
         };
 
