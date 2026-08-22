@@ -39,6 +39,9 @@ public sealed class ResilientGoogleCalendarClient(
     public Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "PatchEventFields", c => inner.PatchEventFieldsAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
 
+    public Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
+        => WithRetryAsync(RetryPolicy.Full, "PatchEventFieldsPreservingTimes", c => inner.PatchEventFieldsPreservingTimesAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
+
     public Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "DeleteEvent", c => inner.DeleteEventAsync(googleCalendarId, googleEventId, c), ct);
 

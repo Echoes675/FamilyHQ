@@ -7,7 +7,19 @@ namespace FamilyHQ.Core.Models;
 /// occurrence count is measured from the true series origin rather than the earliest locally-synced
 /// instance.
 /// </summary>
-/// <param name="Rrule">The master's RRULE line, e.g. <c>RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5</c>.</param>
+/// <param name="Rrule">
+/// The master's RRULE line, e.g. <c>RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=5</c>.
+/// <para>
+/// <b>Null when the master's <c>recurrence</c> array carries no <c>RRULE:</c> line</b> — an
+/// RDATE-only master (the shape an ICS/CalDAV import produces) is the real-world case. Such a master
+/// still exists and still has a DTSTART, so it is returned rather than discarded: the anchor is the
+/// value FHQ-172 is about, and throwing the whole record away for the sake of a field the anchor
+/// caller never reads was the one shape that could relocate a series' origin while its master sat
+/// alive in Google. (Established by tracing the code, not from an observed incident — but it is the
+/// shape the write paths could actually reach.) A caller that needs the rule must handle null; a
+/// caller that needs only the origin is unaffected.
+/// </para>
+/// </param>
 /// <param name="Start">The master's DTSTART as an absolute instant.</param>
 /// <param name="TimeZone">
 /// Google's <c>start.timeZone</c> for the master (e.g. <c>Europe/London</c>). The recurrence is
@@ -16,6 +28,6 @@ namespace FamilyHQ.Core.Models;
 /// they are date-anchored so DST cannot move them.
 /// </param>
 public record SeriesMaster(
-    string Rrule,
+    string? Rrule,
     DateTimeOffset Start,
     string? TimeZone = null);
