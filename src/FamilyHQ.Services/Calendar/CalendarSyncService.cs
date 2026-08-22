@@ -87,6 +87,10 @@ public class CalendarSyncService(
                 changeCount += await calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
             }
+            else
+            {
+                await RefreshCalendarZoneAsync(localCal, googleCal, ct);
+            }
             calendarIdsToSync.Add(localCal.Id);
         }
 
@@ -316,9 +320,14 @@ public class CalendarSyncService(
                         // FHQ-164 Decision 4: lazy backfill of the series' anchor zone. Google reports
                         // start.timeZone on every timed instance in the list response, so an ordinary
                         // window sync populates the column for free — no bulk job, no schema default,
-                        // and no extra API call. Null-coalesced so a fetch that legitimately supplies
-                        // no zone (an all-day event) never blanks a stored one.
-                        existing.IanaTimeZone           = evt.IanaTimeZone ?? existing.IanaTimeZone;
+                        // and no extra API call. A BLANK value counts as absent, not as a new value:
+                        // an all-day event legitimately supplies none, and writing "" back would be
+                        // read as "no zone" by the outbound write, which then re-anchors the series to
+                        // the family's zone — FHQ-170 all over again, from a null-check that looked
+                        // complete.
+                        existing.IanaTimeZone           = string.IsNullOrWhiteSpace(evt.IanaTimeZone)
+                            ? existing.IanaTimeZone
+                            : evt.IanaTimeZone;
                         await calendarRepository.UpdateEventAsync(existing, ct);
                     }
                     else
@@ -394,6 +403,39 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             return await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
+    }
+
+    /// <summary>
+    /// FHQ-164 Decision 4 applied to the CALENDAR row: adopt the default zone Google reports for a
+    /// calendar FamilyHQ already knows about.
+    /// </summary>
+    /// <remarks>
+    /// Nothing else refreshes an existing calendar's fields from Google — every
+    /// <c>UpdateCalendarAsync</c> call site persists a flag the user changed locally — so without
+    /// this, every calendar already in production would keep a null zone forever and the series-zone
+    /// ladder's rung 4 would be dead code in the one environment that matters. The value arrives on
+    /// the <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so it costs no
+    /// extra API call.
+    /// <para>
+    /// Idempotent: written only when Google reports a zone that differs from the stored one. A blank
+    /// or absent value never blanks a stored one — <c>timeZone</c> is optional on Google's calendar
+    /// resource, and dropping a known value would cost the ladder a rung. The write is bookkeeping,
+    /// not a material change, so it stays out of the change count (FHQ-44): a calendar's default zone
+    /// is not something the dashboard renders.
+    /// </para>
+    /// </remarks>
+    private async Task RefreshCalendarZoneAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(googleCal.IanaTimeZone) || googleCal.IanaTimeZone == localCal.IanaTimeZone)
+            return;
+
+        logger.LogDebug(
+            "Calendar {CalendarInfoId} adopting Google's default time zone {IanaTimeZone}.",
+            localCal.Id, googleCal.IanaTimeZone);
+
+        localCal.IanaTimeZone = googleCal.IanaTimeZone;
+        await calendarRepository.UpdateCalendarAsync(localCal, ct);
+        await calendarRepository.SaveChangesAsync(ct);
     }
 
     /// <summary>
