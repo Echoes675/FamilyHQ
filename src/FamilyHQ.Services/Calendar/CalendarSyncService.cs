@@ -313,6 +313,12 @@ public class CalendarSyncService(
                         // Preserve an already-stored RRULE if pass 2 could not resolve one this run
                         // (transient master-fetch failure must not blank out a known rule).
                         existing.RecurrenceRule         = evt.RecurrenceRule ?? existing.RecurrenceRule;
+                        // FHQ-164 Decision 4: lazy backfill of the series' anchor zone. Google reports
+                        // start.timeZone on every timed instance in the list response, so an ordinary
+                        // window sync populates the column for free — no bulk job, no schema default,
+                        // and no extra API call. Null-coalesced so a fetch that legitimately supplies
+                        // no zone (an all-day event) never blanks a stored one.
+                        existing.IanaTimeZone           = evt.IanaTimeZone ?? existing.IanaTimeZone;
                         await calendarRepository.UpdateEventAsync(existing, ct);
                     }
                     else

@@ -3,6 +3,7 @@ using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Core.Calendar.Recurrence;
+using FamilyHQ.Services.Auth;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -531,7 +532,13 @@ public class CalendarEventService(
             End = newMasterEnd,
             IsAllDay = request.IsAllDay,
             Location = request.Location,
-            Description = normalisedDescription
+            Description = normalisedDescription,
+            // FHQ-170: the master keeps the zone GOOGLE anchored the series to. Without this the
+            // write falls through to the family's configured zone and re-anchors the whole series,
+            // moving every future occurrence at the next divergent DST transition. The master's own
+            // zone leads the stored one here (unlike the counting ladder) because the edited row may
+            // be an EXCEPTION instance, which can carry a zone of its own that is not the series'.
+            IanaTimeZone = masterAnchor.TimeZoneId ?? StoredSeriesZone(seriesRows)
         };
 
         var hash = ComputeHash(master);
@@ -558,7 +565,8 @@ public class CalendarEventService(
 
         // (b) Insert a NEW recurring series from this instance with the edited values and a fresh
         // RRULE shaped like the original (preserving its end condition — see ReshapeRule).
-        var freshRule = await ReshapeRuleAsync(owner, seriesId, originalRule, seriesRows, calendarEvent.Start, ct);
+        var reshaped = await ReshapeRuleAsync(owner, seriesId, originalRule, seriesRows, calendarEvent.Start, ct);
+        var freshRule = reshaped.Rrule;
 
         var newSeries = new CalendarEvent
         {
@@ -567,7 +575,11 @@ public class CalendarEventService(
             End = request.End,
             IsAllDay = request.IsAllDay,
             Location = request.Location,
-            Description = normalisedDescription
+            Description = normalisedDescription,
+            // FHQ-170: the forward half of a split is a CONTINUATION of the original series, so it
+            // is anchored to the same zone Google anchored that series to. Null here (nothing
+            // resolvable) leaves the client's family-zone fallback in place — today's behaviour.
+            IanaTimeZone = reshaped.IanaTimeZone
         };
 
         var hash = ComputeHash(newSeries);
@@ -622,17 +634,24 @@ public class CalendarEventService(
     // so a fixed-UTC enumeration between them drifts once the series crosses a DST transition. Across
     // a fall-back the enumerated twin of the split occurrence lands an hour early, is wrongly counted
     // as "before", and the forward series silently loses its last occurrence.
-    private async Task<string> ReshapeRuleAsync(
+    private async Task<ReshapedSeries> ReshapeRuleAsync(
         CalendarInfo owner, string seriesId, string rrule,
         IReadOnlyList<CalendarEvent> seriesRows, DateTimeOffset splitStart, CancellationToken ct)
     {
         var spec = RecurrenceRuleBuilder.ParseRRuleString(rrule);
 
         if (spec.End.Kind != RecurrenceEndKind.Count)
-            return RecurrenceRuleBuilder.ToRRuleString(spec); // Never/Until preserved as-is.
+        {
+            // Never/Until preserved as-is. There is no count to enumerate, so no zone to discover
+            // either: the forward series inherits whatever zone the series' own rows already carry
+            // (ladder rung 1, no call), and the two FETCHING rungs stay off a path that has no use
+            // for them.
+            return new ReshapedSeries(RecurrenceRuleBuilder.ToRRuleString(spec), StoredSeriesZone(seriesRows));
+        }
 
         var anchor = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
-        var seriesZone = ResolveSeriesZone(seriesId, anchor, seriesRows);
+        var seriesZoneId = await ResolveSeriesZoneIdAsync(owner, seriesId, seriesRows, anchor, ct);
+        var seriesZone = CreateRecurrenceZone(seriesId, seriesZoneId, anchor, seriesRows);
         var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor.Start, splitStart, seriesZone);
         var remaining = spec.End.Occurrences!.Value - before;
 
@@ -641,8 +660,19 @@ public class CalendarEventService(
                 $"Cannot split a COUNT-based series: the split point leaves no occurrences for the " +
                 $"forward series (original COUNT {spec.End.Occurrences}, {before} occurrences before the split).");
 
-        return RecurrenceRuleBuilder.ToRRuleString(spec with { End = RecurrenceEnd.Count(remaining) });
+        return new ReshapedSeries(
+            RecurrenceRuleBuilder.ToRRuleString(spec with { End = RecurrenceEnd.Count(remaining) }),
+            seriesZoneId);
     }
+
+    /// <summary>
+    /// The RRULE for the forward half of a split, and the IANA zone that series is anchored to.
+    /// The zone travels with the rule because both describe the SAME continuation: reshaping the
+    /// rule without carrying the zone would hand the new series to the family-zone fallback and
+    /// re-anchor it (FHQ-170).
+    /// </summary>
+    /// <param name="IanaTimeZone">Null when no rung of the discovery ladder yielded a zone.</param>
+    private readonly record struct ReshapedSeries(string Rrule, string? IanaTimeZone);
 
     // Where a COUNT split's enumeration anchor came from. MasterResolved distinguishes the true
     // Google DTSTART from the DEGRADED local-row proxy, which has already been reported at Warning —
@@ -670,17 +700,158 @@ public class CalendarEventService(
         return new SeriesAnchor(master.Start, master.TimeZone, MasterResolved: true);
     }
 
-    // FHQ-161: the zone the split count enumerates in. When Google supplies no usable zone we fall
-    // back DELIBERATELY to the legacy fixed-UTC enumeration rather than rejecting the edit: a missing
-    // or unrecognised zone id must not fail a legitimate user edit, and the fallback is no worse than
-    // the behaviour that shipped before this fix.
-    private IRecurrenceTimeZone ResolveSeriesZone(
-        string seriesId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+    /// <summary>
+    /// FHQ-164 Decision 2 — the series' IANA zone, ASKED OF GOOGLE rather than guessed, strictly
+    /// ordered by provenance:
+    /// <list type="number">
+    ///   <item><description><b>Stored</b> zone on the series' own rows — no call.</description></item>
+    ///   <item><description>The <b>series master</b>, already fetched for the anchor — persisted on the way past.</description></item>
+    ///   <item><description>Any <b>surviving instance</b> via events.get — persisted on the way past.</description></item>
+    ///   <item><description>The <b>calendar's default</b> zone, as synced from Google's calendar resource — no call.</description></item>
+    ///   <item><description>Terminal: null, and the caller degrades to fixed-UTC enumeration.</description></item>
+    /// </list>
+    /// Every rung but the last returns a value <b>Google supplied</b>, which is what makes this
+    /// compatible rather than a better guess. The family's configured zone is deliberately absent:
+    /// most events are created on a phone, so it is a proxy, and this value is written back to
+    /// Google as a COUNT — substituting a local setting for a real Google value is exactly what the
+    /// prime directive forbids.
+    /// <para>
+    /// <b>Hot paths.</b> Only rungs 2 and 3 call Google, and this method runs only on the "this and
+    /// following" split of a COUNT-bounded series — a foreground, one-per-user-action path. Rung 2's
+    /// fetch already happened for the anchor, so the ladder's marginal cost is rung 3 alone, and only
+    /// when the two rungs above it produced nothing. Sync's per-event loop never reaches here: it
+    /// gets the same value for free from <c>start.timeZone</c> on the list response.
+    /// </para>
+    /// </summary>
+    private async Task<string?> ResolveSeriesZoneIdAsync(
+        CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows,
+        SeriesAnchor anchor, CancellationToken ct)
     {
-        if (recurrenceTimeZoneFactory.TryCreate(anchor.TimeZoneId) is { } zone)
+        // Rung 1 — already stored locally from an earlier fetch. Free, and the reason backfill pays.
+        if (StoredSeriesZone(seriesRows) is { } stored)
+            return stored;
+
+        // Rung 2 — the master Google just returned for the anchor.
+        if (!string.IsNullOrWhiteSpace(anchor.TimeZoneId))
+        {
+            await PersistSeriesZoneAsync(seriesRows, anchor.TimeZoneId, ct);
+            return anchor.TimeZoneId;
+        }
+
+        // Rung 3 — any surviving instance carries the series' start.timeZone.
+        if (await FetchZoneFromSurvivingInstanceAsync(owner, seriesId, seriesRows, ct) is { } instanceZone)
+        {
+            await PersistSeriesZoneAsync(seriesRows, instanceZone, ct);
+            return instanceZone;
+        }
+
+        // Rung 4 — the calendar's own default: what Google applies to an event on it with no zone of
+        // its own. NOT persisted onto the series rows — it is the calendar's value, not the series'.
+        if (!string.IsNullOrWhiteSpace(owner.IanaTimeZone))
+        {
+            logger.LogDebug(
+                "Series {SeriesId} supplied no zone of its own; anchoring its COUNT split to calendar {CalendarInfoId}'s default zone {IanaTimeZone}.",
+                seriesId, owner.Id, owner.IanaTimeZone);
+            return owner.IanaTimeZone;
+        }
+
+        // Rung 5 — terminal. CreateRecurrenceZone degrades to fixed-UTC and reports it.
+        return null;
+    }
+
+    // How many instances the ladder's rung 3 will probe before giving up. A master that 404s because
+    // the series was genuinely deleted takes its instances with it, so every probe would 404 too —
+    // bounded so that case costs a fixed handful of calls rather than one per synced occurrence.
+    private const int MaxInstanceZoneProbes = 3;
+
+    /// <summary>
+    /// Ladder rung 3: ask Google for a surviving instance of this series and read its
+    /// <c>start.timeZone</c>. Returns null when no probed instance yields one.
+    /// </summary>
+    /// <remarks>
+    /// Ordinary instances are probed before exceptions: an exception can carry a zone of its own
+    /// (an occurrence moved while travelling), which is not the zone the series is anchored to.
+    /// A probe that fails is swallowed — the ladder has rungs below it, and Decision 3a is explicit
+    /// that a user's edit is never failed over a zone lookup. Re-auth and cancellation still
+    /// propagate: neither is a zone problem, and both must reach the caller.
+    /// </remarks>
+    private async Task<string?> FetchZoneFromSurvivingInstanceAsync(
+        CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows, CancellationToken ct)
+    {
+        var candidates = seriesRows
+            .OrderBy(r => r.IsException)
+            .ThenBy(r => r.Start)
+            .Take(MaxInstanceZoneProbes);
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var detail = await googleCalendarClient.GetEventAsync(owner.GoogleCalendarId, candidate.GoogleEventId, ct);
+                if (!string.IsNullOrWhiteSpace(detail?.IanaTimeZone))
+                    return detail.IanaTimeZone;
+            }
+            catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
+            {
+                logger.LogDebug(
+                    ex,
+                    "Instance {GoogleEventId} of series {SeriesId} could not be fetched while resolving the series' time zone; trying the next candidate.",
+                    candidate.GoogleEventId, seriesId);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// FHQ-164 Decision 4 — lazy backfill. A zone Google has just reported is written onto the
+    /// series' stored rows, so the next edit resolves at rung 1 with no call at all.
+    /// </summary>
+    /// <remarks>
+    /// There is no bulk migration and no schema default: rows stay null until Google actually
+    /// reports a zone for them, and the ladder covers the gap meanwhile. This matters because normal
+    /// sync would not otherwise backfill an EXISTING series' master —
+    /// <c>CalendarSyncService</c> fetches one only when the RRULE is not already cached — though the
+    /// instances of any series inside the sync window do get their zone from the list response.
+    /// </remarks>
+    private async Task PersistSeriesZoneAsync(
+        IReadOnlyList<CalendarEvent> seriesRows, string ianaTimeZone, CancellationToken ct)
+    {
+        var backfilled = false;
+        foreach (var row in seriesRows.Where(r => string.IsNullOrWhiteSpace(r.IanaTimeZone)))
+        {
+            row.IanaTimeZone = ianaTimeZone;
+            await calendarRepository.UpdateEventAsync(row, ct);
+            backfilled = true;
+        }
+
+        if (backfilled)
+            await calendarRepository.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// The series' own zone as already stored on its local rows (ladder rung 1), or null.
+    /// </summary>
+    /// <remarks>
+    /// An EXCEPTION instance can carry a different zone from its master, so ordinary instances are
+    /// read first; an exception's zone is used only when there is nothing else, where it is still a
+    /// Google-supplied value for this series and strictly better than a local setting.
+    /// </remarks>
+    private static string? StoredSeriesZone(IReadOnlyList<CalendarEvent> seriesRows) =>
+        seriesRows.FirstOrDefault(r => !r.IsException && !string.IsNullOrWhiteSpace(r.IanaTimeZone))?.IanaTimeZone
+        ?? seriesRows.FirstOrDefault(r => !string.IsNullOrWhiteSpace(r.IanaTimeZone))?.IanaTimeZone;
+
+    // FHQ-161: the zone the split count enumerates in. When no rung of the ladder yields a usable
+    // zone we fall back DELIBERATELY to the legacy fixed-UTC enumeration rather than rejecting the
+    // edit: a missing or unrecognised zone id must not fail a legitimate user edit, and the fallback
+    // is no worse than the behaviour that shipped before this fix.
+    private IRecurrenceTimeZone CreateRecurrenceZone(
+        string seriesId, string? seriesZoneId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+    {
+        if (recurrenceTimeZoneFactory.TryCreate(seriesZoneId) is { } zone)
             return zone;
 
-        LogFixedUtcFallback(seriesId, anchor, seriesRows);
+        LogFixedUtcFallback(seriesId, seriesZoneId, anchor, seriesRows);
         return FixedUtcRecurrenceTimeZone.Instance;
     }
 
@@ -692,19 +863,22 @@ public class CalendarEventService(
     //   * a degraded local-row anchor cannot carry a zone at all, and was already reported at
     //     Warning by ResolveSeriesAnchorAsync — warning again would double-count one incident and
     //     misattribute its cause.
-    private void LogFixedUtcFallback(string seriesId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+    private void LogFixedUtcFallback(
+        string seriesId, string? seriesZoneId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
     {
         if (!anchor.MasterResolved || IsAllDaySeries(seriesRows))
         {
             logger.LogDebug(
                 "Series {SeriesId} has no IANA time zone to count its COUNT split in ({TimeZoneId}); using fixed-UTC recurrence enumeration, which is exact for this series.",
-                seriesId, anchor.TimeZoneId);
+                seriesId, seriesZoneId);
             return;
         }
 
+        // FHQ-164 Decision 3a: with the discovery ladder in place this is the one genuinely-guessing
+        // case left, so it announces itself by name rather than passing silently.
         logger.LogWarning(
             "Timed series {SeriesId} supplied no usable IANA time zone ({TimeZoneId}); counting the COUNT split with fixed-UTC recurrence enumeration, which is not DST-aware.",
-            seriesId, anchor.TimeZoneId);
+            seriesId, seriesZoneId);
     }
 
     // Every instance of a series shares its master's all-day flag, so the local rows are a faithful
@@ -797,6 +971,10 @@ public class CalendarEventService(
                 existing.GoogleRecurringEventId = fetchedEvent.GoogleRecurringEventId;
                 existing.OriginalStartTime = fetchedEvent.OriginalStartTime;
                 existing.RecurrenceRule = fetchedEvent.RecurrenceRule ?? seriesRule ?? existing.RecurrenceRule;
+                // FHQ-164 Decision 4: the reconcile is a Google fetch like any other, so it backfills
+                // the anchor zone too. Null-coalesced — an all-day event legitimately reports none,
+                // and that must not blank a stored value.
+                existing.IanaTimeZone = fetchedEvent.IanaTimeZone ?? existing.IanaTimeZone;
                 existing.Members = members;
                 await calendarRepository.UpdateEventAsync(existing, ct);
                 persisted.Add(existing);
@@ -871,6 +1049,7 @@ public class CalendarEventService(
                     stored.GoogleRecurringEventId = insert.GoogleRecurringEventId;
                     stored.OriginalStartTime = insert.OriginalStartTime;
                     stored.RecurrenceRule = insert.RecurrenceRule ?? stored.RecurrenceRule;
+                    stored.IanaTimeZone = insert.IanaTimeZone ?? stored.IanaTimeZone;
                     stored.Members = insert.Members;
                     await calendarRepository.UpdateEventAsync(stored, ct);
                 }

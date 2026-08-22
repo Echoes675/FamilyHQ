@@ -137,7 +137,12 @@ public class CalendarMigrationService(
             End = representative.End,
             IsAllDay = representative.IsAllDay,
             Location = representative.Location,
-            Description = description
+            Description = description,
+            // FHQ-170: moving a series between calendars must not re-anchor it. Carry the zone
+            // Google anchored the original series to; without it the recreated master falls through
+            // to the family's configured zone and every future occurrence shifts at the next
+            // divergent DST transition. Null (nothing stored yet) keeps today's fallback.
+            IanaTimeZone = representative.IanaTimeZone
         };
 
         var masterHash = EventContentHash.Compute(

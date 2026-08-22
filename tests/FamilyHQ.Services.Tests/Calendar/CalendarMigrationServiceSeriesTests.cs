@@ -127,6 +127,43 @@ public class CalendarMigrationServiceSeriesTests
     }
 
     [Fact]
+    public async Task EnsureCorrectCalendarForSeries_RecreatedMasterKeepsTheSeriesOwnAnchorZone()
+    {
+        // FHQ-170: moving a series between calendars is a membership change, not a re-anchoring. The
+        // recreated master is built from scratch, so without the original series' zone it falls
+        // through to the family's configured zone and every future occurrence shifts at the next
+        // divergent DST transition — a change the user never asked for.
+        var (google, repo, _, sut) = CreateSut();
+
+        var inst1 = SeriesInstance("inst-1", WindowStart.AddDays(7), AliceCalId);
+        inst1.IanaTimeZone = "America/New_York";
+        repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>())).ReturnsAsync([inst1]);
+        repo.Setup(r => r.GetCalendarByIdAsync(AliceCalId, It.IsAny<CancellationToken>())).ReturnsAsync(Alice);
+        repo.Setup(r => r.GetSharedCalendarAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Shared);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([Alice, Bob, Shared]);
+        repo.Setup(r => r.GetSyncStateAsync(SharedCalId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = SharedCalId, SyncWindowStart = WindowStart, SyncWindowEnd = WindowEnd });
+        repo.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        CalendarEvent? createdMaster = null;
+        google.Setup(g => g.CreateRecurringEventAsync(SharedGoogleCal, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) =>
+            {
+                createdMaster = e;
+                e.GoogleEventId = "new-series-id";
+                return e;
+            });
+        google.Setup(g => g.GetEventsAsync(SharedGoogleCal, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { NewInstance("new-1", WindowStart.AddDays(7)) }, (string?)null));
+
+        await sut.EnsureCorrectCalendarForSeriesAsync(SeriesId, [Alice, Bob]);
+
+        createdMaster!.IanaTimeZone.Should().Be("America/New_York");
+    }
+
+    [Fact]
     public async Task EnsureCorrectCalendarForSeries_AlreadyOnCorrectCalendar_NoMigration()
     {
         var (google, repo, _, sut) = CreateSut();

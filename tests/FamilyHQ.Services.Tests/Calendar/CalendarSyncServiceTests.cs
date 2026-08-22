@@ -381,6 +381,43 @@ public class CalendarSyncServiceTests
         calendarRepository.Verify(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("America/New_York", null, "America/New_York")]  // stored null, Google reports one → backfilled
+    [InlineData("America/New_York", "Europe/Dublin", "America/New_York")]  // Google is authoritative
+    [InlineData(null, "Europe/Dublin", "Europe/Dublin")]  // all-day: no zone reported, stored value survives
+    public async Task SyncAsync_ExistingEvent_BackfillsTheAnchorZoneWithoutEverBlankingIt(
+        string? fetchedZone, string? storedZone, string? expected)
+    {
+        // FHQ-164 Decision 4. Google reports start.timeZone on every timed instance in the list
+        // response, so an ordinary window sync populates the column for free — that is what makes
+        // the backfill lazy and opportunistic rather than a bulk migration job. Null-coalesced: an
+        // all-day event legitimately reports no zone and must not blank a stored one.
+        var (client, calendarRepository, _, systemUnderTest) = CreateSut();
+        var calendarId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        const string googleCalendarId = "zones@group.calendar.google.com";
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Zones" };
+        var existing = new CalendarEvent { GoogleEventId = "evt-zone", Title = "Old", IanaTimeZone = storedZone };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "tok" });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-zone", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "tok", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>
+            {
+                new() { GoogleEventId = "evt-zone", Title = "New", IanaTimeZone = fetchedZone }
+            }, "tok2"));
+
+        await systemUnderTest.SyncAsync(calendarId, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddDays(30));
+
+        existing.IanaTimeZone.Should().Be(expected);
+    }
+
     [Fact]
     public async Task SyncAsync_ExistingMultiMemberEvent_RetainsTaggedMemberThatIsTransientlyShared()
     {
