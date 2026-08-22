@@ -162,6 +162,62 @@ public class GoogleCalendarClientTimeZonePreservationTests
         StartZoneOf(captured).Should().Be(EventZone);
     }
 
+    // ── FHQ-172: the patch that deliberately sends no start and no end ────────
+
+    [Fact]
+    public async Task PatchEventFieldsPreservingTimesAsync_SendsNoStartOrEndPropertyAtAll()
+    {
+        // The whole point is what is ABSENT. A `"start": null` would not do: Google's patch treats a
+        // present key as an instruction, and the merge only leaves the master's DTSTART alone when
+        // the key is missing from the body entirely.
+        var (http, sut) = CreateSut(FamilyZone);
+        var captured = ArrangeWriteCapture(http, "evt-ny");
+
+        await sut.PatchEventFieldsPreservingTimesAsync("cal-1", TimedEvent("evt-ny", EventZone), "hash-1", CancellationToken.None);
+
+        using var doc = Parse(captured);
+        doc.RootElement.TryGetProperty("start", out _).Should().BeFalse("an omitted key is what preserves Google's own DTSTART");
+        doc.RootElement.TryGetProperty("end", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsPreservingTimesAsync_StillSendsTheEditedFieldsAndTheContentHash()
+    {
+        // Omitting the times must cost nothing else: the edit the user actually made still lands,
+        // and the content-hash still reaches extendedProperties so the echo guard can match it.
+        var (http, sut) = CreateSut(FamilyZone);
+        var captured = ArrangeWriteCapture(http, "evt-ny");
+
+        var evt = TimedEvent("evt-ny", EventZone);
+        evt.Title = "Renamed training";
+        evt.Description = "Body";
+        evt.Location = "The pitch";
+
+        await sut.PatchEventFieldsPreservingTimesAsync("cal-1", evt, "hash-omitted", CancellationToken.None);
+
+        using var doc = Parse(captured);
+        doc.RootElement.GetProperty("summary").GetString().Should().Be("Renamed training");
+        doc.RootElement.GetProperty("description").GetString().Should().Be("Body");
+        doc.RootElement.GetProperty("location").GetString().Should().Be("The pitch");
+        doc.RootElement.GetProperty("extendedProperties").GetProperty("private")
+            .GetProperty("content-hash").GetString().Should().Be("hash-omitted");
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_StillSendsStartAndEnd()
+    {
+        // The counterpart pin: the ordinary patch is unchanged, so "no start key" cannot be read as
+        // the new normal.
+        var (http, sut) = CreateSut(FamilyZone);
+        var captured = ArrangeWriteCapture(http, "evt-ny");
+
+        await sut.PatchEventFieldsAsync("cal-1", TimedEvent("evt-ny", EventZone), "hash-1", CancellationToken.None);
+
+        using var doc = Parse(captured);
+        doc.RootElement.TryGetProperty("start", out _).Should().BeTrue();
+        doc.RootElement.TryGetProperty("end", out _).Should().BeTrue();
+    }
+
     // ── The read side: the zone has to arrive before it can be sent back ──────
 
     [Fact]

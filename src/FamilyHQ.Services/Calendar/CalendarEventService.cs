@@ -530,10 +530,56 @@ public class CalendarEventService(
         var newMasterStart = masterAnchor.Start + startShift;
         var newMasterEnd = newMasterStart + (request.End - request.Start);
 
+        // FHQ-172. Everything below the anchor depends on it being the series' TRUE origin. When it
+        // is the local-row proxy instead, `newMasterStart` is that proxy plus the shift, and writing
+        // it moves the series' origin forward to the earliest row the sync window happens to reach —
+        // silently deleting every occurrence before it, on every device. `startShift` is zero for a
+        // pure title edit, so even renaming a series was enough to trigger it.
+        //
+        // The remedy depends on what the user actually asked for:
+        //   * timing unchanged → the master's own start and end are not part of the edit, so omit
+        //     them and let events.patch's merge leave Google's values exactly where they are;
+        //   * timing changed → the new origin is a FUNCTION of the old one, which is unknown. There
+        //     is no honest value to send, so refuse rather than relocate the series.
+        //
+        // HOW REACHABLE IS THIS, HONESTLY. The one trigger anyone could actually trace was
+        // GetSeriesMasterAsync discarding a perfectly good DTSTART whenever the master carried no
+        // RRULE line; returning the start in that case (FHQ-172 Change 1) is what fixes it, and it
+        // removes the RDATE-only trigger outright. What remains is a master events.get that 404s or
+        // yields no parsable start — and no production shape has been demonstrated in which the
+        // omit-times write below then both fires AND succeeds, because an events.patch to the same
+        // id would 404 too. So treat what follows as defence-in-depth, not as the mechanism that
+        // fixes the headline defect: the failure it guards against is the irreversible destruction
+        // of a family's calendar history, which is worth a branch that may never run.
+        var timingChange = DescribeTimingChange(calendarEvent, request, startShift);
+
+        if (!masterAnchor.MasterResolved && timingChange is not null)
+        {
+            // The ONE Warning for this incident (FHQ-161's rule). DomainExceptionHandler will log a
+            // second Warning when it maps the exception below, but that line carries only the status,
+            // the HTTP method and the path — not which series, which calendar, or why. This line is
+            // the only record of the cause, so it is additional information rather than a duplicate.
+            // The anchor site above deliberately stays at Debug so this is not a third.
+            logger.LogWarning(
+                "Refusing an all-in-series {TimingChange} on series {SeriesId} (calendar {CalendarInfoId}): the master supplied no start, so the series' new origin cannot be derived without relocating it. Nothing was written.",
+                timingChange, seriesId, owner.Id);
+
+            throw new SeriesOriginUnresolvedException(
+                "This series' original start could not be read from Google, so its times cannot be " +
+                "changed for the whole series without moving the series itself. Nothing has been " +
+                "changed. If the series still exists in Google Calendar this may clear on a retry; " +
+                "if it does not, edit the series in the Google Calendar app instead.");
+        }
+
         var master = new CalendarEvent
         {
             GoogleEventId = seriesId,
             Title = request.Title,
+            // Meaningful only on the resolved path. On the degraded one these hold proxy + shift and
+            // are never sent: PatchEventFieldsPreservingTimesAsync omits both keys, and the hash is
+            // computed without them — and without IsAllDay, which reaches Google only through those
+            // same keys (see ComputeHashWithoutTimes). They are left populated rather than zeroed so
+            // a future reader cannot mistake a sentinel for a real origin.
             Start = newMasterStart,
             End = newMasterEnd,
             IsAllDay = request.IsAllDay,
@@ -551,9 +597,46 @@ public class CalendarEventService(
                 : masterAnchor.TimeZoneId
         };
 
-        var hash = ComputeHash(master);
-        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, master, hash, ct);
-        RecordOutbound(master.GoogleEventId, hash);
+        if (masterAnchor.MasterResolved)
+        {
+            var hash = ComputeHash(master);
+            await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, master, hash, ct);
+            RecordOutbound(master.GoogleEventId, hash);
+            return;
+        }
+
+        // The degraded-but-honest write: title, location and description land; start and end are not
+        // sent at all, so Google keeps the master's own DTSTART and duration. See the reachability
+        // note above — this is a guard against destroying series history, with no demonstrated
+        // production trigger after Change 1, not the fix for the reported defect.
+        var partialHash = ComputeHashWithoutTimes(master);
+        logger.LogInformation(
+            "Patching series master {SeriesId} (calendar {CalendarInfoId}) without start or end: the master's own origin could not be read, so it is left as Google holds it and only the edited fields are written.",
+            seriesId, owner.Id);
+
+        await googleCalendarClient.PatchEventFieldsPreservingTimesAsync(
+            owner.GoogleCalendarId, master, partialHash, ct);
+        RecordOutbound(master.GoogleEventId, partialHash);
+    }
+
+    /// <summary>
+    /// A short description of the timing change an all-in-series request asks for, or null when it
+    /// asks for none. Start, duration and the all-day flag are each a timing change: the all-day
+    /// flag is expressed to Google purely through <c>start.date</c> vs <c>start.dateTime</c>, so
+    /// flipping it without sending start and end would not reach Google at all.
+    /// </summary>
+    private static string? DescribeTimingChange(
+        CalendarEvent calendarEvent, UpdateEventRequest request, TimeSpan startShift)
+    {
+        if (request.IsAllDay != calendarEvent.IsAllDay)
+            return "all-day change";
+
+        if (startShift != TimeSpan.Zero)
+            return "start-time change";
+
+        return (request.End - request.Start) != (calendarEvent.End - calendarEvent.Start)
+            ? "duration change"
+            : null;
     }
 
     // Returns the series-id → RRULE map for the two series this split touches (the truncated
@@ -569,14 +652,28 @@ public class CalendarEventService(
         // computing the forward series' remaining COUNT, and the same rows are pruned at the split.
         var seriesRows = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
 
-        // (a) Truncate the original master: re-emit its RRULE with UNTIL = this instance's start − 1s.
+        // (a) Work out the forward series' RRULE and anchor zone FIRST. This step only READS from
+        // Google (the master, and at most a handful of instances) plus a local zone backfill, so it
+        // does not depend on the truncation below — and putting it first is what makes a refusal or
+        // a transient failure here leave Google entirely untouched. Reversed, an unresolvable master
+        // aborted the split AFTER the original series had already been truncated, leaving the family
+        // with a series that had lost its tail and gained no replacement (FHQ-172). The residual
+        // window — truncate succeeds, create fails — is FHQ-173.
+        //
+        // The reorder does mean the zone ladder's backfill (PersistSeriesZoneAsync) now COMMITS its
+        // SaveChangesAsync before any Google write. That is benign and deliberate: the row it writes
+        // is a zone Google itself supplied for this series, cached locally — it records what Google
+        // holds, not a claim that FamilyHQ wrote anything. If the split then refuses or fails, the
+        // rows are left more accurate than they were, and the next attempt reads the zone for free.
+        var reshaped = await ReshapeRuleAsync(owner, seriesId, originalRule, seriesRows, calendarEvent.Start, ct);
+        var freshRule = reshaped.Rrule;
+
+        // (b) Truncate the original master: re-emit its RRULE with UNTIL = this instance's start − 1s.
         var truncatedRule = TruncateRuleBefore(calendarEvent);
         await googleCalendarClient.PatchSeriesRecurrenceAsync(owner.GoogleCalendarId, seriesId, truncatedRule, ct);
 
-        // (b) Insert a NEW recurring series from this instance with the edited values and a fresh
+        // (c) Insert a NEW recurring series from this instance with the edited values and the fresh
         // RRULE shaped like the original (preserving its end condition — see ReshapeRule).
-        var reshaped = await ReshapeRuleAsync(owner, seriesId, originalRule, seriesRows, calendarEvent.Start, ct);
-        var freshRule = reshaped.Rrule;
 
         var newSeries = new CalendarEvent
         {
@@ -636,8 +733,9 @@ public class CalendarEventService(
     //
     // The remaining count must be anchored at the TRUE master DTSTART (fetched via GetSeriesMaster):
     // when the master predates the synced window the earliest LOCAL row under-counts the occurrences
-    // before the split, leaving the forward series too long (Major 3). If the master cannot be
-    // resolved (404/transient), fall back to the earliest local row — the best-available proxy.
+    // before the split, leaving the forward series too long (Major 3). FHQ-172: if the master cannot
+    // be resolved the split is REFUSED rather than counted from that proxy — the count is written
+    // back to Google, so a count we know may be wrong would add occurrences to the family's calendar.
     //
     // FHQ-161: the count must also enumerate IN THE SERIES' OWN ZONE. Both inputs are true
     // wall-clock-anchored instants (the master DTSTART from Google, the instance start as synced),
@@ -660,8 +758,31 @@ public class CalendarEventService(
         }
 
         var anchor = await ResolveSeriesAnchorAsync(owner, seriesId, seriesRows, splitStart, ct);
+
+        // FHQ-172. Refuse before anything else runs — before the zone ladder's fetches, and (because
+        // this whole method now precedes the truncation) before any write reaches Google. The count
+        // below is `original COUNT − occurrences before the split`, enumerated FROM the anchor; with
+        // the local-row proxy standing in for a master that predates the sync window, that
+        // under-counts and the forward series carries occurrences the family never scheduled.
+        if (!anchor.MasterResolved)
+        {
+            // The ONE Warning for this incident (FHQ-161's rule). As at the all-in-series refusal:
+            // DomainExceptionHandler logs its own Warning when it maps the exception, but that line
+            // names only the status, method and path, so this one is not a duplicate of it. The
+            // anchor site logs at Debug precisely so this stays the only Warning we raise.
+            logger.LogWarning(
+                "Refusing a \"this and following\" split of COUNT-bounded series {SeriesId} (calendar {CalendarInfoId}): the master supplied no start, so the remaining count could only be derived from the earliest local row and may be wrong. Nothing was written.",
+                seriesId, owner.Id);
+
+            throw new SeriesOriginUnresolvedException(
+                "This series' original start could not be read from Google, so the number of " +
+                "occurrences left after this one cannot be worked out reliably. Nothing has been " +
+                "changed. If the series still exists in Google Calendar this may clear on a retry; " +
+                "if it does not, split the series in the Google Calendar app instead.");
+        }
+
         var seriesZoneId = await ResolveSeriesZoneIdAsync(owner, seriesId, seriesRows, anchor, ct);
-        var seriesZone = CreateRecurrenceZone(seriesId, seriesZoneId, anchor, seriesRows);
+        var seriesZone = CreateRecurrenceZone(seriesId, seriesZoneId, seriesRows);
         var before = RecurrenceRuleBuilder.CountOccurrencesBefore(spec, anchor.Start, splitStart, seriesZone);
         var remaining = spec.End.Occurrences!.Value - before;
 
@@ -684,15 +805,38 @@ public class CalendarEventService(
     /// <param name="IanaTimeZone">Null when no rung of the discovery ladder yielded a zone.</param>
     private readonly record struct ReshapedSeries(string Rrule, string? IanaTimeZone);
 
-    // Where a COUNT split's enumeration anchor came from. MasterResolved distinguishes the true
-    // Google DTSTART from the DEGRADED local-row proxy, which has already been reported at Warning —
-    // so the zone fallback that inevitably follows it is not reported a second time (FHQ-161).
+    /// <summary>
+    /// Where a recurring write's series origin came from. <c>MasterResolved</c> distinguishes the
+    /// true Google DTSTART from the local-row proxy, and it is the caller's job to act on it —
+    /// FHQ-172 made the proxy unwritable, not usable.
+    /// </summary>
     private readonly record struct SeriesAnchor(DateTimeOffset Start, string? TimeZoneId, bool MasterResolved);
 
-    // The true master DTSTART (and the IANA zone it is anchored to) when the master is resolvable;
-    // otherwise the earliest local row, or the split instant when no rows exist. A transient
-    // master-fetch failure degrades to the local proxy rather than aborting the whole split — the
-    // local rows carry no zone of their own, so that path enumerates zone-less (see ResolveSeriesZone).
+    /// <summary>
+    /// The true master DTSTART (and the IANA zone it is anchored to) when the master is resolvable;
+    /// otherwise the earliest local row, or the split instant when no rows exist, flagged
+    /// <c>MasterResolved: false</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This serves two callers, and the flag means something different to each.</b>
+    /// <see cref="ReshapeRuleAsync"/> writes a COUNT derived from the anchor, and
+    /// <see cref="PatchSeriesMasterAsync"/> writes the anchor itself (shifted) as the master's new
+    /// DTSTART. Neither may use the proxy: the first would add or drop occurrences, the second would
+    /// relocate the series' origin and delete its history. So the COUNT split refuses outright, and
+    /// the master patch refuses a timing change and otherwise omits start/end from the write.
+    /// </para>
+    /// <para>
+    /// The proxy is still returned rather than replaced by null, because <c>Start</c> stays the
+    /// enumeration anchor for every resolved case and a nullable would push the same check into
+    /// arithmetic. Only <c>MasterResolved</c> is load-bearing.
+    /// </para>
+    /// <para>
+    /// A transient master-fetch failure is NOT handled here: there is no try/catch, so it propagates
+    /// out through the resilient client after its retries. Only a null return — a 404, or a master
+    /// with no resolvable start — reaches the degraded branch.
+    /// </para>
+    /// </remarks>
     private async Task<SeriesAnchor> ResolveSeriesAnchorAsync(
         CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows, DateTimeOffset splitStart, CancellationToken ct)
     {
@@ -701,8 +845,13 @@ public class CalendarEventService(
         var master = await googleCalendarClient.GetSeriesMasterAsync(owner.GoogleCalendarId, seriesId, ct);
         if (master is null)
         {
-            logger.LogWarning(
-                "Series master {SeriesId} on calendar {CalendarInfoId} returned no start; anchoring COUNT split at the earliest local row instead.",
+            // Debug, not Warning. This method reports a fact and decides nothing: one of its two
+            // callers handles the missing origin COMPLETELY successfully (the omit-times rename
+            // lands the user's whole edit), and the logging standard is explicit that an
+            // expected-and-handled condition is not a Warning. The Warning belongs to whichever
+            // caller actually degrades or refuses, so that one incident yields exactly one of them.
+            logger.LogDebug(
+                "Series master {SeriesId} on calendar {CalendarInfoId} returned no start, so the series' true origin is unknown; no start derived from local rows will be written back to Google.",
                 seriesId, owner.Id);
             return new SeriesAnchor(localAnchor, null, MasterResolved: false);
         }
@@ -891,27 +1040,30 @@ public class CalendarEventService(
     // edit: a missing or unrecognised zone id must not fail a legitimate user edit, and the fallback
     // is no worse than the behaviour that shipped before this fix.
     private IRecurrenceTimeZone CreateRecurrenceZone(
-        string seriesId, string? seriesZoneId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+        string seriesId, string? seriesZoneId, IReadOnlyList<CalendarEvent> seriesRows)
     {
         if (recurrenceTimeZoneFactory.TryCreate(seriesZoneId) is { } zone)
             return zone;
 
-        LogFixedUtcFallback(seriesId, seriesZoneId, anchor, seriesRows);
+        LogFixedUtcFallback(seriesId, seriesZoneId, seriesRows);
         return FixedUtcRecurrenceTimeZone.Instance;
     }
 
     // The fixed-UTC fallback is only a PROBLEM for a timed series, where it is not DST-aware — that
-    // is the one case worth a Warning, and it stays useful only if the benign cases stay out of it
-    // (logging standard: expected-and-handled conditions are not Warnings). Two are benign:
-    //   * an all-day series carries no start.timeZone by design and is date-anchored, so fixed-UTC
-    //     enumeration is EXACT for it — the dominant real null case;
-    //   * a degraded local-row anchor cannot carry a zone at all, and was already reported at
-    //     Warning by ResolveSeriesAnchorAsync — warning again would double-count one incident and
-    //     misattribute its cause.
+    // is the one case worth a Warning, and it stays useful only if the benign case stays out of it
+    // (logging standard: expected-and-handled conditions are not Warnings). The benign case is an
+    // all-day series: it carries no start.timeZone by design and is date-anchored, so fixed-UTC
+    // enumeration is EXACT for it, and it is the dominant real null case.
+    //
+    // FHQ-172 removed a second benign case, "the anchor degraded to a local row so it can carry no
+    // zone". That is no longer reachable: this method is called only from ReshapeRuleAsync's COUNT
+    // branch, which now refuses an unresolved anchor before the zone ladder runs at all. The
+    // suppression is deleted rather than kept "just in case" — a branch guarding a condition that
+    // cannot occur reads as evidence that it can.
     private void LogFixedUtcFallback(
-        string seriesId, string? seriesZoneId, SeriesAnchor anchor, IReadOnlyList<CalendarEvent> seriesRows)
+        string seriesId, string? seriesZoneId, IReadOnlyList<CalendarEvent> seriesRows)
     {
-        if (!anchor.MasterResolved || IsAllDaySeries(seriesRows))
+        if (IsAllDaySeries(seriesRows))
         {
             logger.LogDebug(
                 "Series {SeriesId} has no IANA time zone to count its COUNT split in ({TimeZoneId}); using fixed-UTC recurrence enumeration, which is exact for this series.",
@@ -1121,6 +1273,50 @@ public class CalendarEventService(
 
     private static string ComputeHash(CalendarEvent evt) =>
         EventContentHash.Compute(evt.Title, evt.Start, evt.End, evt.IsAllDay, evt.Description);
+
+    /// <summary>
+    /// FHQ-172: the content hash for a write that deliberately carries no start and no end.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The hash is stamped into <c>extendedProperties.private</c> and recorded so Google's echo of
+    /// THIS write is recognised (FHQ-30). It therefore has to describe what was SENT. The only start
+    /// in scope on this path is the local-row proxy — the one value here already known to be
+    /// untrustworthy — so feeding it in would make the token encode a start Google never received,
+    /// and would make two byte-identical title edits on the same series hash differently purely
+    /// because a different local row happened to be the earliest one synced.
+    /// </para>
+    /// <para>
+    /// This is a correctness-of-meaning fix rather than a bug fix for the echo guard. Nothing
+    /// recomputes the hash from a fetched event: <c>CalendarSyncService.IsSelfEcho</c> compares the
+    /// token Google echoes with the token this write recorded, so any stable string would suppress
+    /// the echo and the proxy would not have broken it today. What it would break is the first time
+    /// anyone reads the value as what its name says it is — a hash of the event's content.
+    /// </para>
+    /// <para>
+    /// The omitted fields are represented by a fixed placeholder rather than dropped from the input,
+    /// so the hash keeps <see cref="EventContentHash"/>'s single shape and its separator-collision
+    /// guarantees. Which placeholder is irrelevant; that it is CONSTANT is the whole point.
+    /// </para>
+    /// <para>
+    /// <b>The all-day flag is omitted too, for the same reason.</b> All-day-ness reaches Google ONLY
+    /// through <c>start.date</c> versus <c>start.dateTime</c> — there is no separate field — so a
+    /// write that sends neither key does not send the flag either, and hashing it would describe
+    /// something that was not sent. Excluding it is safe because it cannot have changed on this
+    /// path: <see cref="DescribeTimingChange"/> classifies an all-day flip as a timing change, and
+    /// <see cref="PatchSeriesMasterAsync"/> refuses every timing change before reaching this write.
+    /// So the flag on the resource is whatever Google already held, for every write hashed here, and
+    /// a constant is a faithful description of that.
+    /// </para>
+    /// </remarks>
+    private static string ComputeHashWithoutTimes(CalendarEvent evt) =>
+        EventContentHash.Compute(evt.Title, TimesNotSent, TimesNotSent, AllDayNotSent, evt.Description);
+
+    /// <summary>Placeholder standing for "this write sent no start/end" — see <see cref="ComputeHashWithoutTimes"/>.</summary>
+    private static readonly DateTimeOffset TimesNotSent = DateTimeOffset.UnixEpoch;
+
+    /// <summary>Placeholder standing for "this write sent no all-day flag" — see <see cref="ComputeHashWithoutTimes"/>.</summary>
+    private const bool AllDayNotSent = false;
 
     private void RecordOutbound(string googleEventId, string hash)
     {

@@ -62,9 +62,16 @@ public class OutboundZoneGuardTests
     /// one of these is serialised into the request body by <c>MapToGoogleEvent</c>, which anchors the
     /// write to the event's own zone when it has one. Matched on a RECEIVER call (<c>x.Method(</c>) so
     /// the interface and client declarations of the same names are not mistaken for call sites.
+    /// <para>
+    /// <c>PatchEventFieldsPreservingTimesAsync</c> (FHQ-172) sends no start/end at all, so the zone
+    /// it would anchor them to is moot for THAT write — but it is listed anyway. The construction it
+    /// receives is the same one the ordinary patch receives on the resolvable path, and a guard that
+    /// exempted it would stop requiring the zone at that construction site the moment the two calls
+    /// were ever separated.
+    /// </para>
     /// </summary>
     private static readonly Regex WriteCalls =
-        new(@"\.\s*(CreateEventAsync|CreateRecurringEventAsync|PatchEventFieldsAsync)\s*\(");
+        new(@"\.\s*(CreateEventAsync|CreateRecurringEventAsync|PatchEventFieldsAsync|PatchEventFieldsPreservingTimesAsync)\s*\(");
 
     /// <summary>An explicitly-typed construction with an object initializer: <c>new CalendarEvent {</c>.</summary>
     private static readonly Regex TypedConstruction = new(@"\bnew\s+CalendarEvent\s*(?:\(\s*\))?\s*\{");

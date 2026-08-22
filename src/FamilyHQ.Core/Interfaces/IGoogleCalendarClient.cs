@@ -33,6 +33,31 @@ public interface IGoogleCalendarClient
     /// </summary>
     Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
 
+    /// <summary>
+    /// FHQ-172. As <see cref="PatchEventFieldsAsync"/>, except the request body carries <b>no</b>
+    /// <c>start</c> and <c>end</c> keys at all, so events.patch's merge semantics leave the
+    /// resource's own start and end exactly as Google holds them.
+    /// </summary>
+    /// <remarks>
+    /// Used for a series master whose true DTSTART could not be established. The alternative — the
+    /// earliest locally-synced row — is a proxy that relocates the series' origin forward and
+    /// deletes every occurrence before the sync window, on every device. Omitting the fields writes
+    /// only what the user actually changed, which is what the prime directive requires; a request
+    /// that DOES change the timing cannot be honoured this way and is refused by the caller instead.
+    /// Returns nothing: the event handed in is not the resource's post-write state, because its
+    /// start and end were never sent.
+    /// <para>
+    /// <b>Reachability, stated honestly.</b> This is a defence-in-depth path with no demonstrated
+    /// production trigger. Since <see cref="GetSeriesMasterAsync"/> stopped discarding a master's
+    /// start merely because it carried no RRULE, the only remaining way for a caller to reach here
+    /// is a master events.get that 404s or yields no parsable start — and an events.patch to that
+    /// same id would 404 too, so the call would fail rather than quietly do the wrong thing. It is
+    /// kept because the failure it guards against is irreversible loss of a family's series history,
+    /// not because it is the fix for the reported defect.
+    /// </para>
+    /// </remarks>
+    Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
+
     Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
 
     /// <summary>
@@ -55,10 +80,15 @@ public interface IGoogleCalendarClient
     Task<GoogleEventDetail?> GetEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
 
     /// <summary>
-    /// Fetches a recurring series master via events.get and returns its RRULE line
-    /// (the <c>RRULE:</c> entry from the master's <c>recurrence</c> array) together with the
-    /// master's DTSTART, or null when the master is missing (404), carries no RRULE, or has no
-    /// resolvable start. The start anchors forward-COUNT enumeration for "this and following" splits.
+    /// Fetches a recurring series master via events.get and returns the master's DTSTART, the zone
+    /// it is anchored to, and its RRULE line (the <c>RRULE:</c> entry from the master's
+    /// <c>recurrence</c> array). The start anchors forward-COUNT enumeration for "this and
+    /// following" splits, and the AllInSeries edit's shift of the series origin.
+    /// <para>
+    /// Null only when the master is missing (404) or has no resolvable start — with no start there
+    /// is no anchor. A master with a start but <b>no RRULE line</b> (an RDATE-only import) is
+    /// returned with <see cref="SeriesMaster.Rrule"/> null rather than discarded (FHQ-172).
+    /// </para>
     /// </summary>
     Task<SeriesMaster?> GetSeriesMasterAsync(string googleCalendarId, string seriesId, CancellationToken ct = default);
 

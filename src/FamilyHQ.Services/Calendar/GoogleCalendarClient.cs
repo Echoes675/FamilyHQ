@@ -391,16 +391,35 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string contentHash,
         CancellationToken ct = default)
     {
+        await PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: false, ct);
+        return calendarEvent;
+    }
+
+    public Task PatchEventFieldsPreservingTimesAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        CancellationToken ct = default)
+        => PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: true, ct);
+
+    private async Task PatchEventFieldsCoreAsync(
+        string googleCalendarId,
+        CalendarEvent calendarEvent,
+        string contentHash,
+        bool omitWhenFields,
+        CancellationToken ct)
+    {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
         var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
         // MapToGoogleEvent emits no `recurrence` key when given no rrule (WhenWritingNull), and PATCH
         // merges — so the master's existing RRULE, attendees and reminders survive the write.
-        var body = MapToGoogleEvent(calendarEvent, contentHash, familyZone: familyZone, clearCounterpartWhenFields: true);
+        var body = MapToGoogleEvent(
+            calendarEvent, contentHash, familyZone: familyZone,
+            clearCounterpartWhenFields: true, omitWhenFields: omitWhenFields);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
         await ThrowIfFailedAsync(response, "PatchEventFields", ct);
-        return calendarEvent;
     }
 
     public async Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
@@ -468,12 +487,16 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var apiEvent = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
 
-        // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
-        var rrule = apiEvent?.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
-        if (rrule is null) return null;
-
-        var start = ParseEventStart(apiEvent!.Start);
+        // FHQ-172: the START is what makes this record worth having. A master with no resolvable
+        // start is no anchor at all, so that — and only that — yields null. The RRULE is checked
+        // AFTER it and no longer gates the result: an RDATE-only master (an ICS/CalDAV import) has a
+        // perfectly good DTSTART, and discarding it here is what left the callers anchoring on a
+        // local-row proxy while the master was sitting there, alive, in Google.
+        var start = ParseEventStart(apiEvent?.Start);
         if (start is null) return null;
+
+        // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
+        var rrule = apiEvent!.Recurrence?.FirstOrDefault(line => line.StartsWith("RRULE:", StringComparison.Ordinal));
 
         // start.timeZone carries the zone the recurrence is anchored to; the split-count enumeration
         // needs it to hold the series' wall clock across a DST transition (FHQ-161).
@@ -513,9 +536,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         await ThrowIfFailedAsync(response, "StopChannel", ct);
     }
 
+    /// <param name="omitWhenFields">
+    /// FHQ-172: when true the returned body carries no <c>start</c> and no <c>end</c> key at all
+    /// (not a null one — <c>WhenWritingNull</c> drops them), so an events.patch leaves the
+    /// resource's own start and end untouched. Only meaningful on a PATCH; a create would be
+    /// rejected by Google without them.
+    /// </param>
     private object MapToGoogleEvent(
         CalendarEvent evt, string contentHash, string? rrule = null, string? familyZone = null,
-        bool clearCounterpartWhenFields = false)
+        bool clearCounterpartWhenFields = false, bool omitWhenFields = false)
     {
         var extendedProperties = new
         {
@@ -528,7 +557,13 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string? startDate = null, startDateTime = null, startZone = null;
         string? endDate = null, endDateTime = null, endZone = null;
 
-        if (evt.IsAllDay)
+        if (omitWhenFields)
+        {
+            // Deliberately compute nothing: every start/end value in scope would be discarded, and
+            // resolving the outbound zone for a pair of fields that are not being sent would emit a
+            // diagnostic about a decision this write is not making.
+        }
+        else if (evt.IsAllDay)
         {
             // Google requires end.date to be the day AFTER the last day of the event (exclusive).
             // Local End may be next-day midnight (already exclusive), an inclusive end-of-day tick,
@@ -578,8 +613,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             summary = evt.Title,
             description = evt.Description,
             location = evt.Location ?? "",
-            start = BuildWhen(startDate, startDateTime, startZone, clearCounterpartWhenFields),
-            end = BuildWhen(endDate, endDateTime, endZone, clearCounterpartWhenFields),
+            start = omitWhenFields ? null : BuildWhen(startDate, startDateTime, startZone, clearCounterpartWhenFields),
+            end = omitWhenFields ? null : BuildWhen(endDate, endDateTime, endZone, clearCounterpartWhenFields),
             recurrence,
             extendedProperties
         };
