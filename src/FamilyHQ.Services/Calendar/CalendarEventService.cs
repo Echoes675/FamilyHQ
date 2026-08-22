@@ -49,7 +49,13 @@ public class CalendarEventService(
             Location = request.Location,
             Description = fullDescription,
             OwnerCalendarInfoId = targetCalendar.Id,
-            Members = assignedMembers
+            Members = assignedMembers,
+            // FHQ-170: deliberately none. A brand-new event has no zone Google supplied for it, so
+            // there is nothing to preserve and the family's configured zone is the right answer —
+            // the one case where a FamilyHQ setting may fill in for a Google value. Stated rather
+            // than left to the default so the decision is visible at the call site (and so
+            // OutboundZoneGuardTests can tell "decided" from "forgotten").
+            IanaTimeZone = null
         };
 
         var hash = EventContentHash.Compute(
@@ -538,7 +544,11 @@ public class CalendarEventService(
             // moving every future occurrence at the next divergent DST transition. The master's own
             // zone leads the stored one here (unlike the counting ladder) because the edited row may
             // be an EXCEPTION instance, which can carry a zone of its own that is not the series'.
-            IanaTimeZone = masterAnchor.TimeZoneId ?? StoredSeriesZone(seriesRows)
+            // Blank counts as absent, not as a value: a `"timeZone": ""` on the master would
+            // otherwise beat a perfectly good stored zone and land straight back on the family's.
+            IanaTimeZone = string.IsNullOrWhiteSpace(masterAnchor.TimeZoneId)
+                ? StoredSeriesZone(seriesRows)
+                : masterAnchor.TimeZoneId
         };
 
         var hash = ComputeHash(master);
@@ -722,24 +732,32 @@ public class CalendarEventService(
     /// when the two rungs above it produced nothing. Sync's per-event loop never reaches here: it
     /// gets the same value for free from <c>start.timeZone</c> on the list response.
     /// </para>
+    /// <para>
+    /// <b>Every rung is filtered for usability</b> (see <see cref="UsableZone"/>): a rung only
+    /// short-circuits the ladder when the id it offers is one the tz database actually resolves.
+    /// Google's zone names run ahead of a bundled tzdb (<c>Europe/Kyiv</c>, <c>America/Ciudad_Juarez</c>),
+    /// so accepting an unrecognised id would skip the rungs below it and count in fixed-UTC when a
+    /// lower rung could still have supplied a zone that works.
+    /// </para>
     /// </summary>
     private async Task<string?> ResolveSeriesZoneIdAsync(
         CalendarInfo owner, string seriesId, IReadOnlyList<CalendarEvent> seriesRows,
         SeriesAnchor anchor, CancellationToken ct)
     {
         // Rung 1 — already stored locally from an earlier fetch. Free, and the reason backfill pays.
-        if (StoredSeriesZone(seriesRows) is { } stored)
+        if (UsableZone(StoredSeriesZone(seriesRows), seriesId) is { } stored)
             return stored;
 
         // Rung 2 — the master Google just returned for the anchor.
-        if (!string.IsNullOrWhiteSpace(anchor.TimeZoneId))
+        if (UsableZone(anchor.TimeZoneId, seriesId) is { } masterZone)
         {
-            await PersistSeriesZoneAsync(seriesRows, anchor.TimeZoneId, ct);
-            return anchor.TimeZoneId;
+            await PersistSeriesZoneAsync(seriesRows, masterZone, ct);
+            return masterZone;
         }
 
         // Rung 3 — any surviving instance carries the series' start.timeZone.
-        if (await FetchZoneFromSurvivingInstanceAsync(owner, seriesId, seriesRows, ct) is { } instanceZone)
+        var probedZone = await FetchZoneFromSurvivingInstanceAsync(owner, seriesId, seriesRows, ct);
+        if (UsableZone(probedZone, seriesId) is { } instanceZone)
         {
             await PersistSeriesZoneAsync(seriesRows, instanceZone, ct);
             return instanceZone;
@@ -747,15 +765,42 @@ public class CalendarEventService(
 
         // Rung 4 — the calendar's own default: what Google applies to an event on it with no zone of
         // its own. NOT persisted onto the series rows — it is the calendar's value, not the series'.
-        if (!string.IsNullOrWhiteSpace(owner.IanaTimeZone))
+        if (UsableZone(owner.IanaTimeZone, seriesId) is { } calendarZone)
         {
             logger.LogDebug(
                 "Series {SeriesId} supplied no zone of its own; anchoring its COUNT split to calendar {CalendarInfoId}'s default zone {IanaTimeZone}.",
-                seriesId, owner.Id, owner.IanaTimeZone);
-            return owner.IanaTimeZone;
+                seriesId, owner.Id, calendarZone);
+            return calendarZone;
         }
 
         // Rung 5 — terminal. CreateRecurrenceZone degrades to fixed-UTC and reports it.
+        return null;
+    }
+
+    /// <summary>
+    /// A rung's candidate zone id when it is present AND the tz database resolves it; null otherwise,
+    /// so the ladder carries on to the rung below.
+    /// </summary>
+    /// <remarks>
+    /// An id this factory rejects is of no use to either consumer: the split count cannot be
+    /// enumerated in it, and the outbound write resolves against the same tz database
+    /// (<c>ITimeZoneService.IsValidZone</c>), so it would be rejected there too and fall back to the
+    /// family's zone. Returning it would therefore buy nothing and cost the rungs below — and it must
+    /// not be persisted either, or the next edit would resolve to the same dead end at rung 1.
+    /// Reported at Debug, not Warning: the ladder handles it, and the one genuinely-guessing outcome
+    /// (every rung exhausted) still announces itself through <see cref="LogFixedUtcFallback"/>.
+    /// </remarks>
+    private string? UsableZone(string? candidate, string seriesId)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+            return null;
+
+        if (recurrenceTimeZoneFactory.TryCreate(candidate) is not null)
+            return candidate;
+
+        logger.LogDebug(
+            "Series {SeriesId} offered the IANA time zone {IanaTimeZone}, which this tz database does not recognise; trying the next rung of the discovery ladder.",
+            seriesId, candidate);
         return null;
     }
 
@@ -972,9 +1017,12 @@ public class CalendarEventService(
                 existing.OriginalStartTime = fetchedEvent.OriginalStartTime;
                 existing.RecurrenceRule = fetchedEvent.RecurrenceRule ?? seriesRule ?? existing.RecurrenceRule;
                 // FHQ-164 Decision 4: the reconcile is a Google fetch like any other, so it backfills
-                // the anchor zone too. Null-coalesced — an all-day event legitimately reports none,
-                // and that must not blank a stored value.
-                existing.IanaTimeZone = fetchedEvent.IanaTimeZone ?? existing.IanaTimeZone;
+                // the anchor zone too. A BLANK value counts as absent, not as a new value — an
+                // all-day event legitimately reports none, and storing "" would read as "no zone" to
+                // the outbound write, which then re-anchors the series to the family's zone (FHQ-170).
+                existing.IanaTimeZone = string.IsNullOrWhiteSpace(fetchedEvent.IanaTimeZone)
+                    ? existing.IanaTimeZone
+                    : fetchedEvent.IanaTimeZone;
                 existing.Members = members;
                 await calendarRepository.UpdateEventAsync(existing, ct);
                 persisted.Add(existing);
@@ -1049,7 +1097,11 @@ public class CalendarEventService(
                     stored.GoogleRecurringEventId = insert.GoogleRecurringEventId;
                     stored.OriginalStartTime = insert.OriginalStartTime;
                     stored.RecurrenceRule = insert.RecurrenceRule ?? stored.RecurrenceRule;
-                    stored.IanaTimeZone = insert.IanaTimeZone ?? stored.IanaTimeZone;
+                    // Blank counts as absent, exactly as in the reconcile above: "" would read as
+                    // "no zone" to the outbound write and re-anchor the series (FHQ-170).
+                    stored.IanaTimeZone = string.IsNullOrWhiteSpace(insert.IanaTimeZone)
+                        ? stored.IanaTimeZone
+                        : insert.IanaTimeZone;
                     stored.Members = insert.Members;
                     await calendarRepository.UpdateEventAsync(stored, ct);
                 }

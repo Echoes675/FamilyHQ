@@ -1,8 +1,10 @@
+using System.Net;
 using System.Runtime.CompilerServices;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
@@ -583,6 +585,103 @@ public class CalendarEventServiceRecurringTests
         split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
     }
 
+    // ── Every rung is filtered for usability ──────────────────────────────────────────────────
+    //
+    // Google's zone names run ahead of a bundled tz database (Europe/Kyiv, America/Ciudad_Juarez are
+    // the real-world instances; which of them the shipped tzdb knows depends on its version, so the
+    // tests below use an unmistakably fictional id and stay deterministic). A rung that hands back an
+    // id the factory cannot resolve must not short-circuit the ladder: the count would fall to
+    // fixed-UTC while a rung below still had a zone that works.
+
+    private const string UnknownZoneId = "Mars/Olympus_Mons";
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_StoredZoneTheTzDatabaseRejects_FallsThroughToTheNextRung()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: UnknownZoneId, masterZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2", "rung 2's zone counts the fall-back transition correctly");
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug && r.Message.Contains("does not recognise") && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ZoneTheTzDatabaseRejects_IsNotPersistedOntoTheSeriesRows()
+    {
+        // Storing an id neither consumer can use would make the next edit resolve to the same dead
+        // end at rung 1, for free, forever.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: UnknownZoneId, instanceZone: null, calendarDefaultZone: null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
+        f.Repo.Verify(r => r.UpdateEventAsync(It.Is<CalendarEvent>(e => e.IanaTimeZone == UnknownZoneId), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // ── Rung 3's probing: bounded, and never swallowing a signal that is not about zones ──────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbesAreBoundedNotOnePerOccurrence()
+    {
+        // A master that 404s because the series was genuinely deleted takes its instances with it, so
+        // every probe 404s too. Unbounded, that costs one call per synced occurrence on the way to
+        // the same answer. Four rows are arranged; only the bound stops the fourth probe.
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Google.Verify(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3),
+            "the ladder probes at most MaxInstanceZoneProbes instances before dropping to the next rung");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbeNeedingReauth_PropagatesRatherThanDegradingTheZone()
+    {
+        // Swallowing a reauth here would degrade the zone silently AND let the edit carry on to a
+        // write that then fails — masking the very signal FHQ-82/85/153 exist to surface. Neither
+        // reauth nor cancellation is a zone problem, so neither is the probe loop's to handle.
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+        f.Google.Setup(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "invalid_grant"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbeFailingTransiently_TriesTheNextCandidate()
+    {
+        // A transient upstream failure IS the probe loop's to handle: the ladder has rungs below it
+        // and a user's edit is never failed over a zone lookup (Decision 3a). Reported at Debug —
+        // expected-and-handled conditions are not Warnings.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: null);
+
+        var probes = 0;
+        f.Google.Setup(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string id, CancellationToken _) => ++probes == 1
+                ? throw new GoogleApiException(HttpStatusCode.ServiceUnavailable, "GetEvent")
+                : new GoogleEventDetail(id, null, LondonZoneId));
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2", "the second candidate supplied the zone the first could not");
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug && r.Message.Contains("could not be fetched") && r.Message.Contains(SeriesId));
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+    }
+
     // ── FHQ-170 on the series-level write paths ───────────────────────────────────────────────
 
     [Fact]
@@ -621,6 +720,33 @@ public class CalendarEventServiceRecurringTests
 
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == LondonZoneId),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(NewYorkZoneId, LondonZoneId, NewYorkZoneId)]  // both present and differing → the master's wins
+    [InlineData(null, LondonZoneId, LondonZoneId)]            // no master zone → the stored series zone
+    [InlineData("", LondonZoneId, LondonZoneId)]              // blank is absent, not a value that beats a good one
+    public async Task UpdateRecurringAsync_AllInSeries_MasterZoneLeadsTheStoredOne(
+        string? masterZone, string? storedZone, string? expectedZone)
+    {
+        // The two arms have to be exercised TOGETHER or the precedence is not pinned at all: with one
+        // arm null either ordering passes. The master's own zone leads here — unlike the counting
+        // ladder — because the edited row may be an EXCEPTION instance carrying a zone of its own
+        // that is not the one the series is anchored to.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        instance.IanaTimeZone = storedZone;
+        f.ArrangeEvent(instance);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>())).ReturnsAsync([instance]);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart, masterZone));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == expectedZone),
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
