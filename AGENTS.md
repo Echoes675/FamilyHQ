@@ -2,6 +2,60 @@
 
 Dashboard app that displays a family calendar events
 
+## Prime directive — preserve the Google Calendar experience
+
+**Read this before any design decision. It outranks convenience, tidiness, and internal consistency.**
+
+> FamilyHQ must preserve the Google Calendar experience. Most events are created, updated and
+> deleted on a user's **mobile device in the Google Calendar app** — not in FamilyHQ. Therefore
+> whatever changes we make must be **fully compatible**. The consideration of **existing events** is
+> also a real concern: the production application is in use and has many calendars and events.
+
+Google is the system of record. **FamilyHQ is one client among several**, and usually not the one
+the family actually uses to make changes. The kiosk is a *view* over their calendar, not the owner
+of it.
+
+### Why this is easy to get wrong
+
+It is natural to reason as though FamilyHQ owns the data — its database has the events, so its
+settings feel authoritative. They are not. That assumption has produced real defects:
+
+- **FHQ-170** — `UpdateEventAsync` sends the *family's* configured zone as `start.timeZone` on every
+  edit, silently discarding the zone the phone set when it created the series. The edited
+  occurrence's instant survives, but the series is re-anchored, so **every future occurrence moves
+  an hour** at the next divergent DST transition — on every device the calendar is shared with.
+- **FHQ-161** — recurrence expansion stepped fixed UTC instants while Google holds wall-clock across
+  a transition. A COUNT-bounded series split across an autumn transition silently lost its last
+  occurrence.
+
+Both were correct-looking code that quietly diverged from what Google does.
+
+### What this requires in practice
+
+- **Round-trip, don't substitute.** Before changing any Google write path, ask what the value was
+  *before* FamilyHQ touched it and whether the change preserves it. Prefer sending back the value
+  Google gave us over a locally-derived equivalent.
+- **FamilyHQ settings are a fallback, not an override.** Use them for data Google did not supply
+  (e.g. a brand-new event's zone). Never use them to replace data it did.
+- **A change correct for events FamilyHQ created may be wrong for events it merely synced.** Check
+  both origins — the synced ones are the majority.
+- **Match Google's semantics, not merely a reasonable interpretation.** Where behaviour is
+  observable (DST handling, recurrence expansion, all-day boundaries, full-replace PUT semantics),
+  the standard is what Google actually does. Note the Simulator does not model everything — see
+  `.agent/docs/intermittent-issues.md`.
+
+### Existing production data is a first-class concern
+
+Production holds many real calendars and events. For any schema, sync, or write change, state
+explicitly **what happens to data that already exists** — "new rows get the new field" is not a
+migration plan when the data that matters is already there.
+
+Check whether normal operation actually backfills. It often does not: `CalendarSyncService` fetches
+a series master **only when the RRULE is not already cached**, so existing series never re-fetch and
+would never populate a newly added column.
+
+Schema changes require explicit approval (see Rules of Engagement below).
+
 ## Core Context
 
 - **Framework**: .NET 10 (Blazor WASM Frontend, ASP.NET Core Backend)
