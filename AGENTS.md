@@ -21,9 +21,17 @@ phone** — and the family will see the damage in the Google Calendar app, not h
 to hold in both directions:
 
 - what FamilyHQ **writes** must be what the Google app expects to read, and
-- what the Google app **wrote** must survive FamilyHQ touching it.
+- an edit must change **what the user asked to change, and nothing else**.
 
-The second is the one that gets missed.
+The second is the one that gets missed. To be clear about what it does *not* mean: editing and
+deleting events that were created on a phone is a **supported, working feature** — the kiosk is a
+peer client, not a second-class one, and it is entirely valid for it to modify or remove anything on
+the family's calendars. The rule is about *incidental* change, not intended change.
+
+So the question to ask of any write path is not "may we touch this event?" but **"does this request
+alter anything the user did not ask us to alter?"** [[FHQ-170]] is the archetype: a user edits an
+event's title on the kiosk, and the series' anchor time zone is silently rewritten as a side effect —
+the title change was requested, the re-anchoring was not, and only the second one is the bug.
 
 ### Why this is easy to get wrong
 
