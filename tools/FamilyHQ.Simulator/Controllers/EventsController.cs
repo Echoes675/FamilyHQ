@@ -1,4 +1,5 @@
 using System.Globalization;
+using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.Calendar.Recurrence;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Simulator.Data;
@@ -187,8 +188,8 @@ public class EventsController : ControllerBase
             Summary = body.Summary ?? "New Event",
             Location = body.Location,
             Description = body.Description,
-            StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow),
-            EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : DateTime.UtcNow.AddHours(1)),
+            StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : DateTime.UtcNow),
+            EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
             UserId = userId,
             ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash"),
@@ -289,8 +290,8 @@ public class EventsController : ControllerBase
         existing.Summary = body.Summary ?? existing.Summary;
         existing.Location = body.Location;
         existing.Description = body.Description;
-        existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : existing.StartTime);
-        existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : existing.EndTime);
+        existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : existing.StartTime);
+        existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
         // FHQ-43: keep the anchored IANA zone in sync when the update maps the start.
         existing.StartTimeZone = body.Start?.TimeZone;
@@ -429,14 +430,14 @@ public class EventsController : ControllerBase
         if (body.Start.DateTime != null || body.Start.Date != null)
         {
             existing.StartTime = body.Start.DateTime?.ToUniversalTime()
-                ?? DateTime.Parse(body.Start.Date!, null, DateTimeStyles.AdjustToUniversal);
+                ?? ParseAllDayDateUtc(body.Start.Date!);
             existing.IsAllDay = body.Start.Date != null;
             existing.StartTimeZone = body.Start.TimeZone;
         }
         if (body.End.DateTime != null || body.End.Date != null)
         {
             existing.EndTime = body.End.DateTime?.ToUniversalTime()
-                ?? DateTime.Parse(body.End.Date!, null, DateTimeStyles.AdjustToUniversal);
+                ?? ParseAllDayDateUtc(body.End.Date!);
         }
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
@@ -787,9 +788,9 @@ public class EventsController : ControllerBase
 
         var isAllDay = body.Start.Date != null;
         var start = body.Start.DateTime?.ToUniversalTime()
-                    ?? (body.Start.Date != null ? DateTime.Parse(body.Start.Date, null, DateTimeStyles.AdjustToUniversal) : originalStartUtc);
+                    ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : originalStartUtc);
         var end = body.End.DateTime?.ToUniversalTime()
-                  ?? (body.End.Date != null ? DateTime.Parse(body.End.Date, null, DateTimeStyles.AdjustToUniversal) : start.AddHours(1));
+                  ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : start.AddHours(1));
 
         var contentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash");
 
@@ -877,11 +878,31 @@ public class EventsController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Resolves an all-day <c>date</c> field ("yyyy-MM-dd") to midnight UTC.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-174. <c>DateTime.Parse(value, null, DateTimeStyles.AdjustToUniversal)</c> returned the
+    /// value with <c>Kind = Unspecified</c> — AdjustToUniversal does nothing to a string that
+    /// carries no zone — and <c>SimContext</c>'s universal <c>v =&gt; v.ToUniversalTime()</c>
+    /// converter then treated that Unspecified value as LOCAL and shifted it by the host's offset.
+    /// On a developer machine at UTC+1 an all-day event stored a day early and was served back to
+    /// the app a day early, so the Simulator disagreed with Google about the one thing it exists to
+    /// imitate. Anchoring at midnight UTC makes the converter a no-op and the round-trip exact.
+    /// </remarks>
+    private static DateTime ParseAllDayDateUtc(string value) => GoogleAllDayDate.Parse(value).UtcDateTime;
+
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.
+    // FHQ-174: AssumeUniversal is what makes this host-independent. AdjustToUniversal alone only
+    // normalises a value that already carries a zone; on one that does not, the parse falls back to
+    // the host's offset. Every caller today passes a timeMin/timeMax that carries a 'Z', so this was
+    // latent rather than broken — but the callers are the app's, and the app can change.
     private static DateTimeOffset? ParseGoogleTimeBound(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? null
-            : DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var parsed)
+            : DateTimeOffset.TryParse(
+                    value, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
                 ? parsed
                 : null;
 

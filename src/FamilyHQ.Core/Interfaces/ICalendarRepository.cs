@@ -1,3 +1,4 @@
+using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Models;
 
 namespace FamilyHQ.Core.Interfaces;
@@ -30,6 +31,15 @@ public interface ICalendarRepository
     /// </summary>
     Task<IReadOnlyList<CalendarEvent>> GetEventsBySeriesIdAsync(string seriesId, CancellationToken ct = default);
     Task<SyncState?> GetSyncStateAsync(Guid calendarInfoId, CancellationToken ct = default);
+
+    /// <summary>
+    /// FHQ-174. Read-only audit of the current user's all-day rows, broken down by the shape each
+    /// boundary is stored in — see <see cref="AllDayBoundaryAuditDto"/> for why Start, End and the
+    /// separate legacy inclusive-end shape are counted apart rather than totalled. Mutates nothing:
+    /// it exists to answer "did the day-shift defect reach this environment's data?" before anyone
+    /// decides whether a repair is warranted.
+    /// </summary>
+    Task<AllDayBoundaryAuditDto> GetAllDayBoundaryAuditAsync(CancellationToken ct = default);
 
     /// <summary>
     /// For the given recurring-series ids, returns a map of series id → stored RRULE for

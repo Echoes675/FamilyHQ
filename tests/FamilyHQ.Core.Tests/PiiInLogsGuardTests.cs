@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using FamilyHQ.Core.Tests.Guards;
 using FluentAssertions;
 
 namespace FamilyHQ.Core.Tests;
@@ -86,7 +87,6 @@ namespace FamilyHQ.Core.Tests;
 /// </summary>
 public class PiiInLogsGuardTests
 {
-    private const string RepositoryMarker = "FamilyHQ.slnx";
     private const string SourceFolderName = "src";
 
     private const string LogCallKind = "log call";
@@ -206,7 +206,7 @@ public class PiiInLogsGuardTests
     [Fact]
     public void ProductionSources_DoNotLogEmailAddressesCalendarIdsDisplayNamesOrTheHomeLocation()
     {
-        var sourceRoot = Path.Combine(FindRepositoryRoot(), SourceFolderName);
+        var sourceRoot = Path.Combine(SourceScan.FindRepositoryRoot(), SourceFolderName);
         var violations = new List<string>();
 
         foreach (var file in EnumerateProductionSources(sourceRoot))
@@ -216,7 +216,7 @@ public class PiiInLogsGuardTests
 
             violations.AddRange(Scan(source).Select(v =>
                 $"{relativePath}:{v.Line} passes {v.Value} to a {v.Kind} — {v.Reason}. " +
-                $"Line: {LineTextAt(source, v.Line)}"));
+                $"Line: {SourceScan.LineTextAt(source, v.Line)}"));
         }
 
         violations.Should().BeEmpty(
@@ -232,7 +232,7 @@ public class PiiInLogsGuardTests
     {
         // A guard that quietly scans nothing passes forever. Pin both ends: the files are found,
         // and log calls are actually being recognised inside them.
-        var sourceRoot = Path.Combine(FindRepositoryRoot(), SourceFolderName);
+        var sourceRoot = Path.Combine(SourceScan.FindRepositoryRoot(), SourceFolderName);
         var files = EnumerateProductionSources(sourceRoot).ToList();
 
         files.Should().HaveCountGreaterThan(100, "src/ holds the whole product");
@@ -375,7 +375,7 @@ public class PiiInLogsGuardTests
                     if (!IsArgumentPosition(region.Text, match.Index + match.Length)) continue;
 
                     violations.Add(new Violation(
-                        value, kind, reason, LineNumberAt(source, region.Start + match.Index)));
+                        value, kind, reason, SourceScan.LineNumberAt(source, region.Start + match.Index)));
                 }
             }
 
@@ -388,7 +388,7 @@ public class PiiInLogsGuardTests
             {
                 violations.Add(new Violation(
                     "a destructured object", kind, DestructuringReason,
-                    LineNumberAt(source, region.Start + match.Index)));
+                    SourceScan.LineNumberAt(source, region.Start + match.Index)));
             }
         }
 
@@ -404,7 +404,7 @@ public class PiiInLogsGuardTests
     /// and the arguments of <c>Redact(…)</c> and <c>nameof(…)</c>.
     /// </summary>
     private static string Mask(string source) =>
-        BlankNameofArguments(BlankRedactedArguments(MaskCommentsAndLiteralText(source)));
+        BlankNameofArguments(BlankRedactedArguments(SourceScan.MaskCommentsAndLiteralText(source)));
 
     /// <summary>
     /// True when the value matched immediately before <paramref name="index"/> is what the call
@@ -422,15 +422,15 @@ public class PiiInLogsGuardTests
         var i = index;
 
         // `x!` is the same value; `x != y` is a comparison whose RESULT is the argument.
-        if (i < region.Length && region[i] == '!' && Next(region, i) != '=') i++;
+        if (i < region.Length && region[i] == '!' && SourceScan.Next(region, i) != '=') i++;
 
         while (i < region.Length && char.IsWhiteSpace(region[i])) i++;
 
         if (i >= region.Length) return true;
         if (region[i] is ',' or ')' or '}') return true;
 
-        return (region[i] == '?' && Next(region, i) == '?')
-               || (region[i] == '+' && Next(region, i) is not ('+' or '='));
+        return (region[i] == '?' && SourceScan.Next(region, i) == '?')
+               || (region[i] == '+' && SourceScan.Next(region, i) is not ('+' or '='));
     }
 
     private readonly record struct SinkRegion(int Start, string Text);
@@ -446,7 +446,7 @@ public class PiiInLogsGuardTests
             foreach (Match match in start.Matches(code))
             {
                 var open = match.Index + match.Length - 1;
-                var close = MatchingParenthesis(code, open);
+                var close = SourceScan.MatchingParenthesis(code, open);
                 yield return (kind, new SinkRegion(open + 1, code[(open + 1)..close]));
             }
         }
@@ -471,291 +471,15 @@ public class PiiInLogsGuardTests
         foreach (Match match in call.Matches(code))
         {
             var open = match.Index + match.Length - 1;
-            Blank(masked, code, open + 1, MatchingParenthesis(code, open));
+            SourceScan.Blank(masked, code, open + 1, SourceScan.MatchingParenthesis(code, open));
         }
 
         return masked.ToString();
-    }
-
-    /// <summary>Index of the <c>)</c> closing the <c>(</c> at <paramref name="open"/>, or end of input.</summary>
-    private static int MatchingParenthesis(string code, int open)
-    {
-        var depth = 0;
-        for (var i = open; i < code.Length; i++)
-        {
-            if (code[i] == '(') depth++;
-            else if (code[i] == ')' && --depth == 0) return i;
-        }
-
-        return code.Length;
-    }
-
-    /// <summary>
-    /// Blanks comments and the literal text of every string and char literal, preserving character
-    /// positions and line breaks so match offsets still map to the original file's line numbers.
-    /// The interpolation holes of a <c>$"…"</c> string are left intact: they are code, and they are
-    /// where an exception message carries its values.
-    /// </summary>
-    private static string MaskCommentsAndLiteralText(string source)
-    {
-        var masked = new StringBuilder(source);
-        var i = 0;
-
-        while (i < source.Length)
-        {
-            var c = source[i];
-
-            if (c == '/' && Next(source, i) == '/')
-            {
-                var end = source.IndexOf('\n', i);
-                i = Blank(masked, source, i, end < 0 ? source.Length : end);
-            }
-            else if (c == '/' && Next(source, i) == '*')
-            {
-                var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                i = Blank(masked, source, i, end < 0 ? source.Length : end + 2);
-            }
-            else if (StartsInterpolatedString(source, i))
-            {
-                i = MaskInterpolatedString(masked, source, i);
-            }
-            else if (c == '"' && Next(source, i) == '"' && Next(source, i + 1) == '"')
-            {
-                i = Blank(masked, source, i, EndOfRawString(source, i));
-            }
-            else if (c == '@' && Next(source, i) == '"')
-            {
-                i = Blank(masked, source, i, EndOfVerbatimString(source, i + 2));
-            }
-            else if (c is '"' or '\'')
-            {
-                i = Blank(masked, source, i, EndOfSimpleLiteral(source, i + 1, c));
-            }
-            else
-            {
-                i++;
-            }
-        }
-
-        return masked.ToString();
-    }
-
-    /// <summary>True when <paramref name="index"/> begins a <c>$"</c>, <c>$@"</c> or <c>@$"</c> string.</summary>
-    private static bool StartsInterpolatedString(string source, int index)
-    {
-        if (source[index] != '$' && !(source[index] == '@' && Next(source, index) == '$'))
-        {
-            return false;
-        }
-
-        var i = index;
-        while (i < source.Length && source[i] is '$' or '@')
-        {
-            i++;
-        }
-
-        return i < source.Length && source[i] == '"';
-    }
-
-    /// <summary>
-    /// Blanks an interpolated string's literal text while preserving its holes, and returns the
-    /// index just past it. A raw interpolated string (<c>$"""…"""</c>) is blanked wholesale — the
-    /// codebase has none, and guessing its hole-brace count would be more risk than value.
-    /// </summary>
-    private static int MaskInterpolatedString(StringBuilder masked, string source, int start)
-    {
-        var i = start;
-        var verbatim = false;
-        while (source[i] is '$' or '@')
-        {
-            verbatim |= source[i] == '@';
-            Blank(masked, source, i, i + 1);
-            i++;
-        }
-
-        if (Next(source, i) == '"' && Next(source, i + 1) == '"')
-        {
-            return Blank(masked, source, i, EndOfRawString(source, i));
-        }
-
-        i = Blank(masked, source, i, i + 1); // opening quote
-
-        while (i < source.Length)
-        {
-            var c = source[i];
-
-            if (c == '"')
-            {
-                // In a verbatim string "" escapes a quote; otherwise this closes the string.
-                if (verbatim && Next(source, i) == '"')
-                {
-                    i = Blank(masked, source, i, i + 2);
-                    continue;
-                }
-
-                return Blank(masked, source, i, i + 1);
-            }
-
-            if (!verbatim && c == '\\')
-            {
-                i = Blank(masked, source, i, i + 2);
-                continue;
-            }
-
-            if (c is '{' or '}' && Next(source, i) == c)
-            {
-                i = Blank(masked, source, i, i + 2); // {{ and }} are escaped braces, not a hole
-                continue;
-            }
-
-            if (c == '{')
-            {
-                i = SkipHole(masked, source, i);
-                continue;
-            }
-
-            if (c == '\n' && !verbatim)
-            {
-                return i; // unterminated: stop at the line end rather than swallowing the file
-            }
-
-            i = Blank(masked, source, i, i + 1);
-        }
-
-        return i;
-    }
-
-    /// <summary>
-    /// Leaves an interpolation hole's contents in place (they are code) and returns the index just
-    /// past its closing brace.
-    /// <para>
-    /// The braces themselves become parentheses rather than blanks, so each hole reads as its own
-    /// bracketed expression: <c>$"lat={latitude}, lon={longitude}"</c> masks to
-    /// <c>      (latitude)      (longitude)</c>, where the argument-position test can see that
-    /// <c>latitude</c> is handed over whole. Blanking them ran every hole of a message together into
-    /// one run of identifiers, so only the last one looked like an argument. Parentheses also keep
-    /// the enclosing call's paren balance intact, which is how the region was found.
-    /// </para>
-    /// </summary>
-    private static int SkipHole(StringBuilder masked, string source, int open)
-    {
-        Blank(masked, source, open, open + 1);
-        masked[open] = '(';
-
-        var depth = 1;
-        var i = open + 1;
-
-        while (i < source.Length && depth > 0)
-        {
-            if (source[i] == '{') depth++;
-            else if (source[i] == '}' && --depth == 0)
-            {
-                var next = Blank(masked, source, i, i + 1);
-                masked[i] = ')';
-                return next;
-            }
-
-            i++;
-        }
-
-        return i;
-    }
-
-    private static char Next(string source, int index) =>
-        index + 1 < source.Length ? source[index + 1] : '\0';
-
-    /// <summary>Index just past a raw string literal's closing quote run.</summary>
-    private static int EndOfRawString(string source, int start)
-    {
-        var fenceLength = 0;
-        while (start + fenceLength < source.Length && source[start + fenceLength] == '"')
-        {
-            fenceLength++;
-        }
-
-        var close = source.IndexOf(new string('"', fenceLength), start + fenceLength, StringComparison.Ordinal);
-        return close < 0 ? source.Length : close + fenceLength;
-    }
-
-    /// <summary>Index just past the closing quote of a verbatim string, where <c>""</c> escapes a quote.</summary>
-    private static int EndOfVerbatimString(string source, int start)
-    {
-        var i = start;
-        while (i < source.Length)
-        {
-            if (source[i] != '"') i++;
-            else if (Next(source, i) == '"') i += 2;
-            else return i + 1;
-        }
-
-        return source.Length;
-    }
-
-    /// <summary>
-    /// Index just past the closing quote of a regular string or char literal, where <c>\</c>
-    /// escapes the next character. An unterminated literal stops at the end of the line.
-    /// </summary>
-    private static int EndOfSimpleLiteral(string source, int start, char quote)
-    {
-        var i = start;
-        while (i < source.Length && source[i] != quote && source[i] != '\n')
-        {
-            i += source[i] == '\\' ? 2 : 1;
-        }
-
-        return Math.Min(i + 1, source.Length);
-    }
-
-    /// <summary>Blanks <c>[start, end)</c>, keeping line breaks, and returns <c>end</c>.</summary>
-    private static int Blank(StringBuilder target, string source, int start, int end)
-    {
-        for (var i = start; i < end && i < source.Length; i++)
-        {
-            if (source[i] is not ('\n' or '\r'))
-            {
-                target[i] = ' ';
-            }
-        }
-
-        return Math.Max(Math.Min(end, source.Length), start + 1);
-    }
-
-    private static int LineNumberAt(string text, int index)
-    {
-        var line = 1;
-        for (var i = 0; i < index && i < text.Length; i++)
-        {
-            if (text[i] == '\n') line++;
-        }
-
-        return line;
-    }
-
-    private static string LineTextAt(string source, int lineNumber)
-    {
-        var lines = source.Split('\n');
-        return lineNumber >= 1 && lineNumber <= lines.Length ? lines[lineNumber - 1].Trim() : string.Empty;
     }
 
     private static IEnumerable<string> EnumerateProductionSources(string sourceRoot) =>
-        Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                        && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
-                        // EF-generated model snapshots name every mapped column, including the
-                        // sensitive ones, and contain no logging at all.
-                        && !f.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"));
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, RepositoryMarker)))
-        {
-            directory = directory.Parent;
-        }
-
-        // Fail loudly rather than vacuously passing: a guard that silently skips is not a guard.
-        directory.Should().NotBeNull(
-            $"the repository root (the directory holding {RepositoryMarker}) must be reachable from {AppContext.BaseDirectory}");
-        return directory!.FullName;
-    }
+        SourceScan.EnumerateSources(sourceRoot, ".cs")
+            // EF-generated model snapshots name every mapped column, including the sensitive ones,
+            // and contain no logging at all.
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"));
 }

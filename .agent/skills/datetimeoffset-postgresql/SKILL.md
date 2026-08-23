@@ -182,6 +182,61 @@ public DateTime EventStart { get; set; }
 public DateTimeOffset EventStart { get; set; }
 ```
 
+## All-day boundaries are midnight UTC (FHQ-174)
+
+An all-day event's `Start`/`End` are **dates**, not instants. Google sends them as an RFC 3339
+full-date (`"2026-06-15"`) and expects the same string back.
+
+**Rule: resolve and build every all-day boundary through `FamilyHQ.Core.Calendar.GoogleAllDayDate`.**
+`Parse` for a value Google sent, `AtMidnightUtc` for a date the kiosk's pickers produced. Both land
+on midnight UTC.
+
+**Why midnight UTC and not the calendar's zone.** The `Start`/`End` value converter
+(`v => v.ToUniversalTime()`) reduces whatever it is given to a UTC instant. A zone-anchored value
+does not survive that: at any positive offset it lands on the previous day, and
+`GoogleCalendarClient.MapToGoogleEvent` then formats `"yyyy-MM-dd"` off the shifted instant and
+tells Google the event starts a day early — with the exclusive-end normalisation adding another day
+on top. Midnight UTC passes through the converter unchanged and formats back to the string Google
+sent.
+
+### What NOT to do
+
+❌ **Do NOT parse a date-only string with a bare `Parse`:**
+```csharp
+// WRONG - stamps the HOST machine's current UTC offset. On a UTC+1 host this is 2026-06-14T23:00Z.
+var start = DateTimeOffset.Parse(item.Start.Date, CultureInfo.InvariantCulture);
+```
+
+❌ **Do NOT stamp the browser's offset on an all-day boundary in the WebUi:**
+```csharp
+// WRONG - same substitution, made in the kiosk instead of the sync.
+_eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+```
+
+✅ **Do this instead:**
+```csharp
+var start = GoogleAllDayDate.Parse(item.Start.Date);                  // inbound, from Google
+var start = GoogleAllDayDate.AtMidnightUtc(pickedDate);               // outbound, from a picker
+```
+
+`DateTimeStyles.AdjustToUniversal` on its own is **not** the fix: it only normalises a value that
+already carries a zone, and does nothing to one that does not. Pair it with
+`DateTimeStyles.AssumeUniversal`.
+
+Two build-breaking guards enforce this, because CI's host offset is zero and no value-based test can
+tell the buggy code from the fixed code:
+
+- `build/BannedSymbols.txt` (`Microsoft.CodeAnalysis.BannedApiAnalyzers`, imported by
+  `FamilyHQ.Core`, `FamilyHQ.Services`, `FamilyHQ.WebUi` and `FamilyHQ.Simulator` via
+  `build/GoogleDateParsingBan.props`) — bans the `Parse`/`TryParse` overloads that take no
+  `DateTimeStyles`. Every Dockerfile copies `build/` **before** `dotnet restore`; the import declares
+  the analyzer package, and without it `dotnet publish` fails with MSB4019.
+- `tests/FamilyHQ.Core.Tests/DateOnlyParseGuardTests.cs` — scans `src/` and `tools/` (`.cs` **and**
+  `.razor`) and fails any `DateTime`/`DateTimeOffset` parse whose argument list does not name
+  `AssumeUniversal`, which the analyzer cannot express. The rule is stated positively on purpose:
+  "not `AdjustToUniversal` alone" lets `DateTimeStyles.None` and a hoisted styles constant through.
+  Write the flags at the call site — a named constant hides them from the guard and fails it.
+
 ## Testing Considerations
 
 ### Unit Tests

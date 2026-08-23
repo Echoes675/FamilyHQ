@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    FHQ-174. Bans the DateTimeOffset/DateTime parse overloads that take no DateTimeStyles, because
+    they resolve a zone-less string using the HOST machine's UTC offset. See build/BannedSymbols.txt
+    for the full reasoning and the sanctioned alternatives.
+
+    Why this and not a test: CI runs at a zero host offset, so the buggy and the fixed code produce
+    identical values there. No value-based unit test can distinguish them; only a rule about which
+    API is called can. RS0030 is reported as a warning and the repository sets
+    TreatWarningsAsErrors, so a reintroduction fails the build.
+
+    Scope: imported only by the projects that handle Google Calendar date payloads — FamilyHQ.Core
+    (the shared parser and the RRULE builder), FamilyHQ.Services (the Google client),
+    FamilyHQ.WebUi (the kiosk's event editor) and FamilyHQ.Simulator (the Google test double).
+    Those are the four places a date crosses the Google boundary, which is the boundary the ban is
+    about. Applying it solution-wide would force per-site suppressions in test and infrastructure
+    code that parses fixed ISO literals with an explicit 'Z' — noise that trains reviewers to add
+    suppressions rather than to read them.
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
+</Project>

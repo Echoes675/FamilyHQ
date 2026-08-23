@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Calendar;
+using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using Microsoft.EntityFrameworkCore;
@@ -141,6 +143,80 @@ public class CalendarRepository : ICalendarRepository
     {
         return await _context.SyncStates
             .FirstOrDefaultAsync(s => s.CalendarInfoId == calendarInfoId, ct);
+    }
+
+    /// <summary>
+    /// The most all-day rows the audit reads in one pass. A family with more than this has something
+    /// far stranger going on than a day shift; the cap is here so the query cannot materialise an
+    /// unbounded result set, not because the limit is expected to bite. Hitting it sets
+    /// <c>Truncated</c> rather than silently under-reporting.
+    /// </summary>
+    private const int MaxAuditRows = 50_000;
+
+    public async Task<AllDayBoundaryAuditDto> GetAllDayBoundaryAuditAsync(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(CurrentUserId))
+            return new AllDayBoundaryAuditDto(0, 0, 0, 0, null, null, false);
+
+        // READ ONLY. FHQ-174 ships no repair: this counts, it does not write.
+        //
+        // The server-side predicate is deliberately just "all-day, mine". The midnight test is
+        // applied in memory because the obvious LINQ form (e.Start.TimeOfDay != TimeSpan.Zero)
+        // translates on timestamptz to a date_part that reads Postgres' session TimeZone — the very
+        // host-dependence this ticket removes — and would give a different answer against a session
+        // that is not at UTC.
+        //
+        // Ordered by Start so the affected range falls out of the scan, and capped so the in-memory
+        // set is bounded. The extra row is how truncation is detected without a second query.
+        var boundaries = await _context.Events
+            .AsNoTracking()
+            .Where(e => e.IsAllDay
+                     && _context.Calendars.Any(c => c.Id == e.OwnerCalendarInfoId && c.UserId == CurrentUserId))
+            .OrderBy(e => e.Start)
+            .Select(e => new { e.Start, e.End })
+            .Take(MaxAuditRows + 1)
+            .ToListAsync(ct);
+
+        var truncated = boundaries.Count > MaxAuditRows;
+        if (truncated)
+            boundaries.RemoveAt(boundaries.Count - 1);
+
+        var nonMidnightStarts = 0;
+        var nonMidnightEnds = 0;
+        var inclusiveEndOfDayEnds = 0;
+        DateTimeOffset? earliestAffected = null;
+        DateTimeOffset? latestAffected = null;
+
+        foreach (var boundary in boundaries)
+        {
+            var startShifted = !GoogleAllDayDate.IsMidnightUtc(boundary.Start);
+
+            // The inclusive end-of-day End is a SEPARATE legacy shape (see AllDayBoundaryAuditDto).
+            // It fails the midnight test for a reason that has nothing to do with the host's offset,
+            // so it is recognised first and excluded from the day-shift count.
+            var endInclusive = GoogleAllDayDate.IsInclusiveEndOfDay(boundary.End);
+            var endShifted = !endInclusive && !GoogleAllDayDate.IsMidnightUtc(boundary.End);
+
+            if (startShifted) nonMidnightStarts++;
+            if (endShifted) nonMidnightEnds++;
+            if (endInclusive) inclusiveEndOfDayEnds++;
+
+            if (startShifted || endShifted)
+            {
+                // Ascending by Start, so the first hit is the earliest and the last wins for latest.
+                earliestAffected ??= boundary.Start;
+                latestAffected = boundary.Start;
+            }
+        }
+
+        return new AllDayBoundaryAuditDto(
+            boundaries.Count,
+            nonMidnightStarts,
+            nonMidnightEnds,
+            inclusiveEndOfDayEnds,
+            earliestAffected,
+            latestAffected,
+            truncated);
     }
 
     public async Task<IReadOnlyDictionary<string, string>> GetStoredRecurrenceRulesAsync(
