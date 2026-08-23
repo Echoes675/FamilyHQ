@@ -485,8 +485,12 @@ public class CalendarSyncService(
             try
             {
                 var master = await googleCalendarClient.GetSeriesMasterAsync(calendar.GoogleCalendarId, seriesId, ct);
-                if (master is not null)
-                    cache[seriesId] = master.Rrule;
+                // FHQ-172: a master is now returned for its DTSTART even when it carries no RRULE
+                // line, so "no master" and "no rule" are separate conditions. This pass wants the
+                // rule and nothing else, and its degraded behaviour is unchanged for both: cache
+                // nothing, warn, and let the next sync retry the series.
+                if (master?.Rrule is { } rrule)
+                    cache[seriesId] = rrule;
                 else
                     logger.LogWarning(
                         "Series master {SeriesId} on calendar {CalendarInfoId} returned no RRULE; instances persisted without one and will retry next sync.",
