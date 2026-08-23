@@ -668,13 +668,28 @@ public class CalendarEventService(
         var reshaped = await ReshapeRuleAsync(owner, seriesId, originalRule, seriesRows, calendarEvent.Start, ct);
         var freshRule = reshaped.Rrule;
 
-        // (b) Truncate the original master: re-emit its RRULE with UNTIL = this instance's start − 1s.
+        // Both rules are settled before either write goes out. TruncateRuleBefore is a pure re-emit
+        // of the stored rule, so computing it here cannot fail between the two mutations — the only
+        // things left to go wrong are the mutations themselves.
         var truncatedRule = TruncateRuleBefore(calendarEvent);
-        await googleCalendarClient.PatchSeriesRecurrenceAsync(owner.GoogleCalendarId, seriesId, truncatedRule, ct);
 
-        // (c) Insert a NEW recurring series from this instance with the edited values and the fresh
-        // RRULE shaped like the original (preserving its end condition — see ReshapeRule).
-
+        // (b) FHQ-173. Insert the NEW recurring series FIRST, from this instance, with the edited
+        // values and the fresh RRULE shaped like the original (preserving its end condition — see
+        // ReshapeRule). The create and the truncation below are two independent Google mutations
+        // with nothing transactional between them, so whichever runs first has already committed
+        // when the second fails, and the ORDER decides what the family is left with:
+        //
+        //   * truncate first (the order this shipped in) — the original series is chopped at the
+        //     split with NOTHING replacing it. Every occurrence from the split onwards is gone, on
+        //     every device the calendar is shared with, and the user is told only that their edit
+        //     failed. Irreversible from here: FamilyHQ is not the system of record.
+        //   * create first — a duplicate, overlapping series. Visible, non-destructive, and
+        //     something the family can put right themselves in the Google Calendar app.
+        //
+        // Neither is desirable; only one is recoverable. Nothing about the create depends on the
+        // truncation — they are separate events on Google, and freshRule comes from (a) — so the
+        // swap costs nothing. The residual duplicate window is a fraction of a second wide, and a
+        // sync landing inside it converges as soon as the truncation lands.
         var newSeries = new CalendarEvent
         {
             Title = request.Title,
@@ -690,11 +705,46 @@ public class CalendarEventService(
         };
 
         var hash = ComputeHash(newSeries);
-        var created = await googleCalendarClient.CreateRecurringEventAsync(owner.GoogleCalendarId, newSeries, hash, freshRule, ct);
+        CalendarEvent created;
+        try
+        {
+            created = await googleCalendarClient.CreateRecurringEventAsync(owner.GoogleCalendarId, newSeries, hash, freshRule, ct);
+        }
+        catch (Exception createFailure) when (GoogleWriteOutcome.MayHaveBeenProcessed(createFailure))
+        {
+            // The create's OWN residual state, and the reason the reorder is an improvement rather
+            // than a cure: this call runs under RetryPolicy.RejectedOnly, so a 5xx, a timeout or a
+            // dropped connection is never repeated — Google may have inserted the series and merely
+            // lost the response. No id came back, so there is nothing to compensate and nothing to
+            // look the orphan up by. All that can be done is say so — but nothing has been
+            // DESTROYED, which is the difference from the shipped order, where this same failure
+            // arrived with the original series already truncated.
+            // A definitely-rejected create (a 4xx) wrote nothing and is not caught at all: the
+            // exception the caller already gets IS the report.
+            logger.LogError(
+                createFailure,
+                "A \"this and following\" split of series {SeriesId} on calendar {CalendarInfoId} failed while creating the forward series, with a failure Google may have processed anyway. A forward series may now exist on Google with no local record of it, and no id was returned to remove it by; it may need to be deleted by hand. The original series was NOT truncated.",
+                seriesId, owner.Id);
+            throw;
+        }
+
         RecordOutbound(created.GoogleEventId, hash);
 
+        // (c) Truncate the original master: re-emit its RRULE with UNTIL = this instance's start − 1s.
+        try
+        {
+            await googleCalendarClient.PatchSeriesRecurrenceAsync(owner.GoogleCalendarId, seriesId, truncatedRule, ct);
+        }
+        catch (Exception truncateFailure)
+        {
+            await CompensateForwardSeriesAsync(owner, seriesId, created.GoogleEventId, truncateFailure, ct);
+            throw;
+        }
+
         // Remove the truncated original's local rows at/after the split point; the reconcile that
-        // follows re-fetches the window and materialises the new series' instances.
+        // follows re-fetches the window and materialises the new series' instances. Reached only
+        // when BOTH writes landed — pruning after a failed truncation would delete the family's
+        // occurrences locally to match a truncation that never happened.
         await RemoveSeriesRowsFromSplitAsync(seriesId, calendarEvent.Start, ct);
 
         return new Dictionary<string, string>
@@ -703,6 +753,129 @@ public class CalendarEventService(
             [created.GoogleEventId] = freshRule
         };
     }
+
+    /// <summary>
+    /// FHQ-173. Undoes the forward series a split has just created, when the truncation that should
+    /// have followed it failed <b>and the failure proves the truncation never committed</b>. Never
+    /// throws: the caller rethrows the truncation failure, which is the failure the user's edit
+    /// actually hit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Undoing is only safe against a write that demonstrably did not land.</b> The create-first
+    /// ordering was originally justified by the claim that compensating "can never be worse than not
+    /// compensating", on the grounds that a failed compensating delete just leaves the duplicate.
+    /// That argument enumerates only the case where the delete FAILS. The case it missed is the
+    /// delete SUCCEEDING against a truncation that actually committed: Google applies the
+    /// truncation, the response is lost to a 5xx or a dropped connection,
+    /// <c>PatchSeriesRecurrenceAsync</c> surfaces it as a failure, and deleting the forward series
+    /// then leaves the original series chopped at the split with its replacement removed — the exact
+    /// hole this ticket exists to prevent, this time actively created rather than merely risked.
+    /// </para>
+    /// <para>
+    /// So the rule is <b>compensate only on positive evidence of a rejection</b>
+    /// (<see cref="GoogleWriteOutcome.MayHaveBeenProcessed"/>), and under ambiguity <b>prefer the
+    /// recoverable outcome</b>: a duplicate series is visible and the family can delete it in the
+    /// Google Calendar app, whereas a hole is silent, permanent data loss on the system of record.
+    /// </para>
+    /// <para>
+    /// Re-reading the master's RRULE to settle the ambiguity was considered and rejected: a stale
+    /// read produces the hole directly, and Google's real read-after-write behaviour cannot be
+    /// verified against the Simulator (see the prime directive in AGENTS.md).
+    /// </para>
+    /// <para>
+    /// This runs only for a failed truncation AFTER a successful create, and it deletes the id the
+    /// create RETURNED. A failed create leaves nothing to undo, and any id not handed back by Google
+    /// is a guess at what we might have made — on a calendar where a wrong guess deletes a real
+    /// family event.
+    /// </para>
+    /// </remarks>
+    private async Task CompensateForwardSeriesAsync(
+        CalendarInfo owner, string seriesId, string forwardSeriesId, Exception truncateFailure, CancellationToken ct)
+    {
+        // Compensating DELETES a series that is live on the family's calendar, so it happens only
+        // when all three of these are clear. Any one of them and the duplicate is left in place and
+        // reported instead:
+        //
+        //   * the caller's token really is cancelled — there is no token left to write with, and
+        //     reaching for CancellationToken.None would issue a fresh write on behalf of a request
+        //     that has been abandoned. Note this tests the TOKEN, not the exception type: FHQ-91's
+        //     per-attempt HttpClient timeout arrives as a TaskCanceledException, which IS an
+        //     OperationCanceledException by inheritance, while the caller's token is untouched
+        //     (ResilientGoogleCalendarClient identifies it exactly that way, and
+        //     DomainExceptionHandler maps it to 504). A type test alone calls that a cancellation
+        //     and is simply wrong; it happens not to compensate either way, but only because the
+        //     rule below catches a timeout for the right reason.
+        //   * GoogleReauthRequiredException — the credentials ARE the failure, so the delete would
+        //     be rejected the same way. The round trip buys nothing but a second failure to explain.
+        //   * the failure is a shape Google MAY ALREADY HAVE PROCESSED — a 5xx, a timeout, a dropped
+        //     connection, anything unrecognised. See the remarks above: this is the case that makes
+        //     an undo destructive rather than merely futile.
+        //
+        // All three still propagate from the caller: this method reports, it never swallows.
+        if (ct.IsCancellationRequested
+            || truncateFailure is GoogleReauthRequiredException
+            || GoogleWriteOutcome.MayHaveBeenProcessed(truncateFailure))
+        {
+            LogOrphanedForwardSeries(owner, seriesId, forwardSeriesId, truncateFailure);
+            return;
+        }
+
+        try
+        {
+            await googleCalendarClient.DeleteEventAsync(owner.GoogleCalendarId, forwardSeriesId, ct);
+        }
+        catch (Exception compensationFailure)
+        {
+            // Caught, reported and not rethrown, so the TRUNCATION failure is what reaches the
+            // caller — a clean-up failure must not replace the failure the user's edit actually hit.
+            // Both are preserved: the truncation failure in the response, this one in the Error
+            // below, which carries the exception itself so its type and stack still reach Seq.
+            LogOrphanedForwardSeries(owner, seriesId, forwardSeriesId, compensationFailure);
+            return;
+        }
+
+        // Information, not Warning or Error. The truncation demonstrably never landed and the series
+        // we created has been removed, so the calendar is back to its pre-edit state and nothing is
+        // left behind — an expected-and-handled condition, which the logging standard forbids
+        // reporting at Warning or above. It is still a significant outcome (a write was made to
+        // Google that the user never asked for), which is what Information is for. This service adds
+        // no Warning of its own for the incident; other lines may still appear in Seq for the same
+        // request (the retry decorator warns per attempt, DeleteEventAsync warns on a 404, and
+        // DomainExceptionHandler warns when it maps the rethrown failure), so this is a rule about
+        // not double-reporting from here, not a claim about the total (FHQ-161).
+        logger.LogInformation(
+            "A \"this and following\" split of series {SeriesId} on calendar {CalendarInfoId} could not truncate the original, and the truncation was rejected outright, so the forward series {ForwardSeriesId} it had just created was deleted again. The calendar is back to its pre-edit state.",
+            seriesId, owner.Id, forwardSeriesId);
+    }
+
+    /// <summary>
+    /// The residual state a split can be left in: the forward series exists on Google, the
+    /// truncation reported failure, and the forward series was left in place. Most often the family
+    /// sees two overlapping series; where the truncation may in fact have committed, they see a
+    /// completed split. Reported at Error naming BOTH ids so an operator can tell which; the
+    /// calendar is named by FamilyHQ's own id, because a Google calendar id is an email address
+    /// (FHQ-166).
+    /// </summary>
+    /// <remarks>
+    /// Reached two ways — the compensating delete was attempted and failed, or it was deliberately
+    /// not attempted (a genuine cancellation, reauth, or a truncation failure Google may have
+    /// processed). The message says only that the forward series was NOT removed, which is true of
+    /// both; <paramref name="cause"/> carries the reason and its stack to Seq.
+    /// <para>
+    /// The message deliberately does NOT assert that the original series is intact. In the
+    /// may-have-been-processed case the truncation might in fact have landed, in which case the
+    /// "duplicate" is really the completed split and there is nothing to clean up — which is why it
+    /// says the forward series must be checked rather than deleted.
+    /// </para>
+    /// It is the ONE Error this service raises for the incident, whichever route it came by.
+    /// </remarks>
+    private void LogOrphanedForwardSeries(
+        CalendarInfo owner, string seriesId, string forwardSeriesId, Exception cause) =>
+        logger.LogError(
+            cause,
+            "A \"this and following\" split of series {SeriesId} on calendar {CalendarInfoId} created the forward series {ForwardSeriesId} but the truncation of the original failed, and the forward series was deliberately left in place. Check the original on Google: if it was not truncated the two series overlap from the split point and the forward one must be deleted by hand; if the truncation did land after all, the split is complete and nothing needs doing.",
+            seriesId, owner.Id, forwardSeriesId);
 
     // The series this instance belongs to keeps its stored RRULE (used by ThisOnly/AllInSeries,
     // neither of which changes the recurrence rule). Empty when the instance has no stored rule.
