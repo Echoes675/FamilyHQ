@@ -103,6 +103,24 @@ public class ResilientGoogleCalendarClientTests
         inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Conflict)]
+    public async Task FullPolicy_DoesNotRetryOther4xx(HttpStatusCode status)
+    {
+        // FHQ-173 moved the "may have been processed" test into GoogleWriteOutcome, shared with the
+        // split compensator. This pins that the move did not broaden what gets retried: a 4xx other
+        // than 429 / rate-limit 403 was refused outright, and repeating it earns the same refusal.
+        var (sut, inner, _) = CreateSut();
+        inner.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Api(status));
+
+        await sut.Invoking(s => s.GetCalendarsAsync()).Should().ThrowAsync<GoogleApiException>();
+
+        inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task DoesNotRetryReauthException()
     {

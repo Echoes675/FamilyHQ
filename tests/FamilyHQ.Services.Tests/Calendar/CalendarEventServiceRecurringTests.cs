@@ -98,7 +98,8 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
 
-        // Exactly TWO Google writes: truncate the original master, then insert the new series.
+        // Exactly TWO Google writes: insert the new series, then truncate the original master.
+        // (FHQ-173 put the create first; the ORDER itself is pinned by the split-ordering tests below.)
         f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(GoogleCalId, SeriesId, It.Is<string>(s => s.Contains("UNTIL=")), It.IsAny<CancellationToken>()), Times.Once);
         f.Google.Verify(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.Is<string>(r => r.Contains("FREQ=WEEKLY")), It.IsAny<CancellationToken>()), Times.Once);
 
@@ -1076,6 +1077,363 @@ public class CalendarEventServiceRecurringTests
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
         capturedHash = captured;
     }
+
+    // ── FHQ-173: neither half of a split may commit on its own ────────────────────────────────
+    //
+    // A "this and following" edit is TWO independent Google mutations with nothing transactional
+    // between them, so whichever runs first has already committed when the second fails. The ORDER
+    // therefore decides what the family is left with:
+    //   * truncate first (the shipped order) — the original series is chopped at the split with
+    //     NOTHING replacing it. Every occurrence from the split onwards is gone, on every device the
+    //     calendar is shared with, and the user is told only that their edit failed.
+    //   * create first — a duplicate, overlapping series. Visible, non-destructive, and something
+    //     the family can put right themselves in the Google Calendar app.
+    // Neither is desirable; only one is recoverable, so the create goes first.
+    //
+    // A failed truncate is then compensated by deleting the series the create just made — but ONLY
+    // when the failure proves Google never processed the truncation. The first version of this work
+    // compensated unconditionally, on the argument that "if the compensating delete fails in turn we
+    // land in the duplicate state, so compensation can never be worse than not compensating". That
+    // enumerates only the delete FAILING. The delete SUCCEEDING against a truncation that actually
+    // committed — Google applied it and lost the response to a 5xx or a dropped connection — leaves
+    // the original series truncated with its replacement removed: the exact hole this ticket exists
+    // to prevent, actively created rather than merely risked.
+    //
+    // Hence the rule these tests pin: under ambiguity, prefer the recoverable outcome. A duplicate
+    // is visible and user-correctable; a hole is silent, permanent data loss on the system of record.
+    //
+    // ONE ERROR PER INCIDENT FROM THIS SERVICE (FHQ-161's rule, applied to Error). These tests assert
+    // the COUNT of Error records, not merely that one is present. The successful-compensation case
+    // asserts the absence of any Warning or Error at all: the calendar is back to where it started,
+    // which the logging standard classes as expected-and-handled.
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateFails_LeavesTheOriginalSeriesUntruncated()
+    {
+        var f = new Fixture();
+        var createFailure = new GoogleApiException(HttpStatusCode.ServiceUnavailable, "CreateRecurringEvent");
+        var split = ArrangePartialWriteSplit(f, createFailure: createFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(createFailure);
+
+        // The headline regression. In the shipped order the truncation had ALREADY committed by the
+        // time the create was attempted, so this failure destroyed the tail of the family's series.
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a create that fails must not leave the original series truncated with nothing replacing it");
+        split.Calls.Should().Equal(CreateCall);
+
+        // There is nothing to compensate: the create is the write that failed, so no forward series
+        // id exists. Compensation is for a failed truncate only.
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Cache.Verify(c => c.Record(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateMayHaveBeenProcessed_ReportsThePossibleOrphanAtError()
+    {
+        // CreateRecurringEventAsync runs under RetryPolicy.RejectedOnly, so a 5xx is never repeated:
+        // Google may have inserted the series and lost only the response. No id came back, so there
+        // is nothing to delete and nothing to look it up by — the residual state can only be named.
+        var f = new Fixture();
+        ArrangePartialWriteSplit(f, createFailure: new GoogleApiException(HttpStatusCode.ServiceUnavailable, "CreateRecurringEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleApiException>();
+
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateWasRejected_ReportsNothing()
+    {
+        // A 4xx means Google understood the request and refused it, so nothing was written and there
+        // is no residual state at all. The exception the caller already gets IS the report; an Error
+        // here would be a false alarm about an orphan that cannot exist.
+        var f = new Fixture();
+        ArrangePartialWriteSplit(f, createFailure: new GoogleApiException(HttpStatusCode.BadRequest, "CreateRecurringEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleApiException>();
+
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateRejectedOutright_DeletesTheForwardSeriesItJustCreated()
+    {
+        // A 4xx truncate is positive evidence that Google did NOT process it, so the original series
+        // is provably untouched and the forward series can be safely undone.
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure,
+            "the caller is told about the write that actually failed, never about the clean-up");
+
+        // Deleted by the id the CREATE returned — never one derived, guessed, or read back.
+        f.Google.Verify(g => g.DeleteEventAsync(GoogleCalId, ForwardSeriesId, It.IsAny<CancellationToken>()), Times.Once);
+        split.Calls.Should().Equal(CreateCall, TruncateCall, CompensateCall);
+
+        // Compensated cleanly: the calendar is back to its pre-edit state, which is exactly what the
+        // user has been told. That is an expected-and-handled outcome, not a degraded one.
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+        f.Logger.Records.Should().ContainSingle(r => r.Level == LogLevel.Information)
+            .Which.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId);
+
+        // The local rows survive because the remote series does. Pruning them here would delete the
+        // family's occurrences locally to match a truncation that never happened.
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateMayHaveBeenProcessed_LeavesTheForwardSeriesInPlace()
+    {
+        // THE regression for the compensator's own failure mode. PatchSeriesRecurrenceAsync runs
+        // under RetryPolicy.Full, where a 5xx is explicitly modelled as "may have been processed".
+        // If Google applied the truncation and the response was lost, deleting the forward series
+        // would leave the original chopped at the split with its replacement gone — a hole, created
+        // by the clean-up. So: no delete. Leave the duplicate, report it, rethrow.
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.ServiceUnavailable, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "undoing a write that may have committed is how the hole gets created");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateTimesOut_LeavesTheForwardSeriesInPlace()
+    {
+        // FHQ-91's per-attempt HttpClient timeout: a TaskCanceledException wrapping a
+        // TimeoutException, with the CALLER'S TOKEN UNTOUCHED. TaskCanceledException derives from
+        // OperationCanceledException, so a type test would call this a cancellation — it is not, and
+        // DomainExceptionHandler maps it to 504, not 499. It skips compensation because the request
+        // may have reached Google and been processed, which is a different rule reaching the same
+        // answer for a different reason.
+        var f = new Fixture();
+        var timeout = new TaskCanceledException("attempt timed out", new TimeoutException());
+        var split = ArrangePartialWriteSplit(f, truncateFailure: timeout);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<TaskCanceledException>()).Which.Should().BeSameAs(timeout);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a timed-out truncation may have been processed by Google anyway");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle()
+            .Which.Message.Should().Contain(ForwardSeriesId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateFailsWithTheCallerCancelled_AttemptsNoCompensation()
+    {
+        // Genuine cancellation, established by the TOKEN rather than the exception type — here with
+        // a truncation failure that would otherwise be compensated. There is no token left to write
+        // with, and reaching for CancellationToken.None would issue a fresh write on behalf of an
+        // abandoned request. The failure still reaches the caller: this path reports, never swallows.
+        var f = new Fixture();
+        using var cts = new CancellationTokenSource();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure, onTruncate: cts.Cancel);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing, cts.Token);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a cancelled token cannot carry a compensating write, and None would resurrect an abandoned request");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle()
+            .Which.Message.Should().Contain(ForwardSeriesId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CompensatingDeleteAlsoFails_ReportsBothSeriesAtError()
+    {
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        ArrangePartialWriteSplit(
+            f,
+            truncateFailure: truncateFailure,
+            compensationFailure: new GoogleApiException(HttpStatusCode.InternalServerError, "DeleteEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure,
+            "a failed clean-up must not replace or mask the failure the user's edit actually hit");
+
+        // The duplicate is the residual state an operator has to clean up, so it is named: both
+        // series ids, and the calendar by FamilyHQ's own id.
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_BothWritesSucceed_CreatesTheForwardSeriesBeforeTruncatingTheOriginal()
+    {
+        var f = new Fixture();
+        var split = ArrangePartialWriteSplit(f);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // The original's local rows at/after the split are pruned once BOTH writes have landed.
+        f.Repo.Verify(r => r.DeleteEventAsync(split.AtSplit.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(split.After.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(split.Before.Id, It.IsAny<CancellationToken>()), Times.Never);
+
+        // The series-rule map still carries BOTH series, so the reconcile stamps the truncated rule
+        // on the original's surviving instances and the fresh rule on the forward series'.
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("UNTIL=")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "fwd-inst-1"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("FREQ=WEEKLY") && !e.RecurrenceRule.Contains("UNTIL=")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        f.Logger.Records.Should().ContainSingle(r => r.Level == LogLevel.Information);
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateNeedsReauth_PropagatesWithoutAttemptingCompensation()
+    {
+        // A reauth failure is "rejected, not processed" — the credentials never got past
+        // authorisation — so the may-have-been-processed rule would allow the delete. It is skipped
+        // for its own reason: the credentials ARE the failure, so the delete would be rejected
+        // identically, buying nothing but a second failure to explain. The reauth still reaches the
+        // caller, which is what puts the reconnect banner up.
+        var f = new Fixture();
+        var reauth = new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "invalid_grant");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: reauth);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleReauthRequiredException>()).Which.Should().BeSameAs(reauth);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a delete on the credentials that just failed cannot succeed");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+
+        // The forward series is still on Google, so the residual state IS the duplicate one and is
+        // reported exactly as a failed compensating delete would report it.
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+    }
+
+    private const string ForwardSeriesId = "new-series-id";
+    private const string CreateCall = "create-forward-series";
+    private const string TruncateCall = "truncate-original";
+    private const string CompensateCall = "delete-forward-series";
+
+    /// <summary>
+    /// FHQ-173. Arranges an ordinary "this and following" split — resolvable master, weekly rule
+    /// with no COUNT — and records the ORDER in which the two Google mutations and the compensating
+    /// delete are made, so a test can state which of them happened and which did not. Each of the
+    /// three can be made to fail independently.
+    /// </summary>
+    /// <param name="onTruncate">
+    /// Runs as the truncate call is made, before it fails. Lets a test cancel the caller's token at
+    /// the moment the second write goes out, which is when a real cancellation would land.
+    /// </param>
+    private static PartialWriteSplit ArrangePartialWriteSplit(
+        Fixture f,
+        Exception? createFailure = null,
+        Exception? truncateFailure = null,
+        Exception? compensationFailure = null,
+        Action? onTruncate = null)
+    {
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var before  = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart.AddDays(-7));
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        var after   = f.RecurringInstance(Guid.NewGuid(), "inst-3", InstanceStart.AddDays(7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([before, atSplit, after]);
+
+        var calls = new List<string>();
+
+        f.Google.Setup(g => g.CreateRecurringEventAsync(
+                GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, CalendarEvent e, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(CreateCall);
+                if (createFailure is not null)
+                    return Task.FromException<CalendarEvent>(createFailure);
+
+                e.GoogleEventId = ForwardSeriesId;
+                return Task.FromResult(e);
+            });
+
+        f.Google.Setup(g => g.PatchSeriesRecurrenceAsync(
+                GoogleCalId, SeriesId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(TruncateCall);
+                onTruncate?.Invoke();
+                return truncateFailure is null ? Task.CompletedTask : Task.FromException(truncateFailure);
+            });
+
+        f.Google.Setup(g => g.DeleteEventAsync(GoogleCalId, ForwardSeriesId, It.IsAny<CancellationToken>()))
+            .Returns((string _, string _, CancellationToken _) =>
+            {
+                calls.Add(CompensateCall);
+                return compensationFailure is null ? Task.CompletedTask : Task.FromException(compensationFailure);
+            });
+
+        // One surviving instance of the truncated original and one of the forward series, both
+        // RRULE-less as GetEventsAsync (pass 1) really returns them.
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("inst-1", InstanceStart.AddDays(-7)),
+            f.GoogleInstanceNoRule("fwd-inst-1", InstanceStart, recurringId: ForwardSeriesId)
+        ]);
+
+        return new PartialWriteSplit(calls, before, atSplit, after);
+    }
+
+    private sealed record PartialWriteSplit(
+        IReadOnlyList<string> Calls, CalendarEvent Before, CalendarEvent AtSplit, CalendarEvent After);
 
     [Fact]
     public async Task DeleteRecurringAsync_ThisAndFollowing_CountSeries_TruncatesWithUntil()
