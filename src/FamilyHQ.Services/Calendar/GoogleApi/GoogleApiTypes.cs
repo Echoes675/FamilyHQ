@@ -2,6 +2,18 @@ using System.Text.Json.Serialization;
 
 namespace FamilyHQ.Services.Calendar.GoogleApi;
 
+// FHQ-174 — assessed and deliberately left as DateTimeOffset. System.Text.Json assumes the HOST's
+// offset for an ISO-8601 value that carries none, which is the same substitution GoogleAllDayDate
+// exists to remove. It is inert here and stays that way for a reason, not by luck: Google's
+// `dateTime` is RFC 3339 and always carries an offset, and the Simulator formats every one of its
+// own from a Kind=Utc DateTime (`ToString("O")` → trailing 'Z'). Binding it as a string and parsing
+// by hand would trade an inert hazard for a live one — a hand-rolled ParseExact would reject the
+// legitimate RFC 3339 variations (fractional seconds, ±hh:mm offsets) that the framework parser
+// already handles, and it would touch every read site. The contract is pinned instead by
+// GoogleAllDayDateContractTests, which asserts an offset-carrying `dateTime` lands on the exact
+// instant Google named. An offset-LESS `dateTime` is not defended: Google does not send one, and if
+// it ever did, `timeZone` — not the host's zone — would be the only defensible interpretation, so
+// guessing here would be wrong in a new way rather than right.
 internal record GoogleApiEventDateTime(
     [property: JsonPropertyName("dateTime")] DateTimeOffset? DateTime,
     [property: JsonPropertyName("date")]     string?         Date,

@@ -22,4 +22,6 @@
     <InternalsVisibleTo Include="FamilyHQ.Services.Tests" />
   </ItemGroup>
 
+
+  <Import Project="$(MSBuildThisFileDirectory)../../build/GoogleDateParsingBan.props" />
 </Project>

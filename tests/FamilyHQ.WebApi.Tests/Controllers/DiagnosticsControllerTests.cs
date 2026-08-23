@@ -375,6 +375,44 @@ public class DiagnosticsControllerTests
         syncJobQueue.Verify(q => q.GetRecentFailuresAsync("u-clamp", expectedLimit, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── GetAllDayBoundaryAudit (FHQ-174) ─────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllDayBoundaryAudit_WhenAuthenticated_ReturnsTheRepositorysCounts()
+    {
+        // The endpoint exists to answer "did the day-shift defect reach this environment's data?".
+        // It reports; it repairs nothing, which is why the controller does no more than pass the
+        // read-only count through.
+        var (calendarRepo, _, _, _, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+        var audit = new AllDayBoundaryAuditDto(
+            AllDayEvents: 42,
+            NonMidnightStarts: 3,
+            NonMidnightEnds: 2,
+            InclusiveEndOfDayEnds: 1,
+            EarliestAffectedStart: new DateTimeOffset(2025, 12, 24, 23, 0, 0, TimeSpan.Zero),
+            LatestAffectedStart: new DateTimeOffset(2026, 3, 16, 23, 0, 0, TimeSpan.Zero),
+            Truncated: false);
+        calendarRepo.Setup(r => r.GetAllDayBoundaryAuditAsync(It.IsAny<CancellationToken>())).ReturnsAsync(audit);
+
+        var result = await sut.GetAllDayBoundaryAudit(CancellationToken.None);
+
+        result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeSameAs(audit);
+    }
+
+    [Fact]
+    public async Task GetAllDayBoundaryAudit_WhenNotAuthenticated_ReturnsUnauthorizedAndDoesNotQuery()
+    {
+        var (calendarRepo, _, _, _, currentUser, sut) = CreateSut();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        var result = await sut.GetAllDayBoundaryAudit(CancellationToken.None);
+
+        result.Should().BeOfType<UnauthorizedResult>();
+        calendarRepo.Verify(r => r.GetAllDayBoundaryAuditAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static (
         Mock<ICalendarRepository> CalendarRepo,
         Mock<ITokenStore> TokenStore,

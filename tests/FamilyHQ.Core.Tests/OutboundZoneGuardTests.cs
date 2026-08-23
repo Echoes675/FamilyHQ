@@ -1,5 +1,5 @@
-using System.Text;
 using System.Text.RegularExpressions;
+using FamilyHQ.Core.Tests.Guards;
 using FluentAssertions;
 
 namespace FamilyHQ.Core.Tests;
@@ -54,7 +54,6 @@ namespace FamilyHQ.Core.Tests;
 /// </summary>
 public class OutboundZoneGuardTests
 {
-    private const string RepositoryMarker = "FamilyHQ.slnx";
     private const string SourceFolderName = "src";
 
     /// <summary>
@@ -89,7 +88,7 @@ public class OutboundZoneGuardTests
     [Fact]
     public void EveryCalendarEventSentToGoogleStatesTheZoneItIsAnchoredTo()
     {
-        var sourceRoot = Path.Combine(FindRepositoryRoot(), SourceFolderName);
+        var sourceRoot = Path.Combine(SourceScan.FindRepositoryRoot(), SourceFolderName);
         var violations = new List<string>();
 
         foreach (var file in EnumerateProductionSources(sourceRoot))
@@ -114,7 +113,7 @@ public class OutboundZoneGuardTests
     {
         // A guard that quietly matches nothing passes forever. Pin both ends: the sources are found,
         // and constructions bound for a Google write are actually being recognised in them.
-        var sourceRoot = Path.Combine(FindRepositoryRoot(), SourceFolderName);
+        var sourceRoot = Path.Combine(SourceScan.FindRepositoryRoot(), SourceFolderName);
         var files = EnumerateProductionSources(sourceRoot).ToList();
 
         files.Should().HaveCountGreaterThan(100, "src/ holds the whole product");
@@ -214,7 +213,7 @@ public class OutboundZoneGuardTests
     /// </summary>
     private static IReadOnlyList<Violation> Scan(string source)
     {
-        var code = MaskCommentsAndLiterals(source);
+        var code = SourceScan.MaskCommentsAndLiterals(source);
         var writeArguments = WriteCallArgumentNames(code);
         var writeRegions = WriteCallRegions(code).ToList();
         var violations = new List<Violation>();
@@ -229,7 +228,7 @@ public class OutboundZoneGuardTests
             if (!byName && !inline) continue;
 
             violations.Add(new Violation(
-                LineNumberAt(source, brace),
+                SourceScan.LineNumberAt(source, brace),
                 name is null ? "a CalendarEvent" : $"CalendarEvent '{name}'"));
         }
 
@@ -242,7 +241,7 @@ public class OutboundZoneGuardTests
 
     private static int CountWriteBoundConstructions(string source)
     {
-        var code = MaskCommentsAndLiterals(source);
+        var code = SourceScan.MaskCommentsAndLiterals(source);
         var writeArguments = WriteCallArgumentNames(code);
         var writeRegions = WriteCallRegions(code).ToList();
 
@@ -348,149 +347,8 @@ public class OutboundZoneGuardTests
         return code.Length;
     }
 
-    /// <summary>
-    /// Blanks comments and the contents of every string and char literal, preserving character
-    /// positions and line breaks so match offsets still map to the original file's line numbers.
-    /// Interpolation holes are blanked with everything else: this guard only reads assignments and
-    /// argument names, neither of which lives inside a string.
-    /// </summary>
-    private static string MaskCommentsAndLiterals(string source)
-    {
-        var masked = new StringBuilder(source);
-        var i = 0;
-
-        while (i < source.Length)
-        {
-            var c = source[i];
-
-            if (c == '/' && Next(source, i) == '/')
-            {
-                var end = source.IndexOf('\n', i);
-                i = Blank(masked, source, i, end < 0 ? source.Length : end);
-            }
-            else if (c == '/' && Next(source, i) == '*')
-            {
-                var end = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
-                i = Blank(masked, source, i, end < 0 ? source.Length : end + 2);
-            }
-            else if (c == '"' && Next(source, i) == '"' && Next(source, i + 1) == '"')
-            {
-                i = Blank(masked, source, i, EndOfRawString(source, i));
-            }
-            else if ((c == '@' || c == '$') && StartsQuoted(source, i, out var quote))
-            {
-                i = Blank(masked, source, i, EndOfVerbatimString(source, quote + 1));
-            }
-            else if (c is '"' or '\'')
-            {
-                i = Blank(masked, source, i, EndOfSimpleLiteral(source, i + 1, c));
-            }
-            else
-            {
-                i++;
-            }
-        }
-
-        return masked.ToString();
-    }
-
-    /// <summary>
-    /// True when a run of <c>$</c>/<c>@</c> prefixes at <paramref name="index"/> opens a string, with
-    /// <paramref name="quote"/> set to the opening quote's index. Both prefixes are treated as
-    /// verbatim: over-blanking a non-verbatim interpolated string is harmless here, whereas stopping
-    /// early on an escaped quote would leave code masked that is not.
-    /// </summary>
-    private static bool StartsQuoted(string source, int index, out int quote)
-    {
-        var i = index;
-        while (i < source.Length && source[i] is '$' or '@') i++;
-
-        quote = i;
-        return i < source.Length && source[i] == '"';
-    }
-
-    private static char Next(string source, int index) =>
-        index + 1 < source.Length ? source[index + 1] : '\0';
-
-    /// <summary>Index just past a raw string literal's closing quote run.</summary>
-    private static int EndOfRawString(string source, int start)
-    {
-        var fenceLength = 0;
-        while (start + fenceLength < source.Length && source[start + fenceLength] == '"') fenceLength++;
-
-        var close = source.IndexOf(new string('"', fenceLength), start + fenceLength, StringComparison.Ordinal);
-        return close < 0 ? source.Length : close + fenceLength;
-    }
-
-    /// <summary>Index just past the closing quote of a verbatim string, where <c>""</c> escapes a quote.</summary>
-    private static int EndOfVerbatimString(string source, int start)
-    {
-        var i = start;
-        while (i < source.Length)
-        {
-            if (source[i] != '"') i++;
-            else if (Next(source, i) == '"') i += 2;
-            else return i + 1;
-        }
-
-        return source.Length;
-    }
-
-    /// <summary>
-    /// Index just past the closing quote of a regular string or char literal, where <c>\</c> escapes
-    /// the next character. An unterminated literal stops at the end of the line.
-    /// </summary>
-    private static int EndOfSimpleLiteral(string source, int start, char quote)
-    {
-        var i = start;
-        while (i < source.Length && source[i] != quote && source[i] != '\n')
-        {
-            i += source[i] == '\\' ? 2 : 1;
-        }
-
-        return Math.Min(i + 1, source.Length);
-    }
-
-    /// <summary>Blanks <c>[start, end)</c>, keeping line breaks, and returns <c>end</c>.</summary>
-    private static int Blank(StringBuilder target, string source, int start, int end)
-    {
-        for (var i = start; i < end && i < source.Length; i++)
-        {
-            if (source[i] is not ('\n' or '\r')) target[i] = ' ';
-        }
-
-        return Math.Max(Math.Min(end, source.Length), start + 1);
-    }
-
-    private static int LineNumberAt(string text, int index)
-    {
-        var line = 1;
-        for (var i = 0; i < index && i < text.Length; i++)
-        {
-            if (text[i] == '\n') line++;
-        }
-
-        return line;
-    }
-
     private static IEnumerable<string> EnumerateProductionSources(string sourceRoot) =>
-        Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
-                        && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")
-                        // EF-generated migrations and snapshots construct nothing and write nothing.
-                        && !f.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"));
-
-    private static string FindRepositoryRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, RepositoryMarker)))
-        {
-            directory = directory.Parent;
-        }
-
-        // Fail loudly rather than vacuously passing: a guard that silently skips is not a guard.
-        directory.Should().NotBeNull(
-            $"the repository root (the directory holding {RepositoryMarker}) must be reachable from {AppContext.BaseDirectory}");
-        return directory!.FullName;
-    }
+        SourceScan.EnumerateSources(sourceRoot, ".cs")
+            // EF-generated migrations and snapshots construct nothing and write nothing.
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"));
 }

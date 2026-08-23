@@ -1,9 +1,9 @@
-using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
@@ -260,17 +260,22 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         continue;
                     }
 
-                    var startParam = item.Start?.DateTime
-                        ?? (item.Start?.Date != null ? DateTimeOffset.Parse(item.Start.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
-                    var endParam = item.End?.DateTime
-                        ?? (item.End?.Date != null ? DateTimeOffset.Parse(item.End.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
+                    // FHQ-174: an all-day date resolves to midnight UTC, never the host's offset.
+                    // These three values are PERSISTED by CalendarSyncService, so a host-dependent
+                    // instant here becomes a day-shifted row and then a day-shifted write back to
+                    // Google. See GoogleAllDayDate.
+                    //
+                    // TryParse, not Parse: a malformed `date` is skipped with a warning, exactly as
+                    // an item with no resolvable start already is. Throwing would abandon the whole
+                    // page — and because the retry re-fetches the same page, one bad item would stop
+                    // that calendar syncing indefinitely rather than costing one event.
+                    var startParam = ResolveBoundary(item.Start, item.Id, "start");
+                    var endParam = ResolveBoundary(item.End, item.Id, "end");
 
                     if (startParam == null || endParam == null) continue;
 
-                    var originalStart = item.OriginalStartTime?.DateTime
-                        ?? (item.OriginalStartTime?.Date != null
-                            ? DateTimeOffset.Parse(item.OriginalStartTime.Date, CultureInfo.InvariantCulture)
-                            : (DateTimeOffset?)null);
+                    var originalStart = ResolveBoundary(item.OriginalStartTime, item.Id, "originalStartTime");
+                    if (item.OriginalStartTime?.Date != null && originalStart == null) continue;
 
                     events.Add(new CalendarEvent
                     {
@@ -492,7 +497,9 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         // AFTER it and no longer gates the result: an RDATE-only master (an ICS/CalDAV import) has a
         // perfectly good DTSTART, and discarding it here is what left the callers anchoring on a
         // local-row proxy while the master was sitting there, alive, in Google.
-        var start = ParseEventStart(apiEvent?.Start);
+        // FHQ-174: the all-day branch anchors at midnight UTC — this value is a series' origin and is
+        // written back to Google on the AllInSeries path, so it must not depend on the host's zone.
+        var start = ResolveBoundary(apiEvent?.Start, seriesId, "start");
         if (start is null) return null;
 
         // recurrence may contain RRULE, EXDATE and RDATE lines; FamilyHQ stores only the RRULE.
@@ -503,10 +510,34 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return new SeriesMaster(rrule, start.Value, apiEvent.Start?.TimeZone);
     }
 
-    // Resolves an event's start instant from either a timed (dateTime) or all-day (date) field.
-    private static DateTimeOffset? ParseEventStart(GoogleApiEventDateTime? start) =>
-        start?.DateTime
-        ?? (start?.Date != null ? DateTimeOffset.Parse(start.Date, CultureInfo.InvariantCulture) : (DateTimeOffset?)null);
+    /// <summary>
+    /// Resolves one boundary of a Google event from either its timed (<c>dateTime</c>) or its all-day
+    /// (<c>date</c>) field. Null means "no usable value": the field was absent, or its <c>date</c>
+    /// was not an RFC 3339 full-date.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-174. The all-day branch anchors at midnight UTC rather than stamping the host's offset —
+    /// see <see cref="GoogleAllDayDate"/>. A malformed <c>date</c> is reported and skipped rather
+    /// than thrown: these values arrive one per item inside a paged loop, and a throw would discard
+    /// every other event on the page and then do the same on every retry, because the retry re-fetches
+    /// the same item. The loop's existing contract is already "an item with no usable start is
+    /// skipped", so this is the same outcome for the same class of problem.
+    /// </remarks>
+    private DateTimeOffset? ResolveBoundary(GoogleApiEventDateTime? field, string? googleEventId, string fieldName)
+    {
+        if (field?.DateTime != null) return field.DateTime;
+        if (field?.Date == null) return null;
+
+        if (GoogleAllDayDate.TryParse(field.Date, out var parsed)) return parsed;
+
+        // The Google event id is FamilyHQ's own correlation handle, not PII (FHQ-166); the date VALUE
+        // is calendar content and stays out of the log — its length is enough to diagnose the shape.
+        _logger.LogWarning(
+            "Skipping event {GoogleEventId}: its all-day {DateField}.date is not an RFC 3339 full-date (length {ValueLength}).",
+            googleEventId, fieldName, field.Date.Length);
+
+        return null;
+    }
 
     public async Task<WatchChannelResponse> WatchEventsAsync(
         string googleCalendarId,
