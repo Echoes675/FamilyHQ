@@ -1,5 +1,6 @@
 @using FamilyHQ.WebUi.Services
 @using FamilyHQ.WebUi.ViewModels
+@inject Microsoft.Extensions.Logging.ILogger<CalendarChipSelector> Logger
 
 <div class="chip-selector">
     @foreach (var cal in AllCalendars)
@@ -23,7 +24,7 @@
 
 @if (!string.IsNullOrEmpty(_chipError))
 {
-    <div class="chip-error mt-1">@_chipError</div>
+    <div class="chip-error mt-1" role="alert" data-testid="chip-selector-error">@_chipError</div>
 }
 
 @code {
@@ -48,6 +49,9 @@
 
     [Parameter]
     public ICalendarApiService? CalendarApi { get; set; }
+
+    // FHQ-175: shown only when the server supplied no kiosk-vetted message (see UserFacingMessage).
+    private const string MembersUpdateFailedFallback = "Could not update members. Please try again.";
 
     private string? _chipError;
 
@@ -97,7 +101,10 @@
         }
         catch (Exception ex) when (ex is not OperationCanceledException and not TaskCanceledException)
         {
-            _chipError = $"Could not update members. Please try again.";
+            // Debug, not Warning: the server side has already logged the failure at its own level
+            // (DomainExceptionHandler), so this line exists for client-side correlation only.
+            Logger.LogDebug(ex, "Member update for event {EventId} failed; showing the vetted or fallback message.", EventId);
+            _chipError = UserFacingMessage.ForFailure(ex, MembersUpdateFailedFallback);
         }
     }
 }

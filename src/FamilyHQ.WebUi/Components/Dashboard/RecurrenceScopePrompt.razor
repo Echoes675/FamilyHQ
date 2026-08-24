@@ -1,5 +1,6 @@
 @namespace FamilyHQ.WebUi.Components.Dashboard
 @using FamilyHQ.Core.DTOs
+@using FamilyHQ.Core.Exceptions
 
 @if (IsVisible)
 {
@@ -23,7 +24,7 @@
                         <div class="alert alert-warning recurrence-scope-warning"
                              role="alert"
                              data-testid="recurrence-scope-member-warning">
-                            Member changes apply to the whole series. Select "All events" to continue.
+                            @MemberScopeViolationException.UserFacingMessage
                         </div>
                     }
                 </div>

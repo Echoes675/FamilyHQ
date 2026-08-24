@@ -20,17 +20,47 @@ namespace FamilyHQ.WebApi.Middleware;
 /// cancellation is declined. Any exception this handler does not recognise is declined so the
 /// framework's default handling surfaces it as a 500.
 /// </summary>
+/// <remarks>
+/// FHQ-175: a mapping may also carry a <b>user message</b>, emitted as the
+/// <see cref="UserMessageExtension"/> ProblemDetails extension. It is the only server text the
+/// kiosk renders verbatim, so it is opt-in per exception: <see cref="DomainException.UserMessage"/>
+/// for domain types, and fixed strings here for the non-domain mappings (reauth, Google API,
+/// timeout). <c>Detail</c> is unchanged and stays the log/API-client string. Absent extension, the
+/// kiosk shows its generic fallback — so a new exception without a vetted message is safe by default.
+/// </remarks>
 public sealed class DomainExceptionHandler(
     IProblemDetailsService problemDetailsService,
     ILogger<DomainExceptionHandler> logger) : IExceptionHandler
 {
-    /// <summary>A resolved exception → response mapping. Extensions/RetryAfter are optional.</summary>
+    /// <summary>ProblemDetails extension key carrying the kiosk-safe text (FHQ-175).</summary>
+    public const string UserMessageExtension = "userMessage";
+
+    /// <summary>ProblemDetails extension key carrying a machine-readable failure code.</summary>
+    public const string CodeExtension = "code";
+
+    /// <summary>The <see cref="CodeExtension"/> value for a reauth-required 409.</summary>
+    public const string NeedsReauthCode = "needs_reauth";
+
+    // Kiosk wording for the non-domain mappings. Each is written for a 7" touchscreen and says what
+    // to do next, so the kiosk adds no retry hint of its own: say "try again" here only when a
+    // retry can actually succeed. No "upstream", no "rate-limiting", no provider internals.
+    private const string ReauthUserMessage = "Your Google connection needs to be re-authorised.";
+    private const string RateLimitedUserMessage = "Google Calendar is busy right now. Please try again in a moment.";
+    // Deliberately advice-free: this arm covers every non-rate-limit rejection, including a Google
+    // 400 — a malformed-payload FamilyHQ bug that fails identically on every retry. A vetted "please
+    // try again" there would be authoritative wrong advice; retry wording is reserved for the arms
+    // that are genuinely transient (rate-limit, timeout).
+    private const string ProviderRejectedUserMessage = "Google Calendar couldn't apply this change.";
+    private const string TimeoutUserMessage = "The request timed out. Please try again in a moment.";
+
+    /// <summary>A resolved exception → response mapping. Extensions/RetryAfter/UserMessage are optional.</summary>
     private sealed record Mapping(
         int Status,
         string Title,
         string? Detail,
         int? RetryAfterSeconds = null,
-        IReadOnlyDictionary<string, object?>? Extensions = null);
+        IReadOnlyDictionary<string, object?>? Extensions = null,
+        string? UserMessage = null);
 
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
@@ -71,6 +101,11 @@ public sealed class DomainExceptionHandler(
         if (mapping.Extensions is { } extensions)
             foreach (var (key, value) in extensions)
                 problemDetails.Extensions[key] = value;
+
+        // Emitted only when present: an absent key is the kiosk's "show the generic fallback"
+        // signal, and a null-valued key would be one more shape for a client to reason about.
+        if (mapping.UserMessage is { } userMessage)
+            problemDetails.Extensions[UserMessageExtension] = userMessage;
 
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
         {
@@ -115,23 +150,35 @@ public sealed class DomainExceptionHandler(
 
     private static Mapping? Map(Exception exception) => exception switch
     {
-        NotFoundException =>
-            new Mapping(StatusCodes.Status404NotFound, "Not Found", null),
+        NotFoundException e =>
+            new Mapping(StatusCodes.Status404NotFound, "Not Found", null, UserMessage: e.UserMessage),
+
+        // FHQ-172/FHQ-175: not the caller's fault and not a server fault — an upstream-state
+        // precondition that blocked the write with nothing written. See the type's remarks for why
+        // 409 rather than 400/422/500. Listed before the validation family because it no longer
+        // belongs to it.
+        SeriesOriginUnresolvedException e =>
+            new Mapping(
+                StatusCodes.Status409Conflict,
+                SeriesOriginUnresolvedException.Title,
+                e.Message,
+                UserMessage: e.UserMessage),
 
         DomainValidationException e =>
-            new Mapping(StatusCodes.Status400BadRequest, "Validation Failed", e.Message),
+            new Mapping(StatusCodes.Status400BadRequest, "Validation Failed", e.Message, UserMessage: e.UserMessage),
 
         GoogleReauthRequiredException e =>
             new Mapping(
                 StatusCodes.Status409Conflict,
                 "Reconnect Google Calendar",
-                "Your Google connection needs to be re-authorised.",
+                ReauthUserMessage,
                 Extensions: new Dictionary<string, object?>
                 {
-                    ["code"] = "needs_reauth",
+                    [CodeExtension] = NeedsReauthCode,
                     ["source"] = e.FailureSource == GoogleAuthFailureSource.TokenRefresh ? "token_refresh" : "calendar_api",
                     ["reconnectUrl"] = "/api/auth/login"
-                }),
+                },
+                UserMessage: ReauthUserMessage),
 
         GoogleApiException e => MapGoogleApi(e),
 
@@ -143,7 +190,8 @@ public sealed class DomainExceptionHandler(
             new Mapping(
                 StatusCodes.Status504GatewayTimeout,
                 "Upstream Timeout",
-                "An upstream service did not respond in time. Please retry shortly."),
+                "An upstream service did not respond in time. Please retry shortly.",
+                UserMessage: TimeoutUserMessage),
 
         _ => null
     };
@@ -161,9 +209,11 @@ public sealed class DomainExceptionHandler(
                 "The calendar provider is rate-limiting requests. Please retry shortly.",
                 RetryAfterSeconds: exception.RetryAfter is { } ra && ra > TimeSpan.Zero
                     ? (int)Math.Ceiling(ra.TotalSeconds)
-                    : null)
+                    : null,
+                UserMessage: RateLimitedUserMessage)
             : new Mapping(
                 StatusCodes.Status502BadGateway,
                 "Upstream Calendar Error",
-                "The calendar provider rejected the request.");
+                "The calendar provider rejected the request.",
+                UserMessage: ProviderRejectedUserMessage);
 }

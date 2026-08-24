@@ -25,19 +25,19 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var response = await httpClient.PutAsJsonAsync(
             $"api/calendars/{calendarId}/settings",
             new { isVisible, isShared }, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task SaveCalendarOrderAsync(Dictionary<Guid, int> order, CancellationToken ct = default)
     {
         var response = await httpClient.PutAsJsonAsync("api/calendars/order", new { order }, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task<MonthViewModel> GetEventsForMonthAsync(int year, int month, CancellationToken ct = default)
     {
         var response = await httpClient.GetAsync($"api/calendars/events?year={year}&month={month}", ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
 
         var dto = await response.Content.ReadFromJsonAsync<MonthViewDto>(cancellationToken: ct)
                   ?? new MonthViewDto();
@@ -83,7 +83,7 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     public async Task<CalendarEventViewModel> CreateEventAsync(CreateEventRequest request, CancellationToken ct = default)
     {
         var response = await httpClient.PostAsJsonAsync("api/events", request, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
 
         var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
                   ?? throw new InvalidOperationException("API returned empty response for CreateEventAsync.");
@@ -94,7 +94,7 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     public async Task<CalendarEventViewModel> UpdateEventAsync(Guid eventId, UpdateEventRequest request, CancellationToken ct = default)
     {
         var response = await httpClient.PutAsJsonAsync($"api/events/{eventId}", request, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
 
         var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
                   ?? throw new InvalidOperationException("API returned empty response for UpdateEventAsync.");
@@ -105,14 +105,14 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     public async Task DeleteEventAsync(Guid eventId, CancellationToken ct = default)
     {
         var response = await httpClient.DeleteAsync($"api/events/{eventId}", ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task<CalendarEventViewModel> UpdateRecurringEventAsync(
         Guid eventId, UpdateEventRequest request, RecurrenceScope scope, CancellationToken ct = default)
     {
         var response = await httpClient.PutAsJsonAsync($"api/events/{eventId}/recurring?scope={scope}", request, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
 
         var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
                   ?? throw new InvalidOperationException("API returned empty response for UpdateRecurringEventAsync.");
@@ -123,7 +123,7 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     public async Task DeleteRecurringEventAsync(Guid eventId, RecurrenceScope scope, CancellationToken ct = default)
     {
         var response = await httpClient.DeleteAsync($"api/events/{eventId}/recurring?scope={scope}", ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task<CalendarEventViewModel> SetEventMembersAsync(
@@ -132,11 +132,25 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var response = await httpClient.PutAsJsonAsync(
             $"api/events/{eventId}/members",
             new { memberCalendarInfoIds }, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
 
         var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
                   ?? throw new InvalidOperationException("Empty response from SetEventMembersAsync.");
         return MapToViewModel(dto);
+    }
+
+    /// <summary>
+    /// The one seam between the API's failure responses and the components (FHQ-175). On a
+    /// non-success status it reads the body, parses it defensively as ProblemDetails, and throws a
+    /// <see cref="CalendarApiException"/> carrying the status, title, <c>userMessage</c> and
+    /// <c>code</c>. Replaces <c>EnsureSuccessStatusCode()</c>, which threw away the body.
+    /// </summary>
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        throw new CalendarApiException(response.StatusCode, ApiProblem.Parse(body));
     }
 
     private static CalendarEventViewModel MapToViewModel(CalendarEventDto dto)
@@ -166,13 +180,13 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     public async Task TriggerSyncAsync(CancellationToken ct = default)
     {
         var response = await httpClient.PostAsync("api/sync/trigger", content: null, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task RegisterWebhooksAsync(CancellationToken ct = default)
     {
         var response = await httpClient.PostAsync("api/sync/register-webhooks", content: null, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, ct);
     }
 
     public async Task<ConnectionStatusDto?> GetConnectionStatusAsync(CancellationToken ct = default)
