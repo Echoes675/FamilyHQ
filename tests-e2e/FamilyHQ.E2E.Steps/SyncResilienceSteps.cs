@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FamilyHQ.E2E.Common.Configuration;
 using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
@@ -216,10 +217,52 @@ public class SyncResilienceSteps
         await _simulatorApi.SetSyncFailureModeAsync(GetUserId(), "RefreshTokenInvalidGrant");
     }
 
-    [Given(@"the Google Calendar API will return a 403 for the user")]
-    public async Task GivenCalendarApi403()
+    // Anchored ^...$ deliberately: Reqnroll decides regex-vs-cucumber-expression by heuristic, and
+    // an unanchored "(401|403)" is read as a cucumber expression — where parentheses mean OPTIONAL
+    // TEXT — so the step silently stops binding ("\d" fares no better: the cucumber dialect rejects
+    // the escape outright). A leading ^ is the one unambiguous regex signal. The Simulator rejects
+    // an unknown mode, so the wider \d{3} match loses no safety.
+    [Given(@"^the Google Calendar API will return a (\d{3}) for the user$")]
+    public async Task GivenCalendarApiFailsWith(string status)
     {
-        await _simulatorApi.SetSyncFailureModeAsync(GetUserId(), "CalendarApi403");
+        // Maps onto the Simulator's SyncFailureMode names: CalendarApi401 / CalendarApi403. Since
+        // FHQ-175 the Simulator honours the mode on its write endpoints too, so a kiosk save — not
+        // only a sync — exercises the reauth path.
+        await _simulatorApi.SetSyncFailureModeAsync(GetUserId(), $"CalendarApi{status}");
+    }
+
+    [When(@"I attempt to create the event ""([^""]*)"" from the dashboard")]
+    public async Task WhenIAttemptToCreateTheEventFromTheDashboard(string title)
+    {
+        var page = _scenarioContext.Get<IPage>();
+        await page.GotoAsync(_config.BaseUrl + "/", new() { WaitUntil = WaitUntilState.NetworkIdle });
+
+        // Deliberately NOT WaitForCalendarToLoadAsync: that helper waits for the NEXT events
+        // response, and after a NetworkIdle navigation the load's response has already completed —
+        // it would wait for a reload that never comes. (The events endpoint itself reads FamilyHQ's
+        // own DB and 200s regardless of the injected Simulator mode; only the Google-shaped write
+        // fails.) This scenario needs only the modal, and AttemptCreateEventAsync's ClickAsync
+        // auto-waits for the Add button to be actionable.
+        await _dashboardPage.AttemptCreateEventAsync(title);
+    }
+
+    [Then(@"the event modal shows the error ""([^""]*)""")]
+    public async Task ThenTheEventModalShowsTheError(string expected)
+    {
+        // Web-first: the banner populates when the save's 4xx is mapped into the modal's error
+        // state; ToContainTextAsync auto-retries against the live DOM (FHQ-41).
+        await Assertions.Expect(_dashboardPage.EventModalError)
+            .ToContainTextAsync(expected, new() { Timeout = 30000 });
+    }
+
+    [Then(@"the event modal error does not ask me to try again")]
+    public async Task ThenTheEventModalErrorDoesNotAskMeToTryAgain()
+    {
+        // FHQ-175: a server-vetted message carries its own advice, and for a failure that cannot
+        // succeed on retry the generic "please try again" is exactly wrong. The positive assertion
+        // in the previous step proves the banner is populated, so this negative one is meaningful.
+        await Assertions.Expect(_dashboardPage.EventModalError)
+            .Not.ToContainTextAsync(new Regex("try again", RegexOptions.IgnoreCase), new() { Timeout = 5000 });
     }
 
     [When(@"I trigger a manual sync from the Settings page")]

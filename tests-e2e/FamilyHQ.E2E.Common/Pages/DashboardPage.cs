@@ -800,6 +800,38 @@ public class DashboardPage : BasePage
         catch (PlaywrightException) { return false; }
     }
 
+    /// <summary>
+    /// The event modal's error banner (FHQ-175). Carries either a server-vetted message or the
+    /// modal's generic "please try again" fallback.
+    /// </summary>
+    public ILocator EventModalError => EventModal.GetByTestId("event-modal-error");
+
+    /// <summary>
+    /// Opens the create modal, fills the title, selects the first calendar chip and clicks Save, then
+    /// waits for the API's response to the save — whatever its status. Does NOT wait for the modal
+    /// to close: callers use this when the save is expected to be refused and the modal to stay open
+    /// showing an error (FHQ-175).
+    /// </summary>
+    public async Task AttemptCreateEventAsync(string title)
+    {
+        await AddEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        await EventTitleInput.FillAsync(title);
+
+        var firstChip = EventModal.Locator(".chip").First;
+        await firstChip.ClickAsync();
+        await Assertions.Expect(firstChip).ToHaveClassAsync(new Regex("chip-active"), new() { Timeout = 5000 });
+
+        // Not filtered on status: the refused-save scenarios expect a 4xx and the click must still
+        // complete cleanly (mirrors SettingsPage.ClickSyncNowAsync).
+        var saveResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/events") && r.Request.Method == "POST",
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await saveResponseTask;
+    }
+
     /// <summary>Cancels the open event modal and waits for it to close.</summary>
     public async Task CancelEventModalAsync()
     {

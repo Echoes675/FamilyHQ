@@ -321,6 +321,187 @@ public class CalendarApiServiceTests
         req.RequestUri!.Query.Should().Contain("scope=AllInSeries");
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // FHQ-175: every non-success response passes through ONE seam that reads the body and parses it
+    // defensively as ProblemDetails. EnsureSuccessStatusCode() used to discard the body.
+    // ---------------------------------------------------------------------------------------------
+
+    private const string ReauthProblemBody = """
+        {
+          "type": "https://tools.ietf.org/html/rfc9110#section-15.5.10",
+          "title": "Reconnect Google Calendar",
+          "status": 409,
+          "detail": "Your Google connection needs to be re-authorised.",
+          "code": "needs_reauth",
+          "source": "calendar_api",
+          "reconnectUrl": "/api/auth/login",
+          "userMessage": "Your Google connection needs to be re-authorised."
+        }
+        """;
+
+    /// <summary>
+    /// Every method that throws on failure, so the seam is proven on all eleven former
+    /// EnsureSuccessStatusCode() sites — reverting any one of them back fails its row here.
+    /// </summary>
+    public static IEnumerable<object[]> ThrowingCalls() =>
+    [
+        ["UpdateCalendarSettingsAsync", (Func<CalendarApiService, Task>)(s => s.UpdateCalendarSettingsAsync(CalAId, true, false))],
+        ["SaveCalendarOrderAsync",      (Func<CalendarApiService, Task>)(s => s.SaveCalendarOrderAsync(new() { [CalAId] = 0 }))],
+        ["GetEventsForMonthAsync",      (Func<CalendarApiService, Task>)(s => s.GetEventsForMonthAsync(2026, 3))],
+        ["CreateEventAsync",            (Func<CalendarApiService, Task>)(s => s.CreateEventAsync(NewCreateRequest()))],
+        ["UpdateEventAsync",            (Func<CalendarApiService, Task>)(s => s.UpdateEventAsync(EventId, NewUpdateRequest()))],
+        ["DeleteEventAsync",            (Func<CalendarApiService, Task>)(s => s.DeleteEventAsync(EventId))],
+        ["UpdateRecurringEventAsync",   (Func<CalendarApiService, Task>)(s => s.UpdateRecurringEventAsync(EventId, NewUpdateRequest(), RecurrenceScope.AllInSeries))],
+        ["DeleteRecurringEventAsync",   (Func<CalendarApiService, Task>)(s => s.DeleteRecurringEventAsync(EventId, RecurrenceScope.ThisOnly))],
+        ["SetEventMembersAsync",        (Func<CalendarApiService, Task>)(s => s.SetEventMembersAsync(EventId, [CalAId]))],
+        ["TriggerSyncAsync",            (Func<CalendarApiService, Task>)(s => s.TriggerSyncAsync())],
+        ["RegisterWebhooksAsync",       (Func<CalendarApiService, Task>)(s => s.RegisterWebhooksAsync())]
+    ];
+
+    [Theory]
+    [MemberData(nameof(ThrowingCalls))]
+    public async Task EveryThrowingCall_OnProblemDetailsFailure_ThrowsCalendarApiExceptionCarryingTheBody(
+        string _, Func<CalendarApiService, Task> call)
+    {
+        var sut = CreateSutWithRawResponse(HttpStatusCode.Conflict, ReauthProblemBody);
+
+        var act = () => call(sut);
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        ex.Title.Should().Be("Reconnect Google Calendar");
+        ex.UserMessage.Should().Be("Your Google connection needs to be re-authorised.");
+        ex.Code.Should().Be("needs_reauth");
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_OnProblemDetailsWithoutUserMessage_LeavesUserMessageNull()
+    {
+        // A non-opted-in domain failure: title and detail present, no userMessage extension. The
+        // kiosk must fall back to its generic string — Detail is never promoted to UserMessage.
+        const string body = """
+            {"title":"Validation Failed","status":400,"detail":"CalendarInfoId 00000000-0000-0000-0000-000000000001 is not known to the user."}
+            """;
+        var sut = CreateSutWithRawResponse(HttpStatusCode.BadRequest, body);
+
+        var act = () => sut.CreateEventAsync(NewCreateRequest());
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ex.Title.Should().Be("Validation Failed");
+        ex.UserMessage.Should().BeNull();
+        ex.Code.Should().BeNull();
+        ex.Message.Should().NotContain("00000000-0000-0000-0000-000000000001", "Detail never reaches the exception");
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_OnFluentValidationArrayBody_FallsBackCleanly()
+    {
+        // EventsController returns BadRequest(validation.Errors) — a raw FluentValidation array that
+        // bypasses DomainExceptionHandler. Root is an array, not an object: nothing is recognised.
+        const string body = """
+            [{"propertyName":"Title","errorMessage":"'Title' must be 200 characters or fewer.","attemptedValue":"xxxxxxxxxx","severity":0,"errorCode":"MaximumLengthValidator"}]
+            """;
+        var sut = CreateSutWithRawResponse(HttpStatusCode.BadRequest, body);
+
+        var act = () => sut.CreateEventAsync(NewCreateRequest());
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ex.Title.Should().BeNull();
+        ex.UserMessage.Should().BeNull();
+        ex.Code.Should().BeNull();
+        ex.Message.Should().NotContainAny(["attemptedValue", "MaximumLengthValidator", "xxxxxxxxxx"]);
+    }
+
+    [Fact]
+    public async Task SetEventMembersAsync_OnBareJsonStringBody_FallsBackCleanly()
+    {
+        // EventsController returns BadRequest("At least one member is required.") — a bare JSON
+        // string. Root is a string, not an object: nothing is recognised.
+        const string body = "\"At least one member is required.\"";
+        var sut = CreateSutWithRawResponse(HttpStatusCode.BadRequest, body);
+
+        var act = () => sut.SetEventMembersAsync(EventId, [CalAId]);
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ex.UserMessage.Should().BeNull();
+        ex.Title.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeleteEventAsync_OnEmptyBody_FallsBackCleanly()
+    {
+        var sut = CreateSutWithRawResponse(HttpStatusCode.InternalServerError, "");
+
+        var act = () => sut.DeleteEventAsync(EventId);
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        ex.UserMessage.Should().BeNull();
+        ex.Title.Should().BeNull();
+        ex.Code.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateEventAsync_OnMalformedJsonBody_FallsBackCleanly()
+    {
+        // A proxy's HTML error page, or a truncated body: not JSON at all. Must not throw a
+        // JsonException out of the seam and must not surface the raw text.
+        const string body = "<html><body><h1>502 Bad Gateway</h1><p>nginx-internal-SECRET</p></body></html>";
+        var sut = CreateSutWithRawResponse(HttpStatusCode.BadGateway, body);
+
+        var act = () => sut.UpdateEventAsync(EventId, NewUpdateRequest());
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        ex.UserMessage.Should().BeNull();
+        ex.Message.Should().NotContain("SECRET");
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_OnUserMessageOfWrongJsonType_LeavesUserMessageNull()
+    {
+        // Only a string is a message. A number/object/null under the same key is a shape mismatch.
+        const string body = """{"title":"Odd","status":400,"userMessage":{"text":"nested"},"code":42}""";
+        var sut = CreateSutWithRawResponse(HttpStatusCode.BadRequest, body);
+
+        var act = () => sut.CreateEventAsync(NewCreateRequest());
+
+        var ex = (await act.Should().ThrowAsync<CalendarApiException>()).Which;
+        ex.Title.Should().Be("Odd");
+        ex.UserMessage.Should().BeNull();
+        ex.Code.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_OnFailure_NoLongerThrowsHttpRequestException()
+    {
+        // The whole point: EnsureSuccessStatusCode() threw HttpRequestException and lost the body.
+        var sut = CreateSutWithRawResponse(HttpStatusCode.Conflict, ReauthProblemBody);
+
+        var act = () => sut.CreateEventAsync(NewCreateRequest());
+
+        await act.Should().NotThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_OnSuccess_DoesNotThrow()
+    {
+        var (sut, _) = CreateCapturingSut(SerializeEventDto());
+
+        var act = () => sut.CreateEventAsync(NewCreateRequest());
+
+        await act.Should().NotThrowAsync();
+    }
+
+    private static CreateEventRequest NewCreateRequest() =>
+        new([CalAId], "Dentist", FixedStart, FixedEnd, false, null, null);
+
+    private static UpdateEventRequest NewUpdateRequest() =>
+        new("Dentist", FixedStart, FixedEnd, false, null, null);
+
     private static string SerializeEventDto()
     {
         var dto = new CalendarEventDto(
