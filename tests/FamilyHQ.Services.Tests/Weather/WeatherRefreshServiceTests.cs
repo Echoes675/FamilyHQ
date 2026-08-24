@@ -1,5 +1,6 @@
 namespace FamilyHQ.Services.Tests.Weather;
 
+using System.Globalization;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Enums;
 using FamilyHQ.Core.Interfaces;
@@ -14,6 +15,12 @@ public class WeatherRefreshServiceTests
 {
     private const string UserId = "user-1";
     private static readonly DateTimeOffset RetrievedAt = new(2026, 6, 18, 8, 0, 0, TimeSpan.Zero);
+
+    // FHQ-166. Distinctive fixture values so a leak into a log line is unmistakable: a place name
+    // plus coordinates is the family's home address to within a few metres.
+    private const string PlaceName = "Sentinelford, Nowhereshire";
+    private const double Latitude = 53.35;
+    private const double Longitude = -6.26;
 
     private static bool MissingSectionsAre(object? state, params WeatherDataType[] expected) =>
         state is IReadOnlyList<KeyValuePair<string, object?>> values
@@ -51,10 +58,17 @@ public class WeatherRefreshServiceTests
 
         var locationRepo = new Mock<ILocationSettingRepository>();
         locationRepo.Setup(x => x.GetAsync(UserId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new LocationSetting { Id = 1, UserId = UserId, Latitude = 53.35, Longitude = -6.26 });
+            .ReturnsAsync(new LocationSetting
+            {
+                Id = 1,
+                UserId = UserId,
+                PlaceName = PlaceName,
+                Latitude = Latitude,
+                Longitude = Longitude
+            });
 
         var provider = new Mock<IWeatherProvider>();
-        provider.Setup(x => x.GetWeatherAsync(53.35, -6.26, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        provider.Setup(x => x.GetWeatherAsync(Latitude, Longitude, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
         var dataRepo = new Mock<IWeatherDataPointRepository>();
@@ -306,5 +320,75 @@ public class WeatherRefreshServiceTests
             It.IsAny<CancellationToken>()),
             Times.Once,
             "every row a refresh writes is stamped with that refresh's clock reading");
+    }
+
+    // ── FHQ-166: the home location must not be logged ────────────────────────────────────────────
+    //
+    // This line fires at Information on every successful refresh — once per user every
+    // WeatherOptions.PollIntervalMinutes, in dev, staging and production alike. It used to carry
+    // "({PlaceName} @ {Lat}, {Lon})", which is where the children live, retained for as long as Seq
+    // retains anything.
+
+    [Fact]
+    public async Task RefreshAsync_SuccessLog_CarriesNeitherThePlaceNameNorTheCoordinates()
+    {
+        var (sut, _, logger) = CreateSut(
+            new WeatherResponse(Current: Current(), HourlyForecasts: [Hour(9)], DailyForecasts: [Day(18)]));
+
+        await sut.RefreshAsync(UserId);
+
+        VerifyNothingLoggedContaining(logger, PlaceName);
+        VerifyNothingLoggedContaining(logger, "Sentinelford");
+        VerifyNothingLoggedContaining(logger, Latitude.ToString(CultureInfo.InvariantCulture));
+        VerifyNothingLoggedContaining(logger, Longitude.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_SuccessLog_StillCorrelatesByUserAndLocationId()
+    {
+        // Redaction that destroyed the correlation would trade one problem for another. LocationId
+        // is the key an investigation actually joins on, and it stays.
+        var (sut, _, logger) = CreateSut(
+            new WeatherResponse(Current: Current(), HourlyForecasts: [Hour(9)], DailyForecasts: [Day(18)]));
+
+        await sut.RefreshAsync(UserId);
+
+        logger.Verify(l => l.Log(
+            LogLevel.Information,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => HasProperty(v, "LocationId", 1) && HasProperty(v, "UserId", UserId)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce,
+            "the refresh outcome must still be attributable to a user and a location");
+    }
+
+    private static bool HasProperty(object? state, string name, object value) =>
+        state is IReadOnlyList<KeyValuePair<string, object?>> values
+        && values.Any(kv => kv.Key == name && Equals(kv.Value, value));
+
+    /// <summary>Asserts no log record at any level, in message or structured property, carries <paramref name="fragment"/>.</summary>
+    private static void VerifyNothingLoggedContaining(
+        Mock<ILogger<WeatherRefreshService>> logger, string fragment) =>
+        logger.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => Renders(v, fragment)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            $"'{fragment}' is part of the family's home address and must never reach a log sink");
+
+    private static bool Renders(object? state, string fragment)
+    {
+        if (state?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        // The rendered message is not the whole story: a structured property reaches Seq as its own
+        // field even when the template happens not to show it.
+        return state is IReadOnlyList<KeyValuePair<string, object?>> values
+            && values.Any(kv => kv.Value?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true);
     }
 }

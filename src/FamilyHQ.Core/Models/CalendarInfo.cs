@@ -19,6 +19,12 @@ public class CalendarInfo
     // Order of this calendar's column in the Agenda view (0 = leftmost).
     public int DisplayOrder { get; set; } = 0;
 
+    // The calendar's own default IANA zone (Google's calendar-resource `timeZone`, surfaced on every
+    // calendarList entry) — the zone Google itself applies to an event on this calendar that carries
+    // none of its own. FHQ-164: the last Google-supplied rung of the series-zone discovery ladder.
+    // Null until a calendar-list sync reports one; never defaulted.
+    public string? IanaTimeZone { get; set; }
+
     // Navigation properties
     public SyncState? SyncState { get; set; }
 }

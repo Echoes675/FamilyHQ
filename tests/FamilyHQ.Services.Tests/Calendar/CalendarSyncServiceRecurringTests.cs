@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -300,6 +301,66 @@ public class CalendarSyncServiceRecurringTests
         repo.Verify(r => r.UpdateEventAsync(
             It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-0" && e.RecurrenceRule == "RRULE:FREQ=WEEKLY;BYDAY=MO"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_WhenSeriesMasterHasNoRRule_CachesNothingAndWarnsExactlyAsBefore()
+    {
+        // FHQ-172 made GetSeriesMasterAsync return an RDATE-only master (a start, no RRULE) instead
+        // of null, so that its DTSTART can anchor a later edit. Pass 2 wants the RULE and nothing
+        // else, so its behaviour must be untouched by that: nothing cached, the same Warning, the
+        // instance persisted rule-less, and the series retried next sync.
+        var (client, repo, calendarId, googleCalendarId, start, end, logger, sut) = ArrangeRuleLessMasterSync();
+
+        await sut.SyncAsync(calendarId, start, end);
+
+        repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleRecurringEventId == SeriesId && e.RecurrenceRule == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+        logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Warning
+            && r.Message.Contains("returned no RRULE")
+            && r.Message.Contains(SeriesId));
+        client.Verify(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private (Mock<IGoogleCalendarClient> Client, Mock<ICalendarRepository> Repo, Guid CalendarId,
+        string GoogleCalendarId, DateTimeOffset Start, DateTimeOffset End,
+        RecordingLogger<CalendarSyncService> Logger, CalendarSyncService Sut) ArrangeRuleLessMasterSync()
+    {
+        var client = new Mock<IGoogleCalendarClient>();
+        var repo = new Mock<ICalendarRepository>();
+        var tagParser = new Mock<IMemberTagParser>();
+        var logger = new RecordingLogger<CalendarSyncService>();
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.SetupGet(c => c.UserId).Returns("u-rruleless-master");
+        tagParser.Setup(p => p.ParseMembers(It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<IReadOnlyList<string>>()))
+            .Returns(new List<string>());
+
+        var calendarId = Guid.Parse("10000000-0000-0000-0000-000000000009");
+        const string googleCalendarId = "rruleless-master@google.com";
+        var start = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end = start.AddDays(60);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "RDATE Cal" };
+        ArrangeCalendar(repo, calendar, isFullSync: true);
+
+        var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+        repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string>());
+
+        // The RDATE-only master: a real start, no RRULE line.
+        client.Setup(c => c.GetSeriesMasterAsync(googleCalendarId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster(null, new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero), "Europe/London"));
+
+        var sut = new CalendarSyncService(
+            client.Object, repo.Object, tagParser.Object, logger,
+            new Mock<ITokenStore>().Object, currentUser.Object,
+            new Mock<ISyncFailureRepository>().Object, new Mock<IOutboundWriteHashCache>().Object);
+
+        return (client, repo, calendarId, googleCalendarId, start, end, logger, sut);
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

@@ -264,6 +264,106 @@ public class SettingsControllerTests
             Times.Once);
     }
 
+    // FHQ-166. SaveLocation's diagnostic line exists to confirm that the save and the subsequent
+    // weather refresh resolved the same identity from the JWT — the user id is the whole point of
+    // the comparison. It used to also carry the place name, which is the family's home address.
+    [Fact]
+    public async Task SaveLocation_DiagnosticLog_CarriesTheUserIdButNotThePlaceName()
+    {
+        const string placeName = "Sentinelford, Nowhereshire";
+        var (sut, geocodingMock, loggerMock) = CreateSutExposingItsLogger();
+
+        geocodingMock.Setup(x => x.GeocodeAsync(placeName, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((55.9533, -3.1883));
+
+        await sut.SaveLocation(new SaveLocationRequest(placeName), CancellationToken.None);
+
+        VerifyLogged(loggerMock, TestUserId, Times.AtLeastOnce(),
+            "the identity comparison this line exists for still needs the user id");
+        VerifyLogged(loggerMock, placeName, Times.Never(),
+            "the place name is the family's home address and must never reach a log sink");
+        VerifyLogged(loggerMock, "Sentinelford", Times.Never(),
+            "not even part of the address may survive");
+    }
+
+    private static void VerifyLogged(
+        Mock<ILogger<SettingsController>> logger, string fragment, Times times, string because) =>
+        logger.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => Carries(v, fragment)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times,
+            because);
+
+    /// <summary>
+    /// True when the log record carries <paramref name="fragment"/> in its rendered message or in
+    /// any structured property — a property reaches Seq as its own field even when the message
+    /// template does not show it.
+    /// </summary>
+    private static bool Carries(object? state, string fragment)
+    {
+        if (state?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        return state is IReadOnlyList<KeyValuePair<string, object?>> values
+            && values.Any(kv => kv.Value?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    /// <summary>
+    /// A SaveLocation-shaped SUT that hands back its logger. The main <see cref="CreateSut"/> tuple
+    /// is already at ten members, so a redaction assertion gets its own narrow builder rather than
+    /// widening it to eleven for every caller.
+    /// </summary>
+    private static (
+        SettingsController Sut,
+        Mock<IGeocodingService> GeocodingMock,
+        Mock<ILogger<SettingsController>> LoggerMock) CreateSutExposingItsLogger()
+    {
+        var locationRepoMock = new Mock<ILocationSettingRepository>();
+        var geocodingMock = new Mock<IGeocodingService>();
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        var schedulerMock = new Mock<IDayThemeScheduler>();
+        var hubMock = new Mock<IHubContext<FamilyHQ.WebApi.Hubs.CalendarHub>>();
+        var loggerMock = new Mock<ILogger<SettingsController>>();
+        var weatherRefreshServiceMock = new Mock<IWeatherRefreshService>();
+        var currentUserMock = new Mock<ICurrentUserService>();
+
+        currentUserMock.Setup(x => x.UserId).Returns(TestUserId);
+        locationRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<LocationSetting>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, LocationSetting ls, CancellationToken _) => ls);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
+                new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
+                null, "Daytime"));
+        weatherRefreshServiceMock
+            .Setup(x => x.RefreshAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WeatherRefreshResult(WeatherRefreshOutcome.Succeeded, LocationSettingId: 1, DataPointsWritten: 5));
+
+        var clientsMock = new Mock<IHubClients>();
+        clientsMock.Setup(x => x.All).Returns(new Mock<IClientProxy>().Object);
+        hubMock.Setup(x => x.Clients).Returns(clientsMock.Object);
+
+        var sut = new SettingsController(
+            locationRepoMock.Object,
+            geocodingMock.Object,
+            dayThemeServiceMock.Object,
+            schedulerMock.Object,
+            hubMock.Object,
+            loggerMock.Object,
+            new Mock<IDisplaySettingRepository>().Object,
+            new Mock<IWeatherService>().Object,
+            weatherRefreshServiceMock.Object,
+            currentUserMock.Object,
+            new Mock<ILocationService>().Object,
+            new Mock<ITimeZoneService>().Object);
+
+        return (sut, geocodingMock, loggerMock);
+    }
+
     private static (
         SettingsController sut,
         Mock<ILocationSettingRepository> locationRepoMock,

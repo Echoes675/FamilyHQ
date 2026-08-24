@@ -7,6 +7,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -396,10 +397,12 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
-    public async Task GetSeriesMasterAsync_WhenNoRecurrenceArray_ReturnsNull()
+    public async Task GetSeriesMasterAsync_WhenNoRecurrenceArray_ReturnsTheStartWithANullRrule()
     {
-        // Arrange — a master with no recurrence array (e.g. a single event mistakenly queried)
-        // yields null rather than throwing, so the sync service degrades gracefully.
+        // FHQ-172. The start is the anchor; the RRULE is one caller's concern. Bailing before
+        // parsing the start threw away a perfectly good DTSTART, and the anchor callers then wrote
+        // back a local-row proxy — relocating the series' origin. The record is returned with a null
+        // Rrule instead, so the RRULE caller degrades exactly as before and the anchor caller does not.
         var (http, tokenStore, systemUnderTest) = CreateSut();
         tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
 
@@ -428,7 +431,92 @@ public class GoogleCalendarClientTests
         // Act
         var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
 
-        // Assert — no recurrence array → no RRULE → null (sync degrades gracefully).
+        // Assert — no recurrence array → no RRULE, but the DTSTART survives.
+        master.Should().NotBeNull();
+        master!.Rrule.Should().BeNull();
+        master.Start.Should().Be(new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenRecurrenceHasNoRRuleLine_ReturnsTheStartWithANullRrule()
+    {
+        // The reachable real-world shape: an RDATE-only master, as an ICS/CalDAV import produces.
+        // The master EXISTS and its origin is right there in the payload, so a split or an
+        // all-in-series edit on it must not fall back to a local proxy (FHQ-172).
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    id = "series-master-id",
+                    start = new { dateTime = "2026-10-13T18:00:00Z", timeZone = "Europe/London" },
+                    recurrence = new[] { "RDATE;TZID=Europe/London:20261020T190000", "EXDATE;TZID=Europe/London:20261027T190000" }
+                }))
+            });
+
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
+        master.Should().NotBeNull();
+        master!.Rrule.Should().BeNull("the recurrence array carries no RRULE: line");
+        master.Start.Should().Be(new DateTimeOffset(2026, 10, 13, 18, 0, 0, TimeSpan.Zero));
+        master.TimeZone.Should().Be("Europe/London");
+    }
+
+    [Fact]
+    public async Task GetSeriesMasterAsync_WhenTheMasterHasNoStart_ReturnsNull()
+    {
+        // The one remaining null case on a 200 response: without a start there is no anchor, and an
+        // RRULE alone cannot supply one.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "new-access", expires_in = 3600, token_type = "Bearer" }))
+            });
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/series-master-id")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    id = "series-master-id",
+                    recurrence = new[] { "RRULE:FREQ=WEEKLY;BYDAY=MO" }
+                }))
+            });
+
+        var master = await systemUnderTest.GetSeriesMasterAsync("cal1", "series-master-id", CancellationToken.None);
+
         master.Should().BeNull();
     }
 
@@ -1807,22 +1895,39 @@ public class GoogleCalendarClientTests
 
         var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
 
+        // A Google PRIMARY calendar's id IS the account's email address (FHQ-166), so this is the
+        // shape the client must be able to log about without disclosing it.
+        const string primaryCalendarId = "a.family.member@example.com";
+
         // Act
-        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+        var result = await systemUnderTest.GetEventsAsync(primaryCalendarId, now.AddDays(-1), now.AddDays(1));
 
         // Assert — loop stopped at cap
         eventsCallCount.Should().Be(GoogleCalendarClient.MaxSyncPages);
         result.Events.Should().HaveCount(GoogleCalendarClient.MaxSyncPages);
 
-        // Assert — warning logged mentioning the calendar ID and the cap
+        // Assert — the warning names the cap and a redacted token, never the address itself
         loggerMock.Verify(
             x => x.Log(
                 LogLevel.Warning,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("cal1") && v.ToString()!.Contains(GoogleCalendarClient.MaxSyncPages.ToString())),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains(TestPiiRedactor.TokenFor(primaryCalendarId))
+                    && v.ToString()!.Contains(GoogleCalendarClient.MaxSyncPages.ToString())),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.Once,
+            "the page-cap warning must stay correlatable to one calendar");
+
+        loggerMock.Verify(
+            x => x.Log(
+                It.IsAny<LogLevel>(),
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains(primaryCalendarId)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "the raw calendar id is an email address and must never reach Seq");
     }
 
     [Fact]
@@ -1915,7 +2020,8 @@ public class GoogleCalendarClientTests
             accessTokenCache,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, systemUnderTest);
     }
@@ -1957,7 +2063,8 @@ public class GoogleCalendarClientTests
             accessTokenCache,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, loggerMock, systemUnderTest);
     }
@@ -2007,7 +2114,8 @@ public class GoogleCalendarClientTests
             cacheMock.Object,
             options,
             loggerMock.Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
 
         return (httpMessageHandlerMock, tokenStoreMock, cacheMock, systemUnderTest);
     }

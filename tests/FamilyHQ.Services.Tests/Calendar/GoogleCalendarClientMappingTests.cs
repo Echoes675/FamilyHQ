@@ -4,6 +4,7 @@ using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Options;
+using FamilyHQ.Services.Tests.Helpers;
 using FamilyHQ.Core.Interfaces;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -15,8 +16,15 @@ namespace FamilyHQ.Services.Tests.Calendar;
 
 public class GoogleCalendarClientMappingTests
 {
+    /// <summary>
+    /// FHQ-166. The response Google really sends carries organiser and attendee email addresses;
+    /// what FamilyHQ keeps from it must not. <see cref="GoogleEventDetail"/> binds the event id and
+    /// the content hash echo detection needs, and nothing else — so the addresses are read off the
+    /// wire and discarded rather than held in memory waiting for a serialiser or a
+    /// <c>{@Detail}</c> log line to find them.
+    /// </summary>
     [Fact]
-    public async Task GetEventAsync_MapsOrganizerToGoogleEventDetail()
+    public async Task GetEventAsync_KeepsOnlyTheIdAndContentHash_DiscardingTheAddressesGoogleSends()
     {
         // Arrange
         var (http, tokenStore, sut) = CreateSut();
@@ -34,7 +42,8 @@ public class GoogleCalendarClientMappingTests
             attendees = new[] {
                 new { email = "att1@calendar.google.com", responseStatus = "accepted" },
                 new { email = "att2@calendar.google.com", responseStatus = "accepted" }
-            }
+            },
+            extendedProperties = new { @private = new Dictionary<string, string> { ["content-hash"] = "hash-1" } }
         });
 
         http.Protected()
@@ -55,7 +64,9 @@ public class GoogleCalendarClientMappingTests
         // Assert
         result.Should().NotBeNull();
         result!.Id.Should().Be("evt-123");
-        result.OrganizerEmail.Should().Be("org@calendar.google.com");
+        result.ContentHash.Should().Be("hash-1");
+        result.ToString().Should().NotContain("@",
+            "an address that is never bound cannot be logged, serialised or destructured by accident");
     }
 
     [Fact]
@@ -495,7 +506,8 @@ public class GoogleCalendarClientMappingTests
             accessTokenCache,
             options,
             new Mock<ILogger<GoogleCalendarClient>>().Object,
-            timeZoneServiceMock.Object);
+            timeZoneServiceMock.Object,
+            TestPiiRedactor.Instance);
         return (httpMessageHandlerMock, tokenStoreMock, sut);
     }
 }

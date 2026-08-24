@@ -58,6 +58,10 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<string>("IanaTimeZone")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<bool>("IsAllDay")
                         .HasColumnType("boolean");
 
@@ -125,6 +129,10 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<string>("IanaTimeZone")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<bool>("IsShared")
                         .ValueGeneratedOnAdd()

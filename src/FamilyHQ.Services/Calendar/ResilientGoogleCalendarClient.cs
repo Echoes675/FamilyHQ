@@ -39,6 +39,9 @@ public sealed class ResilientGoogleCalendarClient(
     public Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "PatchEventFields", c => inner.PatchEventFieldsAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
 
+    public Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
+        => WithRetryAsync(RetryPolicy.Full, "PatchEventFieldsPreservingTimes", c => inner.PatchEventFieldsPreservingTimesAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
+
     public Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "DeleteEvent", c => inner.DeleteEventAsync(googleCalendarId, googleEventId, c), ct);
 
@@ -124,8 +127,12 @@ public sealed class ResilientGoogleCalendarClient(
         // (Post-FHQ-83 a GoogleApiException with 403 is always a rate-limit; auth 403 is GoogleReauthRequiredException.)
         if (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.Forbidden)
             return true;
-        // 5xx may have been processed — only retry idempotent operations, never a create/watch.
-        return policy == RetryPolicy.Full && (int)ex.StatusCode >= 500;
+        // Anything Google may have processed (a 5xx) is only safe to repeat when the operation is
+        // idempotent — never a create/watch. Every other rejection (400, 404, 412…) is retried by
+        // nobody: repeating it just earns the same refusal. The "may have been processed" test is
+        // GoogleWriteOutcome's, shared with the split compensator in CalendarEventService, which
+        // turns on the same question in the opposite direction (FHQ-173).
+        return policy == RetryPolicy.Full && GoogleWriteOutcome.MayHaveBeenProcessed(ex);
     }
 
     private TimeSpan ComputeDelay(GoogleApiException ex, int attempt)

@@ -1435,6 +1435,118 @@ public class EventsControllerTests
         items[0].GetProperty("id").GetString().Should().Be("evt-series_20260602T180000Z");
     }
 
+    // ── All-day dates (FHQ-174) ───────────────────────────────────────────────
+
+    // The Simulator is Google's stand-in, so it has to agree with Google about the one thing an
+    // all-day event is: a DATE. It used to parse `start.date` with
+    // DateTime.Parse(value, null, DateTimeStyles.AdjustToUniversal), which leaves the value
+    // Kind=Unspecified — AdjustToUniversal does nothing to a string carrying no zone — and
+    // SimContext's universal `v => v.ToUniversalTime()` converter then read that Unspecified value
+    // as LOCAL and shifted it by the host's offset. On a developer machine at UTC+1 an all-day
+    // event was stored, and served back, a day early.
+    //
+    // What these assertions can and cannot do, precisely:
+    //
+    //   - The VALUE assertions (`StartTime.Should().Be(new DateTime(...))`) discriminate nothing on
+    //     CI. DateTime equality compares ticks and IGNORES Kind, and CI runs at a zero host offset,
+    //     so the old Unspecified value and the new Utc one have identical ticks there. They document
+    //     the contract; they would only fail on a developer machine at a non-zero offset.
+    //   - The KIND assertion is the one that discriminates, and it does so on EVERY host, because the
+    //     defect's signature is Kind=Unspecified regardless of what the offset happens to be. It is
+    //     specific to the Simulator's shape of the defect (an Unspecified value handed to SimContext's
+    //     ToUniversalTime() converter), not to a host-offset shift in general.
+    //
+    // The build-breaking guards are build/BannedSymbols.txt and DateOnlyParseGuardTests.
+
+    [Fact]
+    public async Task CreateEvent_AllDayDate_StoresMidnightUtcNotTheHostsMidnight()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+
+        await sut.CreateEvent("cal-alice", new GoogleEventRequest
+        {
+            Summary = "School holiday",
+            Start = new GoogleDateTime { Date = "2026-06-15" },
+            End = new GoogleDateTime { Date = "2026-06-16" }
+        });
+
+        var stored = db.Events.Single();
+        stored.IsAllDay.Should().BeTrue();
+        stored.StartTime.Should().Be(new DateTime(2026, 6, 15, 0, 0, 0));
+        stored.EndTime.Should().Be(new DateTime(2026, 6, 16, 0, 0, 0));
+        stored.StartTime.Kind.Should().Be(DateTimeKind.Utc,
+            "an Unspecified Kind is what SimContext's ToUniversalTime() converter reinterprets as host-local");
+    }
+
+    [Fact]
+    public async Task CreateEvent_AllDayDate_ListsBackTheSameDatesItWasGiven()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+
+        await sut.CreateEvent("cal-alice", new GoogleEventRequest
+        {
+            Summary = "School holiday",
+            Start = new GoogleDateTime { Date = "2026-06-15" },
+            End = new GoogleDateTime { Date = "2026-06-16" }
+        });
+
+        var listed = await sut.ListEvents("cal-alice");
+
+        var ok = listed.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var item = doc.RootElement.GetProperty("items")[0];
+        item.GetProperty("start").GetProperty("date").GetString().Should().Be("2026-06-15");
+        item.GetProperty("end").GetProperty("date").GetString().Should().Be("2026-06-16");
+    }
+
+    [Fact]
+    public async Task UpdateEvent_AllDayDate_StoresMidnightUtc()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1",
+            CalendarId = "cal-alice",
+            Summary = "School holiday",
+            UserId = "alice",
+            StartTime = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc),
+            IsAllDay = true
+        });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db, userId: "alice");
+
+        await sut.UpdateEvent("cal-alice", "evt-1", new GoogleEventRequest
+        {
+            Summary = "School holiday",
+            Start = new GoogleDateTime { Date = "2026-06-15" },
+            End = new GoogleDateTime { Date = "2026-06-16" }
+        });
+
+        var stored = db.Events.Single();
+        stored.StartTime.Should().Be(new DateTime(2026, 6, 15, 0, 0, 0));
+        stored.StartTime.Kind.Should().Be(DateTimeKind.Utc);
+    }
+
+    [Fact]
+    public async Task CreateEvent_AllDayDateInAnUnexpectedShape_Throws()
+    {
+        // Fail-fast, matching the app side: a `date` that is not an RFC 3339 full-date means the
+        // caller sent something Google would have rejected, and a test double that quietly accepts
+        // it teaches the app a contract Google does not honour.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+
+        await FluentActions.Invoking(() => sut.CreateEvent("cal-alice", new GoogleEventRequest
+        {
+            Summary = "School holiday",
+            Start = new GoogleDateTime { Date = "15/06/2026" },
+            End = new GoogleDateTime { Date = "2026-06-16" }
+        })).Should().ThrowAsync<FormatException>();
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()

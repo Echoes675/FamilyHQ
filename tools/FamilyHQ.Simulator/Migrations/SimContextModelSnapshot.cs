@@ -38,6 +38,10 @@ namespace FamilyHQ.Simulator.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("TimeZone")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
                     b.Property<string>("UserId")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");

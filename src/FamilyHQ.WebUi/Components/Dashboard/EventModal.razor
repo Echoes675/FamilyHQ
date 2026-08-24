@@ -54,7 +54,7 @@
                                 data-testid="all-day-toggle"
                                 aria-labelledby="allDayLabel"
                                 aria-pressed="@_eventModel.IsAllDay.ToString().ToLowerInvariant()"
-                                @onclick="() => _eventModel.IsAllDay = !_eventModel.IsAllDay">
+                                @onclick="ToggleAllDay">
                             @(_eventModel.IsAllDay ? "On" : "Off")
                         </button>
                     </div>
@@ -175,14 +175,25 @@
     // (which fires after the prompt) can reuse them without re-deriving from the description.
     private List<Guid> _pendingMemberIds = new();
 
+    // FHQ-174: every boundary the pickers produce goes through EventModalLogic.ToModelInstant /
+    // ToPickerWallClock, which anchor an all-day boundary at midnight UTC instead of stamping the
+    // BROWSER's offset on a date Google only ever expressed as "yyyy-MM-dd". The reasoning — why
+    // midnight UTC is the only representation that survives the Start/End EF converter and formats
+    // back to the same date string — is on GoogleAllDayDate and on ToModelInstant.
+    private DateTimeOffset ToModelInstant(DateTime wallClock) =>
+        EventModalLogic.ToModelInstant(wallClock, _eventModel.IsAllDay, TimeZoneInfo.Local.GetUtcOffset(wallClock));
+
+    private DateTime StartWallClock => EventModalLogic.ToPickerWallClock(_eventModel.Start, _eventModel.IsAllDay);
+
+    private DateTime EndWallClock => EventModalLogic.ToPickerWallClock(_eventModel.End, _eventModel.IsAllDay);
+
     private DateTime _startDate
     {
-        get => _eventModel.Start.LocalDateTime.Date;
+        get => StartWallClock.Date;
         set
         {
-            var time = _eventModel.Start.LocalDateTime.TimeOfDay;
-            var dt = value.Date + time;
-            _eventModel.Start = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            var time = StartWallClock.TimeOfDay;
+            _eventModel.Start = ToModelInstant(value.Date + time);
             SyncEndDateIfNeeded();
         }
     }
@@ -194,29 +205,31 @@
         // user sees the date they picked. AddTicks(-1).Date also handles legacy
         // rows where End may have been stored as the inclusive end-of-day tick.
         get => _eventModel.IsAllDay
-            ? _eventModel.End.LocalDateTime.AddTicks(-1).Date
-            : _eventModel.End.LocalDateTime.Date;
+            ? EndWallClock.AddTicks(-1).Date
+            : EndWallClock.Date;
         set
         {
-            var time = _eventModel.End.LocalDateTime.TimeOfDay;
+            var time = EndWallClock.TimeOfDay;
             var dt = _eventModel.IsAllDay
                 ? value.Date.AddDays(1)
                 : value.Date + time;
-            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            _eventModel.End = ToModelInstant(dt);
         }
     }
 
+    // The time pickers are rendered only when the event is NOT all-day, so these two always take
+    // the timed branch of ToModelInstant; they are routed through it so there is one construction
+    // rule in this component rather than two.
     private TimeOnly _startTime
     {
-        get => TimeOnly.FromTimeSpan(_eventModel.Start.LocalDateTime.TimeOfDay);
+        get => TimeOnly.FromTimeSpan(StartWallClock.TimeOfDay);
         set
         {
             // Shift end by the same delta so the user-visible duration is preserved
             // when only the start time is moved. Editing the end time independently
             // (see _endTime) does not touch the start.
             var oldStart = _eventModel.Start;
-            var newStartLocal = oldStart.LocalDateTime.Date + value.ToTimeSpan();
-            var newStart = new DateTimeOffset(newStartLocal, TimeZoneInfo.Local.GetUtcOffset(newStartLocal));
+            var newStart = ToModelInstant(StartWallClock.Date + value.ToTimeSpan());
             var delta = newStart - oldStart;
             _eventModel.Start = newStart;
             _eventModel.End = _eventModel.End + delta;
@@ -225,11 +238,59 @@
 
     private TimeOnly _endTime
     {
-        get => TimeOnly.FromTimeSpan(_eventModel.End.LocalDateTime.TimeOfDay);
-        set
+        get => TimeOnly.FromTimeSpan(EndWallClock.TimeOfDay);
+        set => _eventModel.End = ToModelInstant(EndWallClock.Date + value.ToTimeSpan());
+    }
+
+    // The times the event had before all-day was switched on, so switching it back off restores them
+    // rather than leaving the user on 00:00. Null until the toggle has been switched on at least once
+    // in this modal session — an event that opened all-day has no timed state to restore, and falls
+    // back to the same 09:00–10:00 a freshly-created event gets.
+    private TimeSpan? _timedStartTimeOfDay;
+    private TimeSpan? _timedEndTimeOfDay;
+
+    /// <summary>
+    /// FHQ-174. Flipping <c>IsAllDay</c> re-routes the getters but does NOT re-derive the stored
+    /// boundaries, so the toggle has to do it. Without this, the ordinary create path — tap a day
+    /// cell (which seeds 09:00 local), turn All Day on, save, never touching a picker — stored the
+    /// 09:00 instant, i.e. 08:00Z on a UTC+1 kiosk. That is the day-shift hazard this ticket exists
+    /// to remove, and it would also have polluted the all-day boundary audit that the
+    /// existing-data decision rests on.
+    /// <para>
+    /// Both directions preserve the DATES the pickers are showing and change only the time
+    /// component. Switching off restores the times the event carried before it went all-day (or the
+    /// 09:00–10:00 create default when it never had any) — see
+    /// <see cref="EventModalLogic.TimedWallClocks"/>.
+    /// </para>
+    /// </summary>
+    private void ToggleAllDay()
+    {
+        // Read the visible dates BEFORE flipping the flag: both picker getters branch on IsAllDay.
+        var startDay = _startDate;
+        var inclusiveEndDay = _endDate;
+
+        if (_eventModel.IsAllDay)
         {
-            var dt = _eventModel.End.LocalDateTime.Date + value.ToTimeSpan();
-            _eventModel.End = new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt));
+            var (start, end) = EventModalLogic.TimedWallClocks(
+                startDay,
+                inclusiveEndDay,
+                _timedStartTimeOfDay ?? EventModalLogic.DefaultStartTimeOfDay,
+                _timedEndTimeOfDay ?? EventModalLogic.DefaultEndTimeOfDay);
+
+            _eventModel.IsAllDay = false;
+            _eventModel.Start = ToModelInstant(start);
+            _eventModel.End = ToModelInstant(end);
+        }
+        else
+        {
+            _timedStartTimeOfDay = StartWallClock.TimeOfDay;
+            _timedEndTimeOfDay = EndWallClock.TimeOfDay;
+
+            var (start, end) = EventModalLogic.AllDayWallClocks(startDay, inclusiveEndDay);
+
+            _eventModel.IsAllDay = true;
+            _eventModel.Start = ToModelInstant(start);
+            _eventModel.End = ToModelInstant(end);
         }
     }
 
@@ -255,8 +316,7 @@
     {
         if (_eventModel.End < _eventModel.Start)
         {
-            var duration = TimeSpan.FromHours(1);
-            _eventModel.End = _eventModel.Start + duration;
+            _eventModel.End = EventModalLogic.MinimumEnd(_eventModel.Start, _eventModel.IsAllDay);
         }
     }
 
@@ -268,14 +328,19 @@
         _eventModel = new EventFormModel
         {
             Title = "",
-            Start = new DateTimeOffset(start, TimeZoneInfo.Local.GetUtcOffset(start)),
-            End = new DateTimeOffset(end, TimeZoneInfo.Local.GetUtcOffset(end)),
+            // A freshly-opened create modal is always timed, so these take ToModelInstant's timed
+            // branch. If the user then turns All Day on, ToggleAllDay re-derives BOTH boundaries at
+            // midnight UTC — flipping the flag alone would leave these 09:00 local instants in place.
+            Start = EventModalLogic.ToModelInstant(start, isAllDay: false, TimeZoneInfo.Local.GetUtcOffset(start)),
+            End = EventModalLogic.ToModelInstant(end, isAllDay: false, TimeZoneInfo.Local.GetUtcOffset(end)),
             IsAllDay = false
         };
         // FHQ-32: no silent default. Only an explicitly-passed calendarId seeds the
         // selection; otherwise the modal opens with nothing selected and Save is blocked
         // by the empty-selection validation until the user picks a calendar.
         _selectedCalendarIds = EventModalLogic.InitialCreateSelection(calendarId);
+        _timedStartTimeOfDay = null;
+        _timedEndTimeOfDay = null;
         // A new event is never recurring and has no pre-existing members to compare against.
         _recurrenceRule = null;
         _recurrenceComplete = true;
@@ -301,6 +366,10 @@
             AllCalendars = evt.AllCalendars.ToList()
         };
         _selectedCalendarIds = evt.AllCalendars.Select(c => c.Id).ToHashSet();
+        // A loaded event carries no "times before it went all-day" — an all-day one that is toggled
+        // off in this session takes the 09:00–10:00 create default instead.
+        _timedStartTimeOfDay = null;
+        _timedEndTimeOfDay = null;
         // Seed the picker from the loaded event's rule and remember the recurring state + members
         // so Save/Delete can decide whether to prompt for scope and whether a member change is pending.
         _recurrenceRule = evt.RecurrenceRule;
@@ -324,6 +393,8 @@
         _originalMemberIds = Array.Empty<Guid>();
         _pendingMemberIds = new();
         _memberChangePending = false;
+        _timedStartTimeOfDay = null;
+        _timedEndTimeOfDay = null;
     }
 
     private async Task SaveEvent()

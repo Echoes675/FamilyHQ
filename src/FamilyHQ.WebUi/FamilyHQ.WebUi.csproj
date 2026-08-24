@@ -16,4 +16,6 @@
     <ProjectReference Include="..\FamilyHQ.Core\FamilyHQ.Core.csproj" />
   </ItemGroup>
 
+
+  <Import Project="$(MSBuildThisFileDirectory)../../build/GoogleDateParsingBan.props" />
 </Project>

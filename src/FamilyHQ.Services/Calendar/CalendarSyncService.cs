@@ -54,7 +54,10 @@ public class CalendarSyncService(
 
         foreach (var cal in obsolete)
         {
-            logger.LogInformation("Removing obsolete calendar {CalendarId}", cal.Id);
+            // FHQ-166: {CalendarInfoId}, not {CalendarId}. The value has always been FamilyHQ's own
+            // Guid and is perfectly safe, but SKILL.md now lists {CalendarId} as a PII placeholder —
+            // a Seq user following the rule would distrust a field that is fine.
+            logger.LogInformation("Removing obsolete calendar {CalendarInfoId}", cal.Id);
             await calendarRepository.RemoveCalendarAsync(cal.Id, ct);
         }
 
@@ -83,6 +86,10 @@ public class CalendarSyncService(
                 await calendarRepository.AddCalendarAsync(googleCal, ct);
                 changeCount += await calendarRepository.SaveChangesAsync(ct);
                 localCal = googleCal;
+            }
+            else
+            {
+                await RefreshCalendarZoneAsync(localCal, googleCal, ct);
             }
             calendarIdsToSync.Add(localCal.Id);
         }
@@ -131,12 +138,14 @@ public class CalendarSyncService(
         if (calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
-            var firstCalendarName = calendarsAfterSync.First(c => c.Id == firstCalendarId).DisplayName;
             await calendarRepository.MarkCalendarAsSharedAsync(firstCalendarId, ct);
             changeCount += await calendarRepository.SaveChangesAsync(ct);
+            // FHQ-166: a calendar's display name is its Google `summary`, which for a PRIMARY
+            // calendar is the account's email address — and for a member calendar is a child's
+            // name. Neither belongs in Seq; the calendar's own id says the same thing.
             logger.LogInformation(
-                "Auto-designated {CalendarName} as the shared calendar (no prior designation).",
-                firstCalendarName);
+                "Auto-designated calendar {CalendarInfoId} as the shared calendar (no prior designation).",
+                firstCalendarId);
         }
 
         logger.LogInformation("Finished syncing all calendars.");
@@ -151,7 +160,7 @@ public class CalendarSyncService(
         var calendar = await calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
         if (calendar == null)
         {
-            logger.LogWarning("Calendar {CalendarId} not found. Skipping sync.", calendarInfoId);
+            logger.LogWarning("Calendar {CalendarInfoId} not found. Skipping sync.", calendarInfoId);
             return 0;
         }
 
@@ -165,7 +174,7 @@ public class CalendarSyncService(
 
         bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken);
 
-        logger.LogInformation("Syncing {CalendarName}. FullSync={IsFullSync}", calendar.DisplayName, isFullSync);
+        logger.LogInformation("Syncing calendar {CalendarInfoId}. FullSync={IsFullSync}", calendar.Id, isFullSync);
 
         int changeCount = 0;
 
@@ -217,7 +226,7 @@ public class CalendarSyncService(
             // Pass 2 (recurrence): resolve an RRULE for every recurring series referenced by the
             // pass-1 instances and cache it for this sync run, so each unknown master is fetched
             // at most once. Cancelled tombstones and self-echoes are excluded (see the resolver).
-            var rruleCache = await ResolveSeriesRecurrenceRulesAsync(calendar.GoogleCalendarId, events, ct);
+            var rruleCache = await ResolveSeriesRecurrenceRulesAsync(calendar, events, ct);
 
             if (isFullSync)
             {
@@ -308,6 +317,17 @@ public class CalendarSyncService(
                         // Preserve an already-stored RRULE if pass 2 could not resolve one this run
                         // (transient master-fetch failure must not blank out a known rule).
                         existing.RecurrenceRule         = evt.RecurrenceRule ?? existing.RecurrenceRule;
+                        // FHQ-164 Decision 4: lazy backfill of the series' anchor zone. Google reports
+                        // start.timeZone on every timed instance in the list response, so an ordinary
+                        // window sync populates the column for free — no bulk job, no schema default,
+                        // and no extra API call. A BLANK value counts as absent, not as a new value:
+                        // an all-day event legitimately supplies none, and writing "" back would be
+                        // read as "no zone" by the outbound write, which then re-anchors the series to
+                        // the family's zone — FHQ-170 all over again, from a null-check that looked
+                        // complete.
+                        existing.IanaTimeZone           = string.IsNullOrWhiteSpace(evt.IanaTimeZone)
+                            ? existing.IanaTimeZone
+                            : evt.IanaTimeZone;
                         await calendarRepository.UpdateEventAsync(existing, ct);
                     }
                     else
@@ -370,12 +390,12 @@ public class CalendarSyncService(
 
             // Bookkeeping only — excluded from the material change count (FHQ-44).
             await calendarRepository.SaveChangesAsync(ct);
-            logger.LogInformation("Synced {Count} events for {CalendarName}.", events.Count(), calendar.DisplayName);
+            logger.LogInformation("Synced {Count} events for calendar {CalendarInfoId}.", events.Count(), calendar.Id);
             return changeCount;
         }
         catch (SyncTokenExpiredException) when (!isRetry)
         {
-            logger.LogWarning("Sync token expired for {CalendarName}. Restarting full sync.", calendar.DisplayName);
+            logger.LogWarning("Sync token expired for calendar {CalendarInfoId}. Restarting full sync.", calendar.Id);
             syncState.SyncToken = null;
             if (isNewSyncState) await calendarRepository.AddSyncStateAsync(syncState, ct);
             else                await calendarRepository.SaveSyncStateAsync(syncState, ct);
@@ -383,6 +403,39 @@ public class CalendarSyncService(
             await calendarRepository.SaveChangesAsync(ct);
             return await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: true, ct);
         }
+    }
+
+    /// <summary>
+    /// FHQ-164 Decision 4 applied to the CALENDAR row: adopt the default zone Google reports for a
+    /// calendar FamilyHQ already knows about.
+    /// </summary>
+    /// <remarks>
+    /// Nothing else refreshes an existing calendar's fields from Google — every
+    /// <c>UpdateCalendarAsync</c> call site persists a flag the user changed locally — so without
+    /// this, every calendar already in production would keep a null zone forever and the series-zone
+    /// ladder's rung 4 would be dead code in the one environment that matters. The value arrives on
+    /// the <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so it costs no
+    /// extra API call.
+    /// <para>
+    /// Idempotent: written only when Google reports a zone that differs from the stored one. A blank
+    /// or absent value never blanks a stored one — <c>timeZone</c> is optional on Google's calendar
+    /// resource, and dropping a known value would cost the ladder a rung. The write is bookkeeping,
+    /// not a material change, so it stays out of the change count (FHQ-44): a calendar's default zone
+    /// is not something the dashboard renders.
+    /// </para>
+    /// </remarks>
+    private async Task RefreshCalendarZoneAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(googleCal.IanaTimeZone) || googleCal.IanaTimeZone == localCal.IanaTimeZone)
+            return;
+
+        logger.LogDebug(
+            "Calendar {CalendarInfoId} adopting Google's default time zone {IanaTimeZone}.",
+            localCal.Id, googleCal.IanaTimeZone);
+
+        localCal.IanaTimeZone = googleCal.IanaTimeZone;
+        await calendarRepository.UpdateCalendarAsync(localCal, ct);
+        await calendarRepository.SaveChangesAsync(ct);
     }
 
     /// <summary>
@@ -402,8 +455,13 @@ public class CalendarSyncService(
     /// instances persist with a null RRULE and the next sync retries; a reauth failure
     /// propagates so the user is prompted to reconnect.
     /// </summary>
+    /// <remarks>
+    /// Takes the whole <see cref="CalendarInfo"/> rather than just its Google id so the degraded
+    /// paths below can name the calendar by FamilyHQ's own id: the Google id is an email address
+    /// for a primary calendar and must not reach Seq (FHQ-166).
+    /// </remarks>
     private async Task<IReadOnlyDictionary<string, string>> ResolveSeriesRecurrenceRulesAsync(
-        string googleCalendarId, IEnumerable<CalendarEvent> events, CancellationToken ct)
+        CalendarInfo calendar, IEnumerable<CalendarEvent> events, CancellationToken ct)
     {
         // Cancelled tombstones reuse the recurring id but are being deleted, so they need no RRULE.
         // Self-echoes (FHQ-30) are short-circuited in the persistence loop and never stored, so
@@ -426,21 +484,25 @@ public class CalendarSyncService(
         {
             try
             {
-                var master = await googleCalendarClient.GetSeriesMasterAsync(googleCalendarId, seriesId, ct);
-                if (master is not null)
-                    cache[seriesId] = master.Rrule;
+                var master = await googleCalendarClient.GetSeriesMasterAsync(calendar.GoogleCalendarId, seriesId, ct);
+                // FHQ-172: a master is now returned for its DTSTART even when it carries no RRULE
+                // line, so "no master" and "no rule" are separate conditions. This pass wants the
+                // rule and nothing else, and its degraded behaviour is unchanged for both: cache
+                // nothing, warn, and let the next sync retry the series.
+                if (master?.Rrule is { } rrule)
+                    cache[seriesId] = rrule;
                 else
                     logger.LogWarning(
-                        "Series master {SeriesId} on calendar {GoogleCalendarId} returned no RRULE; instances persisted without one and will retry next sync.",
-                        seriesId, googleCalendarId);
+                        "Series master {SeriesId} on calendar {CalendarInfoId} returned no RRULE; instances persisted without one and will retry next sync.",
+                        seriesId, calendar.Id);
             }
             catch (Exception ex) when (ex is not GoogleReauthRequiredException and not OperationCanceledException)
             {
                 // Transient API failure: degrade gracefully, retry the series next sync.
                 logger.LogWarning(
                     ex,
-                    "Failed to fetch series master {SeriesId} on calendar {GoogleCalendarId}; instances persisted without an RRULE and will retry next sync.",
-                    seriesId, googleCalendarId);
+                    "Failed to fetch series master {SeriesId} on calendar {CalendarInfoId}; instances persisted without an RRULE and will retry next sync.",
+                    seriesId, calendar.Id);
             }
         }
 

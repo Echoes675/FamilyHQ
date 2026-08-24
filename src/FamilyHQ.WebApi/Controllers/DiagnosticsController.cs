@@ -115,6 +115,28 @@ public class DiagnosticsController : ControllerBase
     }
 
     /// <summary>
+    /// FHQ-174 existing-data check: a breakdown of the current user's stored all-day boundaries by
+    /// the shape they are stored in.
+    /// </summary>
+    /// <remarks>
+    /// Read-only by design — this ticket ships no repair. The counts are reported per boundary and
+    /// per shape rather than as one total, because two unrelated legacy defects both produce a
+    /// non-midnight value and only one of them is the host-offset day shift; see
+    /// <see cref="AllDayBoundaryAuditDto"/> for which is which. Rows inside the sync window heal
+    /// without intervention (<c>CalendarSyncService</c> overwrites Start/End from every list
+    /// response), so the numbers that matter are the ones dated outside it, which is why the response
+    /// carries the affected range as well as the counts.
+    /// </remarks>
+    [HttpGet("all-day-boundary-audit")]
+    public async Task<IActionResult> GetAllDayBoundaryAudit(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(_currentUser.UserId))
+            return Unauthorized();
+
+        return Ok(await _calendarRepository.GetAllDayBoundaryAuditAsync(ct));
+    }
+
+    /// <summary>
     /// Current user's sync-queue depth — the count of not-yet-terminal jobs (Pending or
     /// InProgress). Used to observe whether the durable queue has drained.
     /// </summary>

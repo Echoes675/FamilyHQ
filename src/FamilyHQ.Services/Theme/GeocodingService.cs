@@ -12,7 +12,11 @@ public class GeocodingService(HttpClient httpClient) : IGeocodingService
 
         var results = await httpClient.GetFromJsonAsync<NominatimResult[]>(url, ct);
         if (results is null || results.Length == 0)
-            throw new InvalidOperationException($"No geocoding results found for '{placeName}'.");
+            // FHQ-166: the place name stays out of the message. This exception reaches an
+            // ILogger wherever it is not caught, which is the same sink as a log template, and the
+            // searched-for address is the family's home. The caller (SettingsController) already
+            // knows what the user typed and turns this into a "check the spelling" 400.
+            throw new InvalidOperationException("No geocoding results found for the requested place name.");
 
         return (double.Parse(results[0].Lat, System.Globalization.CultureInfo.InvariantCulture),
                 double.Parse(results[0].Lon, System.Globalization.CultureInfo.InvariantCulture));

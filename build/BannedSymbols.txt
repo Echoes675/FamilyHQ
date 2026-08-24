@@ -1,0 +1,39 @@
+; FHQ-174 — date/time parses that silently substitute the HOST machine's UTC offset.
+;
+; Every overload below resolves a value that carries no zone information by stamping the offset of
+; whatever machine happens to be running the code. For a Google `date` ("2026-06-15") that turns a
+; date Google sent into an instant Google never sent: on a host at UTC+1 the value becomes
+; 2026-06-14T23:00:00Z, the Start/End EF converter keeps that instant, and the outbound all-day
+; mapping then tells Google the event starts a day early.
+;
+; This list is the ONLY thing that catches a reintroduction. CI's host offset is zero, so the buggy
+; and the fixed code produce identical values there and no value-based test can tell them apart.
+;
+; The fix is FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google `date`, or a ParseExact/TryParse
+; overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal for any other
+; zone-less string. Note the styles overloads are NOT banned and are not automatically safe:
+; DateTimeStyles.None, or AdjustToUniversal WITHOUT AssumeUniversal, still falls back to the host's
+; offset. This list cannot express that — it can only name an overload, not an argument — so
+; tests/FamilyHQ.Core.Tests/DateOnlyParseGuardTests.cs covers it: every DateTime/DateTimeOffset parse
+; must name AssumeUniversal in its own argument list. Between them the two mechanisms leave no
+; overload of these two types unchecked.
+
+M:System.DateTimeOffset.Parse(System.String); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.Parse(System.String,System.IFormatProvider); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.Parse(System.ReadOnlySpan{System.Char},System.IFormatProvider); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.ParseExact(System.String,System.String,System.IFormatProvider); Stamps the host's UTC offset on a zone-less value. Pass DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.TryParse(System.String,System.DateTimeOffset@); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.TryParse(System.ReadOnlySpan{System.Char},System.DateTimeOffset@); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.TryParse(System.String,System.IFormatProvider,System.DateTimeOffset@); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.TryParse(System.ReadOnlySpan{System.Char},System.IFormatProvider,System.DateTimeOffset@); Stamps the host's UTC offset on a zone-less value. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTimeOffset.TryParseExact(System.String,System.String,System.IFormatProvider,System.DateTimeOffset@); Stamps the host's UTC offset on a zone-less value. Pass DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+
+M:System.DateTime.Parse(System.String); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.Parse(System.String,System.IFormatProvider); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.Parse(System.ReadOnlySpan{System.Char},System.IFormatProvider); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.ParseExact(System.String,System.String,System.IFormatProvider); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Pass DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.TryParse(System.String,System.DateTime@); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.TryParse(System.ReadOnlySpan{System.Char},System.DateTime@); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.TryParse(System.String,System.IFormatProvider,System.DateTime@); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.TryParse(System.ReadOnlySpan{System.Char},System.IFormatProvider,System.DateTime@); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Use FamilyHQ.Core.Calendar.GoogleAllDayDate for a Google date, or an overload with DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).
+M:System.DateTime.TryParseExact(System.String,System.String,System.IFormatProvider,System.DateTime@); Leaves a zone-less value as Kind=Unspecified, which the EF DateTime converters then treat as the HOST's local time. Pass DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal (FHQ-174).

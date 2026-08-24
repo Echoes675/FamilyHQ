@@ -40,9 +40,11 @@ public class CalendarMigrationService(
                     $"Cannot migrate event to individual calendar: no non-shared member found in assignedMembers.");
         }
 
+        // FHQ-166: the display names here are family member names (and, for a primary calendar,
+        // the account's email address). The calendar ids identify the same two calendars.
         logger.LogInformation(
-            "Migrating event {GoogleEventId} from {Source} to {Target}.",
-            calendarEvent.GoogleEventId, currentOwner.DisplayName, targetCalendar.DisplayName);
+            "Migrating event {GoogleEventId} from calendar {SourceCalendarInfoId} to {TargetCalendarInfoId}.",
+            calendarEvent.GoogleEventId, currentOwner.Id, targetCalendar.Id);
 
         // FHQ-68: stamp an explicit [members: ...] tag (non-shared member display names) so a
         // Google-originated event's free-form description does not re-resolve to different members on the
@@ -120,8 +122,8 @@ public class CalendarMigrationService(
             ?? throw new InvalidOperationException($"Series {seriesId} has no stored RecurrenceRule to migrate.");
 
         logger.LogInformation(
-            "Migrating series {SeriesId} from {Source} to {Target}.",
-            seriesId, currentOwner.DisplayName, targetCalendar.DisplayName);
+            "Migrating series {SeriesId} from calendar {SourceCalendarInfoId} to {TargetCalendarInfoId}.",
+            seriesId, currentOwner.Id, targetCalendar.Id);
 
         // Insert the series on the target calendar with the new RRULE and a normalised members tag.
         var memberNames = assignedMembers.Where(m => !m.IsShared).Select(m => m.DisplayName).ToList();
@@ -135,7 +137,12 @@ public class CalendarMigrationService(
             End = representative.End,
             IsAllDay = representative.IsAllDay,
             Location = representative.Location,
-            Description = description
+            Description = description,
+            // FHQ-170: moving a series between calendars must not re-anchor it. Carry the zone
+            // Google anchored the original series to; without it the recreated master falls through
+            // to the family's configured zone and every future occurrence shifts at the next
+            // divergent DST transition. Null (nothing stored yet) keeps today's fallback.
+            IanaTimeZone = representative.IanaTimeZone
         };
 
         var masterHash = EventContentHash.Compute(

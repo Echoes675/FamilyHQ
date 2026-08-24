@@ -1,8 +1,10 @@
+using System.Net;
 using System.Runtime.CompilerServices;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
@@ -96,7 +98,8 @@ public class CalendarEventServiceRecurringTests
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
 
-        // Exactly TWO Google writes: truncate the original master, then insert the new series.
+        // Exactly TWO Google writes: insert the new series, then truncate the original master.
+        // (FHQ-173 put the create first; the ORDER itself is pinned by the split-ordering tests below.)
         f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(GoogleCalId, SeriesId, It.Is<string>(s => s.Contains("UNTIL=")), It.IsAny<CancellationToken>()), Times.Once);
         f.Google.Verify(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.Is<string>(r => r.Contains("FREQ=WEEKLY")), It.IsAny<CancellationToken>()), Times.Once);
 
@@ -142,6 +145,12 @@ public class CalendarEventServiceRecurringTests
         var after = f.RecurringInstance(Guid.NewGuid(), "inst-3", InstanceStart.AddDays(7));
         f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([before, atSplit, after]);
+
+        // The master IS resolvable, and its DTSTART is the first synced occurrence — the count is
+        // anchored there. (FHQ-172: an unresolvable master no longer counts from a local proxy, it
+        // refuses, so this test states the anchor it means to exercise instead of relying on null.)
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=10", before.Start));
 
         string? capturedNewRule = null;
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -317,24 +326,10 @@ public class CalendarEventServiceRecurringTests
         f.Logger.Records.Should().NotContain(r => r.Message.Contains("no usable IANA time zone"));
     }
 
-    [Fact]
-    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSeriesWithAnUnresolvableMaster_WarnsOnlyAboutTheAnchor()
-    {
-        // The degraded local-row anchor cannot carry a zone, so the fixed-UTC fallback is a
-        // CONSEQUENCE of the already-reported anchor failure, not a second incident. One Warning per
-        // incident, and it names the real cause.
-        var f = new Fixture();
-        var splitStart = new DateTimeOffset(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
-
-        ArrangeCountSplit(f, WeeklyTuesdayCount5, AutumnSeriesStart, LondonZoneId, splitStart);
-        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((SeriesMaster?)null);
-
-        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
-
-        f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
-            .Which.Message.Should().Contain("returned no start");
-    }
+    // FHQ-172 moved the unresolvable-master COUNT split from "degrade to a local proxy" to "refuse
+    // and write nothing"; that behaviour is covered by the FHQ-172 section further down this file
+    // (search "FHQ-172: an unresolvable series master must never yield a written anchor"), which
+    // also carries the one-Warning-per-incident assertions this test used to own.
 
     // Arranges a "this and following" split of a COUNT-bounded series whose master carries the given
     // RRULE, DTSTART and IANA zone, and captures the RRULE the forward series is created with.
@@ -367,6 +362,1079 @@ public class CalendarEventServiceRecurringTests
         return captured;
     }
 
+    // ── FHQ-164 / FHQ-170: the series-zone discovery ladder ───────────────────────────────────
+    //
+    // FHQ-161 closed the happy path — the master supplies the zone. This closes the rest of it:
+    // rather than substituting the family's configured zone (a proxy, since most events are created
+    // on a phone), the zone is ASKED OF GOOGLE, strictly ordered by provenance:
+    //   1. stored on the series' own rows   3. any surviving instance (events.get)
+    //   2. the series master                4. the calendar's default zone
+    //   5. terminal: fixed-UTC, announced at Warning for a timed series.
+    //
+    // The same worked example throughout: weekly Tuesday 19:00 Europe/London, COUNT=5, from Tue
+    // 13 Oct 2026, split at occurrence 4 (Tue 3 Nov, 19:00 GMT). Zone-aware → COUNT=2. Fixed-UTC
+    // over-counts by one across the 25 Oct fall-back → COUNT=1, deleting occurrence 5.
+
+    private const string NewYorkZoneId = "America/New_York";
+    private static readonly DateTimeOffset AutumnSplitStart = new(2026, 11, 3, 19, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_MasterWithNoZoneButZoneStored_KeepsEveryOccurrence()
+    {
+        // FHQ-164's headline case, restated for FHQ-172. It used to be posed as "the master 404s",
+        // but that case no longer reaches the count at all — it is refused. The zone gap it closes is
+        // real either way: a master that resolves and carries NO start.timeZone (Google omits it on
+        // an all-day master, and older masters can lack it) would otherwise fall to the fixed-UTC
+        // enumeration and silently drop the series' last occurrence. The stored zone closes it.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: LondonZoneId, masterZone: null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_MasterWithNoZoneAndNoStoredZone_SurvivingInstanceSuppliesIt()
+    {
+        // Rung 3. A recurring instance carries the series' start.timeZone and every instance's id is
+        // already in seriesRows, so one events.get recovers the zone the master could not give.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2");
+        f.Google.Verify(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_SplitAtFinalOccurrence_ResolvableZone_IsNotFalselyRejected()
+    {
+        // COUNT=4 split at the LAST occurrence: before = 3, remaining = 1 — legitimate. The fixed-UTC
+        // count returns before = 4 → remaining = 0 → InvalidSeriesSplitException with a false
+        // explanation. Any rung of the ladder that yields makes that impossible.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: null, instanceZone: LondonZoneId,
+            rrule: "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=4");
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().NotThrowAsync<InvalidSeriesSplitException>();
+        split.Rule.Value.Should().Contain("COUNT=1");
+    }
+
+    // ── Ladder order: a higher rung's value wins over a lower one's ────────────────────────────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_StoredZoneWinsOverTheMasters_AndCostsNoCall()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: LondonZoneId, masterZone: NewYorkZoneId,
+            instanceZone: NewYorkZoneId, calendarDefaultZone: NewYorkZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Google.Verify(g => g.GetEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "rung 1 is a local read — reaching Google for a value already stored is pure latency");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_MasterZoneWinsOverASurvivingInstances()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: LondonZoneId,
+            instanceZone: NewYorkZoneId, calendarDefaultZone: NewYorkZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Google.Verify(g => g.GetEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "the master fetch already happened for the anchor, so rung 3 is only reached when rung 2 gave nothing");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceZoneWinsOverTheCalendarDefault()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: null,
+            instanceZone: LondonZoneId, calendarDefaultZone: NewYorkZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CalendarDefaultIsUsedWhenNothingAboveItYields()
+    {
+        // Rung 4 is what Google itself would apply to an event on this calendar with no zone of its
+        // own — still a Google-supplied value, so no Warning and no guess.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2");
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+    }
+
+    // ── The terminal rung ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_EveryRungExhausted_WarnsNamingTheSeriesAndStillCompletes()
+    {
+        // Decision 3a: never fail a user's edit over a zone lookup. The one genuinely-guessing case
+        // left announces itself instead of passing silently.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=1", "fixed-UTC over-counts by one across the fall-back transition");
+        split.Created.Value.Should().NotBeNull("the edit completes rather than failing on a zone lookup");
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Warning
+            && r.Message.Contains("no usable IANA time zone")
+            && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_EveryRungExhaustedOnAnAllDaySeries_StaysAtDebug()
+    {
+        // An all-day series legitimately carries no zone and is date-anchored, so fixed-UTC
+        // enumeration is EXACT for it. Warning here would bury the timed case, the only one that
+        // matters (logging standard: expected-and-handled conditions are not Warnings).
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: null, isAllDay: true);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, Req("Bin day", AutumnSplitStart, "Body", isAllDay: true), RecurrenceScope.ThisAndFollowing);
+
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug && r.Message.Contains("fixed-UTC recurrence enumeration") && r.Message.Contains(SeriesId));
+    }
+
+    // ── Lazy backfill (Decision 4) ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ZoneResolvedFromTheMaster_IsPersistedOntoTheSeriesRows()
+    {
+        // Normal sync fetches a master only when the RRULE is not already cached, so an existing
+        // series would never re-fetch one. Persisting what a fetch DID report is what makes the
+        // backfill happen at all — and makes the next edit resolve at rung 1 with no call.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == LondonZoneId);
+        f.Repo.Verify(r => r.UpdateEventAsync(It.Is<CalendarEvent>(e => e.IanaTimeZone == LondonZoneId), It.IsAny<CancellationToken>()),
+            Times.AtLeast(split.Rows.Count));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ZoneResolvedFromAnInstance_IsPersistedOntoTheSeriesRows()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == LondonZoneId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TheCalendarsDefaultZoneIsNotPersistedOntoTheSeriesRows()
+    {
+        // Rung 4 is the CALENDAR's value, not the series'. Writing it onto the series would fabricate
+        // a provenance the rows do not have and would stop a later, better rung from ever running.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_NoZoneObserved_LeavesTheStoredRowsNull()
+    {
+        // Existing production rows stay null until Google actually reports a zone — no schema
+        // default, nothing that pretends to know.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
+    }
+
+    // ── The reconcile is a Google fetch like any other, so it backfills too ───────────────────
+
+    [Theory]
+    [InlineData(LondonZoneId, null, LondonZoneId)]        // Google reports one → stored
+    [InlineData(LondonZoneId, NewYorkZoneId, LondonZoneId)]  // Google is the system of record
+    [InlineData(null, LondonZoneId, LondonZoneId)]        // all-day / absent: the stored value survives
+    [InlineData("", LondonZoneId, LondonZoneId)]          // blank is absent, not a new value
+    public async Task UpdateRecurringAsync_ThisOnly_ReconcileBackfillsTheAnchorZoneWithoutEverBlankingIt(
+        string? fetchedZone, string? storedZone, string? expectedZone)
+    {
+        // Blanking here would be invisible until the NEXT edit, which would then find no zone and
+        // hand the write to the family-zone fallback — FHQ-170, one step removed from its cause.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var storedRow = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        storedRow.IanaTimeZone = storedZone;
+        f.ArrangeExistingRow(storedRow);
+
+        var fetched = f.GoogleInstance("inst-2", InstanceStart, isException: true);
+        fetched.IanaTimeZone = fetchedZone;
+        f.ArrangeReconcileWindow([fetched]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated Title", InstanceStart, "Lunch"), RecurrenceScope.ThisOnly);
+
+        storedRow.IanaTimeZone.Should().Be(expectedZone);
+    }
+
+    // ── Every rung is filtered for usability ──────────────────────────────────────────────────
+    //
+    // Google's zone names run ahead of a bundled tz database (Europe/Kyiv, America/Ciudad_Juarez are
+    // the real-world instances; which of them the shipped tzdb knows depends on its version, so the
+    // tests below use an unmistakably fictional id and stay deterministic). A rung that hands back an
+    // id the factory cannot resolve must not short-circuit the ladder: the count would fall to
+    // fixed-UTC while a rung below still had a zone that works.
+
+    private const string UnknownZoneId = "Mars/Olympus_Mons";
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_StoredZoneTheTzDatabaseRejects_FallsThroughToTheNextRung()
+    {
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: UnknownZoneId, masterZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2", "rung 2's zone counts the fall-back transition correctly");
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug && r.Message.Contains("does not recognise") && r.Message.Contains(SeriesId));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ZoneTheTzDatabaseRejects_IsNotPersistedOntoTheSeriesRows()
+    {
+        // Storing an id neither consumer can use would make the next edit resolve to the same dead
+        // end at rung 1, for free, forever.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: null, masterZone: UnknownZoneId, instanceZone: null, calendarDefaultZone: null);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rows.Should().OnlyContain(r => r.IanaTimeZone == null);
+        f.Repo.Verify(r => r.UpdateEventAsync(It.Is<CalendarEvent>(e => e.IanaTimeZone == UnknownZoneId), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // ── Rung 3's probing: bounded, and never swallowing a signal that is not about zones ──────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbesAreBoundedNotOnePerOccurrence()
+    {
+        // A master that 404s because the series was genuinely deleted takes its instances with it, so
+        // every probe 404s too. Unbounded, that costs one call per synced occurrence on the way to
+        // the same answer. Four rows are arranged; only the bound stops the fourth probe.
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        f.Google.Verify(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3),
+            "the ladder probes at most MaxInstanceZoneProbes instances before dropping to the next rung");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbeNeedingReauth_PropagatesRatherThanDegradingTheZone()
+    {
+        // Swallowing a reauth here would degrade the zone silently AND let the edit carry on to a
+        // write that then fails — masking the very signal FHQ-82/85/153 exist to surface. Neither
+        // reauth nor cancellation is a zone problem, so neither is the probe loop's to handle.
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: LondonZoneId);
+        f.Google.Setup(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "invalid_grant"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleReauthRequiredException>();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_InstanceProbeFailingTransiently_TriesTheNextCandidate()
+    {
+        // A transient upstream failure IS the probe loop's to handle: the ladder has rungs below it
+        // and a user's edit is never failed over a zone lookup (Decision 3a). Reported at Debug —
+        // expected-and-handled conditions are not Warnings.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: null, masterZone: null, instanceZone: null, calendarDefaultZone: null);
+
+        var probes = 0;
+        f.Google.Setup(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string id, CancellationToken _) => ++probes == 1
+                ? throw new GoogleApiException(HttpStatusCode.ServiceUnavailable, "GetEvent")
+                : new GoogleEventDetail(id, null, LondonZoneId));
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("COUNT=2", "the second candidate supplied the zone the first could not");
+        f.Logger.Records.Should().Contain(r =>
+            r.Level == LogLevel.Debug && r.Message.Contains("could not be fetched") && r.Message.Contains(SeriesId));
+        f.Logger.Records.Should().NotContain(r => r.Level == LogLevel.Warning && r.Message.Contains("IANA time zone"));
+    }
+
+    // ── FHQ-170 on the series-level write paths ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_PatchesTheMasterWithTheSeriesOwnZone()
+    {
+        // The AllInSeries patch builds a master object from scratch. With no zone on it the client
+        // falls through to the family's configured zone and re-anchors the whole series — FHQ-170 at
+        // its most severe, because it moves every future occurrence at once.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        f.ArrangeEvent(instance);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart, NewYorkZoneId));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == NewYorkZoneId),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_MasterWithoutAZone_FallsBackToTheStoredSeriesZone()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        instance.IanaTimeZone = LondonZoneId;
+        f.ArrangeEvent(instance);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>())).ReturnsAsync([instance]);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == LondonZoneId),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(NewYorkZoneId, LondonZoneId, NewYorkZoneId)]  // both present and differing → the master's wins
+    [InlineData(null, LondonZoneId, LondonZoneId)]            // no master zone → the stored series zone
+    [InlineData("", LondonZoneId, LondonZoneId)]              // blank is absent, not a value that beats a good one
+    public async Task UpdateRecurringAsync_AllInSeries_MasterZoneLeadsTheStoredOne(
+        string? masterZone, string? storedZone, string? expectedZone)
+    {
+        // The two arms have to be exercised TOGETHER or the precedence is not pinned at all: with one
+        // arm null either ordering passes. The master's own zone leads here — unlike the counting
+        // ladder — because the edited row may be an EXCEPTION instance carrying a zone of its own
+        // that is not the one the series is anchored to.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        instance.IanaTimeZone = storedZone;
+        f.ArrangeEvent(instance);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>())).ReturnsAsync([instance]);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart, masterZone));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == expectedZone),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_UntilSeries_ForwardSeriesKeepsTheStoredZoneWithoutExtraCalls()
+    {
+        // A Never/UNTIL split has no count to enumerate, so the ladder's fetching rungs would be pure
+        // latency — but the forward series is still a CONTINUATION and must keep its anchor zone.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: LondonZoneId, rrule: "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261201T000000Z");
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Created.Value!.IanaTimeZone.Should().Be(LondonZoneId);
+        f.Google.Verify(g => g.GetSeriesMasterAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Google.Verify(g => g.GetEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Arranges a "this and following" split of the worked-example series across the October
+    /// fall-back transition, wiring each rung of the discovery ladder independently so a test can
+    /// state exactly which rungs are available. Captures both the RRULE the forward series is
+    /// created with and the event object itself (which carries its anchor zone).
+    /// </summary>
+    private static LadderSplit ArrangeLadderSplit(
+        Fixture f,
+        string? storedZone = null,
+        string? masterZone = null,
+        bool masterResolves = true,
+        string? instanceZone = null,
+        string? calendarDefaultZone = null,
+        string rrule = WeeklyTuesdayCount5,
+        bool isAllDay = false)
+    {
+        // The four synced occurrences of weekly Tuesday 19:00 Europe/London from 13 Oct 2026; the
+        // last of them is the split point. 27 Oct and 3 Nov sit after the 25 Oct fall-back, so their
+        // UTC instants are an hour later than the first two — which is precisely what a fixed-UTC
+        // enumeration cannot reproduce.
+        var starts = new[]
+        {
+            AutumnSeriesStart,
+            AutumnSeriesStart.AddDays(7),
+            new DateTimeOffset(2026, 10, 27, 19, 0, 0, TimeSpan.Zero),
+            AutumnSplitStart
+        };
+
+        var rows = new List<CalendarEvent>();
+        for (var i = 0; i < starts.Length; i++)
+        {
+            var isSplitRow = i == starts.Length - 1;
+            var row = f.RecurringInstance(isSplitRow ? EventId : Guid.NewGuid(), $"inst-{i}", starts[i]);
+            row.RecurrenceRule = rrule;
+            row.IsAllDay = isAllDay;
+            row.IanaTimeZone = storedZone;
+            rows.Add(row);
+        }
+
+        f.ArrangeEvent(rows[^1]);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>())).ReturnsAsync(rows);
+
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(masterResolves ? new SeriesMaster(rrule, AutumnSeriesStart, masterZone) : null);
+
+        f.Google.Setup(g => g.GetEventAsync(GoogleCalId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string id, CancellationToken _) =>
+                instanceZone is null ? null : new GoogleEventDetail(id, null, instanceZone));
+
+        f.Alice.IanaTimeZone = calendarDefaultZone;
+
+        var capturedRule = new StrongBox<string?>(null);
+        var capturedEvent = new StrongBox<CalendarEvent?>(null);
+        f.Google.Setup(g => g.CreateRecurringEventAsync(
+                GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) =>
+            {
+                capturedRule.Value = r;
+                capturedEvent.Value = e;
+                e.GoogleEventId = "new-series-id";
+            })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+
+        f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", AutumnSplitStart, recurringId: "new-series-id")]);
+        return new LadderSplit(capturedRule, capturedEvent, rows);
+    }
+
+    private sealed record LadderSplit(
+        StrongBox<string?> Rule,
+        StrongBox<CalendarEvent?> Created,
+        IReadOnlyList<CalendarEvent> Rows);
+
+    // ── FHQ-172: an unresolvable series master must never yield a written anchor ───────────────
+    //
+    // ResolveSeriesAnchorAsync degrades to the earliest LOCAL row when Google returns no master.
+    // That row is a proxy: when the master predates the sync window it sits LATER than the true
+    // origin. Both callers used to write it —
+    //   * AllInSeries patched `proxy + shift` onto the master as its new DTSTART, relocating the
+    //     series' origin forward and deleting every occurrence before the sync window from Google.
+    //     `shift` is zero for a pure title edit, so RENAMING a series was enough to trigger it.
+    //   * the COUNT split derived `remaining = COUNT − occurrences before the split` from it and
+    //     wrote that count back, leaving the forward series too long.
+    // Neither is permitted now: the split refuses, and the master patch omits start/end unless the
+    // user actually asked for a timing change, in which case it refuses too.
+    //
+    // ONE WARNING PER INCIDENT (FHQ-161). These tests assert the COUNT of Warning records, not
+    // merely that one is present: a `Contain(...)` cannot tell one Warning from three, and that gap
+    // is exactly how a duplicate Warning regressed once already. The anchor site itself logs at
+    // Debug — it decides nothing, and the omit-times rename below handles the missing origin
+    // completely successfully, which the logging standard says is not a Warning at all. So the
+    // budget is: zero from a successful degraded write, exactly one from each refusal.
+    // (DomainExceptionHandler logs its own Warning when it maps the exception; that is outside this
+    // logger and carries only status/method/path, so it is extra information, not a duplicate.)
+    //
+    // REACHABILITY, HONESTLY. After Change 1 (a master's start survives an absent RRULE) no
+    // production shape is known in which the omit-times write both fires and succeeds — a master
+    // that 404s on events.get would 404 on events.patch too. These tests drive the branch through
+    // the mocked client because it is a deliberate guard against irreversible loss of series
+    // history, not because it is the mechanism that fixed the reported defect.
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_MasterUnresolvableAndNothingRetimed_PatchesWithoutStartOrEnd()
+    {
+        // The renaming case. The edit must still land — the family asked for it and it is perfectly
+        // expressible — but through the patch that sends no start/end, so events.patch's merge
+        // leaves Google's own DTSTART exactly where it is.
+        var f = new Fixture();
+        ArrangeUnresolvedMasterSeries(f, out _);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Renamed", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsPreservingTimesAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.Title == "Renamed"),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the ordinary patch would carry the local-row proxy as the series' new origin");
+
+        // Nothing degraded and nothing was refused: the user asked for a rename and got a rename.
+        // The COUNT here, not just the absence of a particular message — a Warning budget is only
+        // enforceable if it is counted.
+        f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().BeEmpty(
+            "a write that fully satisfies the request is an expected-and-handled condition, which the logging standard forbids reporting at Warning");
+    }
+
+    [Theory]
+    [InlineData("start")]
+    [InlineData("duration")]
+    [InlineData("all-day")]
+    public async Task UpdateRecurringAsync_AllInSeries_MasterUnresolvableAndTheTimingChanged_ThrowsAndWritesNothing(string change)
+    {
+        // A real timing change makes the new origin a FUNCTION of the old one, and the old one is
+        // exactly what is missing. There is no honest value to send, so nothing is sent.
+        var f = new Fixture();
+        ArrangeUnresolvedMasterSeries(f, out _);
+
+        var request = change switch
+        {
+            "start" => new UpdateEventRequest("Weekly", InstanceStart.AddHours(-1), InstanceStart, false, "Loc", "Body"),
+            "duration" => new UpdateEventRequest("Weekly", InstanceStart, InstanceStart.AddHours(2), false, "Loc", "Body"),
+            _ => new UpdateEventRequest("Weekly", InstanceStart, InstanceStart.AddHours(1), true, "Loc", "Body")
+        };
+
+        var act = () => f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.AllInSeries);
+
+        await act.Should().ThrowAsync<SeriesOriginUnresolvedException>();
+        f.Google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Google.Verify(g => g.PatchEventFieldsPreservingTimesAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Cache.Verify(c => c.Record(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+
+        // One incident, one Warning — the refusal's own. The anchor site must not add a second, so
+        // this asserts the count and not merely that the refusal was reported.
+        f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().ContainSingle()
+            .Which.Message.Should().Contain("Refusing an all-in-series");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_MasterUnresolvable_ContentHashDoesNotDependOnTheLocalRows()
+    {
+        // The content-hash is stamped into extendedProperties and recorded so Google's echo of this
+        // write is recognised (FHQ-30) — so it must describe what was SENT. Start and end were not
+        // sent, and the only start in scope is the proxy this whole ticket exists to distrust.
+        // Two byte-identical edits differing only in which local row happens to be the earliest
+        // synced one must therefore produce the SAME token.
+        var early = new Fixture();
+        ArrangeUnresolvedMasterSeries(early, out var earlyHash, earliestRowStart: InstanceStart.AddDays(-70));
+
+        var late = new Fixture();
+        ArrangeUnresolvedMasterSeries(late, out var lateHash, earliestRowStart: InstanceStart.AddDays(-7));
+
+        await early.Sut.UpdateRecurringAsync(EventId, Req("Renamed", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+        await late.Sut.UpdateRecurringAsync(EventId, Req("Renamed", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        earlyHash.Value.Should().NotBeNull();
+        earlyHash.Value.Should().Be(lateHash.Value);
+        early.Cache.Verify(c => c.Record(SeriesId, earlyHash.Value!), Times.Once,
+            "the token recorded for echo matching must be the token that was sent");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSplitWithAnUnresolvableMaster_RefusesBeforeTouchingGoogle()
+    {
+        // The ordering half of the fix. The reshape (which needs the anchor) now runs BEFORE the
+        // truncation, so a refusal leaves the original series intact. Reversed, the family lost the
+        // tail of their series and got no replacement.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(f, storedZone: LondonZoneId, masterResolves: false);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<SeriesOriginUnresolvedException>();
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the original series must not be truncated by a split that then refuses");
+        f.Google.Verify(g => g.CreateRecurringEventAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        split.Rule.Value.Should().BeNull();
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CountSplitWithAnUnresolvableMaster_WarnsNamingTheSeriesAndTheCalendarById()
+    {
+        var f = new Fixture();
+        ArrangeLadderSplit(f, storedZone: LondonZoneId, masterResolves: false);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<SeriesOriginUnresolvedException>();
+
+        // One incident, one Warning (FHQ-161) — counted, not merely present. `Contain` cannot tell
+        // one Warning from three, and the anchor site adding a second is precisely the regression
+        // this assertion exists to catch.
+        var warning = f.Logger.Records.Where(r => r.Level == LogLevel.Warning).Should().ContainSingle().Subject;
+        warning.Message.Should().Contain("Refusing").And.Contain(SeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_UntilSplitWithAnUnresolvableMaster_IsUnaffected()
+    {
+        // A Never/UNTIL series has no count to derive, so it returns before the anchor is resolved
+        // at all. The refusal must not spread to it: this split is still perfectly writable.
+        var f = new Fixture();
+        var split = ArrangeLadderSplit(
+            f, storedZone: LondonZoneId, masterResolves: false,
+            rrule: "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261201T000000Z");
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Football training", AutumnSplitStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Rule.Value.Should().Contain("UNTIL=20261201T000000Z");
+        f.Google.Verify(g => g.GetSeriesMasterAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_MasterResolvable_StillPatchesWithStartAndEnd()
+    {
+        // Regression pin for the untouched majority: a resolvable master behaves exactly as before,
+        // through the ordinary patch, carrying the shifted origin.
+        var f = new Fixture();
+        var masterStart = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        f.ArrangeEvent(instance);
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", masterStart));
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", masterStart)]);
+
+        var newStart = InstanceStart.AddHours(-1);
+        await f.Sut.UpdateRecurringAsync(
+            EventId, new UpdateEventRequest("Weekly", newStart, newStart.AddHours(1), false, "Loc", "Body"),
+            RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.Start == masterStart.AddHours(-1)),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.PatchEventFieldsPreservingTimesAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// Arranges an all-in-series edit of a series whose master Google will not resolve, with local
+    /// rows reaching back only as far as <paramref name="earliestRowStart"/> — the proxy anchor.
+    /// Captures the content-hash handed to the omit-start/end patch.
+    /// </summary>
+    private static void ArrangeUnresolvedMasterSeries(
+        Fixture f, out StrongBox<string?> capturedHash, DateTimeOffset? earliestRowStart = null)
+    {
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var earliest = f.RecurringInstance(Guid.NewGuid(), "inst-1", earliestRowStart ?? InstanceStart.AddDays(-7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([earliest, instance]);
+
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SeriesMaster?)null);
+
+        var captured = new StrongBox<string?>(null);
+        f.Google.Setup(g => g.PatchEventFieldsPreservingTimesAsync(
+                GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback((string _, CalendarEvent _, string h, CancellationToken _) => captured.Value = h)
+            .Returns(Task.CompletedTask);
+
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+        capturedHash = captured;
+    }
+
+    // ── FHQ-173: neither half of a split may commit on its own ────────────────────────────────
+    //
+    // A "this and following" edit is TWO independent Google mutations with nothing transactional
+    // between them, so whichever runs first has already committed when the second fails. The ORDER
+    // therefore decides what the family is left with:
+    //   * truncate first (the shipped order) — the original series is chopped at the split with
+    //     NOTHING replacing it. Every occurrence from the split onwards is gone, on every device the
+    //     calendar is shared with, and the user is told only that their edit failed.
+    //   * create first — a duplicate, overlapping series. Visible, non-destructive, and something
+    //     the family can put right themselves in the Google Calendar app.
+    // Neither is desirable; only one is recoverable, so the create goes first.
+    //
+    // A failed truncate is then compensated by deleting the series the create just made — but ONLY
+    // when the failure proves Google never processed the truncation. The first version of this work
+    // compensated unconditionally, on the argument that "if the compensating delete fails in turn we
+    // land in the duplicate state, so compensation can never be worse than not compensating". That
+    // enumerates only the delete FAILING. The delete SUCCEEDING against a truncation that actually
+    // committed — Google applied it and lost the response to a 5xx or a dropped connection — leaves
+    // the original series truncated with its replacement removed: the exact hole this ticket exists
+    // to prevent, actively created rather than merely risked.
+    //
+    // Hence the rule these tests pin: under ambiguity, prefer the recoverable outcome. A duplicate
+    // is visible and user-correctable; a hole is silent, permanent data loss on the system of record.
+    //
+    // ONE ERROR PER INCIDENT FROM THIS SERVICE (FHQ-161's rule, applied to Error). These tests assert
+    // the COUNT of Error records, not merely that one is present. The successful-compensation case
+    // asserts the absence of any Warning or Error at all: the calendar is back to where it started,
+    // which the logging standard classes as expected-and-handled.
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateFails_LeavesTheOriginalSeriesUntruncated()
+    {
+        var f = new Fixture();
+        var createFailure = new GoogleApiException(HttpStatusCode.ServiceUnavailable, "CreateRecurringEvent");
+        var split = ArrangePartialWriteSplit(f, createFailure: createFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(createFailure);
+
+        // The headline regression. In the shipped order the truncation had ALREADY committed by the
+        // time the create was attempted, so this failure destroyed the tail of the family's series.
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a create that fails must not leave the original series truncated with nothing replacing it");
+        split.Calls.Should().Equal(CreateCall);
+
+        // There is nothing to compensate: the create is the write that failed, so no forward series
+        // id exists. Compensation is for a failed truncate only.
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        f.Cache.Verify(c => c.Record(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateMayHaveBeenProcessed_ReportsThePossibleOrphanAtError()
+    {
+        // CreateRecurringEventAsync runs under RetryPolicy.RejectedOnly, so a 5xx is never repeated:
+        // Google may have inserted the series and lost only the response. No id came back, so there
+        // is nothing to delete and nothing to look it up by — the residual state can only be named.
+        var f = new Fixture();
+        ArrangePartialWriteSplit(f, createFailure: new GoogleApiException(HttpStatusCode.ServiceUnavailable, "CreateRecurringEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleApiException>();
+
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCreateWasRejected_ReportsNothing()
+    {
+        // A 4xx means Google understood the request and refused it, so nothing was written and there
+        // is no residual state at all. The exception the caller already gets IS the report; an Error
+        // here would be a false alarm about an orphan that cannot exist.
+        var f = new Fixture();
+        ArrangePartialWriteSplit(f, createFailure: new GoogleApiException(HttpStatusCode.BadRequest, "CreateRecurringEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        await act.Should().ThrowAsync<GoogleApiException>();
+
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateRejectedOutright_DeletesTheForwardSeriesItJustCreated()
+    {
+        // A 4xx truncate is positive evidence that Google did NOT process it, so the original series
+        // is provably untouched and the forward series can be safely undone.
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure,
+            "the caller is told about the write that actually failed, never about the clean-up");
+
+        // Deleted by the id the CREATE returned — never one derived, guessed, or read back.
+        f.Google.Verify(g => g.DeleteEventAsync(GoogleCalId, ForwardSeriesId, It.IsAny<CancellationToken>()), Times.Once);
+        split.Calls.Should().Equal(CreateCall, TruncateCall, CompensateCall);
+
+        // Compensated cleanly: the calendar is back to its pre-edit state, which is exactly what the
+        // user has been told. That is an expected-and-handled outcome, not a degraded one.
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+        f.Logger.Records.Should().ContainSingle(r => r.Level == LogLevel.Information)
+            .Which.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId);
+
+        // The local rows survive because the remote series does. Pruning them here would delete the
+        // family's occurrences locally to match a truncation that never happened.
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateMayHaveBeenProcessed_LeavesTheForwardSeriesInPlace()
+    {
+        // THE regression for the compensator's own failure mode. PatchSeriesRecurrenceAsync runs
+        // under RetryPolicy.Full, where a 5xx is explicitly modelled as "may have been processed".
+        // If Google applied the truncation and the response was lost, deleting the forward series
+        // would leave the original chopped at the split with its replacement gone — a hole, created
+        // by the clean-up. So: no delete. Leave the duplicate, report it, rethrow.
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.ServiceUnavailable, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "undoing a write that may have committed is how the hole gets created");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+
+        f.Repo.Verify(r => r.DeleteEventAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateTimesOut_LeavesTheForwardSeriesInPlace()
+    {
+        // FHQ-91's per-attempt HttpClient timeout: a TaskCanceledException wrapping a
+        // TimeoutException, with the CALLER'S TOKEN UNTOUCHED. TaskCanceledException derives from
+        // OperationCanceledException, so a type test would call this a cancellation — it is not, and
+        // DomainExceptionHandler maps it to 504, not 499. It skips compensation because the request
+        // may have reached Google and been processed, which is a different rule reaching the same
+        // answer for a different reason.
+        var f = new Fixture();
+        var timeout = new TaskCanceledException("attempt timed out", new TimeoutException());
+        var split = ArrangePartialWriteSplit(f, truncateFailure: timeout);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<TaskCanceledException>()).Which.Should().BeSameAs(timeout);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a timed-out truncation may have been processed by Google anyway");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle()
+            .Which.Message.Should().Contain(ForwardSeriesId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateFailsWithTheCallerCancelled_AttemptsNoCompensation()
+    {
+        // Genuine cancellation, established by the TOKEN rather than the exception type — here with
+        // a truncation failure that would otherwise be compensated. There is no token left to write
+        // with, and reaching for CancellationToken.None would issue a fresh write on behalf of an
+        // abandoned request. The failure still reaches the caller: this path reports, never swallows.
+        var f = new Fixture();
+        using var cts = new CancellationTokenSource();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: truncateFailure, onTruncate: cts.Cancel);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing, cts.Token);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a cancelled token cannot carry a compensating write, and None would resurrect an abandoned request");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle()
+            .Which.Message.Should().Contain(ForwardSeriesId);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_CompensatingDeleteAlsoFails_ReportsBothSeriesAtError()
+    {
+        var f = new Fixture();
+        var truncateFailure = new GoogleApiException(HttpStatusCode.BadRequest, "PatchSeriesRecurrence");
+        ArrangePartialWriteSplit(
+            f,
+            truncateFailure: truncateFailure,
+            compensationFailure: new GoogleApiException(HttpStatusCode.InternalServerError, "DeleteEvent"));
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleApiException>()).Which.Should().BeSameAs(truncateFailure,
+            "a failed clean-up must not replace or mask the failure the user's edit actually hit");
+
+        // The duplicate is the residual state an operator has to clean up, so it is named: both
+        // series ids, and the calendar by FamilyHQ's own id.
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+        f.Logger.Records.Should().NotContain(r => r.Message.Contains(GoogleCalId),
+            "a Google calendar id is an email address (FHQ-166)");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_BothWritesSucceed_CreatesTheForwardSeriesBeforeTruncatingTheOriginal()
+    {
+        var f = new Fixture();
+        var split = ArrangePartialWriteSplit(f);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // The original's local rows at/after the split are pruned once BOTH writes have landed.
+        f.Repo.Verify(r => r.DeleteEventAsync(split.AtSplit.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(split.After.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.DeleteEventAsync(split.Before.Id, It.IsAny<CancellationToken>()), Times.Never);
+
+        // The series-rule map still carries BOTH series, so the reconcile stamps the truncated rule
+        // on the original's surviving instances and the fresh rule on the forward series'.
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-1"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("UNTIL=")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.AddEventAsync(
+            It.Is<CalendarEvent>(e => e.GoogleEventId == "fwd-inst-1"
+                && e.RecurrenceRule != null && e.RecurrenceRule.Contains("FREQ=WEEKLY") && !e.RecurrenceRule.Contains("UNTIL=")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        f.Logger.Records.Should().ContainSingle(r => r.Level == LogLevel.Information);
+        f.Logger.Records.Should().NotContain(r => r.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_TruncateNeedsReauth_PropagatesWithoutAttemptingCompensation()
+    {
+        // A reauth failure is "rejected, not processed" — the credentials never got past
+        // authorisation — so the may-have-been-processed rule would allow the delete. It is skipped
+        // for its own reason: the credentials ARE the failure, so the delete would be rejected
+        // identically, buying nothing but a second failure to explain. The reauth still reaches the
+        // caller, which is what puts the reconnect banner up.
+        var f = new Fixture();
+        var reauth = new GoogleReauthRequiredException(GoogleAuthFailureSource.CalendarApi, "invalid_grant");
+        var split = ArrangePartialWriteSplit(f, truncateFailure: reauth);
+
+        var act = () => f.Sut.UpdateRecurringAsync(
+            EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        (await act.Should().ThrowAsync<GoogleReauthRequiredException>()).Which.Should().BeSameAs(reauth);
+
+        f.Google.Verify(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a delete on the credentials that just failed cannot succeed");
+        split.Calls.Should().Equal(CreateCall, TruncateCall);
+
+        // The forward series is still on Google, so the residual state IS the duplicate one and is
+        // reported exactly as a failed compensating delete would report it.
+        var error = f.Logger.Records.Where(r => r.Level == LogLevel.Error).Should().ContainSingle().Subject;
+        error.Message.Should().Contain(SeriesId).And.Contain(ForwardSeriesId).And.Contain(AliceCalId.ToString());
+    }
+
+    private const string ForwardSeriesId = "new-series-id";
+    private const string CreateCall = "create-forward-series";
+    private const string TruncateCall = "truncate-original";
+    private const string CompensateCall = "delete-forward-series";
+
+    /// <summary>
+    /// FHQ-173. Arranges an ordinary "this and following" split — resolvable master, weekly rule
+    /// with no COUNT — and records the ORDER in which the two Google mutations and the compensating
+    /// delete are made, so a test can state which of them happened and which did not. Each of the
+    /// three can be made to fail independently.
+    /// </summary>
+    /// <param name="onTruncate">
+    /// Runs as the truncate call is made, before it fails. Lets a test cancel the caller's token at
+    /// the moment the second write goes out, which is when a real cancellation would land.
+    /// </param>
+    private static PartialWriteSplit ArrangePartialWriteSplit(
+        Fixture f,
+        Exception? createFailure = null,
+        Exception? truncateFailure = null,
+        Exception? compensationFailure = null,
+        Action? onTruncate = null)
+    {
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var before  = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart.AddDays(-7));
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        var after   = f.RecurringInstance(Guid.NewGuid(), "inst-3", InstanceStart.AddDays(7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([before, atSplit, after]);
+
+        var calls = new List<string>();
+
+        f.Google.Setup(g => g.CreateRecurringEventAsync(
+                GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, CalendarEvent e, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(CreateCall);
+                if (createFailure is not null)
+                    return Task.FromException<CalendarEvent>(createFailure);
+
+                e.GoogleEventId = ForwardSeriesId;
+                return Task.FromResult(e);
+            });
+
+        f.Google.Setup(g => g.PatchSeriesRecurrenceAsync(
+                GoogleCalId, SeriesId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(TruncateCall);
+                onTruncate?.Invoke();
+                return truncateFailure is null ? Task.CompletedTask : Task.FromException(truncateFailure);
+            });
+
+        f.Google.Setup(g => g.DeleteEventAsync(GoogleCalId, ForwardSeriesId, It.IsAny<CancellationToken>()))
+            .Returns((string _, string _, CancellationToken _) =>
+            {
+                calls.Add(CompensateCall);
+                return compensationFailure is null ? Task.CompletedTask : Task.FromException(compensationFailure);
+            });
+
+        // One surviving instance of the truncated original and one of the forward series, both
+        // RRULE-less as GetEventsAsync (pass 1) really returns them.
+        f.ArrangeReconcileWindow([
+            f.GoogleInstanceNoRule("inst-1", InstanceStart.AddDays(-7)),
+            f.GoogleInstanceNoRule("fwd-inst-1", InstanceStart, recurringId: ForwardSeriesId)
+        ]);
+
+        return new PartialWriteSplit(calls, before, atSplit, after);
+    }
+
+    private sealed record PartialWriteSplit(
+        IReadOnlyList<string> Calls, CalendarEvent Before, CalendarEvent AtSplit, CalendarEvent After);
+
     [Fact]
     public async Task DeleteRecurringAsync_ThisAndFollowing_CountSeries_TruncatesWithUntil()
     {
@@ -395,6 +1463,8 @@ public class CalendarEventServiceRecurringTests
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
         f.ArrangeEvent(instance);
+        // FHQ-172: the master patch shape asserted below presupposes a RESOLVABLE master, which is
+        // the Fixture's default — the degraded omit-start/end branch is opted into, never defaulted.
 
         // Reconcile window returns a normal instance and an exception (with overridden title + OriginalStartTime).
         var normal = f.GoogleInstance("inst-1", WindowStart.AddDays(7));
@@ -421,6 +1491,11 @@ public class CalendarEventServiceRecurringTests
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
         f.ArrangeEvent(instance);
+        // FHQ-172: a real time change needs the master's true origin, so state the anchor this test
+        // depends on rather than inheriting it — it is anchored at the edited occurrence's own
+        // start, which makes the shifted origin exactly the requested start.
+        f.Google.Setup(g => g.GetSeriesMasterAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart));
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", WindowStart.AddDays(7))]);
 
         var newStart = InstanceStart.AddHours(-1);
@@ -877,6 +1952,34 @@ public class CalendarEventServiceRecurringTests
     }
 
     [Fact]
+    public async Task CreateAsync_RecurringSeries_WhenConcurrentSyncInsertsSameInstances_DoesNotBlankTheStoredZone()
+    {
+        // The re-resolve folds this operation's fields onto the row the concurrent sync stored. That
+        // row may already carry the zone Google reported for the series; an insert that carries none
+        // (or a blank one) must not overwrite it, or the race would quietly cost the series its anchor.
+        var f = new Fixture();
+        f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+
+        var fetched = f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master");
+        fetched.IanaTimeZone = "";
+        f.ArrangeReconcileWindow([fetched]);
+
+        f.Repo.SetupSequence(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("23505: duplicate key value violates unique constraint \"IX_Events_GoogleEventId\""))
+            .ReturnsAsync(1);
+
+        var stored = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart);
+        stored.IanaTimeZone = LondonZoneId;
+        f.Repo.SetupSequence(r => r.GetEventByGoogleEventIdAsync("inst-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null).ReturnsAsync(stored);
+
+        await f.Sut.CreateAsync(CreateReq([AliceCalId], "Standup", InstanceStart, "Body", "RRULE:FREQ=WEEKLY;BYDAY=SU"));
+
+        stored.IanaTimeZone.Should().Be(LondonZoneId);
+    }
+
+    [Fact]
     public async Task CreateAsync_RecurringSeries_WhenReconcileFailsTwice_PropagatesTheError()
     {
         var f = new Fixture();
@@ -1113,6 +2216,17 @@ public class CalendarEventServiceRecurringTests
 
             Google.Setup(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
+
+            // FHQ-172: default to a RESOLVABLE series master, because that is production's
+            // overwhelming majority. Moq's own default is null, which this service reads as "the
+            // series' true origin is unknown" and routes down the degraded omit-start/end branch —
+            // so before this default, every test that simply forgot a setup was silently exercising
+            // the rare path while appearing to test the normal one. That mock-default trap is the
+            // same defect class that let the original bug ship, and it is fixed once here rather
+            // than by remembering to add a line to each new test. A test that WANTS the degraded
+            // path overrides this with an explicit null, which then reads as a deliberate choice.
+            Google.Setup(g => g.GetSeriesMasterAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart));
 
             // Real zone factory: a tzdb lookup is pure, deterministic computation (no I/O, no clock),
             // and substituting it would mean asserting DST behaviour against fake DST rules.

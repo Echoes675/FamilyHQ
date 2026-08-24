@@ -39,6 +39,11 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
             .IsRequired()
             .HasDefaultValue(0);
 
+        // FHQ-164: the calendar's default zone from Google's calendar resource. Same shape and cap
+        // as DayTheme.IanaTimeZone / DisplaySetting.IanaTimeZone.
+        builder.Property(c => c.IanaTimeZone)
+            .HasMaxLength(64);
+
         builder.HasIndex(c => new { c.GoogleCalendarId, c.UserId }).IsUnique();
 
         builder.HasOne(c => c.SyncState)

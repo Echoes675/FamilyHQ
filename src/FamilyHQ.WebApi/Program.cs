@@ -184,6 +184,12 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FamilyHQ.Data.FamilyHqDbContext>();
     db.Database.Migrate();
+
+    // FHQ-166: materialise the log-redaction singleton at boot. Its "no salt configured — tokens
+    // cannot be correlated across restarts" Warning is emitted from the constructor, and the first
+    // thing that resolves it otherwise is GoogleCalendarClient on the first sync. That can be hours
+    // after startup, long past the point an operator is reading the boot log after a deploy.
+    scope.ServiceProvider.GetRequiredService<IPiiRedactor>();
 }
 
 if (app.Configuration.GetValue<bool>("ReverseProxy:Enabled"))

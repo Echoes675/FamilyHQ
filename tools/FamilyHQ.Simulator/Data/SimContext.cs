@@ -39,6 +39,7 @@ public class SimContext : DbContext
             entity.Property(e => e.Summary).IsRequired().HasMaxLength(500);
             entity.Property(e => e.BackgroundColor).HasMaxLength(50);
             entity.Property(e => e.UserId).HasMaxLength(255);
+            entity.Property(e => e.TimeZone).HasMaxLength(255);
         });
 
         modelBuilder.Entity<SimulatedUser>(entity =>

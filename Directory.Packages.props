@@ -54,6 +54,11 @@
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageVersion Include="Serilog.Sinks.Seq" Version="9.1.0" />
     <PackageVersion Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+    <!-- Analyzers -->
+    <!-- FHQ-174: bans the DateTimeOffset/DateTime parse overloads that take no DateTimeStyles and so
+         resolve a zone-less string with the host machine's UTC offset. Imported by the four projects
+         that handle Google Calendar date payloads via build/GoogleDateParsingBan.props. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
     <!-- Versioning -->
     <PackageVersion Include="MinVer" Version="6.0.0" />
     <!-- Testing -->
