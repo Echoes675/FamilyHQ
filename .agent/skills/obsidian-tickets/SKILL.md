@@ -7,6 +7,22 @@ description: Project-specific skill that defines how Claude reads and writes tic
 
 The vault at `D:\Obsidian Vault\FamilyHQ` is the single source of truth for FamilyHQ tickets, specs, and plans. This skill tells Claude when and how to interact with it.
 
+## Vault root — the open vault is the parent folder
+
+**Obsidian has `D:\Obsidian Vault` open, not `D:\Obsidian Vault\FamilyHQ`.** The parent holds two
+project folders (`FamilyHQ/`, `RelayRobin/`) and one live config at `D:\Obsidian Vault\.obsidian\`.
+Each project folder still contains a leftover `.obsidian/` from when it was its own vault; **Obsidian
+ignores nested ones**, so anything read or written there has no effect on what renders.
+
+Two consequences that are easy to get wrong:
+
+- **MCP paths are vault-root-relative, so they start with `FamilyHQ/`** — `obsidian_get_file_contents("FamilyHQ/Tickets/FHQ-N/FHQ-N.md")`, not `"Tickets/FHQ-N/FHQ-N.md"`. Filesystem paths in this skill are absolute and unaffected.
+- **Dataview folder sources are one level deeper than they read.** Dashboard and epic roll-up queries are written to resolve under either root — `FROM "FamilyHQ/Tickets" OR "Tickets"`. Both names are deliberate: the bare one matches nothing in the combined vault, the prefixed one matches nothing if `FamilyHQ/` is ever opened standalone. Don't collapse them to one. `WHERE file.folder = this.file.folder` is relative and needs no prefix.
+
+Diagnosing "the dashboards render as raw text with the fences visible" means checking
+`D:\Obsidian Vault\.obsidian\`, never the nested copies (FHQ-157 — the nested folder was checked,
+found healthy, and the real cause went unfound for four days).
+
 ## Vault layout
 
 ```
@@ -76,6 +92,7 @@ Use mcp-obsidian tools (already wired up at user scope):
 - **Read:** `obsidian_get_file_contents`, `obsidian_list_files_in_vault`, `obsidian_list_files_in_dir`, `obsidian_simple_search`
 - **Write:** `obsidian_patch_content` (target a YAML key for frontmatter updates), `obsidian_append_content` (add to body sections)
 - **Pattern:** read-modify-write for frontmatter changes — atomic enough for solo use; no locking.
+- **Paths:** vault-root-relative, so prefixed with `FamilyHQ/` (see *Vault root* above).
 
 If MCP is unavailable (Obsidian not running), surface it to the user and skip vault writes — never silently drop.
 
