@@ -45,7 +45,7 @@ public class ThemeService : IThemeService, IAsyncDisposable
 
         try
         {
-            var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
+            var dto = await FetchTodayAsync();
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
@@ -56,11 +56,23 @@ public class ThemeService : IThemeService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Null when the kiosk has no saved location (204) — it keeps its default theme. The status is
+    /// checked before deserialising because an empty body makes GetFromJsonAsync throw.
+    /// </summary>
+    private async Task<DayThemeDto?> FetchTodayAsync()
+    {
+        using var response = await _httpClient.GetAsync("api/daytheme/today");
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DayThemeDto>();
+    }
+
     public async Task ApplyCurrentPeriodAsync()
     {
         try
         {
-            var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
+            var dto = await FetchTodayAsync();
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
