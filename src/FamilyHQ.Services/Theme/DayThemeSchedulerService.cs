@@ -206,7 +206,27 @@ public class DayThemeSchedulerService(
         TimeSpan? earliest = null;
         foreach (var userId in userIds)
         {
-            var dto = await dayThemeService.GetTodayAsync(userId, ct);
+            ct.ThrowIfCancellationRequested();
+
+            // Guarded per kiosk for the same reason as EnsureAllKiosksAsync. Without this the read
+            // side broke the guarantee the write side makes: one kiosk throwing here escapes to the
+            // loop's catch-all, which backs off instead of scheduling — so every OTHER kiosk loses
+            // its boundaries too, which is exactly what the per-kiosk guard exists to prevent.
+            Core.DTOs.DayThemeDto? dto;
+            try
+            {
+                dto = await dayThemeService.GetTodayAsync(userId, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Reading day-theme boundaries failed for one kiosk; continuing with the others");
+                continue;
+            }
+
             if (dto is null) continue;
 
             var delay = GetNextBoundaryDelay(dto);
