@@ -34,7 +34,12 @@ Feature: Settings Page
     When I navigate to the location tab
     And I enter "Edinburgh, Scotland" as the place name
     And I click save location
-    And I navigate to the display tab
+    # Barrier, not decoration: clicking save does not await the POST, and the display tab reads the
+    # boundaries once when it is opened. Without waiting for the saved pill, the tab can initialise
+    # before the row exists and finds none — which is what turned Deploy-Dev #708 red while passing
+    # locally, where the save simply won the race.
+    Then I see the location pill displaying "Edinburgh, Scotland"
+    When I navigate to the display tab
     Then I see the Morning theme tile with a time
     And I see the Daytime theme tile with a time
     And I see the Evening theme tile with a time
