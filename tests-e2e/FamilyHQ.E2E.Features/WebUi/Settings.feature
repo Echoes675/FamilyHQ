@@ -27,8 +27,14 @@ Feature: Settings Page
     Then I see the location pill displaying "Edinburgh, Scotland"
     And I see the "Saved" badge on the location pill
 
+  # FHQ-177: the theme is derived from the kiosk's SAVED location, so one has to exist before there
+  # are any times to show. This used to pass without saving anything because the boundaries came from
+  # an IP lookup — which in production returns the hosting datacentre, not the family's home.
   Scenario: Theme tiles are visible on the display tab
-    When I navigate to the display tab
+    When I navigate to the location tab
+    And I enter "Edinburgh, Scotland" as the place name
+    And I click save location
+    And I navigate to the display tab
     Then I see the Morning theme tile with a time
     And I see the Daytime theme tile with a time
     And I see the Evening theme tile with a time

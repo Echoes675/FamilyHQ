@@ -110,10 +110,13 @@ public class SettingsController : ControllerBase
             UpdatedAt = DateTimeOffset.UtcNow
         }, ct);
 
-        await _dayThemeService.RecalculateForTodayAsync(ct);
+        // Recalculating for a kiosk whose location was just cleared is a no-op — no location, no
+        // boundaries — so the same two lines serve both saving and deleting.
+        await _dayThemeService.RecalculateForTodayAsync(userId, ct);
 
-        var dto = await _dayThemeService.GetTodayAsync(ct);
-        await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
+        // FHQ-177: a bare signal, not a period. The theme is per-kiosk, so each client re-reads its
+        // own; pushing this kiosk's period to Clients.All would retheme every other kiosk to match it.
+        await _hubContext.Clients.All.SendAsync("ThemeChanged", ct);
 
         await _scheduler.TriggerRecalculationAsync();
 
@@ -131,10 +134,13 @@ public class SettingsController : ControllerBase
         var userId = _currentUser.UserId!;
         await _locationRepo.DeleteAsync(userId, ct);
 
-        await _dayThemeService.RecalculateForTodayAsync(ct);
+        // Recalculating for a kiosk whose location was just cleared is a no-op — no location, no
+        // boundaries — so the same two lines serve both saving and deleting.
+        await _dayThemeService.RecalculateForTodayAsync(userId, ct);
 
-        var dto = await _dayThemeService.GetTodayAsync(ct);
-        await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
+        // FHQ-177: a bare signal, not a period. The theme is per-kiosk, so each client re-reads its
+        // own; pushing this kiosk's period to Clients.All would retheme every other kiosk to match it.
+        await _hubContext.Clients.All.SendAsync("ThemeChanged", ct);
 
         await _scheduler.TriggerRecalculationAsync();
 

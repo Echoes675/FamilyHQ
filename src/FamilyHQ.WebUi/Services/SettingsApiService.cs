@@ -40,9 +40,11 @@ public class SettingsApiService : ISettingsApiService
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<DayThemeDto> GetTodayThemeAsync()
+    public async Task<DayThemeDto?> GetTodayThemeAsync()
     {
-        return (await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today"))!;
+        // 204 when the kiosk has no saved location: GetFromJsonAsync yields null, and the caller
+        // renders the tiles without times rather than an error.
+        return await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
     }
 
     public async Task<DisplaySettingDto> GetDisplayAsync()

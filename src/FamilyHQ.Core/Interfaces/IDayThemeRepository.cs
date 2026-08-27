@@ -4,13 +4,11 @@ namespace FamilyHQ.Core.Interfaces;
 
 public interface IDayThemeRepository
 {
-    Task<DayTheme?> GetByDateAsync(DateOnly date, CancellationToken ct = default);
-
     /// <summary>
-    /// The stored row with the greatest <see cref="DayTheme.Date"/>, or null when the table is empty.
-    /// FHQ-134: its <see cref="DayTheme.IanaTimeZone"/> is the family's effective zone, and is what the
-    /// theme service converts "now" into to derive the local date key. Read-only, no tracking.
+    /// FHQ-177: scoped to one kiosk. Rows are unique per (UserId, Date), so two kiosks in different
+    /// places each hold their own boundaries for the same calendar date.
     /// </summary>
-    Task<DayTheme?> GetMostRecentAsync(CancellationToken ct = default);
+    Task<DayTheme?> GetByDateAsync(string userId, DateOnly date, CancellationToken ct = default);
+
     Task<DayTheme> UpsertAsync(DayTheme dayTheme, CancellationToken ct = default);
 }

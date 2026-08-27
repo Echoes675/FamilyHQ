@@ -65,8 +65,8 @@ public class SettingsControllerTests
             .ReturnsAsync((55.9533, -3.1883));
         locationRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<LocationSetting>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string _, LocationSetting ls, CancellationToken _) => ls);
-        dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
                 null,
@@ -84,7 +84,9 @@ public class SettingsControllerTests
         // Assert
         result.Should().BeOfType<OkObjectResult>();
         schedulerMock.Verify(x => x.TriggerRecalculationAsync(), Times.Once);
-        clientMock.Verify(x => x.SendCoreAsync("ThemeChanged", It.Is<object[]>(o => o.Length > 0), It.IsAny<CancellationToken>()), Times.Once);
+        // FHQ-177: the signal carries NO period. Asserting the payload is empty is the point —
+        // a period here would be this kiosk's, pushed to every other kiosk.
+        clientMock.Verify(x => x.SendCoreAsync("ThemeChanged", It.Is<object[]>(o => o.Length == 0), It.IsAny<CancellationToken>()), Times.Once);
         weatherRefreshServiceMock.Verify(x => x.RefreshAsync(TestUserId, It.IsAny<CancellationToken>()), Times.Once);
         timeZoneServiceMock.Verify(x => x.RepersistAutoIfNotExplicitAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -95,8 +97,8 @@ public class SettingsControllerTests
         // Arrange
         var (sut, locationRepoMock, _, dayThemeServiceMock, schedulerMock, hubMock, _, weatherRefreshServiceMock, locationServiceMock, timeZoneServiceMock) = CreateSut();
         locationRepoMock.Setup(x => x.DeleteAsync(TestUserId, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.RecalculateForTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
                 null,
@@ -335,7 +337,7 @@ public class SettingsControllerTests
         currentUserMock.Setup(x => x.UserId).Returns(TestUserId);
         locationRepoMock.Setup(x => x.UpsertAsync(TestUserId, It.IsAny<LocationSetting>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string _, LocationSetting ls, CancellationToken _) => ls);
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DayThemeDto(new DateOnly(2026, 6, 15),
                 new TimeOnly(5, 0), new TimeOnly(6, 30), new TimeOnly(20, 0), new TimeOnly(21, 30),
                 null, "Daytime"));

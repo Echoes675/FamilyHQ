@@ -10,7 +10,7 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
 
     public event Action? OnEventsUpdated;
     public event Action? OnConnectionStatusUpdated;
-    public event Action<string>? OnThemeChanged;
+    public event Action? OnThemeChanged;
     public event Action? OnWeatherUpdated;
     public event Action? Reconnected;
 
@@ -42,7 +42,8 @@ public class SignalRService : IAsyncDisposable, ISignalRConnectionEvents
             OnConnectionStatusUpdated?.Invoke();
         });
 
-        _hubConnection.On<string>("ThemeChanged", period => OnThemeChanged?.Invoke(period));
+        // FHQ-177: the signal carries no period — it is per-kiosk now, so each client re-reads its own.
+        _hubConnection.On("ThemeChanged", () => OnThemeChanged?.Invoke());
 
         _hubConnection.On("WeatherUpdated", () => OnWeatherUpdated?.Invoke());
 
