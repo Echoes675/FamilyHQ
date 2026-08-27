@@ -218,6 +218,41 @@ public class DayThemeSchedulerServiceTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_DoesNotSignalOnEveryBackoff_WhenNoKioskHasALocation()
+    {
+        // A fresh install has no saved location, which is now a SUPPORTED state rather than a fault.
+        // With no kiosk to schedule, the loop falls back to the retry backoff — and must not treat
+        // that as a boundary. Signalling there would push a ThemeChanged to every client and log an
+        // Information line once a minute, forever, on a system that is simply not configured yet.
+        using var cts = new CancellationTokenSource();
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var clock = new TimerArmedTimeProvider(fakeTime);
+
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        var broadcasts = 0;
+        var broadcasterMock = new Mock<IThemeBroadcaster>();
+        broadcasterMock.Setup(x => x.BroadcastThemeChangedAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken _) => { Interlocked.Increment(ref broadcasts); return Task.CompletedTask; });
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+
+        var sut = CreateSut(dayThemeServiceMock.Object, broadcasterMock.Object, logger, clock,
+                            kioskUserIds: []);
+
+        var run = sut.RunExecuteAsync(cts.Token);
+        await clock.WaitForNextTimerAsync();                    // first iteration is waiting
+        clock.LastTimerDueTime.Should().Be(TimeSpan.FromMilliseconds(1),
+            "with no kiosk there is no boundary to wait for, so the wait is the retry backoff");
+        fakeTime.Advance(TimeSpan.FromSeconds(1));              // let that wait complete
+        await clock.WaitForNextTimerAsync();                    // second iteration is waiting, so the first finished
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(15));
+
+        broadcasts.Should().Be(1,
+            "only the startup signal — a completed backoff is not a boundary and must not be broadcast");
+        logger.Records.Should().NotContain(r => r.Message.Contains("Theme boundary reached"));
+    }
+
+    [Fact]
     public void GetNextBoundaryDelay_WithNonUtcZone_UsesLocalTimeNotUtc()
     {
         // Clock fixed at 04:50 UTC = 05:50 Europe/Dublin (BST, UTC+1).

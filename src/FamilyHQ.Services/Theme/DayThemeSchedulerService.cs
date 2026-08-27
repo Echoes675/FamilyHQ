@@ -122,18 +122,19 @@ public class DayThemeSchedulerService(
         // happens to the field afterwards.
         var recalculationToken = Volatile.Read(ref _delayCts).Token;
 
-        TimeSpan nextBoundary;
+        TimeSpan nextWait;
+        bool waitingOnABoundary;
         using (var scope = serviceProvider.CreateScope())
         {
             await EnsureAllKiosksAsync(scope.ServiceProvider, stoppingToken);
-            nextBoundary = await ComputeNextBoundaryDelayAsync(scope.ServiceProvider, stoppingToken);
+            (nextWait, waitingOnABoundary) = await ComputeNextWaitAsync(scope.ServiceProvider, stoppingToken);
         }
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, recalculationToken);
         // Delay through the injected TimeProvider, like every boundary computation above, so the whole
         // iteration honours one clock. With TimeProvider.System this is the ambient Task.Delay; under
         // FakeTimeProvider the wait becomes drivable, which is what makes the delay-elapses path testable.
-        await Task.Delay(nextBoundary, timeProvider, linkedCts.Token);
+        await Task.Delay(nextWait, timeProvider, linkedCts.Token);
 
         // The delay may have crossed midnight; ensure again before the post-delay read so the new
         // calendar day's rows are present. This closes the FHQ-55 race in which the rollover check
@@ -142,6 +143,13 @@ public class DayThemeSchedulerService(
         {
             await EnsureAllKiosksAsync(scope.ServiceProvider, stoppingToken);
         }
+
+        // Only signal if we were actually waiting on a boundary. When no kiosk has a theme the wait
+        // is the retry backoff, not a boundary — signalling there would push a ThemeChanged to every
+        // client once a minute forever, and log it, on a fresh install that simply has no location
+        // configured yet. A kiosk that gains a location mid-backoff is served by
+        // TriggerRecalculationAsync, which SettingsController raises on save.
+        if (!waitingOnABoundary) return;
 
         // Broadcast AFTER the delay so kiosks re-read the period that just became active. The signal
         // carries no period: it is per-kiosk now, and each kiosk fetches its own.
@@ -188,7 +196,7 @@ public class DayThemeSchedulerService(
     /// cross their boundaries at different instants, so the loop must wake for whichever comes first
     /// and let each kiosk work out whether anything changed for it.
     /// </summary>
-    private async Task<TimeSpan> ComputeNextBoundaryDelayAsync(IServiceProvider scoped, CancellationToken ct)
+    private async Task<(TimeSpan Wait, bool IsBoundary)> ComputeNextWaitAsync(IServiceProvider scoped, CancellationToken ct)
     {
         var locationRepo = scoped.GetRequiredService<ILocationSettingRepository>();
         var dayThemeService = scoped.GetRequiredService<IDayThemeService>();
@@ -207,8 +215,8 @@ public class DayThemeSchedulerService(
 
         // No kiosk has a usable theme (none configured, or every calculation failed). Re-check on the
         // error backoff rather than spinning, and rather than sleeping until a midnight we cannot
-        // locate without a zone.
-        return earliest ?? _options.LoopErrorBackoff;
+        // locate without a zone. Flagged as NOT a boundary so the caller does not signal.
+        return earliest is null ? (_options.LoopErrorBackoff, false) : (earliest.Value, true);
     }
 
     protected TimeSpan GetNextBoundaryDelay(Core.DTOs.DayThemeDto dto)
