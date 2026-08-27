@@ -35,10 +35,12 @@ Feature: Settings Page
     And I enter "Edinburgh, Scotland" as the place name
     And I click save location
     # Barrier, not decoration: clicking save does not await the POST, and the display tab reads the
-    # boundaries once when it is opened. Without waiting for the saved pill, the tab can initialise
-    # before the row exists and finds none — which is what turned Deploy-Dev #708 red while passing
-    # locally, where the save simply won the race.
-    Then I see the location pill displaying "Edinburgh, Scotland"
+    # boundaries once when it is opened, so the tab can initialise before the row exists (Deploy-Dev
+    # #708). It must be the BADGE: the pill shows the auto-detected city pre-save, and dev's simulated
+    # geolocation is Edinburgh too, so asserting the pill text matched a value that was already there
+    # and returned in 0.0s — no barrier at all (Deploy-Dev #712). The badge only flips Auto -> Saved
+    # on the server response, by which point SaveLocation has awaited the recalculation.
+    Then I see the "Saved" badge on the location pill
     When I navigate to the display tab
     Then I see the Morning theme tile with a time
     And I see the Daytime theme tile with a time
