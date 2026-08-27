@@ -14,6 +14,36 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 13. A "barrier" assertion that matches a value already on screen synchronises nothing (FHQ-177)
+
+**Shape:** an E2E step is added to wait for an async operation to finish, it looks correct, it passes
+locally and in most CI runs — and it is inert, leaving the original race fully intact.
+
+**The instance.** FHQ-177 made the day theme depend on a *saved* location, so
+`Theme tiles are visible on the display tab` had to save one first. `I click save location` does not
+await the POST, and `SaveLocation` geocodes, recalculates the theme, refreshes weather and repersists
+the zone before responding — while the display tab reads the boundaries once, when opened. Deploy-Dev
+**#708** failed; local passed, because the save simply won the race there.
+
+The barrier added was `Then I see the location pill displaying "Edinburgh, Scotland"`. Deploy-Dev
+**#712** then failed on the same scenario, with #711 and #713 green either side.
+
+**Why it was inert:** the location pill shows the **auto-detected** city *before* any save, and the
+dev Simulator's geolocation returns **Edinburgh** — the exact value being asserted. The step matched
+text that was already rendered and returned in **0.0s**.
+
+**The tell is the step duration.** A barrier that completes in 0.0s did not wait for anything. The
+step trace prints per-step timings for failed scenarios; read them before concluding a wait is real.
+
+**Fix:** assert the `"Saved"` badge instead. It reads `"Auto"` until the save response returns — the
+neighbouring no-location scenario asserts precisely that — so it cannot be satisfied early, and by
+the time it flips the server has awaited the recalculation.
+
+**Generalisation worth carrying:** when choosing a barrier, ask *what value is on screen before the
+operation starts?* If the assertion would pass against that value, it is decoration. Prefer a state
+that provably cannot exist pre-operation over text that merely happens to change.
+
+
 ### 11. "Day view shows hourly temperatures" fails in the 23:00–00:00 UTC window — seed date vs view date diverge (FHQ-134 class)
 
 **Status:** root cause **confirmed by code trace**; fix implemented on branch `fix/FHQ-134-160-theme-local-date` (E2E zone alignment commit). **Not yet resolved** — per this file's convention the bar is evidence, and the honest bar here is that the divergence window *no longer exists by construction* plus a green E2E gate. Do not mark resolved off green daytime runs alone; the argument to check is the one below, not the run count.
