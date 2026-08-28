@@ -25,7 +25,6 @@ public class SettingsController : ControllerBase
     private readonly IWeatherService _weatherService;
     private readonly IWeatherRefreshService _weatherRefreshService;
     private readonly ICurrentUserService _currentUser;
-    private readonly ILocationService _locationService;
     private readonly ITimeZoneService _timeZoneService;
 
     public SettingsController(
@@ -39,7 +38,6 @@ public class SettingsController : ControllerBase
         IWeatherService weatherService,
         IWeatherRefreshService weatherRefreshService,
         ICurrentUserService currentUser,
-        ILocationService locationService,
         ITimeZoneService timeZoneService)
     {
         _locationRepo = locationRepo;
@@ -52,38 +50,23 @@ public class SettingsController : ControllerBase
         _weatherService = weatherService;
         _weatherRefreshService = weatherRefreshService;
         _currentUser = currentUser;
-        _locationService = locationService;
         _timeZoneService = timeZoneService;
     }
 
     [HttpGet("location")]
     public async Task<IActionResult> GetLocation(CancellationToken ct)
     {
+        // FHQ-179: there is no auto-detection fallback. The only automatic source was an ip-api call
+        // made from THIS container, so it resolved the hosting VPS — a family in Derry with no saved
+        // location was shown a German city, labelled "Auto", as though FamilyHQ had worked out where
+        // they were. There is no correct value to substitute: a server-side IP lookup describes the
+        // server, in every deployment. 404 means "none saved", and the client renders an empty state.
         var userId = _currentUser.UserId!;
         var setting = await _locationRepo.GetAsync(userId, ct);
-        if (setting is not null)
-            return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
 
-        try
-        {
-            var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
-
-            // FHQ-178: the detected zone is deliberately NOT persisted any more. This lookup runs
-            // from the WebApi container, so it describes the hosting VPS — production reported
-            // Europe/Berlin for a household in Derry. Persisting it put a datacentre's zone on the
-            // path that stamps `familyZone` onto new Google events (GetSendZoneAsync), and
-            // persist-once meant nothing would ever re-derive it. The kiosk reports its own OS zone
-            // instead (SetKioskZoneAsync).
-            //
-            // The place NAME is still shown as a rough hint for the search box; it is never
-            // persisted and never reaches Google.
-            return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Auto-detection failed; no location available.");
-            return NotFound();
-        }
+        return setting is null
+            ? NotFound()
+            : Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
     }
 
     [HttpPost("location")]
