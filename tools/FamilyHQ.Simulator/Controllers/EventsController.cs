@@ -48,8 +48,7 @@ public class EventsController : ControllerBase
             calendarId, singleEvents, timeMin, timeMax);
         var userId = ExtractUserId(Request);
 
-        var injected = SyncFailureResponse.TryBuild(_failureStore.Get(userId ?? string.Empty));
-        if (injected is not null)
+        if (InjectedFailure(userId) is { } injected)
             return injected;
 
         var userEventIds = await _db.Events
@@ -169,6 +168,11 @@ public class EventsController : ControllerBase
     public async Task<IActionResult> CreateEvent(string calendarId, [FromBody] GoogleEventRequest body)
     {
         _logger.LogInformation("[SIM] POST create event for calendar: {CalendarId}", calendarId);
+        var userId = ExtractUserId(Request);
+
+        if (InjectedFailure(userId) is { } injected)
+            return injected;
+
         if (body == null)
         {
             _logger.LogWarning("[SIM] Failed to deserialize request body for CreateEvent.");
@@ -180,7 +184,6 @@ public class EventsController : ControllerBase
             return missingTzError;
         }
 
-        var userId = ExtractUserId(Request);
         var newEvent = new SimulatedEvent
         {
             Id = "simulated_evt_" + Guid.NewGuid().ToString("N"),
@@ -244,6 +247,9 @@ public class EventsController : ControllerBase
     {
         _logger.LogInformation("[SIM] PUT update event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
+
+        if (InjectedFailure(userId) is { } injected)
+            return injected;
 
         if (body is not null && RecurringTimedStartMissingTimeZone(body) is { } missingTzError)
         {
@@ -323,6 +329,9 @@ public class EventsController : ControllerBase
         _logger.LogInformation("[SIM] POST move event: {EventId} from calendar: {CalendarId} to: {Destination}", eventId, calendarId, destination);
         var userId = ExtractUserId(Request);
 
+        if (InjectedFailure(userId) is { } injected)
+            return injected;
+
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 
         if (existing == null)
@@ -367,6 +376,11 @@ public class EventsController : ControllerBase
         //     This is why the master edit MUST NOT be a PUT: events.update is a full-resource replace
         //     that drops the omitted recurrence array and collapses the series.
         _logger.LogInformation("[SIM] PATCH event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
+        var userId = ExtractUserId(Request);
+
+        // Before the no-op short-circuit: Google authenticates before it looks at the body.
+        if (InjectedFailure(userId) is { } injected)
+            return injected;
 
         var hasRecurrence = body?.Recurrence is not null;
         var hasScalarFields = body is not null && (
@@ -385,7 +399,6 @@ public class EventsController : ControllerBase
             return Ok();
         }
 
-        var userId = ExtractUserId(Request);
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 
         // FHQ-145: a PATCH to a compound INSTANCE id "{masterId}_{stamp}" with no stored row is the
@@ -465,6 +478,9 @@ public class EventsController : ControllerBase
     {
         _logger.LogInformation("[SIM] DELETE event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
+
+        if (InjectedFailure(userId) is { } injected)
+            return injected;
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 
@@ -905,6 +921,15 @@ public class EventsController : ControllerBase
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
                 ? parsed
                 : null;
+
+    /// <summary>
+    /// The per-user failure mode an E2E scenario injected through the backdoor, as the Google-shaped
+    /// error Google would return — or null to proceed normally. Consulted by the list endpoint and,
+    /// since FHQ-175, by every write endpoint too: a revoked grant fails events.insert/update/patch/
+    /// delete/move exactly as it fails events.list, so a kiosk save can exercise the reauth path.
+    /// </summary>
+    private IActionResult? InjectedFailure(string? userId) =>
+        SyncFailureResponse.TryBuild(_failureStore.Get(userId ?? string.Empty));
 
     // Token format: "simulated_{userId}_{nonce}"
     private static string? ExtractUserId(HttpRequest request)

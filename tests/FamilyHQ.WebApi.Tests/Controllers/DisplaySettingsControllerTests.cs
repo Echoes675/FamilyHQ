@@ -120,7 +120,6 @@ public class DisplaySettingsControllerTests
         var currentUserMock = new Mock<ICurrentUserService>();
         currentUserMock.Setup(x => x.UserId).Returns("test-user-123");
 
-        var locationServiceMock = new Mock<ILocationService>();
         var timeZoneServiceMock = new Mock<ITimeZoneService>();
 
         var sut = new SettingsController(
@@ -134,7 +133,6 @@ public class DisplaySettingsControllerTests
             weatherServiceMock.Object,
             weatherRefreshServiceMock.Object,
             currentUserMock.Object,
-            locationServiceMock.Object,
             timeZoneServiceMock.Object);
 
         return (sut, locationRepoMock, geocodingMock, dayThemeServiceMock, schedulerMock, hubMock, displayRepoMock);

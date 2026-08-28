@@ -11,7 +11,7 @@ public class ThemeService : IThemeService, IAsyncDisposable
     private readonly SignalRService _signalRService;
     private readonly IDisplaySettingService _displaySettingService;
     private readonly ILogger<ThemeService> _logger;
-    private readonly Action<string> _themeChangedHandler;
+    private readonly Action _themeChangedHandler;
     private IJSObjectReference? _module;
 
     public ThemeService(
@@ -27,7 +27,9 @@ public class ThemeService : IThemeService, IAsyncDisposable
         _displaySettingService = displaySettingService;
         _logger = logger;
 
-        _themeChangedHandler = period => _ = ApplyPushedThemeChangeAsync(period);
+        // FHQ-177: the push is a bare signal. Re-read our own period rather than trusting a
+        // broadcast value, which would be another kiosk's answer whenever they differ.
+        _themeChangedHandler = () => _ = ApplyPushedThemeChangeAsync();
         _signalRService.OnThemeChanged += _themeChangedHandler;
     }
 
@@ -43,7 +45,7 @@ public class ThemeService : IThemeService, IAsyncDisposable
 
         try
         {
-            var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
+            var dto = await FetchTodayAsync();
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
@@ -54,11 +56,23 @@ public class ThemeService : IThemeService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Null when the kiosk has no saved location (204) — it keeps its default theme. The status is
+    /// checked before deserialising because an empty body makes GetFromJsonAsync throw.
+    /// </summary>
+    private async Task<DayThemeDto?> FetchTodayAsync()
+    {
+        using var response = await _httpClient.GetAsync("api/daytheme/today");
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DayThemeDto>();
+    }
+
     public async Task ApplyCurrentPeriodAsync()
     {
         try
         {
-            var dto = await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today");
+            var dto = await FetchTodayAsync();
             if (dto is not null)
                 await SetThemeAsync(dto.CurrentPeriod);
         }
@@ -68,18 +82,23 @@ public class ThemeService : IThemeService, IAsyncDisposable
         }
     }
 
-    private async Task ApplyPushedThemeChangeAsync(string period)
+    private async Task ApplyPushedThemeChangeAsync()
     {
         // Fire-and-forget from the SignalR handler — exceptions must be
         // observed here or they vanish silently (FHQ-125).
         try
         {
+            // FHQ-177: the signal no longer carries a period, so re-read ours. The IsAutoTheme guard
+            // still matters and does NOT live in ApplyCurrentPeriodAsync: that method is also called
+            // from Settings at the moment auto-theme is switched on, when the flag has not been
+            // written yet. Dropping the guard here would let a boundary override a manually chosen
+            // theme.
             if (_displaySettingService.IsAutoTheme)
-                await SetThemeAsync(period);
+                await ApplyCurrentPeriodAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to apply pushed theme change for {Period}", period);
+            _logger.LogWarning(ex, "Failed to apply pushed theme change");
         }
     }
 

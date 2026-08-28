@@ -13,54 +13,40 @@ namespace FamilyHQ.Services.Tests.Theme;
 
 public class DayThemeSchedulerServiceTests
 {
-    [Fact]
-    public async Task ExecuteAsync_DoesNotCrashHost_WhenGetTodayReportsMissingRecord()
+    private const string DefaultKiosk = "kiosk-kitchen";
+
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(TimeoutException))]
+    public async Task ExecuteAsync_DoesNotCrashHost_WhenTheIterationFailsOutrightAsync(Type failureType)
     {
-        // Reproduces the FHQ-55 production crash: at a day boundary GetTodayAsync finds no record
-        // and throws InvalidOperationException. The loop must absorb it (log + continue), not let it
-        // escape ExecuteAsync — which, under BackgroundServiceExceptionBehavior.StopHost, kills the host.
+        // FHQ-55 production crash: an exception escaping ExecuteAsync stops the whole host, because
+        // it runs with BackgroundServiceExceptionBehavior.StopHost. The loop must absorb it and
+        // continue.
+        //
+        // FHQ-177 moved WHERE this is proven. Per-kiosk failures are now caught per kiosk (so one bad
+        // kiosk cannot cost the others their theme), which means a throwing GetTodayAsync no longer
+        // reaches the loop guard at all. The kiosk ENUMERATION sits outside both inner guards, so it
+        // is what still exercises the outer one — the host protection is unchanged, the mechanism
+        // that reaches it is not.
         using var cts = new CancellationTokenSource();
-        var dayThemeServiceMock = new Mock<IDayThemeService>();
-        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var getCalls = 0;
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
-            // Call 1 is the startup read; the first loop read is call 2 — cancel there to bound the run.
-            .Callback(() => { if (Interlocked.Increment(ref getCalls) >= 2) cts.Cancel(); })
-            .ThrowsAsync(new InvalidOperationException("No DayTheme record found for today."));
+        var failure = (Exception)Activator.CreateInstance(failureType, "iteration failed")!;
         var logger = new RecordingLogger<DayThemeSchedulerService>();
 
-        var sut = CreateSut(dayThemeServiceMock.Object, new Mock<IThemeBroadcaster>().Object, logger);
+        // Deterministic termination without polling a real clock: the enumeration is called once by
+        // startup and once by the first loop iteration, so cancelling on the second call lets exactly
+        // one iteration fail and be logged, then the backoff is cancelled and the loop exits.
+        var enumerations = 0;
+        var sut = CreateSut(new Mock<IDayThemeService>().Object, new Mock<IThemeBroadcaster>().Object,
+                            logger, kioskEnumerationFailure: failure,
+                            onEnumerate: () => { if (Interlocked.Increment(ref enumerations) >= 2) cts.Cancel(); });
 
-        await sut.Invoking(s => s.RunExecuteAsync(cts.Token))
-            .Should().NotThrowAsync("a missing DayTheme record must not stop the host");
+        await sut.Invoking(s => s.RunExecuteAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(15)))
+            .Should().NotThrowAsync("a failing iteration must never stop the host");
 
         logger.Records.Should().Contain(
             r => r.Level == LogLevel.Error && r.Message.Contains("loop iteration failed"),
             "the failed iteration must be logged before the loop continues");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_DoesNotCrashHost_WhenLoopIterationThrowsTransientError()
-    {
-        // The loop guard must contain ANY exception (not just the missing-record one) — e.g. a transient
-        // database/location failure — so a single bad iteration never takes down the host.
-        using var cts = new CancellationTokenSource();
-        var dayThemeServiceMock = new Mock<IDayThemeService>();
-        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var getCalls = 0;
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
-            .Callback(() => { if (Interlocked.Increment(ref getCalls) >= 2) cts.Cancel(); })
-            .ThrowsAsync(new TimeoutException("transient database timeout"));
-        var logger = new RecordingLogger<DayThemeSchedulerService>();
-
-        var sut = CreateSut(dayThemeServiceMock.Object, new Mock<IThemeBroadcaster>().Object, logger);
-
-        await sut.Invoking(s => s.RunExecuteAsync(cts.Token))
-            .Should().NotThrowAsync("a transient loop failure must not stop the host");
-
-        logger.Records.Should().Contain(r => r.Level == LogLevel.Error && r.Message.Contains("loop iteration failed"));
     }
 
     [Theory]
@@ -89,18 +75,20 @@ public class DayThemeSchedulerServiceTests
         var getTodayCalls = 0;
         Action triggerRecalculation = () => { };
         var dayThemeServiceMock = new Mock<IDayThemeService>();
-        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 var call = Interlocked.Increment(ref getTodayCalls);
-                // Call 1 is the startup read; call 2 is the first loop iteration's boundary read.
-                if (call == 2)
+                // FHQ-177: startup only ensures rows and signals — it no longer reads a period, since
+                // the period is per-kiosk and the kiosks fetch their own. So call 1 IS the first loop
+                // iteration's boundary read (it used to be call 2).
+                if (call == 1)
                     for (var i = 0; i < triggerCount; i++) triggerRecalculation();
-                // Call 3 is the re-read the trigger must produce — stop the loop so the test terminates.
-                if (call >= 3) cts.Cancel();
-                return Task.FromResult(dto);
+                // Call 2 is the re-read the trigger must produce — stop the loop so the test terminates.
+                if (call >= 2) cts.Cancel();
+                return Task.FromResult<DayThemeDto?>(dto);
             });
         var logger = new RecordingLogger<DayThemeSchedulerService>();
 
@@ -114,46 +102,44 @@ public class DayThemeSchedulerServiceTests
         // on a fake clock the test never advances, which this turns into a prompt failure.
         await sut.RunExecuteAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(15));
 
-        getTodayCalls.Should().Be(3, "the trigger must cause exactly one fresh boundary re-read");
+        getTodayCalls.Should().Be(2, "the trigger must cause exactly one fresh boundary re-read");
         logger.Records.Should().NotContain(r => r.Level == LogLevel.Error,
             "the trigger must be absorbed as a clean cancellation, not surface as a failed iteration");
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenBoundaryDelayElapses_BroadcastsThePeriodThatBecameActive()
+    public async Task ExecuteAsync_SignalsKiosksOnlyAfterTheBoundaryHasActuallyPassed()
     {
-        // The scheduler's core contract: sleep to the next boundary, then re-read and broadcast the
-        // period that has JUST become active — not the one that was active when the delay started.
-        // Now unit-testable because the delay runs on the injected TimeProvider: TimerArmedTimeProvider
-        // signals the instant the loop enters the delay and advancing the fake clock is what ends it,
-        // so the whole test is driven by explicit steps with no polling and no wall-clock waiting.
+        // The scheduler's core contract, restated for FHQ-177. The signal no longer carries a period
+        // — it is per-kiosk now, so each kiosk re-reads its own — which means "broadcast the period
+        // that just became active" becomes "do not signal until the boundary has actually passed".
+        // Asserting the clock at each broadcast keeps the original guarantee testable: a signal sent
+        // early would have kiosks re-read and find the OLD period, leaving the theme stale until the
+        // next boundary.
         using var cts = new CancellationTokenSource();
         // 06:30 UTC = 07:30 Europe/Dublin (BST); the next boundary is EveningStart 20:00 local = 12.5h away.
         var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
         var clock = new TimerArmedTimeProvider(fakeTime);
-        DayThemeDto DtoFor(string period) => new(
+        var dto = new DayThemeDto(
             new DateOnly(2024, 6, 21),
             new TimeOnly(5, 30), new TimeOnly(6, 0), new TimeOnly(20, 0), new TimeOnly(21, 30),
             "Europe/Dublin",
-            period);
+            "Daytime");
 
-        var getTodayCalls = 0;
         var dayThemeServiceMock = new Mock<IDayThemeService>();
-        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<CancellationToken>()))
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<CancellationToken>()))
-            // Calls 1 (startup) and 2 (the pre-delay read) still see Daytime; the boundary is crossed
-            // during the delay, so the post-delay read must observe Evening.
-            .Returns(() => Task.FromResult(DtoFor(Interlocked.Increment(ref getTodayCalls) <= 2 ? "Daytime" : "Evening")));
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult<DayThemeDto?>(dto));
 
-        var broadcastPeriods = new List<string>();
+        var broadcastAt = new List<DateTimeOffset>();
         var broadcasterMock = new Mock<IThemeBroadcaster>();
-        broadcasterMock.Setup(x => x.BroadcastThemeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string period, CancellationToken _) =>
+        broadcasterMock.Setup(x => x.BroadcastThemeChangedAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken _) =>
             {
-                broadcastPeriods.Add(period);
-                // Startup broadcast, then the post-delay one — stop the loop so the test terminates.
-                if (broadcastPeriods.Count >= 2) cts.Cancel();
+                broadcastAt.Add(fakeTime.GetUtcNow());
+                // Startup signal, then the post-delay one — stop the loop so the test terminates.
+                if (broadcastAt.Count >= 2) cts.Cancel();
                 return Task.CompletedTask;
             });
         var logger = new RecordingLogger<DayThemeSchedulerService>();
@@ -165,9 +151,127 @@ public class DayThemeSchedulerServiceTests
         fakeTime.Advance(TimeSpan.FromHours(13));        // cross the boundary — this is what ends the wait
         await run.WaitAsync(TimeSpan.FromSeconds(15));   // tripwire only; the loop completes inline
 
-        broadcastPeriods.Should().Equal(["Daytime", "Evening"],
-            "the boundary broadcast must carry the period read after the delay, not the one read before it");
+        broadcastAt.Should().HaveCount(2);
+        broadcastAt[0].Should().Be(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero),
+            "the startup signal fires immediately");
+        // 20:00 Dublin (BST) is 19:00 UTC; the loop must not have signalled before that instant.
+        broadcastAt[1].Should().BeOnOrAfter(new DateTimeOffset(2024, 6, 21, 19, 0, 0, TimeSpan.Zero),
+            "the boundary signal must wait until the boundary has passed in the kiosk's own zone");
         logger.Records.Should().NotContain(r => r.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ContinuesWithOtherKiosks_WhenOneKiosksCalculationFails()
+    {
+        // A polar latitude throws from the sun calculator, and unusable coordinates can too. Before
+        // scoping there was one calculation and one failure mode; now a single bad kiosk must not
+        // deny every other kiosk its theme, so the per-kiosk guard sits INSIDE the loop iteration.
+        using var cts = new CancellationTokenSource();
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var dto = new DayThemeDto(
+            new DateOnly(2024, 6, 21),
+            new TimeOnly(5, 30), new TimeOnly(6, 0), new TimeOnly(20, 0), new TimeOnly(21, 30),
+            "Europe/Dublin", "Daytime");
+
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync("kiosk-broken", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Sun phase 'Dusk' is not available"));
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync("kiosk-good", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync("kiosk-broken", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DayThemeDto?)null);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync("kiosk-good", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(dto);
+
+        var broadcasts = 0;
+        var broadcasterMock = new Mock<IThemeBroadcaster>();
+        broadcasterMock.Setup(x => x.BroadcastThemeChangedAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken _) => { if (Interlocked.Increment(ref broadcasts) >= 1) cts.Cancel(); return Task.CompletedTask; });
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+
+        var sut = CreateSut(dayThemeServiceMock.Object, broadcasterMock.Object, logger, fakeTime,
+                            kioskUserIds: ["kiosk-broken", "kiosk-good"]);
+
+        await sut.Invoking(s => s.RunExecuteAsync(cts.Token)).Should().NotThrowAsync();
+
+        dayThemeServiceMock.Verify(x => x.EnsureTodayAsync("kiosk-good", It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+            "the healthy kiosk must still be calculated after the broken one throws");
+        logger.Records.Should().Contain(r => r.Level == LogLevel.Error && r.Message.Contains("one kiosk"));
+        logger.Records.Should().NotContain(r => r.Message.Contains("loop iteration failed"),
+            "a single kiosk's failure is contained per-kiosk, not by the whole-iteration guard");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_StillSchedulesOtherKiosks_WhenOneKiosksBoundaryReadThrows()
+    {
+        // The write side (EnsureAllKiosksAsync) guards per kiosk; the read side must too. Without it
+        // one kiosk throwing escapes to the loop's catch-all, which backs off instead of scheduling —
+        // so a single bad kiosk silently costs every other kiosk its boundaries.
+        using var cts = new CancellationTokenSource();
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var clock = new TimerArmedTimeProvider(fakeTime);
+        var dto = new DayThemeDto(
+            new DateOnly(2024, 6, 21),
+            new TimeOnly(5, 30), new TimeOnly(6, 0), new TimeOnly(20, 0), new TimeOnly(21, 30),
+            "Europe/Dublin", "Daytime");
+
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        dayThemeServiceMock.Setup(x => x.EnsureTodayAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync("kiosk-broken", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+        dayThemeServiceMock.Setup(x => x.GetTodayAsync("kiosk-good", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(dto);
+
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+        var sut = CreateSut(dayThemeServiceMock.Object, new Mock<IThemeBroadcaster>().Object, logger, clock,
+                            kioskUserIds: ["kiosk-broken", "kiosk-good"]);
+
+        var run = sut.RunExecuteAsync(cts.Token);
+        await clock.WaitForNextTimerAsync();
+        // 06:30 UTC is 07:30 in Dublin; the healthy kiosk's next boundary is 20:00 local = 12.5h away.
+        clock.LastTimerDueTime.Should().Be(TimeSpan.FromHours(12.5),
+            "the healthy kiosk's boundary must still be scheduled despite the other kiosk throwing");
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(15));
+
+        logger.Records.Should().NotContain(r => r.Message.Contains("loop iteration failed"),
+            "the failure is contained per-kiosk, not by the whole-iteration guard");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotSignalOnEveryBackoff_WhenNoKioskHasALocation()
+    {
+        // A fresh install has no saved location, which is now a SUPPORTED state rather than a fault.
+        // With no kiosk to schedule, the loop falls back to the retry backoff — and must not treat
+        // that as a boundary. Signalling there would push a ThemeChanged to every client and log an
+        // Information line once a minute, forever, on a system that is simply not configured yet.
+        using var cts = new CancellationTokenSource();
+        var fakeTime = new FakeTimeProvider(new DateTimeOffset(2024, 6, 21, 6, 30, 0, TimeSpan.Zero));
+        var clock = new TimerArmedTimeProvider(fakeTime);
+
+        var dayThemeServiceMock = new Mock<IDayThemeService>();
+        var broadcasts = 0;
+        var broadcasterMock = new Mock<IThemeBroadcaster>();
+        broadcasterMock.Setup(x => x.BroadcastThemeChangedAsync(It.IsAny<CancellationToken>()))
+            .Returns((CancellationToken _) => { Interlocked.Increment(ref broadcasts); return Task.CompletedTask; });
+        var logger = new RecordingLogger<DayThemeSchedulerService>();
+
+        var sut = CreateSut(dayThemeServiceMock.Object, broadcasterMock.Object, logger, clock,
+                            kioskUserIds: []);
+
+        var run = sut.RunExecuteAsync(cts.Token);
+        await clock.WaitForNextTimerAsync();                    // first iteration is waiting
+        clock.LastTimerDueTime.Should().Be(TimeSpan.FromMilliseconds(1),
+            "with no kiosk there is no boundary to wait for, so the wait is the retry backoff");
+        fakeTime.Advance(TimeSpan.FromSeconds(1));              // let that wait complete
+        await clock.WaitForNextTimerAsync();                    // second iteration is waiting, so the first finished
+        cts.Cancel();
+        await run.WaitAsync(TimeSpan.FromSeconds(15));
+
+        broadcasts.Should().Be(1,
+            "only the startup signal — a completed backoff is not a boundary and must not be broadcast");
+        logger.Records.Should().NotContain(r => r.Message.Contains("Theme boundary reached"));
     }
 
     [Fact]
@@ -234,11 +338,27 @@ public class DayThemeSchedulerServiceTests
         IDayThemeService dayThemeService,
         IThemeBroadcaster themeBroadcaster,
         ILogger<DayThemeSchedulerService> logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IReadOnlyList<string>? kioskUserIds = null,
+        Exception? kioskEnumerationFailure = null,
+        Action? onEnumerate = null)
     {
         // The scheduler resolves IDayThemeService from a per-iteration DI scope; mock the scope chain.
         var scopeProviderMock = new Mock<IServiceProvider>();
         scopeProviderMock.Setup(x => x.GetService(typeof(IDayThemeService))).Returns(dayThemeService);
+
+        // FHQ-177: the scheduler has no HTTP context, so it asks the repository which kiosks have a
+        // location and works through them.
+        var locationRepoMock = new Mock<ILocationSettingRepository>();
+        locationRepoMock.Setup(x => x.GetUserIdsWithLocationAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                onEnumerate?.Invoke();
+                return kioskEnumerationFailure is not null
+                    ? Task.FromException<IReadOnlyList<string>>(kioskEnumerationFailure)
+                    : Task.FromResult(kioskUserIds ?? [DefaultKiosk]);
+            });
+        scopeProviderMock.Setup(x => x.GetService(typeof(ILocationSettingRepository))).Returns(locationRepoMock.Object);
 
         var scopeMock = new Mock<IServiceScope>();
         scopeMock.Setup(x => x.ServiceProvider).Returns(scopeProviderMock.Object);

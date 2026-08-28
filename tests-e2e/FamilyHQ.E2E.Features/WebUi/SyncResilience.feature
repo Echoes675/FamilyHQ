@@ -39,3 +39,9 @@ Feature: Sync resilience and diagnostics
     And I wait for the failed sync run to be recorded
     And I view the diagnostics tab
     Then I see the failed run in the recent failed sync runs table
+
+  Scenario: Saving an event while Google needs reconnecting tells me to reconnect instead of retrying
+    Given the Google Calendar API will return a 401 for the user
+    When I attempt to create the event "Dentist" from the dashboard
+    Then the event modal shows the error "Your Google connection needs to be re-authorised."
+    And the event modal error does not ask me to try again

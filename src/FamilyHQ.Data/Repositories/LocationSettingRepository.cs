@@ -35,6 +35,12 @@ public class LocationSettingRepository : ILocationSettingRepository
         return existing;
     }
 
+    public async Task<IReadOnlyList<string>> GetUserIdsWithLocationAsync(CancellationToken ct = default)
+        => await _context.LocationSettings
+            .AsNoTracking()
+            .Select(x => x.UserId)
+            .ToListAsync(ct);
+
     public async Task DeleteAsync(string userId, CancellationToken ct = default)
     {
         var existing = await GetAsync(userId, ct);

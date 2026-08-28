@@ -15,11 +15,6 @@ Feature: Settings Page
   Scenario: Calendars tab is the second tab on the settings page
     Then the settings tab in position 2 is "Calendars"
 
-  Scenario: Location tab shows auto-detected location when none saved
-    When I navigate to the location tab
-    Then I see the location pill displaying "Edinburgh, Scotland"
-    And I see the "Auto" badge on the location pill
-
   Scenario: User can save a location
     When I navigate to the location tab
     And I enter "Edinburgh, Scotland" as the place name
@@ -27,7 +22,20 @@ Feature: Settings Page
     Then I see the location pill displaying "Edinburgh, Scotland"
     And I see the "Saved" badge on the location pill
 
+  # FHQ-177: the theme is derived from the kiosk's SAVED location, so one has to exist before there
+  # are any times to show. This used to pass without saving anything because the boundaries came from
+  # an IP lookup — which in production returns the hosting datacentre, not the family's home.
   Scenario: Theme tiles are visible on the display tab
+    When I navigate to the location tab
+    And I enter "Edinburgh, Scotland" as the place name
+    And I click save location
+    # Barrier, not decoration: clicking save does not await the POST, and the display tab reads the
+    # boundaries once when it is opened, so the tab can initialise before the row exists (Deploy-Dev
+    # #708). It must be the BADGE. Asserting the pill TEXT was inert: pre-FHQ-179 the pill showed an
+    # auto-detected city, dev's simulated geolocation was Edinburgh too, so the assertion matched a
+    # value already on screen and returned in 0.0s — no barrier at all (Deploy-Dev #712). Since
+    # FHQ-179 there is no pill until a location is saved, so the badge cannot be satisfied early.
+    Then I see the "Saved" badge on the location pill
     When I navigate to the display tab
     Then I see the Morning theme tile with a time
     And I see the Daytime theme tile with a time

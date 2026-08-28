@@ -5,11 +5,13 @@ namespace FamilyHQ.Core.Exceptions;
 /// </summary>
 public abstract class NotFoundException : DomainException
 {
-    protected NotFoundException(string message) : base(message)
+    protected NotFoundException(string message, string? userMessage = null)
+        : base(message, userMessage)
     {
     }
 
-    protected NotFoundException(string message, Exception inner) : base(message, inner)
+    protected NotFoundException(string message, Exception inner, string? userMessage = null)
+        : base(message, inner, userMessage)
     {
     }
 }

@@ -1,6 +1,7 @@
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Services
 @inject ISettingsApiService SettingsApiService
+@inject IKioskTimeZoneReporter KioskTimeZoneReporter
 @inject IJSRuntime JS
 
 <div class="settings-section-content">
@@ -10,16 +11,19 @@
         <p class="settings-label">Current location</p>
         @if (_locationSetting is not null)
         {
+            @* FHQ-179: a location is always one the family saved. The "Auto" badge is gone with the
+               IP lookup that produced it — that lookup ran on the server and reported the hosting
+               datacentre, so the badge asserted a detection that had never happened. *@
             <div class="settings-location-pill" data-testid="location-pill">
                 <span>@_locationSetting.PlaceName</span>
-                <span class="settings-location-pill__badge @(_locationSetting.IsAutoDetected ? "badge--auto" : "badge--saved")" data-testid="location-badge">
-                    @(_locationSetting.IsAutoDetected ? "Auto" : "Saved")
+                <span class="settings-location-pill__badge badge--saved" data-testid="location-badge">
+                    Saved
                 </span>
             </div>
         }
         else
         {
-            <p class="settings-hint">No location saved — using automatic detection.</p>
+            <p class="settings-hint">No location saved — set one so the weather and theme match where you are.</p>
         }
 
         <div class="settings-input-container">
@@ -185,6 +189,14 @@
         try
         {
             await SettingsApiService.ResetTimeZoneAsync();
+
+            // FHQ-178: reset clears the explicit zone and re-resolves, which with no saved location
+            // yields nothing — the kiosk's report is what fills it. Reporting only happens on page
+            // load, and clicking reset does not reload, so without this the zone would sit empty
+            // (i.e. UTC for outbound Google writes) until the kiosk next started. Report immediately
+            // so "auto" means the kiosk's own zone from the moment it is chosen.
+            await KioskTimeZoneReporter.ReportAsync();
+
             _tz = await SettingsApiService.GetTimeZoneAsync();
         }
         finally

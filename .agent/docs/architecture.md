@@ -28,7 +28,7 @@
 
 ## Key Entities
 - **CalendarEvent**: Google Calendar event data.
-- **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date. Calculated once per day by DayThemeSchedulerService using sunrise/sunset for the configured location.
+- **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date, **per kiosk** — unique on (UserId, Date) since FHQ-177. Calculated once per day per kiosk by DayThemeSchedulerService from sunrise/sunset at that kiosk's **saved LocationSetting**. A kiosk with no saved location gets no row and keeps its default theme: the boundaries used to come from a server-side IP lookup, which geolocates the hosting VPS rather than the family, so guessing is choosing a known-wrong answer.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
 - **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp. `Condition` is persisted as the `WeatherCondition` **ordinal**, so new enum members must be appended — inserting one re-labels every stored row (pinned by `WeatherConditionTests`).
@@ -37,8 +37,8 @@
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
-- **IDayThemeService / DayThemeService**: Calculates and persists today's DayTheme boundaries.
-- **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists. Loops using Task.Delay to wake at each period boundary and broadcast `ThemeChanged(periodName)` to all SignalR clients via IHubContext<CalendarHub>.
+- **IDayThemeService / DayThemeService**: Calculates and persists today's DayTheme boundaries for one kiosk (every method takes a `userId`). Reads the kiosk's `LocationSetting` and derives the zone from its coordinates — never IP geolocation.
+- **DayThemeSchedulerService** (IHostedService): On startup, ensures today's DayTheme exists for every kiosk with a saved location. Loops using Task.Delay to wake at the **earliest** upcoming boundary across all kiosks, then broadcasts a payload-free `ThemeChanged` signal via IHubContext<CalendarHub>. Each kiosk's calculation is guarded independently, so one bad location cannot deny the others a theme.
 - **ILocationService / LocationService**: Returns the effective location — saved LocationSetting from DB if present, otherwise IP-based geolocation (ip-api.com free tier) as fallback. A `status != "success"` body is a hard failure, never retried: ip-api's three documented fail messages (`private range`, `reserved range`, `invalid query`) are all permanent for the querying IP. Its rate limiting is a separate HTTP 429 (+ `X-Ttl`) signal, absorbed by the retry handler below (FHQ-114).
 - **IGeocodingService / GeocodingService**: Geocodes a place name string to lat/lon using the Nominatim (OpenStreetMap) API. No API key required. Base URL is config-driven — Nominatim in production, simulator in dev/staging.
 - **TransientHttpRetryHandler** (`DelegatingHandler`, FHQ-114): retry for the three non-Google outbound clients — ip-api, Nominatim, Open-Meteo — all registered in `AddFamilyHqServices`. Retries idempotent (GET/HEAD) requests on 408/429/5xx and connection failures, honouring `Retry-After` (and ip-api's `X-Ttl`, **429 only** — `X-Ttl` is a rate-limit-window counter paired with `X-Rl` and ships on non-throttled responses too), otherwise exponential backoff with jitter. A **429 with no hint** (Open-Meteo's shape) is surfaced un-retried so caller-level backoff owns it rather than spending more of an exhausted quota. Every sleep is capped by `MaxRetryDelay` on **both** the response and the connection-failure path; anything longer surfaces immediately. Sleeps happen inside `SendAsync`, so each client's `Timeout` is the TOTAL budget for the attempt+backoff sequence — see `ExternalHttpResilienceOptions` for the worst-case arithmetic, and note the two interactive clients (ip-api, Nominatim — both awaited by `GET`/`POST /api/settings/location` with no client-side timeout) are budgeted near their pre-retry 10s ceiling rather than the background client's. (Contrast `ResilientGoogleCalendarClient`, which decorates an interface because the Google SDK is not a plain `HttpClient`.)
@@ -138,9 +138,10 @@ The periodic safety-net timer feeds the same queue (**FHQ-38**): `SyncOrchestrat
 Distinct from the per-event `SyncEventFailure` subsystem (individual events that could not be saved), the queue records whole-run failures. `GET /api/diagnostics/failed-sync-runs` returns the current user's recent terminally-failed runs (`FailedSyncRunDto`), surfaced on the Diagnostics tab of the Settings page in a third "Recent failed sync runs" section (`data-testid="diagnostics-runs-table"`). These re-run automatically on the next change, so they are informational, not action items.
 
 ## API Endpoints
-- `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period)
+- `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period) — **requires auth**; the caller's identity selects the kiosk. `204 No Content` when that kiosk has no saved location. Anonymous access was removed in FHQ-177: the response's timezone and solar times together disclose roughly where the family lives.
 - `GET  /api/settings/location` → LocationSettingDto or 404
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
+- `PUT  /api/settings/timezone/kiosk` `{ ianaTimeZone }` → records the zone the KIOSK's own OS reports (FHQ-178). Ignored when an explicit zone is set; sent on every kiosk load, so a change to the kiosk's timezone propagates without polling. Server-side IP geolocation is never used for the zone — it resolves the hosting VPS, and this value is stamped onto new Google events via `GetSendZoneAsync`.
 - `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier 0–1.0, OpaqueSurfaces, TransitionDurationSecs, ThemeSelection) — requires auth; returns defaults if no row exists for the user
 - `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs, themeSelection }` → upserts the user's DisplaySetting row; requires auth
 - `GET  /api/weather/current` → CurrentWeatherDto (condition, temperature, wind)
@@ -161,7 +162,7 @@ Four named fixed-window policies (`Configuration/RateLimitingConfiguration.cs`, 
 
 ## SignalR (CalendarHub — /hubs/calendar)
 - **EventsUpdated**: existing — triggers calendar refresh on all clients.
-- **ThemeChanged(string period)**: pushed by DayThemeSchedulerService when the current time-of-day period changes. `period` is one of: `"Morning"`, `"Daytime"`, `"Evening"`, `"Night"`.
+- **ThemeChanged()**: pushed by DayThemeSchedulerService when a period boundary passes. **Carries no payload** since FHQ-177 — the period is per-kiosk, so a single broadcast value would be wrong for any kiosk elsewhere. Each client responds by re-reading its own `GET /api/daytheme/today`.
 - **WeatherUpdated**: pushed by WeatherPollerService when new weather data is stored. No parameters — UI fetches fresh data via HTTP.
 
 ## UI Layer Architecture

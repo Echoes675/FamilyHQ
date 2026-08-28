@@ -1,6 +1,7 @@
 @using System.Text.RegularExpressions
 @using FamilyHQ.Core.Calendar.Recurrence
 @using FamilyHQ.Core.DTOs
+@using FamilyHQ.Core.Exceptions
 @using FamilyHQ.WebUi.Services
 @inject ICalendarApiService CalendarApi
 @inject Microsoft.Extensions.Logging.ILogger<EventModal> Logger
@@ -98,7 +99,7 @@
                     </div>
                     @if (!string.IsNullOrEmpty(_modalError))
                     {
-                        <div class="alert alert-danger">@_modalError</div>
+                        <div class="alert alert-danger" role="alert" data-testid="event-modal-error">@_modalError</div>
                     }
                 </div>
                 <div class="modal-footer flex justify-between">
@@ -148,6 +149,11 @@
     // them would be misleading.
     private IReadOnlyList<CalendarSummaryViewModel> SelectableCalendars =>
         Calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
+
+    // FHQ-175: shown only when the server supplied no kiosk-vetted message. A vetted message
+    // carries its own advice, so these are the only strings here allowed to say "please try again".
+    private const string SaveFailedFallback = "Couldn't save your event — please try again.";
+    private const string DeleteFailedFallback = "Couldn't delete this event — please try again.";
 
     private bool _showEventModal;
     /// <summary>FHQ-63: lets the dashboard defer the idle day-rollover while an event is being edited.</summary>
@@ -424,7 +430,7 @@
 
         if (effectiveMemberIds.Count == 0)
         {
-            _modalError = "Please select at least one calendar.";
+            _modalError = NoMembersException.UserFacingMessage;
             return;
         }
         if (_eventModel.End < _eventModel.Start)
@@ -493,7 +499,7 @@
         }
         catch (Exception ex)
         {
-            _modalError = "Couldn't save your event — please try again.";
+            _modalError = UserFacingMessage.ForFailure(ex, SaveFailedFallback);
             Logger.LogError(ex, "Failed to save the event from the modal.");
         }
         finally
@@ -524,7 +530,7 @@
         }
         catch (Exception ex)
         {
-            _modalError = "Couldn't delete this event — please try again.";
+            _modalError = UserFacingMessage.ForFailure(ex, DeleteFailedFallback);
             Logger.LogError(ex, "Failed to delete event {EventId} from the modal.", _eventModel.Id);
         }
         finally
@@ -578,7 +584,7 @@
         }
         catch (Exception ex)
         {
-            _modalError = "Couldn't save your event — please try again.";
+            _modalError = UserFacingMessage.ForFailure(ex, SaveFailedFallback);
             Logger.LogError(ex, "Failed to save the event from the modal.");
         }
         finally

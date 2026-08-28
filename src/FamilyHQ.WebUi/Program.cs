@@ -87,6 +87,8 @@ public class Program
         .AddHttpMessageHandler<CorrelationIdMessageHandler>()
         .AddHttpMessageHandler<CustomAuthorizationMessageHandler>();
 
+        builder.Services.AddScoped<IKioskTimeZoneReporter, KioskTimeZoneReporter>();
+
         builder.Services.AddHttpClient<IDiagnosticsApiService, DiagnosticsApiService>(client =>
         {
             client.BaseAddress = new Uri(backendUrl);

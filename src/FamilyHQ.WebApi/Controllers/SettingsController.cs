@@ -25,7 +25,6 @@ public class SettingsController : ControllerBase
     private readonly IWeatherService _weatherService;
     private readonly IWeatherRefreshService _weatherRefreshService;
     private readonly ICurrentUserService _currentUser;
-    private readonly ILocationService _locationService;
     private readonly ITimeZoneService _timeZoneService;
 
     public SettingsController(
@@ -39,7 +38,6 @@ public class SettingsController : ControllerBase
         IWeatherService weatherService,
         IWeatherRefreshService weatherRefreshService,
         ICurrentUserService currentUser,
-        ILocationService locationService,
         ITimeZoneService timeZoneService)
     {
         _locationRepo = locationRepo;
@@ -52,31 +50,23 @@ public class SettingsController : ControllerBase
         _weatherService = weatherService;
         _weatherRefreshService = weatherRefreshService;
         _currentUser = currentUser;
-        _locationService = locationService;
         _timeZoneService = timeZoneService;
     }
 
     [HttpGet("location")]
     public async Task<IActionResult> GetLocation(CancellationToken ct)
     {
+        // FHQ-179: there is no auto-detection fallback. The only automatic source was an ip-api call
+        // made from THIS container, so it resolved the hosting VPS — a family in Derry with no saved
+        // location was shown a German city, labelled "Auto", as though FamilyHQ had worked out where
+        // they were. There is no correct value to substitute: a server-side IP lookup describes the
+        // server, in every deployment. 404 means "none saved", and the client renders an empty state.
         var userId = _currentUser.UserId!;
         var setting = await _locationRepo.GetAsync(userId, ct);
-        if (setting is not null)
-            return Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
 
-        try
-        {
-            var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
-            // Auto-discovery is a change point: persist the detected zone ONCE so outbound Google
-            // writes read it (GetSendZoneAsync) instead of resolving ip-api per write (FHQ-43).
-            await _timeZoneService.EnsureAutoZonePersistedAsync(autoLocation.IanaTimeZone, ct);
-            return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Auto-detection failed; no location available.");
-            return NotFound();
-        }
+        return setting is null
+            ? NotFound()
+            : Ok(new LocationSettingDto(setting.PlaceName, IsAutoDetected: false));
     }
 
     [HttpPost("location")]
@@ -110,10 +100,13 @@ public class SettingsController : ControllerBase
             UpdatedAt = DateTimeOffset.UtcNow
         }, ct);
 
-        await _dayThemeService.RecalculateForTodayAsync(ct);
+        // Recalculating for a kiosk whose location was just cleared is a no-op — no location, no
+        // boundaries — so the same two lines serve both saving and deleting.
+        await _dayThemeService.RecalculateForTodayAsync(userId, ct);
 
-        var dto = await _dayThemeService.GetTodayAsync(ct);
-        await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
+        // FHQ-177: a bare signal, not a period. The theme is per-kiosk, so each client re-reads its
+        // own; pushing this kiosk's period to Clients.All would retheme every other kiosk to match it.
+        await _hubContext.Clients.All.SendAsync("ThemeChanged", ct);
 
         await _scheduler.TriggerRecalculationAsync();
 
@@ -131,10 +124,13 @@ public class SettingsController : ControllerBase
         var userId = _currentUser.UserId!;
         await _locationRepo.DeleteAsync(userId, ct);
 
-        await _dayThemeService.RecalculateForTodayAsync(ct);
+        // Recalculating for a kiosk whose location was just cleared is a no-op — no location, no
+        // boundaries — so the same two lines serve both saving and deleting.
+        await _dayThemeService.RecalculateForTodayAsync(userId, ct);
 
-        var dto = await _dayThemeService.GetTodayAsync(ct);
-        await _hubContext.Clients.All.SendAsync("ThemeChanged", dto.CurrentPeriod, ct);
+        // FHQ-177: a bare signal, not a period. The theme is per-kiosk, so each client re-reads its
+        // own; pushing this kiosk's period to Clients.All would retheme every other kiosk to match it.
+        await _hubContext.Clients.All.SendAsync("ThemeChanged", ct);
 
         await _scheduler.TriggerRecalculationAsync();
 
@@ -224,6 +220,25 @@ public class SettingsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
             return BadRequest("Unknown IANA timezone.");
         await _timeZoneService.SetExplicitZoneAsync(request.IanaTimeZone, ct);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// FHQ-178: the kiosk reports the zone its own OS is set to, on every load. It is the only
+    /// automatic source that describes the family rather than the datacentre. Ignored when an
+    /// explicit zone is set, and re-reported each load so a change to the kiosk's timezone
+    /// propagates without polling.
+    /// </summary>
+    [HttpPut("timezone/kiosk")]
+    public async Task<IActionResult> SetKioskTimeZone([FromBody] SetTimeZoneRequest request, CancellationToken ct)
+    {
+        // A kiosk on an old TZDB could report a zone this server cannot resolve. That is not a
+        // client error worth surfacing on a wall display — the zone simply stays as it was, and
+        // GetSendZoneAsync keeps returning whatever was already there (or null).
+        if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
+            return NoContent();
+
+        await _timeZoneService.SetKioskZoneAsync(request.IanaTimeZone, ct);
         return NoContent();
     }
 

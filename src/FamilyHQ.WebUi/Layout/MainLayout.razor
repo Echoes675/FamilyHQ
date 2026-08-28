@@ -4,6 +4,7 @@
 @using FamilyHQ.WebUi.Components.Weather
 @using FamilyHQ.WebUi.Services.Auth
 @inject IThemeService ThemeService
+@inject IKioskTimeZoneReporter KioskTimeZoneReporter
 @inject IDisplaySettingService DisplaySettingService
 @inject IWeatherUiService WeatherUiService
 @inject IAuthenticationService AuthService
@@ -37,7 +38,12 @@
         await DisplaySettingService.InitialiseAsync();  // must run first so ThemeService can read ThemeSelection
         await ThemeService.InitialiseAsync();
         if (await AuthService.IsAuthenticatedAsync())
+        {
+            // FHQ-178: report this kiosk's own OS time zone. Every load, not once — that is what
+            // makes a change to the kiosk's timezone propagate, with nothing to poll.
+            await KioskTimeZoneReporter.ReportAsync();
             await WeatherUiService.InitialiseAsync();
+        }
     }
 
     private void Recover()

@@ -564,11 +564,7 @@ public class CalendarEventService(
                 "Refusing an all-in-series {TimingChange} on series {SeriesId} (calendar {CalendarInfoId}): the master supplied no start, so the series' new origin cannot be derived without relocating it. Nothing was written.",
                 timingChange, seriesId, owner.Id);
 
-            throw new SeriesOriginUnresolvedException(
-                "This series' original start could not be read from Google, so its times cannot be " +
-                "changed for the whole series without moving the series itself. Nothing has been " +
-                "changed. If the series still exists in Google Calendar this may clear on a retry; " +
-                "if it does not, edit the series in the Google Calendar app instead.");
+            throw SeriesOriginUnresolvedException.ForSeriesTimingChange();
         }
 
         var master = new CalendarEvent
@@ -947,11 +943,7 @@ public class CalendarEventService(
                 "Refusing a \"this and following\" split of COUNT-bounded series {SeriesId} (calendar {CalendarInfoId}): the master supplied no start, so the remaining count could only be derived from the earliest local row and may be wrong. Nothing was written.",
                 seriesId, owner.Id);
 
-            throw new SeriesOriginUnresolvedException(
-                "This series' original start could not be read from Google, so the number of " +
-                "occurrences left after this one cannot be worked out reliably. Nothing has been " +
-                "changed. If the series still exists in Google Calendar this may clear on a retry; " +
-                "if it does not, split the series in the Google Calendar app instead.");
+            throw SeriesOriginUnresolvedException.ForSeriesSplit();
         }
 
         var seriesZoneId = await ResolveSeriesZoneIdAsync(owner, seriesId, seriesRows, anchor, ct);
