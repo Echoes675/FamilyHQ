@@ -9,7 +9,6 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ILocationService locationService,
     ITimeZoneLookup timeZoneLookup) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
@@ -20,7 +19,7 @@ public class TimeZoneService(
         var userId = currentUser.UserId;
         if (string.IsNullOrEmpty(userId)) return null;
 
-        // Saved custom location -> derive from its lat/lon (GeoTimeZone, bundled data). NO ip-api.
+        // Saved custom location -> derive from its lat/lon (GeoTimeZone, bundled data).
         var location = await locationRepo.GetAsync(userId, ct);
         if (location is not null)
         {
@@ -28,17 +27,64 @@ public class TimeZoneService(
             if (!string.IsNullOrWhiteSpace(derived) && IsValidZone(derived)) return derived;
         }
 
-        // No saved location -> auto-detect via ip-api (single call returns location AND timezone).
-        // Never let a tz lookup throw — return null on any failure.
-        try
+        // FHQ-178: there is deliberately NO ip-api fallback here any more. That call is made from the
+        // WebApi container, so it geolocates the HOSTING VPS rather than the family — production
+        // returned Europe/Berlin for a household in Derry. It is not unlucky, it is structural: no
+        // server-side IP lookup can identify where the family lives.
+        //
+        // This value reaches Google. GetSendZoneAsync feeds `familyZone` on event creation, so a
+        // guessed zone here is stamped onto the family's calendar and read back on their phones —
+        // the incidental change AGENTS.md's golden rule prohibits. The kiosk reports its own OS zone
+        // instead (SetKioskZoneAsync); if it has not yet, returning null is correct. Null means the
+        // caller falls back to UTC, which is a zone we are NOT asserting is theirs.
+        var kioskZone = await displayRepo.GetAsync(userId, ct);
+        if (!string.IsNullOrWhiteSpace(kioskZone?.IanaTimeZone)
+            && kioskZone.IsTimeZoneAutoDetected
+            && IsValidZone(kioskZone.IanaTimeZone))
         {
-            var auto = await locationService.GetEffectiveLocationAsync(ct);
-            if (!string.IsNullOrWhiteSpace(auto.IanaTimeZone) && IsValidZone(auto.IanaTimeZone))
-                return auto.IanaTimeZone;
+            return kioskZone.IanaTimeZone;
         }
-        catch { /* never fail a resolve on a tz lookup */ }
 
         return null;
+    }
+
+    /// <summary>
+    /// FHQ-178: the kiosk reports the zone its own operating system is set to, read in the browser
+    /// from <c>Intl.DateTimeFormat().resolvedOptions().timeZone</c>. The kiosk physically sits in the
+    /// family's home, so this is the one automatic source that actually describes them — no network
+    /// call, no third party, and nothing about their location leaves the house.
+    /// <para>
+    /// Reported on every kiosk load rather than stored once, which is what makes a change to the
+    /// kiosk's OS timezone propagate: there is nothing to poll and no extra state to keep. An
+    /// EXPLICIT zone is never touched — if the family chose one, the kiosk's OS is not evidence
+    /// against it, and there is nothing to detect until they reset to auto.
+    /// </para>
+    /// </summary>
+    public async Task SetKioskZoneAsync(string? ianaZone, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId;
+        if (string.IsNullOrEmpty(userId) || string.IsNullOrWhiteSpace(ianaZone) || !IsValidZone(ianaZone))
+            return;
+
+        var display = await displayRepo.GetAsync(userId, ct);
+
+        // Explicit wins, always. Only an auto-detected zone (or none at all) follows the kiosk.
+        if (display is not null
+            && !string.IsNullOrWhiteSpace(display.IanaTimeZone)
+            && !display.IsTimeZoneAutoDetected)
+        {
+            return;
+        }
+
+        // No write when it already matches: this runs on every kiosk load, and an unconditional
+        // upsert would touch UpdatedAt on each one.
+        if (string.Equals(display?.IanaTimeZone, ianaZone, StringComparison.Ordinal)
+            && display?.IsTimeZoneAutoDetected == true)
+        {
+            return;
+        }
+
+        await PersistZoneAsync(userId, display, ianaZone, isAutoDetected: true, ct);
     }
 
     public async Task<string?> GetSendZoneAsync(CancellationToken ct = default)
@@ -47,25 +93,12 @@ public class TimeZoneService(
         if (string.IsNullOrEmpty(userId)) return null;
 
         // READ-ONLY. The effective zone is persisted ONCE at a change point: location auto-discovery
-        // (SettingsController.GetLocation -> EnsureAutoZonePersistedAsync), manual set, or location
+        // (the kiosk reporting its OS zone -> SetKioskZoneAsync), manual set, or location
         // save/reset. The outbound Google-write path must NEVER resolve here — doing so would call
         // ip-api on every write AND write the request-scoped DbContext mid event/member operation
         // (which shifted sync timing and re-exposed the membership flap). Unset -> null (caller -> UTC).
         var display = await displayRepo.GetAsync(userId, ct);
         return string.IsNullOrWhiteSpace(display?.IanaTimeZone) ? null : display.IanaTimeZone;
-    }
-
-    public async Task EnsureAutoZonePersistedAsync(string? ianaZone, CancellationToken ct = default)
-    {
-        var userId = currentUser.UserId;
-        if (string.IsNullOrEmpty(userId) || string.IsNullOrWhiteSpace(ianaZone) || !IsValidZone(ianaZone))
-            return;
-
-        var display = await displayRepo.GetAsync(userId, ct);
-        // Auto-discovery sets the zone ONCE. If the user already has a zone (auto or explicit), leave it.
-        if (!string.IsNullOrWhiteSpace(display?.IanaTimeZone)) return;
-
-        await PersistZoneAsync(userId, display, ianaZone, isAutoDetected: true, ct);
     }
 
     public async Task SetExplicitZoneAsync(string ianaZone, CancellationToken ct = default)

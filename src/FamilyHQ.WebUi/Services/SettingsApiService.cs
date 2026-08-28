@@ -73,6 +73,12 @@ public class SettingsApiService : ISettingsApiService
         return (await _httpClient.GetFromJsonAsync<TimeZoneSettingDto>("api/settings/timezone"))!;
     }
 
+    public async Task ReportKioskTimeZoneAsync(string ianaTimeZone)
+    {
+        var response = await _httpClient.PutAsJsonAsync("api/settings/timezone/kiosk", new SetTimeZoneRequest(ianaTimeZone));
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task SetTimeZoneAsync(string ianaTimeZone)
     {
         var response = await _httpClient.PutAsJsonAsync("api/settings/timezone", new SetTimeZoneRequest(ianaTimeZone));

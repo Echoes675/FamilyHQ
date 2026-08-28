@@ -141,6 +141,7 @@ Distinct from the per-event `SyncEventFailure` subsystem (individual events that
 - `GET  /api/daytheme/today` → DayThemeDto (Date + 4 boundary times + current period) — **requires auth**; the caller's identity selects the kiosk. `204 No Content` when that kiosk has no saved location. Anonymous access was removed in FHQ-177: the response's timezone and solar times together disclose roughly where the family lives.
 - `GET  /api/settings/location` → LocationSettingDto or 404
 - `POST /api/settings/location` `{ placeName }` → geocodes, saves, returns LocationSettingDto
+- `PUT  /api/settings/timezone/kiosk` `{ ianaTimeZone }` → records the zone the KIOSK's own OS reports (FHQ-178). Ignored when an explicit zone is set; sent on every kiosk load, so a change to the kiosk's timezone propagates without polling. Server-side IP geolocation is never used for the zone — it resolves the hosting VPS, and this value is stamped onto new Google events via `GetSendZoneAsync`.
 - `GET  /api/settings/display` → DisplaySettingDto (SurfaceMultiplier 0–1.0, OpaqueSurfaces, TransitionDurationSecs, ThemeSelection) — requires auth; returns defaults if no row exists for the user
 - `PUT  /api/settings/display` `{ surfaceMultiplier, opaqueSurfaces, transitionDurationSecs, themeSelection }` → upserts the user's DisplaySetting row; requires auth
 - `GET  /api/weather/current` → CurrentWeatherDto (condition, temperature, wind)
