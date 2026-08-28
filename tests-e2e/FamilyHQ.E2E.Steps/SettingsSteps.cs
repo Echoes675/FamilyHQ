@@ -148,10 +148,9 @@ public class SettingsSteps
     [Then(@"I see the location pill displaying ""([^""]*)""")]
     public async Task ThenISeeTheLocationPillDisplaying(string placeName)
     {
-        // The pill is visible both before and after the save (pre-save it shows the
-        // auto-detected city).  A one-shot InnerTextAsync() read races the post-save
-        // re-render, so use Playwright's auto-retrying assertion to poll for the new
-        // text.
+        // FHQ-179: the pill only exists once a location is saved — there is no auto-detected
+        // placeholder any more. Still use Playwright's auto-retrying assertion rather than a
+        // one-shot InnerTextAsync(), which would race the post-save re-render.
         await Assertions.Expect(_settingsPage.LocationPill)
             .ToContainTextAsync(placeName, new() { Timeout = 30000 });
     }
@@ -159,10 +158,10 @@ public class SettingsSteps
     [Then(@"I see the ""([^""]*)"" badge on the location pill")]
     public async Task ThenISeeTheBadgeOnTheLocationPill(string badgeText)
     {
-        // The badge text transitions from "Auto" to "Saved" after the save request
-        // completes and Blazor re-renders.  Use Playwright's auto-retrying assertion so
-        // we poll for the expected text instead of reading InnerTextAsync once and
-        // racing the re-render.
+        // The badge appears with the pill once the save request completes and Blazor re-renders
+        // (pre-FHQ-179 it transitioned "Auto" -> "Saved"; now there is nothing until saved). Use
+        // Playwright's auto-retrying assertion rather than reading InnerTextAsync once and racing
+        // the re-render. FHQ-177 depends on this as a synchronisation barrier.
         await Assertions.Expect(_settingsPage.LocationPillBadge)
             .ToHaveTextAsync(badgeText, new() { Timeout = 10000 });
     }

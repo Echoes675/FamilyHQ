@@ -144,9 +144,9 @@ public class ServiceCollectionExtensionsTests
         var factory = provider.GetRequiredService<IHttpClientFactory>();
 
         // The retry handler sleeps INSIDE SendAsync, so each client's Timeout is the total budget
-        // for the whole attempt+backoff sequence, not a single attempt. The two interactive clients
-        // stay near their pre-retry 10s ceiling; Open-Meteo keeps the 30s it always had.
-        factory.CreateClient(nameof(ILocationService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
+        // for the whole attempt+backoff sequence, not a single attempt. Geocoding stays near its
+        // pre-retry 10s ceiling; Open-Meteo keeps the 30s it always had. (FHQ-179 removed the
+        // ip-api client — a geolocation lookup from this container resolves the hosting VPS.)
         factory.CreateClient(nameof(IGeocodingService)).Timeout.Should().Be(TimeSpan.FromSeconds(12));
         factory.CreateClient(nameof(IWeatherProvider)).Timeout.Should().Be(TimeSpan.FromSeconds(30));
     }
@@ -159,7 +159,6 @@ public class ServiceCollectionExtensionsTests
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new[]
             {
-                new KeyValuePair<string, string?>("Location:IpApiBaseUrl", "https://ipapi.test"),
                 new KeyValuePair<string, string?>("Geocoding:BaseUrl", "https://nominatim.test"),
                 new KeyValuePair<string, string?>("Weather:BaseUrl", "https://openmeteo.test")
             })
@@ -169,7 +168,6 @@ public class ServiceCollectionExtensionsTests
         using var provider = services.BuildServiceProvider();
         var factory = provider.GetRequiredService<IHttpClientFactory>();
 
-        factory.CreateClient(nameof(ILocationService)).BaseAddress.Should().Be(new Uri("https://ipapi.test/"));
         factory.CreateClient(nameof(IGeocodingService)).BaseAddress.Should().Be(new Uri("https://nominatim.test/"));
         factory.CreateClient(nameof(IWeatherProvider)).BaseAddress.Should().Be(new Uri("https://openmeteo.test/"));
     }
@@ -220,7 +218,6 @@ public class ServiceCollectionExtensionsTests
         services.AddScoped(_ => Mock.Of<ICurrentUserService>());
         services.AddScoped(_ => Mock.Of<IDisplaySettingRepository>());
         services.AddScoped(_ => Mock.Of<ILocationSettingRepository>());
-        services.AddScoped(_ => Mock.Of<ILocationService>());
 
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();

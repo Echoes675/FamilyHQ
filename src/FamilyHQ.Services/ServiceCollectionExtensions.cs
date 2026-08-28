@@ -97,15 +97,10 @@ public static class ServiceCollectionExtensions
             client.Timeout = externalResilience.WeatherTimeout;
         }).AddHttpMessageHandler<TransientHttpRetryHandler>();
 
-        // ip-api geolocation and Nominatim geocoding: service-layer HTTP clients, wired here rather
-        // than in WebApi/Program.cs so all three share one resilience configuration (FHQ-114).
-        var ipApiBaseUrl = configuration["Location:IpApiBaseUrl"] ?? "http://ip-api.com";
-        services.AddHttpClient<ILocationService, LocationService>(client =>
-        {
-            client.BaseAddress = new Uri(ipApiBaseUrl.TrimEnd('/') + "/");
-            client.Timeout = externalResilience.LocationTimeout;
-        }).AddHttpMessageHandler<TransientHttpRetryHandler>();
-
+        // Nominatim geocoding: a service-layer HTTP client, wired here rather than in
+        // WebApi/Program.cs so it shares the same resilience configuration (FHQ-114).
+        // FHQ-179 removed the ip-api client alongside it — a geolocation lookup made from this
+        // container resolves the hosting VPS, never the family.
         var geocodingBaseUrl = configuration["Geocoding:BaseUrl"] ?? "https://nominatim.openstreetmap.org";
         services.AddHttpClient<IGeocodingService, GeocodingService>(client =>
         {
