@@ -9,6 +9,9 @@ namespace FamilyHQ.Services.Tests.Repositories;
 
 public class DayThemeRepositoryTests
 {
+    private const string KioskA = "kiosk-a";
+    private const string KioskB = "kiosk-b";
+
     private readonly FakeFamilyHqDbContext _db = new();
 
     private DayThemeRepository CreateSut() => new(_db);
@@ -20,6 +23,7 @@ public class DayThemeRepositoryTests
         var sut = CreateSut();
         var dayTheme = new DayTheme
         {
+            UserId = KioskA,
             Date = new DateOnly(2024, 6, 21),
             MorningStart = new TimeOnly(5, 30),
             DaytimeStart = new TimeOnly(6, 0),
@@ -36,35 +40,6 @@ public class DayThemeRepositoryTests
     }
 
     [Fact]
-    public async Task GetMostRecentAsync_ReturnsTheRowWithTheGreatestDate()
-    {
-        // FHQ-134: the date key is derived from the zone on the most recent row, so "most recent"
-        // must be by Date, not by insertion order.
-        _db.Setup<DayTheme>(
-        [
-            new DayTheme { Date = new DateOnly(2024, 6, 21), IanaTimeZone = "Europe/Dublin" },
-            new DayTheme { Date = new DateOnly(2024, 6, 19), IanaTimeZone = "America/New_York" },
-            new DayTheme { Date = new DateOnly(2024, 6, 20), IanaTimeZone = "Europe/Paris" }
-        ]);
-
-        var result = await CreateSut().GetMostRecentAsync();
-
-        result.Should().NotBeNull();
-        result!.Date.Should().Be(new DateOnly(2024, 6, 21));
-        result.IanaTimeZone.Should().Be("Europe/Dublin");
-    }
-
-    [Fact]
-    public async Task GetMostRecentAsync_ReturnsNull_WhenNoRowsExist()
-    {
-        _db.Setup<DayTheme>();
-
-        var result = await CreateSut().GetMostRecentAsync();
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
     public async Task UpsertAsync_Update_CopiesIanaTimeZoneFromIncomingRecord()
     {
         // FHQ-160: a same-day cross-timezone move recalculates today's theme. Today's row already
@@ -74,6 +49,7 @@ public class DayThemeRepositoryTests
         // wrong zone (wrong wake instant, wrong period).
         var existing = new DayTheme
         {
+            UserId = KioskA,
             Date = new DateOnly(2024, 6, 21),
             MorningStart = new TimeOnly(5, 30),
             DaytimeStart = new TimeOnly(6, 0),
@@ -88,6 +64,7 @@ public class DayThemeRepositoryTests
         // is the only thing that can carry the recalculated zone onto the stored row.
         var recalculated = new DayTheme
         {
+            UserId = KioskA,
             Date = new DateOnly(2024, 6, 21),
             MorningStart = new TimeOnly(4, 15),
             DaytimeStart = new TimeOnly(5, 45),
@@ -107,5 +84,50 @@ public class DayThemeRepositoryTests
         result.NightStart.Should().Be(new TimeOnly(21, 0));
         mockSet.Verify(s => s.Add(It.IsAny<DayTheme>()), Times.Never);
         _db.SaveChangesCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetByDateAsync_ReturnsOnlyTheRequestedKiosksRow()
+    {
+        // FHQ-177: two kiosks, same date, different places. Before scoping there was one global row
+        // per date, so whichever kiosk wrote last decided everyone's sunrise. Matching on Date alone
+        // here would hand kiosk A's boundaries to kiosk B.
+        var date = new DateOnly(2024, 6, 21);
+        _db.Setup<DayTheme>(
+        [
+            new DayTheme { UserId = KioskA, Date = date, IanaTimeZone = "Europe/Dublin", NightStart = new TimeOnly(23, 0) },
+            new DayTheme { UserId = KioskB, Date = date, IanaTimeZone = "Australia/Sydney", NightStart = new TimeOnly(18, 30) }
+        ]);
+
+        var result = await CreateSut().GetByDateAsync(KioskB, date);
+
+        result.Should().NotBeNull();
+        result!.IanaTimeZone.Should().Be("Australia/Sydney");
+        result.NightStart.Should().Be(new TimeOnly(18, 30));
+    }
+
+    [Fact]
+    public async Task GetByDateAsync_ReturnsNull_WhenOnlyAnotherKioskHasARowForThatDate()
+    {
+        var date = new DateOnly(2024, 6, 21);
+        _db.Setup<DayTheme>([new DayTheme { UserId = KioskA, Date = date, IanaTimeZone = "Europe/Dublin" }]);
+
+        var result = await CreateSut().GetByDateAsync(KioskB, date);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpsertAsync_Insert_WhenTheSameDateBelongsToAnotherKiosk()
+    {
+        // The upsert resolves the existing row through GetByDateAsync, so it inherits the scoping.
+        // If it did not, kiosk B's first calculation would overwrite kiosk A's row instead of
+        // creating its own.
+        var date = new DateOnly(2024, 6, 21);
+        var mockSet = _db.Setup<DayTheme>([new DayTheme { UserId = KioskA, Date = date, IanaTimeZone = "Europe/Dublin" }]);
+
+        await CreateSut().UpsertAsync(new DayTheme { UserId = KioskB, Date = date, IanaTimeZone = "Australia/Sydney" });
+
+        mockSet.Verify(s => s.Add(It.Is<DayTheme>(d => d.UserId == KioskB)), Times.Once);
     }
 }

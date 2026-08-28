@@ -31,7 +31,12 @@ public class ControllerAuthorizationPolicyTests
     /// - AuthController.Callback: Google redirects the browser here without a JWT.
     /// - AuthController.Exchange: one-time-code-for-JWT exchange happens pre-auth.
     /// - HealthController.Get: deploy checks and E2E probes hit /api/health unauthenticated.
-    /// - DayThemeController.GetToday: kiosk renders the day theme before login.
+    /// - (removed FHQ-177) DayThemeController.GetToday was anonymous so the kiosk could theme
+    ///   its login screen. The theme is per-kiosk now, so an unauthenticated caller cannot be
+    ///   served a correct one — there is no kiosk to resolve. It also stopped the endpoint
+    ///   handing the timezone and four solar times to anyone on the internet, which together
+    ///   disclose roughly where the family lives. Cost: the login screen uses the default
+    ///   theme until sign-in, which on a permanently-signed-in wall display is not visible.
     /// - SyncController.GooglePushWebhook: Google push sends no bearer token; authenticity
     ///   is enforced via the per-channel token instead (FHQ-81).
     /// </summary>
@@ -41,7 +46,6 @@ public class ControllerAuthorizationPolicyTests
         "FamilyHQ.WebApi.Controllers.AuthController.Callback [GET api/auth/callback]",
         "FamilyHQ.WebApi.Controllers.AuthController.Exchange [POST api/auth/exchange]",
         "FamilyHQ.WebApi.Controllers.HealthController.Get [GET api/health]",
-        "FamilyHQ.WebApi.Controllers.DayThemeController.GetToday [GET api/daytheme/today]",
         "FamilyHQ.WebApi.Controllers.SyncController.GooglePushWebhook [POST api/sync/webhook]",
     };
 

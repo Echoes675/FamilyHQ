@@ -7,31 +7,46 @@ namespace FamilyHQ.Services.Theme;
 
 public class DayThemeService(
     IDayThemeRepository dayThemeRepo,
-    ILocationService locationService,
+    ILocationSettingRepository locationRepo,
     ISunCalculatorService sunCalculator,
     ITimeZoneLookup timeZoneLookup,
     TimeProvider timeProvider) : IDayThemeService
 {
-    public async Task EnsureTodayAsync(CancellationToken ct = default)
+    public async Task EnsureTodayAsync(string userId, CancellationToken ct = default)
     {
-        var today = await ResolveLocalDateAsync(ct);
-        var existing = await dayThemeRepo.GetByDateAsync(today, ct);
+        var location = await locationRepo.GetAsync(userId, ct);
+        if (location is null) return;
+
+        var zone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var today = LocalDateIn(zone) ?? ServerLocalDate();
+
+        var existing = await dayThemeRepo.GetByDateAsync(userId, today, ct);
         if (existing is not null) return;
 
-        await CalculateAndPersistAsync(today, ct);
+        await PersistAsync(userId, location, zone, today, ct);
     }
 
-    public async Task RecalculateForTodayAsync(CancellationToken ct = default)
+    public async Task RecalculateForTodayAsync(string userId, CancellationToken ct = default)
     {
-        var today = await ResolveLocalDateAsync(ct);
-        await CalculateAndPersistAsync(today, ct);
+        var location = await locationRepo.GetAsync(userId, ct);
+        if (location is null) return;
+
+        var zone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var today = LocalDateIn(zone) ?? ServerLocalDate();
+
+        await PersistAsync(userId, location, zone, today, ct);
     }
 
-    public async Task<DayThemeDto> GetTodayAsync(CancellationToken ct = default)
+    public async Task<DayThemeDto?> GetTodayAsync(string userId, CancellationToken ct = default)
     {
-        var today = await ResolveLocalDateAsync(ct);
-        var record = await dayThemeRepo.GetByDateAsync(today, ct)
-            ?? throw new InvalidOperationException("No DayTheme record found for today.");
+        var location = await locationRepo.GetAsync(userId, ct);
+        if (location is null) return null;
+
+        var zone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+        var today = LocalDateIn(zone) ?? ServerLocalDate();
+
+        var record = await dayThemeRepo.GetByDateAsync(userId, today, ct);
+        if (record is null) return null;
 
         var localNow = ComputeLocalNow(record.IanaTimeZone);
         var currentPeriod = DeriveCurrentPeriod(record, localNow);
@@ -47,68 +62,15 @@ public class DayThemeService(
     }
 
     /// <summary>
-    /// FHQ-134: the family's LOCAL date, which is the key every DayTheme row is stored under.
+    /// FHQ-177: the kiosk's LOCAL date, which is the date half of every row's key.
     /// <para>
-    /// The circular dependency (the zone lives on the record, but the date selects the record) is
-    /// broken by reading the zone off the MOST RECENT row rather than today's: one indexed read, no
-    /// user context, no network. The alternatives were both dead ends. <c>ITimeZoneService</c> is
-    /// per-user via <c>ICurrentUserService</c>, which reads the HTTP context — and the dominant
-    /// caller, <c>DayThemeSchedulerService</c>, is a background hosted service with no HTTP context,
-    /// so UserId is null there and the derivation would silently degrade to the UTC date on exactly
-    /// the path this fix exists to serve. Resolving the zone live (location + lookup) would put an
-    /// ip-api call on a hot path — banned, and since FHQ-114 gave that client retries it now costs up
-    /// to ~12s per call. DayTheme is keyed by Date alone (no UserId), so a single global zone is the
-    /// right shape here, and it is the same field <see cref="ComputeLocalNow"/> and the scheduler's
-    /// boundary maths already trust.
-    /// </para>
-    /// <para>
-    /// An empty table (first-ever boot) or an unusable stored zone falls back to the previous
-    /// server-date behaviour; <see cref="CalculateAndPersistAsync"/> re-derives from the zone it
-    /// resolves, so the first row still lands on the correct local date.
+    /// This used to be circular — the zone lived on the DayTheme row, but the date selected the row —
+    /// and FHQ-134 broke the cycle by reading the zone off the most recent row. Scoping the theme to
+    /// the kiosk removes the cycle instead of working around it: the zone now comes from the kiosk's
+    /// saved location, which is known before the date is needed. That is why
+    /// <c>GetMostRecentAsync</c> is gone.
     /// </para>
     /// </summary>
-    private async Task<DateOnly> ResolveLocalDateAsync(CancellationToken ct)
-    {
-        var mostRecent = await dayThemeRepo.GetMostRecentAsync(ct);
-        return LocalDateIn(mostRecent?.IanaTimeZone) ?? ServerLocalDate();
-    }
-
-    private async Task CalculateAndPersistAsync(DateOnly date, CancellationToken ct)
-    {
-        var location = await locationService.GetEffectiveLocationAsync(ct);
-        var ianaTimeZone = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
-
-        // The zone just resolved is fresher than the one the date key was derived from — it is the
-        // only thing that knows about a location change or a first-ever boot. Re-deriving here means
-        // the row lands on the date that is genuinely "today" in the zone being stored alongside it.
-        var resolvedDate = LocalDateIn(ianaTimeZone) ?? date;
-        await PersistAsync(resolvedDate, location, ianaTimeZone, ct);
-
-        // A zone change can move the local date. The row the NEXT date-key derivation reads its zone
-        // from is the one with the greatest Date, so when the requested key is the later of the two,
-        // leaving it on the abandoned zone would pin the whole app to that zone until its next
-        // midnight. Refresh it too — the boundaries are correct for its own date in the new zone, and
-        // the extra work is local sun maths plus one write, on a path only a relocation reaches.
-        if (date > resolvedDate)
-            await PersistAsync(date, location, ianaTimeZone, ct);
-    }
-
-    private async Task PersistAsync(DateOnly date, LocationResult location, string? ianaTimeZone, CancellationToken ct)
-    {
-        var boundaries = await sunCalculator.CalculateBoundariesAsync(
-            location.Latitude, location.Longitude, date, ianaTimeZone);
-
-        await dayThemeRepo.UpsertAsync(new DayTheme
-        {
-            Date = date,
-            MorningStart = boundaries.MorningStart,
-            DaytimeStart = boundaries.DaytimeStart,
-            EveningStart = boundaries.EveningStart,
-            NightStart = boundaries.NightStart,
-            IanaTimeZone = ianaTimeZone
-        }, ct);
-    }
-
     private DateOnly? LocalDateIn(string? ianaTimeZone)
     {
         if (string.IsNullOrWhiteSpace(ianaTimeZone)) return null;
@@ -121,6 +83,24 @@ public class DayThemeService(
     }
 
     private DateOnly ServerLocalDate() => DateOnly.FromDateTime(timeProvider.GetLocalNow().DateTime);
+
+    private async Task PersistAsync(
+        string userId, LocationSetting location, string? ianaTimeZone, DateOnly date, CancellationToken ct)
+    {
+        var boundaries = await sunCalculator.CalculateBoundariesAsync(
+            location.Latitude, location.Longitude, date, ianaTimeZone);
+
+        await dayThemeRepo.UpsertAsync(new DayTheme
+        {
+            UserId = userId,
+            Date = date,
+            MorningStart = boundaries.MorningStart,
+            DaytimeStart = boundaries.DaytimeStart,
+            EveningStart = boundaries.EveningStart,
+            NightStart = boundaries.NightStart,
+            IanaTimeZone = ianaTimeZone
+        }, ct);
+    }
 
     private TimeOnly ComputeLocalNow(string? ianaTimeZone)
     {

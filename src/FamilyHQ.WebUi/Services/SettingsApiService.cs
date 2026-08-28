@@ -40,9 +40,15 @@ public class SettingsApiService : ISettingsApiService
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<DayThemeDto> GetTodayThemeAsync()
+    public async Task<DayThemeDto?> GetTodayThemeAsync()
     {
-        return (await _httpClient.GetFromJsonAsync<DayThemeDto>("api/daytheme/today"))!;
+        // FHQ-177: 204 when the kiosk has no saved location. Read the status BEFORE deserialising —
+        // GetFromJsonAsync throws on an empty body, and this call is unguarded in the display tab, so
+        // the throw took the whole settings component down instead of just the boundary times.
+        using var response = await _httpClient.GetAsync("api/daytheme/today");
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DayThemeDto>();
     }
 
     public async Task<DisplaySettingDto> GetDisplayAsync()

@@ -45,11 +45,9 @@ public class DayThemeSchedulerService(
             try
             {
                 using var scope = serviceProvider.CreateScope();
-                var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
-                await dayThemeService.EnsureTodayAsync(stoppingToken);
-                var dto = await dayThemeService.GetTodayAsync(stoppingToken);
-                await themeBroadcaster.BroadcastThemeAsync(dto.CurrentPeriod, stoppingToken);
-                logger.LogInformation("Startup theme broadcast: {Period}", dto.CurrentPeriod);
+                var kioskCount = await EnsureAllKiosksAsync(scope.ServiceProvider, stoppingToken);
+                await themeBroadcaster.BroadcastThemeChangedAsync(stoppingToken);
+                logger.LogInformation("Startup theme broadcast for {KioskCount} kiosk(s)", kioskCount);
             }
             catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
             {
@@ -124,32 +122,121 @@ public class DayThemeSchedulerService(
         // happens to the field afterwards.
         var recalculationToken = Volatile.Read(ref _delayCts).Token;
 
-        using var scope = serviceProvider.CreateScope();
-        var dayThemeService = scope.ServiceProvider.GetRequiredService<IDayThemeService>();
-
-        // Always ensure today's record exists before reading it. EnsureTodayAsync is idempotent
-        // (a single indexed read when the record is already present), so this is cheap, and it removes
-        // the day-boundary race where the date rolled over after the previous iteration's delay.
-        await dayThemeService.EnsureTodayAsync(stoppingToken);
-        var dto = await dayThemeService.GetTodayAsync(stoppingToken);
-
-        var nextBoundary = GetNextBoundaryDelay(dto);
+        TimeSpan nextWait;
+        bool waitingOnABoundary;
+        using (var scope = serviceProvider.CreateScope())
+        {
+            await EnsureAllKiosksAsync(scope.ServiceProvider, stoppingToken);
+            (nextWait, waitingOnABoundary) = await ComputeNextWaitAsync(scope.ServiceProvider, stoppingToken);
+        }
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, recalculationToken);
         // Delay through the injected TimeProvider, like every boundary computation above, so the whole
         // iteration honours one clock. With TimeProvider.System this is the ambient Task.Delay; under
         // FakeTimeProvider the wait becomes drivable, which is what makes the delay-elapses path testable.
-        await Task.Delay(nextBoundary, timeProvider, linkedCts.Token);
+        await Task.Delay(nextWait, timeProvider, linkedCts.Token);
 
         // The delay may have crossed midnight; ensure again before the post-delay read so the new
-        // calendar day's record is present. This closes the FHQ-55 race in which the rollover check
-        // and the read straddled the date boundary, leaving GetTodayAsync to throw and crash the host.
-        await dayThemeService.EnsureTodayAsync(stoppingToken);
+        // calendar day's rows are present. This closes the FHQ-55 race in which the rollover check
+        // and the read straddled the date boundary.
+        using (var scope = serviceProvider.CreateScope())
+        {
+            await EnsureAllKiosksAsync(scope.ServiceProvider, stoppingToken);
+        }
 
-        // Broadcast AFTER the delay so we emit the period that just became active
-        var updatedDto = await dayThemeService.GetTodayAsync(stoppingToken);
-        await themeBroadcaster.BroadcastThemeAsync(updatedDto.CurrentPeriod, stoppingToken);
-        logger.LogInformation("Theme broadcast: {Period}", updatedDto.CurrentPeriod);
+        // Only signal if we were actually waiting on a boundary. When no kiosk has a theme the wait
+        // is the retry backoff, not a boundary — signalling there would push a ThemeChanged to every
+        // client once a minute forever, and log it, on a fresh install that simply has no location
+        // configured yet. A kiosk that gains a location mid-backoff is served by
+        // TriggerRecalculationAsync, which SettingsController raises on save.
+        if (!waitingOnABoundary) return;
+
+        // Broadcast AFTER the delay so kiosks re-read the period that just became active. The signal
+        // carries no period: it is per-kiosk now, and each kiosk fetches its own.
+        await themeBroadcaster.BroadcastThemeChangedAsync(stoppingToken);
+        logger.LogInformation("Theme boundary reached; kiosks signalled to re-read");
+    }
+
+    /// <summary>
+    /// Ensures today's row exists for every kiosk that has a saved location. A single kiosk's failure
+    /// (unusable coordinates, a polar latitude with no sun phase) must not deny every other kiosk its
+    /// theme, so each is guarded independently — the loop's catch-all would have abandoned the whole
+    /// pass.
+    /// </summary>
+    private async Task<int> EnsureAllKiosksAsync(IServiceProvider scoped, CancellationToken ct)
+    {
+        var locationRepo = scoped.GetRequiredService<ILocationSettingRepository>();
+        var dayThemeService = scoped.GetRequiredService<IDayThemeService>();
+
+        var userIds = await locationRepo.GetUserIdsWithLocationAsync(ct);
+        foreach (var userId in userIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await dayThemeService.EnsureTodayAsync(userId, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // No UserId in the message: it is a stable pseudonymous id, but the failure text can
+                // carry coordinates from the sun calculator, so keep both out (FHQ-166).
+                logger.LogError(ex, "Day-theme calculation failed for one kiosk; continuing with the others");
+            }
+        }
+
+        return userIds.Count;
+    }
+
+    /// <summary>
+    /// The delay until the EARLIEST upcoming boundary across every kiosk. Kiosks in different zones
+    /// cross their boundaries at different instants, so the loop must wake for whichever comes first
+    /// and let each kiosk work out whether anything changed for it.
+    /// </summary>
+    private async Task<(TimeSpan Wait, bool IsBoundary)> ComputeNextWaitAsync(IServiceProvider scoped, CancellationToken ct)
+    {
+        var locationRepo = scoped.GetRequiredService<ILocationSettingRepository>();
+        var dayThemeService = scoped.GetRequiredService<IDayThemeService>();
+
+        var userIds = await locationRepo.GetUserIdsWithLocationAsync(ct);
+
+        TimeSpan? earliest = null;
+        foreach (var userId in userIds)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Guarded per kiosk for the same reason as EnsureAllKiosksAsync. Without this the read
+            // side broke the guarantee the write side makes: one kiosk throwing here escapes to the
+            // loop's catch-all, which backs off instead of scheduling — so every OTHER kiosk loses
+            // its boundaries too, which is exactly what the per-kiosk guard exists to prevent.
+            Core.DTOs.DayThemeDto? dto;
+            try
+            {
+                dto = await dayThemeService.GetTodayAsync(userId, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Reading day-theme boundaries failed for one kiosk; continuing with the others");
+                continue;
+            }
+
+            if (dto is null) continue;
+
+            var delay = GetNextBoundaryDelay(dto);
+            if (earliest is null || delay < earliest) earliest = delay;
+        }
+
+        // No kiosk has a usable theme (none configured, or every calculation failed). Re-check on the
+        // error backoff rather than spinning, and rather than sleeping until a midnight we cannot
+        // locate without a zone. Flagged as NOT a boundary so the caller does not signal.
+        return earliest is null ? (_options.LoopErrorBackoff, false) : (earliest.Value, true);
     }
 
     protected TimeSpan GetNextBoundaryDelay(Core.DTOs.DayThemeDto dto)
