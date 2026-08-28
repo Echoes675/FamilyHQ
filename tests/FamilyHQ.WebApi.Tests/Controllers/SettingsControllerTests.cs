@@ -36,6 +36,28 @@ public class SettingsControllerTests
     }
 
     [Fact]
+    public async Task GetLocation_WhenNoSavedLocation_DoesNotPersistTheDetectedZone()
+    {
+        // FHQ-178. This lookup runs from the WebApi container, so it geolocates the hosting VPS —
+        // production returned Europe/Berlin for a household in Derry. Persisting it put a datacentre's
+        // zone on the path that stamps `familyZone` onto new Google events, and persist-once meant
+        // nothing would ever re-derive it. Merely opening Settings -> Location was enough to do it.
+        var (sut, locationRepoMock, _, _, _, _, _, _, locationServiceMock, timeZoneServiceMock) = CreateSut();
+        locationRepoMock.Setup(x => x.GetAsync(TestUserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LocationSetting?)null);
+        locationServiceMock.Setup(x => x.GetEffectiveLocationAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LocationResult("Frankfurt, Germany", 50.11, 8.68, IsAutoDetected: true, IanaTimeZone: "Europe/Berlin"));
+
+        await sut.GetLocation(CancellationToken.None);
+
+        timeZoneServiceMock.Verify(
+            x => x.SetKioskZoneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "the kiosk reports its own zone; an IP lookup must never masquerade as one");
+        timeZoneServiceMock.Verify(
+            x => x.SetExplicitZoneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetLocation_ReturnsOk_WhenSet()
     {
         // Arrange

@@ -15,4 +15,8 @@ public interface ISettingsApiService
     Task<TimeZoneSettingDto> GetTimeZoneAsync();
     Task SetTimeZoneAsync(string ianaTimeZone);
     Task ResetTimeZoneAsync();
+
+    /// <summary>FHQ-178: report the kiosk's own OS timezone. Ignored server-side when the
+    /// family has set an explicit zone.</summary>
+    Task ReportKioskTimeZoneAsync(string ianaTimeZone);
 }

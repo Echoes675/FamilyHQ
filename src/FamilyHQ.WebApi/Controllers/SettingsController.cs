@@ -67,9 +67,16 @@ public class SettingsController : ControllerBase
         try
         {
             var autoLocation = await _locationService.GetEffectiveLocationAsync(ct);
-            // Auto-discovery is a change point: persist the detected zone ONCE so outbound Google
-            // writes read it (GetSendZoneAsync) instead of resolving ip-api per write (FHQ-43).
-            await _timeZoneService.EnsureAutoZonePersistedAsync(autoLocation.IanaTimeZone, ct);
+
+            // FHQ-178: the detected zone is deliberately NOT persisted any more. This lookup runs
+            // from the WebApi container, so it describes the hosting VPS — production reported
+            // Europe/Berlin for a household in Derry. Persisting it put a datacentre's zone on the
+            // path that stamps `familyZone` onto new Google events (GetSendZoneAsync), and
+            // persist-once meant nothing would ever re-derive it. The kiosk reports its own OS zone
+            // instead (SetKioskZoneAsync).
+            //
+            // The place NAME is still shown as a rough hint for the search box; it is never
+            // persisted and never reaches Google.
             return Ok(new LocationSettingDto(autoLocation.PlaceName, IsAutoDetected: true));
         }
         catch (Exception ex)
@@ -230,6 +237,25 @@ public class SettingsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
             return BadRequest("Unknown IANA timezone.");
         await _timeZoneService.SetExplicitZoneAsync(request.IanaTimeZone, ct);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// FHQ-178: the kiosk reports the zone its own OS is set to, on every load. It is the only
+    /// automatic source that describes the family rather than the datacentre. Ignored when an
+    /// explicit zone is set, and re-reported each load so a change to the kiosk's timezone
+    /// propagates without polling.
+    /// </summary>
+    [HttpPut("timezone/kiosk")]
+    public async Task<IActionResult> SetKioskTimeZone([FromBody] SetTimeZoneRequest request, CancellationToken ct)
+    {
+        // A kiosk on an old TZDB could report a zone this server cannot resolve. That is not a
+        // client error worth surfacing on a wall display — the zone simply stays as it was, and
+        // GetSendZoneAsync keeps returning whatever was already there (or null).
+        if (string.IsNullOrWhiteSpace(request.IanaTimeZone) || !_timeZoneService.IsValidZone(request.IanaTimeZone))
+            return NoContent();
+
+        await _timeZoneService.SetKioskZoneAsync(request.IanaTimeZone, ct);
         return NoContent();
     }
 
