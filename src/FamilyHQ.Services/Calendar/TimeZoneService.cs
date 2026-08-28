@@ -76,6 +76,18 @@ public class TimeZoneService(
             return;
         }
 
+        // A SAVED LOCATION also wins. The precedence here must match ResolveAutoZoneAsync's
+        // (location, then kiosk) or the two fight: this runs on every kiosk load, so a kiosk in one
+        // zone would silently overwrite the zone derived from a location the family deliberately
+        // chose in another — "New York" saved, then re-themed to the kiosk's own zone on the next
+        // page load, with the difference visible only on their Google calendar.
+        var location = await locationRepo.GetAsync(userId, ct);
+        if (location is not null)
+        {
+            var derived = timeZoneLookup.GetTimeZone(location.Latitude, location.Longitude);
+            if (!string.IsNullOrWhiteSpace(derived) && IsValidZone(derived)) return;
+        }
+
         // No write when it already matches: this runs on every kiosk load, and an unconditional
         // upsert would touch UpdatedAt on each one.
         if (string.Equals(display?.IanaTimeZone, ianaZone, StringComparison.Ordinal)

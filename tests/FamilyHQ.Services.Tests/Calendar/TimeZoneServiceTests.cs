@@ -152,6 +152,46 @@ public class TimeZoneServiceTests
     }
 
     [Fact]
+    public async Task SetKioskZone_WhenASavedLocationResolves_IsIgnored()
+    {
+        // Precedence must match ResolveAutoZoneAsync (location, then kiosk). This runs on EVERY kiosk
+        // load, so without this a kiosk in Dublin would overwrite the zone derived from a location
+        // the family deliberately saved as New York — on the next page load, with the difference
+        // visible only on their Google calendar.
+        var (sut, display, loc, tzLookup) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new DisplaySetting { UserId = "u-1", IanaTimeZone = "America/New_York", IsTimeZoneAutoDetected = true });
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>()))
+           .ReturnsAsync(new LocationSetting { UserId = "u-1", Latitude = 40.71, Longitude = -74.01 });
+        tzLookup.Setup(x => x.GetTimeZone(40.71, -74.01)).Returns("America/New_York");
+
+        await sut.SetKioskZoneAsync("Europe/Dublin");
+
+        display.Verify(d => d.UpsertAsync(It.IsAny<string>(), It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()), Times.Never,
+            "a saved location outranks the kiosk's own OS zone");
+    }
+
+    [Fact]
+    public async Task SetKioskZone_WhenTheSavedLocationYieldsNoZone_StillFollowsTheKiosk()
+    {
+        // GeoTimeZone can return nothing (mid-ocean coordinates, say). The location then provides no
+        // zone at all, so the kiosk is the best remaining source rather than a blocked one.
+        var (sut, display, loc, tzLookup) = CreateSut();
+        display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>())).ReturnsAsync((DisplaySetting?)null);
+        loc.Setup(l => l.GetAsync("u-1", It.IsAny<CancellationToken>()))
+           .ReturnsAsync(new LocationSetting { UserId = "u-1", Latitude = 0.0, Longitude = 0.0 });
+        tzLookup.Setup(x => x.GetTimeZone(0.0, 0.0)).Returns((string?)null);
+        DisplaySetting? upserted = null;
+        display.Setup(d => d.UpsertAsync("u-1", It.IsAny<DisplaySetting>(), It.IsAny<CancellationToken>()))
+               .Callback<string, DisplaySetting, CancellationToken>((_, s, _) => upserted = s)
+               .ReturnsAsync((string _, DisplaySetting s, CancellationToken _) => s);
+
+        await sut.SetKioskZoneAsync("Europe/Dublin");
+
+        upserted!.IanaTimeZone.Should().Be("Europe/Dublin");
+    }
+
+    [Fact]
     public async Task SetKioskZone_WhenTheZoneIsExplicit_IsIgnored()
     {
         // The other half of the same question: with a manually-set zone there is nothing to detect.

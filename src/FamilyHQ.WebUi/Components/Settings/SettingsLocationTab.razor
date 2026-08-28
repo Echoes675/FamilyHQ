@@ -1,6 +1,7 @@
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.WebUi.Services
 @inject ISettingsApiService SettingsApiService
+@inject IKioskTimeZoneReporter KioskTimeZoneReporter
 @inject IJSRuntime JS
 
 <div class="settings-section-content">
@@ -185,6 +186,14 @@
         try
         {
             await SettingsApiService.ResetTimeZoneAsync();
+
+            // FHQ-178: reset clears the explicit zone and re-resolves, which with no saved location
+            // yields nothing — the kiosk's report is what fills it. Reporting only happens on page
+            // load, and clicking reset does not reload, so without this the zone would sit empty
+            // (i.e. UTC for outbound Google writes) until the kiosk next started. Report immediately
+            // so "auto" means the kiosk's own zone from the moment it is chosen.
+            await KioskTimeZoneReporter.ReportAsync();
+
             _tz = await SettingsApiService.GetTimeZoneAsync();
         }
         finally
