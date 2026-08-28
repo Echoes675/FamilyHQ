@@ -78,6 +78,21 @@ This deploys to the dev environment and runs all E2E tests.
 
 Note the run number when it starts.
 
+> **Wait for the branch build of YOUR commit to finish first — Step 2 is not optional here.**
+> Deploy-Dev deploys the **image produced by the latest completed branch build**, but checks out the
+> branch tip for the **E2E test code**. Trigger it before your commit's branch build lands and you
+> run the *new tests against the old application*, silently.
+>
+> This is not theoretical: FHQ-178's Deploy-Dev #719 failed on exactly the two scenarios its last
+> commit had just fixed, because the image was still the previous commit's. #720 and #721, after the
+> branch build caught up, passed. The signature is a failure that lands precisely on what you just
+> changed, then vanishes on a re-run — which reads exactly like flake and is not.
+>
+> Confirm with `jk run ls "FamilyHQ/<branch with %2F>" --limit 2` that a branch build **started after
+> your push** has completed, before triggering the deploy. A run whose failures match your latest fix
+> does not count against the gate, but it does not count *for* it either — the three consecutive
+> passes must all be on the final code.
+
 ---
 
 ## Step 4 — Assess E2E results
