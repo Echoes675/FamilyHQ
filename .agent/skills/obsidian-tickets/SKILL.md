@@ -50,6 +50,22 @@ A top-level ticket lives in exactly one of `Tickets/`, `Done/`, or `Archive/` at
 - Subtasks: `FHQ-P.S`. Counter: locate the parent's folder (in `Tickets/`, `Done/`, or `Archive/`) and scan that folder for `FHQ-P.*.md` for max S → next is S+1.
 - Epics: `FHQ-E0N` (zero-padded, e.g. `FHQ-E01`). **Separate** counter: scan `Epics/` recursively (incl. `Done/`, `Cancelled/`) for `FHQ-E\d+` → max + 1. The letter keeps epic ids out of the numeric `FHQ-N` scan, so the two sequences never collide.
 
+**Re-scan in the same turn as the write — a counter goes stale within a session.** Sessions in this
+repo run across days, and the user creates tickets between turns. A max computed earlier in the
+conversation is not safe to reuse, however recently it feels like you ran it. This applies to all
+three counters above, the epic sequence included.
+
+The cost of getting it wrong is a destroyed ticket, not a duplicate id: the vault is **not a git
+repo** and has no Obsidian trash, so a clobbered file is recoverable only from Obsidian's File
+Recovery snapshots (Settings → File recovery) or Google Drive version history — the vault is
+Drive-synced, and Drive keeps 30 days for non-Google files.
+
+**The tell:** a create that reports the file was *updated* rather than *created* has landed on an
+existing ticket. Stop and inspect what was there before. Confirming that the file you just wrote is
+intact, or that no sibling files sit beside it, cannot reveal an overwrite — the previous content is
+already gone by then. (FHQ-188, 2026-09-08: an id scanned five days earlier was reused, and this
+signal was seen and misread.)
+
 **Title field:** every ticket carries a `title:` frontmatter field — the human title (its H1 text without the `FHQ-N — ` prefix). Set it on create and keep it in sync with the H1; dashboards display it (DQL cannot read the H1, and DataviewJS is disabled). Epic members in particular need `title:` for the epic's member roll-up.
 
 ## Lifecycle states
