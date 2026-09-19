@@ -20,7 +20,6 @@ pipeline {
         DEPLOY_HOST = 'jenkins_docker@192.168.86.23'
         DEPLOY_PATH = '/Docker/deployed_apps/preprod/familyhq'
         APP_BASE_URL = 'https://preprod.familyhq.alphaepsilon.co.uk:8400'
-        DB_NAME = 'FamilyHQ-PreProd'
     }
 
     stages {
@@ -119,9 +118,13 @@ pipeline {
             }
         }
 
-        stage('Drop DB') {
+        // Preprod's database is long-lived (FHQ-140): it holds the smoke account's stored Google token,
+        // its location and its webhook registrations, and each deploy's migrations run against
+        // existing data as they will in prod. Never drop or recreate it here. On a fresh host,
+        // Migrate() at WebApi startup creates the database.
+        stage('Stop Existing') {
             steps {
-                echo '======= Drop DB ======='
+                echo '======= Stop Existing ======='
                 sshagent(credentials: ['jenkins_docker_dev']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_HOST} '
@@ -129,10 +132,6 @@ pipeline {
                             docker compose -p familyhq-preprod -f docker-compose.yml -f docker-compose.preprod.yml down --remove-orphans || true
                             docker stop familyhq-webui-preprod familyhq-webapi-preprod familyhq-preprod-traefik 2>/dev/null || true
                             docker rm familyhq-webui-preprod familyhq-webapi-preprod familyhq-preprod-traefik 2>/dev/null || true
-
-                            docker exec postgres-db-1 psql -U devdbuser -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"'"'${DB_NAME}'"'"' AND pid <> pg_backend_pid();"
-                            docker exec postgres-db-1 psql -U devdbuser -c "DROP DATABASE IF EXISTS \\"${DB_NAME}\\";"
-                            docker exec postgres-db-1 psql -U devdbuser -c "CREATE DATABASE \\"${DB_NAME}\\";"
                         '
                     """
                 }
