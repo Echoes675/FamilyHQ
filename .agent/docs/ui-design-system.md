@@ -237,6 +237,24 @@ Bootstrap utility classes have been replaced with custom equivalents in `app.css
 - `.mb-1` through `.mb-5`, `.mt-1` through `.mt-5`, `.gap-1` through `.gap-4`
 - `.w-full`, `.text-center`, `.text-right`
 
+#### Tabs inside a modal (FHQ-199)
+
+The event create/edit modal is tabbed (Details · Repeat) so its height stays bounded as fields are
+added. The pattern, for any future modal that needs it:
+
+- **Bar:** `.view-tabs.modal-tabs` containing `.view-tab` buttons with `role="tab"` and
+  `aria-selected`. It sits between `.modal-header` and `.modal-body`, outside the scroll area.
+- **Panes stay mounted.** Each pane is a `.modal-tabpanel` toggled with the `hidden` attribute —
+  never `@if`. A child component with in-progress state (the recurrence picker) would lose it if
+  unmounted on a tab switch.
+- **A tab must show its state.** `.tab-badge` carries a one-word summary ("Weekly"); `.tab-marker`
+  flags an unfinished tab. Text for both comes from a pure logic class (`EventModalTabsLogic`), not
+  from the Razor file.
+- **Nothing important may hide on an inactive tab.** Validation errors and the reason Save is
+  disabled render in `.modal-status`, between the body and the footer, visible from every tab.
+- **No animated tab transitions** — Pi 3B+ constraint.
+- **Adding a tab:** one value on the tab enum, one tab button, one pane.
+
 ### CSS Architecture
 
 #### Registered custom properties (@property)

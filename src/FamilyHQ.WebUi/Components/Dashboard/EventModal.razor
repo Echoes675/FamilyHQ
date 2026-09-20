@@ -30,78 +30,135 @@
                     </div>
                     <button type="button" class="btn-close" @onclick="Close" aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Calendars</label>
-                        <CalendarChipSelector
-                            AllCalendars="SelectableCalendars"
-                            SelectedCalendarIds="_selectedCalendarIds"
-                            SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
-                            EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
-                            CalendarApi="CalendarApi" />
-                        @if (_selectedCalendarIds.Count == 0)
+                <div class="view-tabs modal-tabs" role="tablist" aria-label="Event sections">
+                    <button type="button"
+                            role="tab"
+                            id="event-modal-tab-details"
+                            data-testid="event-modal-tab-details"
+                            class="@TabClass(_activeTab == EventModalTab.Details)"
+                            aria-selected="@AriaBool(_activeTab == EventModalTab.Details)"
+                            aria-controls="event-modal-panel-details"
+                            @onclick="() => _activeTab = EventModalTab.Details">
+                        Details
+                    </button>
+                    <button type="button"
+                            role="tab"
+                            id="event-modal-tab-repeat"
+                            data-testid="event-modal-tab-repeat"
+                            class="@TabClass(_activeTab == EventModalTab.Repeat)"
+                            aria-selected="@AriaBool(_activeTab == EventModalTab.Repeat)"
+                            aria-controls="event-modal-panel-repeat"
+                            @onclick="() => _activeTab = EventModalTab.Repeat">
+                        Repeat
+                        @if (RepeatBadge is not null)
                         {
-                            <div class="text-danger mt-1" style="font-size: 0.82rem;">Please select at least one calendar.</div>
+                            <span class="tab-badge" data-testid="event-modal-tab-repeat-badge">@RepeatBadge</span>
+                        }
+                        @if (!_recurrenceComplete)
+                        {
+                            <span class="tab-marker text-danger"
+                                  data-testid="event-modal-tab-repeat-incomplete"
+                                  aria-label="Repeat settings are incomplete">!</span>
+                        }
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="event-modal-panel-details"
+                         role="tabpanel"
+                         class="modal-tabpanel"
+                         data-testid="event-modal-panel-details"
+                         aria-labelledby="event-modal-tab-details"
+                         hidden="@(_activeTab != EventModalTab.Details)">
+                        <div class="mb-3">
+                            <label class="form-label">Calendars</label>
+                            <CalendarChipSelector
+                                AllCalendars="SelectableCalendars"
+                                SelectedCalendarIds="_selectedCalendarIds"
+                                SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
+                                EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
+                                CalendarApi="CalendarApi" />
+                            @if (_selectedCalendarIds.Count == 0)
+                            {
+                                <div class="text-danger mt-1" style="font-size: 0.82rem;">Please select at least one calendar.</div>
+                            }
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Event Title</label>
+                            <input type="text" class="form-input" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
+                        </div>
+                        <div class="pill-toggle-row mb-3">
+                            <span class="pill-toggle-label" id="allDayLabel">All Day Event</span>
+                            <button type="button"
+                                    class="@($"pill-toggle {(_eventModel.IsAllDay ? "pill-toggle--on" : "pill-toggle--off")}")"
+                                    data-testid="all-day-toggle"
+                                    aria-labelledby="allDayLabel"
+                                    aria-pressed="@_eventModel.IsAllDay.ToString().ToLowerInvariant()"
+                                    @onclick="ToggleAllDay">
+                                @(_eventModel.IsAllDay ? "On" : "Off")
+                            </button>
+                        </div>
+                        <div class="grid-2 mb-3">
+                            <div>
+                                <label class="form-label">Start Date</label>
+                                <input type="date" class="form-input" @bind="_startDate" />
+                            </div>
+                            <div>
+                                <label class="form-label">End Date</label>
+                                <input type="date" class="form-input" @bind="_endDate" />
+                            </div>
+                        </div>
+                        @if (!_eventModel.IsAllDay)
+                        {
+                            <div class="grid-2 mb-3">
+                                <div data-testid="start-time-picker">
+                                    <label class="form-label">Start Time</label>
+                                    <TimePicker Value="_startTime" ValueChanged="v => _startTime = v" AriaLabel="Start time" />
+                                </div>
+                                <div data-testid="end-time-picker">
+                                    <label class="form-label">End Time</label>
+                                    <TimePicker Value="_endTime" ValueChanged="v => _endTime = v" AriaLabel="End time" />
+                                </div>
+                            </div>
+                        }
+                        <div class="mb-3">
+                            <label class="form-label">Location (Optional)</label>
+                            <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Description (Optional)</label>
+                            <textarea class="form-input" rows="3" @bind="_eventModel.Description"
+                                      placeholder="Notes, details…"></textarea>
+                        </div>
+                    </div>
+                    <div id="event-modal-panel-repeat"
+                         role="tabpanel"
+                         class="modal-tabpanel"
+                         data-testid="event-modal-panel-repeat"
+                         aria-labelledby="event-modal-tab-repeat"
+                         hidden="@(_activeTab != EventModalTab.Repeat)">
+                        <div class="mb-3" data-testid="recurrence-section">
+                            <label class="form-label">Repeat</label>
+                            <RecurrencePicker Start="_eventModel.Start"
+                                              @bind-Value="_recurrenceRule"
+                                              SelectionCompleteChanged="v => _recurrenceComplete = v" />
+                        </div>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(_modalError) || SaveHint is not null)
+                {
+                    @* FHQ-199: outside the panes and outside the scrolling body, so neither an error nor
+                       the reason Save is disabled can hide on a tab nobody is looking at. *@
+                    <div class="modal-status">
+                        @if (!string.IsNullOrEmpty(_modalError))
+                        {
+                            <div class="alert alert-danger" role="alert" data-testid="event-modal-error">@_modalError</div>
+                        }
+                        @if (SaveHint is not null)
+                        {
+                            <div class="modal-save-hint" data-testid="event-save-hint">@SaveHint</div>
                         }
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Event Title</label>
-                        <input type="text" class="form-input" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
-                    </div>
-                    <div class="pill-toggle-row mb-3">
-                        <span class="pill-toggle-label" id="allDayLabel">All Day Event</span>
-                        <button type="button"
-                                class="@($"pill-toggle {(_eventModel.IsAllDay ? "pill-toggle--on" : "pill-toggle--off")}")"
-                                data-testid="all-day-toggle"
-                                aria-labelledby="allDayLabel"
-                                aria-pressed="@_eventModel.IsAllDay.ToString().ToLowerInvariant()"
-                                @onclick="ToggleAllDay">
-                            @(_eventModel.IsAllDay ? "On" : "Off")
-                        </button>
-                    </div>
-                    <div class="grid-2 mb-3">
-                        <div>
-                            <label class="form-label">Start Date</label>
-                            <input type="date" class="form-input" @bind="_startDate" />
-                        </div>
-                        <div>
-                            <label class="form-label">End Date</label>
-                            <input type="date" class="form-input" @bind="_endDate" />
-                        </div>
-                    </div>
-                    @if (!_eventModel.IsAllDay)
-                    {
-                        <div class="grid-2 mb-3">
-                            <div data-testid="start-time-picker">
-                                <label class="form-label">Start Time</label>
-                                <TimePicker Value="_startTime" ValueChanged="v => _startTime = v" AriaLabel="Start time" />
-                            </div>
-                            <div data-testid="end-time-picker">
-                                <label class="form-label">End Time</label>
-                                <TimePicker Value="_endTime" ValueChanged="v => _endTime = v" AriaLabel="End time" />
-                            </div>
-                        </div>
-                    }
-                    <div class="mb-3" data-testid="recurrence-section">
-                        <label class="form-label">Repeat</label>
-                        <RecurrencePicker Start="_eventModel.Start"
-                                          @bind-Value="_recurrenceRule"
-                                          SelectionCompleteChanged="v => _recurrenceComplete = v" />
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Location (Optional)</label>
-                        <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Description (Optional)</label>
-                        <textarea class="form-input" rows="3" @bind="_eventModel.Description"
-                                  placeholder="Notes, details…"></textarea>
-                    </div>
-                    @if (!string.IsNullOrEmpty(_modalError))
-                    {
-                        <div class="alert alert-danger" role="alert" data-testid="event-modal-error">@_modalError</div>
-                    }
-                </div>
+                }
                 <div class="modal-footer flex justify-between">
                     <div>
                         @if (_isEditingEvent)
@@ -165,6 +222,20 @@
     private string? _modalError;
     private bool _isSaving;
     private bool _recurrenceComplete = true;
+
+    // FHQ-199: which tab is showing. Both panes stay MOUNTED and are toggled with `hidden` — never
+    // `@if` — because RecurrencePicker holds in-progress state (an unfinished Custom selection has
+    // no RRULE yet, so it lives only inside the component) and is IAsyncDisposable. Unmounting it on
+    // a tab switch would silently discard what the user had chosen.
+    private EventModalTab _activeTab = EventModalTab.Details;
+
+    private string? RepeatBadge => EventModalTabsLogic.RepeatBadge(_recurrenceRule);
+
+    private string? SaveHint => EventModalTabsLogic.SaveBlockedHint(_recurrenceComplete);
+
+    private static string TabClass(bool isActive) => isActive ? "view-tab active" : "view-tab";
+
+    private static string AriaBool(bool value) => value ? "true" : "false";
 
     // FHQ-18 recurrence state.
     // _recurrenceRule: the picker's current RRULE (null = does not repeat). Two-way bound.
@@ -352,6 +423,7 @@
         _recurrenceComplete = true;
         _wasRecurring = false;
         _originalMemberIds = Array.Empty<Guid>();
+        _activeTab = EventModalTab.Details;
         _modalError = null;
         _showEventModal = true;
         StateHasChanged();
@@ -382,6 +454,7 @@
         _recurrenceComplete = true;
         _wasRecurring = evt.IsRecurring;
         _originalMemberIds = evt.AllCalendars.Select(c => c.Id).ToList();
+        _activeTab = EventModalTab.Details;
         _modalError = null;
         _showEventModal = true;
         StateHasChanged();
@@ -391,6 +464,7 @@
     {
         _showEventModal = false;
         _showScopePrompt = false;
+        _activeTab = EventModalTab.Details;
         _eventModel = new();
         _modalError = null;
         _recurrenceRule = null;

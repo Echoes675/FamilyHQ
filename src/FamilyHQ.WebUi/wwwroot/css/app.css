@@ -281,6 +281,18 @@ html, body {
 .modal-body { padding: 20px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .modal-footer { display: flex; justify-content: space-between; padding: 16px 20px; border-top: 1px solid var(--theme-glass-divider); gap: 8px; flex: 0 0 auto; }
 
+/* FHQ-199: tabs inside the event modal. The look comes from .view-tabs / .view-tab (Section 9);
+   these rules only place the bar inside the modal and style what a tab says about itself.
+   Panes are toggled with the `hidden` attribute and stay mounted — see EventModal.razor. */
+.modal-tabs { padding: 0 20px; flex: 0 0 auto; }
+.modal-tabs .view-tab { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.tab-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: var(--theme-text); background: color-mix(in srgb, var(--theme-accent) 20%, transparent); transition: background-color var(--theme-transition-duration, 15s) ease-in-out, color var(--theme-transition-duration, 15s) ease-in-out; }
+.tab-marker { font-weight: 700; }
+.modal-tabpanel[hidden] { display: none; }
+.modal-status { padding: 0 20px 12px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.modal-status .alert { margin-bottom: 0; }
+.modal-save-hint { font-size: 13px; color: var(--theme-text-muted); }
+
 /* =============================================
    Section 11 — Forms
    ============================================= */
