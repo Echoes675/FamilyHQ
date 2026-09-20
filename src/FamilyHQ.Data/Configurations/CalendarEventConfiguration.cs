@@ -68,6 +68,11 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         // and the hash is only used in-flight to detect webhook self-echoes (FHQ-30).
         builder.Ignore(e => e.ContentHash);
 
+        // FHQ-189: Reminders is read off Google on every sync but not yet persisted — that is a
+        // later task. Without this, EF's default convention treats the reference-typed property as
+        // an unconfigured navigation to a keyless entity and throws building the model.
+        builder.Ignore(e => e.Reminders);
+
         // EventMembers junction: which family members are assigned to this event.
         builder.HasMany(e => e.Members)
             .WithMany()

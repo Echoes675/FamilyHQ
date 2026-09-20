@@ -465,7 +465,9 @@ public class GoogleCalendarClientMappingTests
             });
     }
 
-    private static void SetupAuthResponse(Mock<HttpMessageHandler> http)
+    // FHQ-189: internal (not private) so GoogleCalendarClientRemindersTests.cs can reuse this
+    // helper (via `using static`) instead of inventing its own SUT wiring.
+    internal static void SetupAuthResponse(Mock<HttpMessageHandler> http)
     {
         http.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
@@ -479,7 +481,9 @@ public class GoogleCalendarClientMappingTests
             });
     }
 
-    private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient Sut) CreateSut()
+    // FHQ-189: internal (not private) so GoogleCalendarClientRemindersTests.cs can reuse this
+    // helper (via `using static`) instead of inventing its own SUT wiring.
+    internal static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient Sut) CreateSut()
     {
         var httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(httpMessageHandlerMock.Object);
