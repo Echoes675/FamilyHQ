@@ -237,6 +237,38 @@ Bootstrap utility classes have been replaced with custom equivalents in `app.css
 - `.mb-1` through `.mb-5`, `.mt-1` through `.mt-5`, `.gap-1` through `.gap-4`
 - `.w-full`, `.text-center`, `.text-right`
 
+#### Tabs inside a modal (FHQ-199)
+
+The event create/edit modal is tabbed (Details · Repeat) so its height stays bounded as fields are
+added. The pattern, for any future modal that needs it:
+
+- **Bar:** `.view-tabs.modal-tabs` containing `.view-tab` buttons with `role="tab"` and
+  `aria-selected`. It sits between `.modal-header` and `.modal-body`, outside the scroll area.
+- **Panes stay mounted.** Each pane is a `.modal-tabpanel` toggled with the `hidden` attribute —
+  never `@if`. A child component with in-progress state (the recurrence picker) would lose it if
+  unmounted on a tab switch.
+- **Panes share one grid cell, so the modal never resizes.** `.modal-tabpanels` (added alongside
+  `.modal-body` for this modal) is `display: grid`; both `.modal-tabpanel` children sit in
+  `grid-area: 1 / 1`, so the container is always as tall as the taller pane regardless of which tab
+  is active. The inactive pane is `visibility: hidden`, not `display: none` — it still occupies the
+  shared grid cell (that is what keeps the body's height, and the whole content-sized, centred
+  dialog, stable across a tab switch) but is out of hit-testing, focus order and the accessibility
+  tree.
+- **A tab must show its state.** `.tab-badge` carries a one-word summary ("Weekly"), and
+  `.tab-marker` flags a tab with an unmet requirement — the Repeat tab when a repeat is on with no
+  frequency chosen, the Details tab when no calendar is selected. The badge and Save-hint TEXT come
+  from a pure logic class (`EventModalTabsLogic`); the marker's `!` glyph and its `aria-label` are
+  literals in the Razor file, not logic-class output — a tab knows its own unmet requirement
+  locally (`_selectedCalendarIds.Count == 0`, `!_recurrenceComplete`) without needing a named rule.
+- **Nothing important may hide on an inactive tab.** Validation errors and the reason Save is
+  disabled render in `.modal-status`, between the body and the footer, visible from every tab. A
+  tab may ALSO flag its own unmet requirement inline (the Details marker above) rather than routing
+  everything through the shared status strip — both patterns are valid; use the marker for "this
+  tab itself is incomplete" and the status strip for "Save was attempted and failed" or "here is
+  the reason Save is currently disabled".
+- **No animated tab transitions** — Pi 3B+ constraint.
+- **Adding a tab:** one value on the tab enum, one tab button, one pane.
+
 ### CSS Architecture
 
 #### Registered custom properties (@property)

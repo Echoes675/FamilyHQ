@@ -281,6 +281,25 @@ html, body {
 .modal-body { padding: 20px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .modal-footer { display: flex; justify-content: space-between; padding: 16px 20px; border-top: 1px solid var(--theme-glass-divider); gap: 8px; flex: 0 0 auto; }
 
+/* FHQ-199: tabs inside the event modal. The look comes from .view-tabs / .view-tab (Section 9);
+   these rules only place the bar inside the modal and style what a tab says about itself.
+   Panes are toggled with the `hidden` attribute and stay mounted — see EventModal.razor. */
+.modal-tabs { padding: 0 20px; flex: 0 0 auto; }
+.modal-tabs .view-tab { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.tab-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: var(--theme-text); background: color-mix(in srgb, var(--theme-accent) 20%, transparent); transition: background-color var(--theme-transition-duration, 15s) ease-in-out, color var(--theme-transition-duration, 15s) ease-in-out; }
+.tab-marker { font-weight: 700; }
+/* FHQ-199 Fix 1: both panes share one grid cell, so the body is always as tall as the taller
+   pane and the modal neither resizes nor re-centres when the tab changes. The inactive pane
+   keeps its `hidden` attribute (it stays mounted, and assistive tech treats it as hidden) but is
+   laid out invisibly: visibility:hidden also removes it from hit-testing, focus order and the
+   accessibility tree — unlike display:none, it still occupies the shared cell, which is what
+   keeps the container's height stable. */
+.modal-tabpanels { display: grid; }
+.modal-tabpanel { grid-area: 1 / 1; min-width: 0; }
+.modal-tabpanel[hidden] { display: block; visibility: hidden; }
+.modal-status { padding: 12px 20px; flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.modal-save-hint { font-size: 13px; color: var(--theme-text-muted); }
+
 /* =============================================
    Section 11 — Forms
    ============================================= */
