@@ -47,4 +47,39 @@ public class EventModalTabsSteps
     {
         await _dashboardPage.AssertRepeatTabBadgeAsync(expected);
     }
+
+    // FHQ-199 Fix 2: the Details tab flags its own unmet requirement (no calendar selected) so the
+    // marker is visible even while the Repeat tab is showing.
+
+    [When(@"I attempt to save the event")]
+    public async Task WhenIAttemptToSaveTheEvent()
+    {
+        await _dashboardPage.AttemptSaveAsync();
+    }
+
+    [When(@"I select the ""([^""]*)"" calendar for the event")]
+    public async Task WhenISelectTheCalendarForTheEvent(string calendarName)
+    {
+        await _dashboardPage.EnsureCalendarChipActiveAsync(calendarName);
+    }
+
+    [Then(@"the Details tab is marked as incomplete")]
+    public async Task ThenTheDetailsTabIsMarkedAsIncomplete()
+    {
+        await _dashboardPage.AssertDetailsTabIncompleteAsync();
+    }
+
+    [Then(@"the Details tab is not marked as incomplete")]
+    public async Task ThenTheDetailsTabIsNotMarkedAsIncomplete()
+    {
+        await _dashboardPage.AssertDetailsTabNotIncompleteAsync();
+    }
+
+    // FHQ-199 Fix 1: the modal's bounding box must not change when the tab changes.
+
+    [Then(@"the event editor stays in the same place as the tab changes")]
+    public async Task ThenTheEventEditorStaysInTheSamePlaceAsTheTabChanges()
+    {
+        await _dashboardPage.AssertModalStaysStillAcrossTabsAsync();
+    }
 }

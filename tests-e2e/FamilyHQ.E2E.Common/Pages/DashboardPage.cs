@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using FamilyHQ.E2E.Common.Configuration;
 using FamilyHQ.E2E.Common.Helpers;
+using FluentAssertions;
 using Microsoft.Playwright;
 
 namespace FamilyHQ.E2E.Common.Pages;
@@ -1172,6 +1173,57 @@ public class DashboardPage : BasePage
         => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-repeat-badge"))
             .ToHaveTextAsync(expected, new() { Timeout = 5000 });
 
+    /// <summary>
+    /// Clicks Save without waiting for the modal to close. Used where a validation failure is
+    /// expected to keep the modal open — e.g. <see cref="BeginCreatingEventAsync"/> leaves the
+    /// title blank, so this exercises the missing-title validation (FHQ-199: that error must stay
+    /// visible even while the Repeat tab is showing).
+    /// </summary>
+    public async Task AttemptSaveAsync() => await SaveEventBtn.ClickAsync();
+
+    /// <summary>Asserts the Details tab carries its "unfinished" marker (FHQ-199 Fix 2: no calendar selected).</summary>
+    public async Task AssertDetailsTabIncompleteAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-details-incomplete"))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+
+    /// <summary>Asserts the Details tab's "unfinished" marker is gone (a calendar is now selected).</summary>
+    public async Task AssertDetailsTabNotIncompleteAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-details-incomplete"))
+            .ToHaveCountAsync(0, new() { Timeout = 5000 });
+
+    /// <summary>
+    /// FHQ-199 Fix 1: asserts the modal's bounding box (position AND size) is unchanged, within 1px
+    /// for sub-pixel rounding, as the active tab moves from Details to Repeat and back. Each switch
+    /// is synchronised on the tab's aria-selected flip inside <see cref="ShowModalTabAsync"/> — no
+    /// sleep — before the box is re-measured, so a pass proves the CSS grid-stacking fix, not timing.
+    /// </summary>
+    public async Task AssertModalStaysStillAcrossTabsAsync()
+    {
+        var initial = await ModalBoundingBoxAsync();
+
+        await ShowModalTabAsync("repeat");
+        await AssertModalBoxMatchesAsync(initial);
+
+        await ShowModalTabAsync("details");
+        await AssertModalBoxMatchesAsync(initial);
+    }
+
+    private async Task AssertModalBoxMatchesAsync(LocatorBoundingBoxResult expected)
+    {
+        var actual = await ModalBoundingBoxAsync();
+        actual.X.Should().BeApproximately(expected.X, 1f, "the modal must not shift horizontally when the tab changes.");
+        actual.Y.Should().BeApproximately(expected.Y, 1f, "the modal must not shift vertically when the tab changes (it would if the dialog resized and re-centred).");
+        actual.Width.Should().BeApproximately(expected.Width, 1f, "the modal must not resize when the tab changes.");
+        actual.Height.Should().BeApproximately(expected.Height, 1f, "the modal must not resize when the tab changes.");
+    }
+
+    private async Task<LocatorBoundingBoxResult> ModalBoundingBoxAsync()
+    {
+        var box = await EventModal.BoundingBoxAsync();
+        box.Should().NotBeNull("the event modal must be visible with a measurable layout box.");
+        return box!;
+    }
+
     private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
     private ILocator ScopePromptOkBtn => Page.GetByTestId("recurrence-scope-ok");
 
@@ -1376,9 +1428,24 @@ public class DashboardPage : BasePage
         await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
     }
 
-    /// <summary>Activates the named calendar chip in the open modal if it is not already active.</summary>
-    private async Task EnsureCalendarChipActiveAsync(string calendarName)
+    /// <summary>
+    /// Activates the named calendar chip in the open modal if it is not already active. Public so a
+    /// scenario can select a calendar without also saving (FHQ-199: clearing the Details tab's
+    /// "no calendar selected" marker) as well as via the composed create/edit flows below.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-199: the chip selector lives on the Details pane, so this shows that tab first — mirrors
+    /// <see cref="EnsureRepeatOnAsync"/> calling <c>ShowModalTabAsync("repeat")</c> first, so callers
+    /// do not need a tab-switch step of their own regardless of which tab is currently showing. A
+    /// freshly-opened modal is already on Details, so this is a no-op for the create/edit flows below;
+    /// it only does work for a caller that selects a calendar while the Repeat tab is active. The
+    /// inactive Details pane is `visibility: hidden` (Fix 1), so the chip genuinely cannot be clicked
+    /// without switching first — Playwright times out waiting for it to become visible.
+    /// </remarks>
+    public async Task EnsureCalendarChipActiveAsync(string calendarName)
     {
+        await ShowModalTabAsync("details");
+
         var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
         var classes = await chip.GetAttributeAsync("class") ?? "";
         if (!classes.Contains("chip-active"))

@@ -33,3 +33,21 @@ Feature: Event Editor Tabs
     And I show the "Details" tab of the event editor
     Then the Repeat tab is labelled "Weekly"
     And the event can be saved
+
+  Scenario: A validation error is visible from the Repeat tab
+    When I begin creating an event in "Appointments"
+    And I show the "Repeat" tab of the event editor
+    And I attempt to save the event
+    Then the event modal shows the error "Title is required."
+    And the event editor is showing the "Repeat" tab
+
+  Scenario: A missing calendar is flagged on the Details tab while the Repeat tab is showing
+    When I open the create-event modal
+    And I show the "Repeat" tab of the event editor
+    Then the Details tab is marked as incomplete
+    When I select the "Appointments" calendar for the event
+    Then the Details tab is not marked as incomplete
+
+  Scenario: The event editor does not move when the tab changes
+    When I begin creating an event in "Appointments"
+    Then the event editor stays in the same place as the tab changes
