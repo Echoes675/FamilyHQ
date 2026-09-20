@@ -31,8 +31,11 @@ public class EventModalTabsLogicTests
     [Fact]
     public void RepeatBadge_WithAnUnreadableRule_FallsBackRatherThanThrowing()
     {
-        // A synced event can carry a rule the parser rejects. The tab must still say the event
-        // repeats — throwing here would take the whole modal down over a label.
+        // A synced event can carry a rule the parser rejects. This does not save the modal's
+        // render from throwing overall — RecurrencePickerModel.FromRecurrenceRule parses the same
+        // rule with no catch in the same render — but it does mean the badge rule itself never
+        // throws, so it is safe to call from any render path, now or if a future caller needs it
+        // outside the one render that already fails on the picker.
         EventModalTabsLogic.RepeatBadge("RRULE:INTERVAL=2")
             .Should().Be(EventModalTabsLogic.UnreadableRuleBadge);
     }

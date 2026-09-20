@@ -22,6 +22,11 @@
                             var recurrenceSummary = _wasRecurring && !string.IsNullOrWhiteSpace(_recurrenceRule)
                                 ? RecurrenceRuleBuilder.Describe(_recurrenceRule)
                                 : null;
+                            // FHQ-199 M3: capture once per render — RepeatBadge and SaveHint were each
+                            // being re-evaluated (2x and 3x respectively) by the markup below for the
+                            // same pure inputs.
+                            var repeatBadge = EventModalTabsLogic.RepeatBadge(_recurrenceRule);
+                            var saveHint = EventModalTabsLogic.SaveBlockedHint(_recurrenceComplete);
                         }
                         @if (recurrenceSummary is not null)
                         {
@@ -40,6 +45,13 @@
                             aria-controls="event-modal-panel-details"
                             @onclick="() => _activeTab = EventModalTab.Details">
                         Details
+                        @if (_selectedCalendarIds.Count == 0)
+                        {
+                            <span class="tab-marker text-danger"
+                                  role="img"
+                                  data-testid="event-modal-tab-details-incomplete"
+                                  aria-label="Details are incomplete">!</span>
+                        }
                     </button>
                     <button type="button"
                             role="tab"
@@ -50,19 +62,20 @@
                             aria-controls="event-modal-panel-repeat"
                             @onclick="() => _activeTab = EventModalTab.Repeat">
                         Repeat
-                        @if (RepeatBadge is not null)
+                        @if (repeatBadge is not null)
                         {
-                            <span class="tab-badge" data-testid="event-modal-tab-repeat-badge">@RepeatBadge</span>
+                            <span class="tab-badge" data-testid="event-modal-tab-repeat-badge">@repeatBadge</span>
                         }
                         @if (!_recurrenceComplete)
                         {
                             <span class="tab-marker text-danger"
+                                  role="img"
                                   data-testid="event-modal-tab-repeat-incomplete"
                                   aria-label="Repeat settings are incomplete">!</span>
                         }
                     </button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body modal-tabpanels">
                     <div id="event-modal-panel-details"
                          role="tabpanel"
                          class="modal-tabpanel"
@@ -144,7 +157,7 @@
                         </div>
                     </div>
                 </div>
-                @if (!string.IsNullOrEmpty(_modalError) || SaveHint is not null)
+                @if (!string.IsNullOrEmpty(_modalError) || saveHint is not null)
                 {
                     @* FHQ-199: outside the panes and outside the scrolling body, so neither an error nor
                        the reason Save is disabled can hide on a tab nobody is looking at. *@
@@ -153,9 +166,9 @@
                         {
                             <div class="alert alert-danger" role="alert" data-testid="event-modal-error">@_modalError</div>
                         }
-                        @if (SaveHint is not null)
+                        @if (saveHint is not null)
                         {
-                            <div class="modal-save-hint" data-testid="event-save-hint">@SaveHint</div>
+                            <div class="modal-save-hint" data-testid="event-save-hint">@saveHint</div>
                         }
                     </div>
                 }
@@ -228,10 +241,6 @@
     // no RRULE yet, so it lives only inside the component) and is IAsyncDisposable. Unmounting it on
     // a tab switch would silently discard what the user had chosen.
     private EventModalTab _activeTab = EventModalTab.Details;
-
-    private string? RepeatBadge => EventModalTabsLogic.RepeatBadge(_recurrenceRule);
-
-    private string? SaveHint => EventModalTabsLogic.SaveBlockedHint(_recurrenceComplete);
 
     private static string TabClass(bool isActive) => isActive ? "view-tab active" : "view-tab";
 
