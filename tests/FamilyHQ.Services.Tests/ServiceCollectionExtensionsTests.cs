@@ -22,17 +22,20 @@ public class ServiceCollectionExtensionsTests
     /// </summary>
     private const string ConfiguredSalt = "a-configured-salt-of-sufficient-length";
 
+    /// <summary>
+    /// FHQ-196. Webhook registration defaults to enabled, and registration now refuses to run
+    /// without an absolute address for it, so every configuration built here has to carry one.
+    /// It is arrange-only detail — the tests that are *about* the address build their own.
+    /// </summary>
+    private const string ConfiguredWebhookBaseUrl = "https://familyhq.example.com";
+
     [Fact]
     public void AddFamilyHqServices_RegistersAllRequiredServices()
     {
         // Arrange
         var services = new ServiceCollection();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("Sync:PeriodicSyncInterval", "01:00:00")
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("Sync:PeriodicSyncInterval", "01:00:00"));
 
         // Act
         services.AddFamilyHqServices(configuration);
@@ -81,7 +84,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = BuildConfiguration();
         services.AddFamilyHqServices(configuration);
 
         using var provider = services.BuildServiceProvider();
@@ -98,13 +101,9 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("GoogleResilience:AuthTimeout", "00:00:07"),
-                new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:09")
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("GoogleResilience:AuthTimeout", "00:00:07"),
+            new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:09"));
         services.AddFamilyHqServices(configuration);
 
         using var provider = services.BuildServiceProvider();
@@ -118,12 +117,8 @@ public class ServiceCollectionExtensionsTests
     public void AddFamilyHqServices_InvalidGoogleResilienceConfig_ThrowsAtRegistration()
     {
         var services = new ServiceCollection();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:00")
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("GoogleResilience:CalendarTimeout", "00:00:00"));
 
         // Fail-fast: a zero/negative timeout must surface at boot, not as a hung/instantly-failing call.
         services.Invoking(s => s.AddFamilyHqServices(configuration))
@@ -137,7 +132,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = BuildConfiguration();
         services.AddFamilyHqServices(configuration);
 
         using var provider = services.BuildServiceProvider();
@@ -156,13 +151,9 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("Geocoding:BaseUrl", "https://nominatim.test"),
-                new KeyValuePair<string, string?>("Weather:BaseUrl", "https://openmeteo.test")
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("Geocoding:BaseUrl", "https://nominatim.test"),
+            new KeyValuePair<string, string?>("Weather:BaseUrl", "https://openmeteo.test"));
         services.AddFamilyHqServices(configuration);
 
         using var provider = services.BuildServiceProvider();
@@ -176,12 +167,8 @@ public class ServiceCollectionExtensionsTests
     public void AddFamilyHqServices_InvalidExternalHttpResilienceConfig_ThrowsAtRegistration()
     {
         var services = new ServiceCollection();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>("ExternalHttpResilience:MaxAttempts", "0")
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("ExternalHttpResilience:MaxAttempts", "0"));
 
         services.Invoking(s => s.AddFamilyHqServices(configuration))
             .Should().Throw<InvalidOperationException>()
@@ -193,16 +180,65 @@ public class ServiceCollectionExtensionsTests
     public void AddFamilyHqServices_InvalidWeatherConfig_ThrowsAtRegistration()
     {
         var services = new ServiceCollection();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>("Weather:MaxFailureBackoffMinutes", "0"));
+
+        services.Invoking(s => s.AddFamilyHqServices(configuration))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*MaxFailureBackoffMinutes*");
+    }
+
+    // ---- FHQ-196: the webhook registration address is fail-fast validated at boot ----
+    [Fact]
+    public void AddFamilyHqServices_WebhookRegistrationEnabledWithoutAnAddress_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new[]
             {
-                new KeyValuePair<string, string?>("Weather:MaxFailureBackoffMinutes", "0")
+                new KeyValuePair<string, string?>("Sync:WebhookRegistrationEnabled", "true")
+            })
+            .Build();
+
+        // Deferred, this is invisible: registration warns once per calendar and carries on, so the
+        // deployment looks healthy while no push notification ever arrives.
+        services.Invoking(s => s.AddFamilyHqServices(configuration))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage($"*{nameof(FamilyHQ.Services.Options.SyncOptions.WebhookBaseUrl)}*");
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_WebhookRegistrationEnabledWithARelativeAddress_ThrowsAtRegistration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("Sync:WebhookRegistrationEnabled", "true"),
+                new KeyValuePair<string, string?>("Sync:WebhookBaseUrl", "/api/sync/webhook")
             })
             .Build();
 
         services.Invoking(s => s.AddFamilyHqServices(configuration))
             .Should().Throw<InvalidOperationException>()
-            .WithMessage("*MaxFailureBackoffMinutes*");
+            .WithMessage($"*{nameof(FamilyHQ.Services.Options.SyncOptions.WebhookBaseUrl)}*");
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_WebhookRegistrationEnabledWithThePlainHttpSimulatorAddress_DoesNotThrow()
+    {
+        // dev and staging register against the Simulator over http inside the compose network;
+        // requiring https here would break both environments.
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("Sync:WebhookRegistrationEnabled", "true"),
+                new KeyValuePair<string, string?>("Sync:WebhookBaseUrl", "http://webapi:8080")
+            })
+            .Build();
+
+        services.Invoking(s => s.AddFamilyHqServices(configuration)).Should().NotThrow();
     }
 
     [Fact]
@@ -210,7 +246,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = BuildConfiguration();
         services.AddFamilyHqServices(configuration);
         // These are registered by WebApi/FamilyHQ.Data.PostgreSQL (not AddFamilyHqServices); stub them
         // so the inner client's dependency chain (GoogleCalendarClient -> TimeZoneService -> ...) can build.
@@ -236,7 +272,7 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder().Build();
+        var configuration = BuildConfiguration();
         services.AddFamilyHqServices(configuration);
 
         using var provider = services.BuildServiceProvider();
@@ -296,16 +332,19 @@ public class ServiceCollectionExtensionsTests
             .WithMessage($"*{SaltedHashPiiRedactor.SaltConfigurationKey}*");
     }
 
+    private static IConfiguration BuildConfiguration(params KeyValuePair<string, string?>[] settings) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                settings.Prepend(
+                    new KeyValuePair<string, string?>("Sync:WebhookBaseUrl", ConfiguredWebhookBaseUrl)))
+            .Build();
+
     private static ServiceCollection CreateServicesWithSalt(string salt)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new[]
-            {
-                new KeyValuePair<string, string?>(SaltedHashPiiRedactor.SaltConfigurationKey, salt)
-            })
-            .Build();
+        var configuration = BuildConfiguration(
+            new KeyValuePair<string, string?>(SaltedHashPiiRedactor.SaltConfigurationKey, salt));
         services.AddFamilyHqServices(configuration);
 
         return services;
