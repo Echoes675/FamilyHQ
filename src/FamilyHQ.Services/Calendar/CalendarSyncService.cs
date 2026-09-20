@@ -172,7 +172,20 @@ public class CalendarSyncService(
             isNewSyncState = true;
         }
 
-        bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken);
+        // FHQ-189: a calendar that has never been synced WITH reminders in the field mask is forced
+        // through one full sync, even though its token is still valid. Incremental sync never
+        // re-sends an unchanged event, so the events already in production would otherwise never
+        // gain their reminders. Stamped below once the sync succeeds, so this happens exactly once
+        // per calendar. This is the same code path a Google 410 already exercises.
+        bool needsReminderBackfill = syncState.RemindersSyncedAt is null;
+        bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken) || needsReminderBackfill;
+
+        if (needsReminderBackfill)
+        {
+            logger.LogInformation(
+                "Calendar {CalendarInfoId} has no reminder data; forcing one full sync to backfill it.",
+                calendar.Id);
+        }
 
         logger.LogInformation("Syncing calendar {CalendarInfoId}. FullSync={IsFullSync}", calendar.Id, isFullSync);
 
@@ -184,7 +197,9 @@ public class CalendarSyncService(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
-                syncState.SyncToken,
+                // A full sync (backfill included) is a windowed fetch, not an incremental one — Google's
+                // events.list rejects a syncToken combined with a time range, so none is sent here.
+                isFullSync ? null : syncState.SyncToken,
                 ct);
 
             // Materialise once: the sequence is enumerated several times below (pass-2 resolution,
@@ -244,26 +259,6 @@ public class CalendarSyncService(
 
             foreach (var evt in events)
             {
-                // Self-echo guard (FHQ-30): skip events that echo our own outbound writes.
-                // ContentHash is populated by GoogleCalendarClient from extendedProperties.private["content-hash"].
-                // Null hash means a manually-edited event, a delete tombstone, or a legacy event — always process.
-                if (IsSelfEcho(evt))
-                {
-                    logger.LogInformation(
-                        "Self-echo skipped for event {EventId} on calendar {CalendarInfoId} (hash {Hash}).",
-                        evt.GoogleEventId, calendarInfoId, evt.ContentHash);
-                    continue;
-                }
-
-                // Stamp the resolved RRULE (pass 2) onto recurring instances before persistence.
-                // A series whose master could not be fetched this run is left with RecurrenceRule
-                // null so the next sync retries it.
-                if (evt.GoogleRecurringEventId is not null
-                    && rruleCache.TryGetValue(evt.GoogleRecurringEventId, out var resolvedRrule))
-                {
-                    evt.RecurrenceRule = resolvedRrule;
-                }
-
                 // The entity actually written to the change tracker for this event.
                 // If a downstream SaveChangesAsync throws (e.g. Postgres rejects the
                 // value as too long), we need to detach this specific entity so the
@@ -271,13 +266,50 @@ public class CalendarSyncService(
                 CalendarEvent? touched = null;
                 try
                 {
+                    // FHQ-189: the self-echo guard below now also compares reminders, which needs
+                    // the locally-stored row — but only fetch it here when the guard could actually
+                    // need it (a hash match where Google also reported reminders this fetch). A
+                    // hash match with no reminders on the fetch resolves from the hash alone (see
+                    // IsSelfEcho), so a genuine echo still costs no DB lookup at all (FHQ-30's
+                    // original "skipped event triggers no DB lookup" behaviour). Not yet fetched
+                    // here, it is fetched once below, before the update/create branch.
+                    var isHashCandidate = !string.IsNullOrEmpty(evt.ContentHash)
+                        && outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash);
+                    var localEvent = isHashCandidate && evt.Reminders is not null
+                        ? await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct)
+                        : null;
+
+                    // Self-echo guard (FHQ-30): skip events that echo our own outbound writes.
+                    // ContentHash is populated by GoogleCalendarClient from extendedProperties.private["content-hash"].
+                    // Null hash means a manually-edited event, a delete tombstone, or a legacy event — always process.
+                    if (IsSelfEcho(evt, localEvent))
+                    {
+                        logger.LogInformation(
+                            "Self-echo skipped for event {EventId} on calendar {CalendarInfoId} (hash {Hash}).",
+                            evt.GoogleEventId, calendarInfoId, evt.ContentHash);
+                        continue;
+                    }
+
+                    // Not an echo (or not a candidate at all): the update/create branch below
+                    // needs the locally-stored row regardless, so fetch it now unless the echo
+                    // check above already did.
+                    localEvent ??= await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
+
+                    // Stamp the resolved RRULE (pass 2) onto recurring instances before persistence.
+                    // A series whose master could not be fetched this run is left with RecurrenceRule
+                    // null so the next sync retries it.
+                    if (evt.GoogleRecurringEventId is not null
+                        && rruleCache.TryGetValue(evt.GoogleRecurringEventId, out var resolvedRrule))
+                    {
+                        evt.RecurrenceRule = resolvedRrule;
+                    }
+
                     if (evt.Title == "CANCELLED_TOMBSTONE")
                     {
-                        var tracked = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                        if (tracked != null)
+                        if (localEvent != null)
                         {
-                            touched = tracked;
-                            await calendarRepository.DeleteEventAsync(tracked.Id, ct);
+                            touched = localEvent;
+                            await calendarRepository.DeleteEventAsync(localEvent.Id, ct);
                             changeCount += await calendarRepository.SaveChangesAsync(ct);
                         }
                         continue;
@@ -301,22 +333,21 @@ public class CalendarSyncService(
                     if (!calendar.IsShared && parsedMembers.All(m => m.Id != calendar.Id))
                         parsedMembers.Add(calendar);
 
-                    var existing = await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct);
-                    if (existing != null)
+                    if (localEvent != null)
                     {
-                        touched = existing;
-                        existing.Title                  = evt.Title;
-                        existing.Start                  = evt.Start;
-                        existing.End                    = evt.End;
-                        existing.IsAllDay               = evt.IsAllDay;
-                        existing.Location               = evt.Location;
-                        existing.Description            = evt.Description;
-                        existing.Members                = parsedMembers;
-                        existing.GoogleRecurringEventId = evt.GoogleRecurringEventId;
-                        existing.OriginalStartTime      = evt.OriginalStartTime;
+                        touched = localEvent;
+                        localEvent.Title                  = evt.Title;
+                        localEvent.Start                  = evt.Start;
+                        localEvent.End                    = evt.End;
+                        localEvent.IsAllDay               = evt.IsAllDay;
+                        localEvent.Location               = evt.Location;
+                        localEvent.Description            = evt.Description;
+                        localEvent.Members                = parsedMembers;
+                        localEvent.GoogleRecurringEventId = evt.GoogleRecurringEventId;
+                        localEvent.OriginalStartTime      = evt.OriginalStartTime;
                         // Preserve an already-stored RRULE if pass 2 could not resolve one this run
                         // (transient master-fetch failure must not blank out a known rule).
-                        existing.RecurrenceRule         = evt.RecurrenceRule ?? existing.RecurrenceRule;
+                        localEvent.RecurrenceRule         = evt.RecurrenceRule ?? localEvent.RecurrenceRule;
                         // FHQ-164 Decision 4: lazy backfill of the series' anchor zone. Google reports
                         // start.timeZone on every timed instance in the list response, so an ordinary
                         // window sync populates the column for free — no bulk job, no schema default,
@@ -325,10 +356,16 @@ public class CalendarSyncService(
                         // read as "no zone" by the outbound write, which then re-anchors the series to
                         // the family's zone — FHQ-170 all over again, from a null-check that looked
                         // complete.
-                        existing.IanaTimeZone           = string.IsNullOrWhiteSpace(evt.IanaTimeZone)
-                            ? existing.IanaTimeZone
+                        localEvent.IanaTimeZone           = string.IsNullOrWhiteSpace(evt.IanaTimeZone)
+                            ? localEvent.IanaTimeZone
                             : evt.IanaTimeZone;
-                        await calendarRepository.UpdateEventAsync(existing, ct);
+                        // FHQ-189: unlike IanaTimeZone above — which is only ever filled in, never
+                        // cleared — reminders are authoritative on every fetch: a user really can
+                        // remove the last one, and that removal must reach us. A NULL from the
+                        // client means Google said nothing about reminders at all, which is not the
+                        // same as "none", so the stored value stands.
+                        localEvent.Reminders              = evt.Reminders ?? localEvent.Reminders;
+                        await calendarRepository.UpdateEventAsync(localEvent, ct);
                     }
                     else
                     {
@@ -379,6 +416,9 @@ public class CalendarSyncService(
 
             syncState.SyncToken    = nextSyncToken;
             syncState.LastSyncedAt = DateTimeOffset.UtcNow;
+            // Stamp only after the fetch succeeded, so a failed backfill is retried next sync
+            // rather than being silently skipped forever.
+            syncState.RemindersSyncedAt ??= DateTimeOffset.UtcNow;
             if (isFullSync)
             {
                 syncState.SyncWindowStart = startDate;
@@ -439,13 +479,26 @@ public class CalendarSyncService(
     }
 
     /// <summary>
-    /// FHQ-30 self-echo guard: true when this inbound event echoes one of our own recent
-    /// outbound writes (matching GoogleEventId + content-hash). A null/empty hash means a
-    /// manually-edited event, a tombstone, or a legacy event — never an echo.
+    /// FHQ-30 self-echo guard, narrowed by FHQ-189: true when this inbound event echoes one of our
+    /// own recent writes.
     /// </summary>
-    private bool IsSelfEcho(CalendarEvent evt)
-        => !string.IsNullOrEmpty(evt.ContentHash)
-           && outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash);
+    /// <remarks>
+    /// The stamped content-hash covers Title, Start, End, IsAllDay and Description — NOT reminders.
+    /// So a reminder added on a phone within the cache's 60-second window arrives carrying the hash
+    /// the kiosk last stamped, and the hash test alone would discard it silently and permanently.
+    /// An event is therefore only an echo if its reminders match what we already hold as well.
+    /// </remarks>
+    private bool IsSelfEcho(CalendarEvent evt, CalendarEvent? existing)
+    {
+        if (string.IsNullOrEmpty(evt.ContentHash)) return false;
+        if (!outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash)) return false;
+
+        // Google said nothing about reminders, or we hold nothing to compare: fall back to the
+        // hash decision alone, exactly as before this change.
+        if (evt.Reminders is null || existing?.Reminders is null) return true;
+
+        return evt.Reminders.SameAs(existing.Reminders);
+    }
 
     /// <summary>
     /// Pass 2 of recurring ingestion. Builds a per-run series-id → RRULE cache from the
@@ -465,11 +518,14 @@ public class CalendarSyncService(
     {
         // Cancelled tombstones reuse the recurring id but are being deleted, so they need no RRULE.
         // Self-echoes (FHQ-30) are short-circuited in the persistence loop and never stored, so
-        // they must not trigger a wasted master fetch either.
+        // they must not trigger a wasted master fetch either. No locally-stored row is in scope
+        // here (this pass runs before the per-event lookup), so null is passed for the existing
+        // event — IsSelfEcho then falls back to the hash-only decision, preserving this call
+        // site's behaviour exactly as it was before FHQ-189.
         var seriesIds = events
             .Where(e => e.GoogleRecurringEventId is not null
                      && e.Title != "CANCELLED_TOMBSTONE"
-                     && !IsSelfEcho(e))
+                     && !IsSelfEcho(e, null))
             .Select(e => e.GoogleRecurringEventId!)
             .Distinct()
             .ToList();

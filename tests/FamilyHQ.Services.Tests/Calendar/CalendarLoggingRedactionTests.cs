@@ -104,8 +104,11 @@ public class CalendarLoggingRedactionTests
             .ReturnsAsync(calendar);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([calendar]);
+        // FHQ-189: RemindersSyncedAt must be stamped, or this becomes a forced backfill full sync
+        // and the "stale" token is never sent, so the SyncTokenExpiredException this test relies on
+        // never fires. This models an already-backfilled calendar hitting an expired token.
         repo.Setup(r => r.GetSyncStateAsync(OwnerCalendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = OwnerCalendarId, SyncToken = "stale" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = OwnerCalendarId, SyncToken = "stale", RemindersSyncedAt = DateTimeOffset.UtcNow });
         repo.Setup(r => r.GetEventsByOwnerCalendarAsync(OwnerCalendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         client.Setup(c => c.GetEventsAsync(PrimaryCalendarId, null, null, "stale", It.IsAny<CancellationToken>()))
