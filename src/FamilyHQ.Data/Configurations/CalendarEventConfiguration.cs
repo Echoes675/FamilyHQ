@@ -50,6 +50,17 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         builder.Property(e => e.IanaTimeZone)
             .HasMaxLength(64);
 
+        // FHQ-189: Google replaces `reminders` as a whole object and FamilyHQ only ever reads and
+        // writes it together with its event, so it is stored as one JSON document rather than a
+        // child table. A child table would add a join to the reminders-timeline query that runs on
+        // every kiosk load, plus a delete-and-reinsert on every sync — the race FHQ-111 was about.
+        // OwnsOne(...).ToJson() keeps FamilyHQ.Data provider-agnostic; Npgsql maps it to jsonb.
+        builder.OwnsOne(e => e.Reminders, r =>
+        {
+            r.ToJson();
+            r.OwnsMany(x => x.Overrides);
+        });
+
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);
         builder.HasIndex(e => e.End);
@@ -67,11 +78,6 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         // It is never persisted — the DB is the authoritative source for event data,
         // and the hash is only used in-flight to detect webhook self-echoes (FHQ-30).
         builder.Ignore(e => e.ContentHash);
-
-        // FHQ-189: Reminders is read off Google on every sync but not yet persisted — that is a
-        // later task. Without this, EF's default convention treats the reference-typed property as
-        // an unconfigured navigation to a keyless entity and throws building the model.
-        builder.Ignore(e => e.Reminders);
 
         // EventMembers junction: which family members are assigned to this event.
         builder.HasMany(e => e.Members)

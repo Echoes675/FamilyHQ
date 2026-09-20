@@ -44,11 +44,12 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
         builder.Property(c => c.IanaTimeZone)
             .HasMaxLength(64);
 
-        // FHQ-189: DefaultReminders is read off Google on every calendar-list sync but not yet
-        // persisted — that is a later task. Without this, EF's default convention treats the
-        // reference-typed property as an unconfigured navigation to a keyless entity and throws
-        // building the model (mirrors CalendarEventConfiguration.Ignore(e => e.Reminders)).
-        builder.Ignore(c => c.DefaultReminders);
+        // FHQ-189: the calendar's default reminders (see CalendarInfo.DefaultReminders).
+        builder.OwnsOne(c => c.DefaultReminders, r =>
+        {
+            r.ToJson();
+            r.OwnsMany(x => x.Overrides);
+        });
 
         builder.HasIndex(c => new { c.GoogleCalendarId, c.UserId }).IsUnique();
 

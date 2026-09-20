@@ -30,7 +30,12 @@ public class SyncStateConfiguration : IEntityTypeConfiguration<SyncState>
             .HasConversion(
                 v => v.HasValue ? v.Value.ToUniversalTime() : (DateTimeOffset?)null,
                 v => v);
-            
+
+        builder.Property(s => s.RemindersSyncedAt)
+            .HasConversion(
+                v => v.HasValue ? v.Value.ToUniversalTime() : v,
+                v => v);
+
         builder.HasIndex(s => s.CalendarInfoId).IsUnique();
     }
 }
