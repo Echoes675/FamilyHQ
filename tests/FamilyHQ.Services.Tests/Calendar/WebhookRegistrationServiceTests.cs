@@ -18,6 +18,12 @@ public class WebhookRegistrationServiceTests
     private const string WebhookBaseUrl = "https://familyhq.example.com";
     private const string ExpectedWebhookUrl = "https://familyhq.example.com/api/sync/webhook";
 
+    /// <summary>FHQ-196. SHA-256 of <see cref="ExpectedWebhookUrl"/>, as the column stores it.</summary>
+    private const string CurrentAddressHash = "b6b02363fac419d5948c31b0c09b500cb6e260eaa39d0bb5b5c1fa569b54c426";
+
+    /// <summary>FHQ-196. A RelayRobin-shaped address whose path segment after /h/ is the route key.</summary>
+    private const string RelayBaseUrl = "https://relay.example.com/h/s3cr3t-route-key";
+
     [Fact]
     public async Task RegisterForCalendarAsync_CallsWatchAndUpserts_WhenNoExistingRegistration()
     {
@@ -457,7 +463,7 @@ public class WebhookRegistrationServiceTests
     }
 
     [Fact]
-    public async Task RegisterForCalendarAsync_SkipsWhenRegistrationNotExpired()
+    public async Task RegisterForCalendarAsync_SkipsWhenRegistrationNotExpiredAndAddressUnchanged()
     {
         // Arrange
         var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
@@ -467,6 +473,9 @@ public class WebhookRegistrationServiceTests
             CalendarInfoId = CalendarInfoId,
             ChannelId = "existing-channel",
             ResourceId = "existing-resource",
+            // FHQ-196: skipping is now conditional on the channel being registered for the address
+            // currently configured, so the stored hash has to match for this to be a skip at all.
+            RegisteredAddressHash = CurrentAddressHash,
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
             RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
         };
@@ -539,6 +548,9 @@ public class WebhookRegistrationServiceTests
             CalendarInfoId = CalendarInfoId,
             ChannelId = "existing-channel",
             ResourceId = "existing-resource",
+            // FHQ-196: the address matches, so force is the only thing that can be driving the
+            // re-registration below — without this the test would pass on the mismatch path.
+            RegisteredAddressHash = CurrentAddressHash,
             ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
             RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
         };
@@ -731,12 +743,177 @@ public class WebhookRegistrationServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── FHQ-196: a changed registration address takes effect on the next registration pass ───────
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_StoresTheHashOfTheAddressItRegisteredWith()
+    {
+        // Without this the next pass cannot tell whether the channel belongs to the configured
+        // address, and a changed address stays ignored for the life of the channel.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WebhookRegistration?)null);
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId, It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("ch", "res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg => reg.RegisteredAddressHash == CurrentAddressHash),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_StillValidButRegisteredForAnotherAddress_ReRegistersAndStopsTheOldChannel()
+    {
+        // The bug FHQ-196 fixes: the channel has 3 days left, so the expiry check alone would skip
+        // it and Google would keep posting to the previous address for up to ~6 days.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            RegisteredAddressHash = WebhookAddress.Hash("https://previous.example.com/api/sync/webhook"),
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId, It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        client.Verify(c => c.WatchEventsAsync(
+            GoogleCalendarId, It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg =>
+                reg.ChannelId == "new-ch" && reg.RegisteredAddressHash == CurrentAddressHash),
+            It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.StopChannelAsync(
+            "existing-channel", "existing-resource", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_StillValidWithNoStoredAddressHash_ReRegisters()
+    {
+        // Every row that predates FHQ-196 is in this state. A missing hash counts as a mismatch,
+        // so the first pass after the deploy re-registers the channel and fills the hash in — the
+        // normal new-then-stop sequence, so notifications are not interrupted.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut) = CreateSut();
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "legacy-channel",
+            ResourceId = "legacy-resource",
+            RegisteredAddressHash = null,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId, It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        webhookRepo.Verify(r => r.UpsertAsync(
+            It.Is<WebhookRegistration>(reg => reg.RegisteredAddressHash == CurrentAddressHash),
+            It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.StopChannelAsync(
+            "legacy-channel", "legacy-resource", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenTheAddressChanged_LogsItWithTheRouteKeyMasked()
+    {
+        // A RelayRobin address carries its route key in the path, and that key is the credential
+        // that authorises posting notifications to FamilyHQ. It must never reach a log sink.
+        var (client, webhookRepo, calendarRepo, tokenStore, sut, logger) = CreateSutWithLogger(webhookBaseUrl: RelayBaseUrl);
+
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            RegisteredAddressHash = WebhookAddress.Hash("https://previous.example.com/api/sync/webhook"),
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(3),
+            RegisteredAt = DateTimeOffset.UtcNow.AddDays(-4)
+        };
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        client.Setup(c => c.WatchEventsAsync(
+                GoogleCalendarId, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse("new-ch", "new-res", DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeMilliseconds()));
+
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        VerifyNothingLoggedContaining(logger, "s3cr3t-route-key");
+        VerifySomethingLoggedContaining(logger, "https://relay.example.com/h/***/api/sync/webhook");
+    }
+
+    private static void VerifyNothingLoggedContaining(Mock<ILogger<WebhookRegistrationService>> logger, string fragment) =>
+        logger.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => Carries(v, fragment)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            $"'{fragment}' is the route key that authorises posting to FamilyHQ and must never reach a log sink");
+
+    private static void VerifySomethingLoggedContaining(Mock<ILogger<WebhookRegistrationService>> logger, string fragment) =>
+        logger.Verify(l => l.Log(
+            It.IsAny<LogLevel>(),
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => Carries(v, fragment)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce,
+            $"masking must leave '{fragment}' behind, or the line cannot say which address was used");
+
+    private static bool Carries(object? state, string fragment)
+    {
+        if (state?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return true;
+        }
+
+        return state is IReadOnlyList<KeyValuePair<string, object?>> values
+            && values.Any(kv => kv.Value?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
     private static (
         Mock<IGoogleCalendarClient> client,
         Mock<IWebhookRegistrationRepository> webhookRepo,
         Mock<ICalendarRepository> calendarRepo,
         Mock<ITokenStore> tokenStore,
         WebhookRegistrationService sut) CreateSut(bool webhookEnabled = true)
+    {
+        var (client, webhookRepo, calendarRepo, tokenStore, sut, _) = CreateSutWithLogger(webhookEnabled);
+
+        return (client, webhookRepo, calendarRepo, tokenStore, sut);
+    }
+
+    private static (
+        Mock<IGoogleCalendarClient> client,
+        Mock<IWebhookRegistrationRepository> webhookRepo,
+        Mock<ICalendarRepository> calendarRepo,
+        Mock<ITokenStore> tokenStore,
+        WebhookRegistrationService sut,
+        Mock<ILogger<WebhookRegistrationService>> logger) CreateSutWithLogger(
+            bool webhookEnabled = true, string webhookBaseUrl = WebhookBaseUrl)
     {
         var clientMock = new Mock<IGoogleCalendarClient>();
         var webhookRepoMock = new Mock<IWebhookRegistrationRepository>();
@@ -747,7 +924,7 @@ public class WebhookRegistrationServiceTests
         var syncOptions = new SyncOptions
         {
             WebhookRegistrationEnabled = webhookEnabled,
-            WebhookBaseUrl = WebhookBaseUrl
+            WebhookBaseUrl = webhookBaseUrl
         };
         var optionsMock = Microsoft.Extensions.Options.Options.Create(syncOptions);
 
@@ -759,6 +936,6 @@ public class WebhookRegistrationServiceTests
             optionsMock,
             loggerMock.Object);
 
-        return (clientMock, webhookRepoMock, calendarRepoMock, tokenStoreMock, sut);
+        return (clientMock, webhookRepoMock, calendarRepoMock, tokenStoreMock, sut, loggerMock);
     }
 }

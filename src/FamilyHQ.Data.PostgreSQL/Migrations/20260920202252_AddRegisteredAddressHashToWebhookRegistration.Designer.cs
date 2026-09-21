@@ -3,6 +3,7 @@ using System;
 using FamilyHQ.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyHQ.Data.PostgreSQL.Migrations
 {
     [DbContext(typeof(FamilyHqDbContext))]
-    partial class FamilyHqDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260920202252_AddRegisteredAddressHashToWebhookRegistration")]
+    partial class AddRegisteredAddressHashToWebhookRegistration
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -406,9 +409,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                     b.Property<DateTimeOffset?>("LastSyncedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("RemindersSyncedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("SyncToken")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -659,103 +659,6 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         .HasForeignKey("OwnerCalendarInfoId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.OwnsOne("FamilyHQ.Core.Models.EventReminders", "Reminders", b1 =>
-                        {
-                            b1.Property<Guid>("CalendarEventId");
-
-                            b1.Property<bool>("UseDefault")
-                                .HasJsonPropertyName("useDefault");
-
-                            b1.HasKey("CalendarEventId");
-
-                            b1.ToTable("Events");
-
-                            b1
-                                .ToJson("Reminders")
-                                .HasColumnType("jsonb");
-
-                            b1.WithOwner()
-                                .HasForeignKey("CalendarEventId");
-
-                            b1.OwnsMany("FamilyHQ.Core.Models.EventReminder", "Overrides", b2 =>
-                                {
-                                    b2.Property<Guid>("EventRemindersCalendarEventId");
-
-                                    b2.Property<int>("__synthesizedOrdinal")
-                                        .ValueGeneratedOnAdd();
-
-                                    b2.Property<string>("Method")
-                                        .IsRequired()
-                                        .HasJsonPropertyName("method");
-
-                                    b2.Property<int>("Minutes")
-                                        .HasJsonPropertyName("minutes");
-
-                                    b2.HasKey("EventRemindersCalendarEventId", "__synthesizedOrdinal");
-
-                                    b2.ToTable("Events");
-
-                                    b2.HasJsonPropertyName("overrides");
-
-                                    b2.WithOwner()
-                                        .HasForeignKey("EventRemindersCalendarEventId");
-                                });
-
-                            b1.Navigation("Overrides");
-                        });
-
-                    b.Navigation("Reminders");
-                });
-
-            modelBuilder.Entity("FamilyHQ.Core.Models.CalendarInfo", b =>
-                {
-                    b.OwnsOne("FamilyHQ.Core.Models.EventReminders", "DefaultReminders", b1 =>
-                        {
-                            b1.Property<Guid>("CalendarInfoId");
-
-                            b1.Property<bool>("UseDefault")
-                                .HasJsonPropertyName("useDefault");
-
-                            b1.HasKey("CalendarInfoId");
-
-                            b1.ToTable("Calendars");
-
-                            b1
-                                .ToJson("DefaultReminders")
-                                .HasColumnType("jsonb");
-
-                            b1.WithOwner()
-                                .HasForeignKey("CalendarInfoId");
-
-                            b1.OwnsMany("FamilyHQ.Core.Models.EventReminder", "Overrides", b2 =>
-                                {
-                                    b2.Property<Guid>("EventRemindersCalendarInfoId");
-
-                                    b2.Property<int>("__synthesizedOrdinal")
-                                        .ValueGeneratedOnAdd();
-
-                                    b2.Property<string>("Method")
-                                        .IsRequired()
-                                        .HasJsonPropertyName("method");
-
-                                    b2.Property<int>("Minutes")
-                                        .HasJsonPropertyName("minutes");
-
-                                    b2.HasKey("EventRemindersCalendarInfoId", "__synthesizedOrdinal");
-
-                                    b2.ToTable("Calendars");
-
-                                    b2.HasJsonPropertyName("overrides");
-
-                                    b2.WithOwner()
-                                        .HasForeignKey("EventRemindersCalendarInfoId");
-                                });
-
-                            b1.Navigation("Overrides");
-                        });
-
-                    b.Navigation("DefaultReminders");
                 });
 
             modelBuilder.Entity("FamilyHQ.Core.Models.SyncEventFailure", b =>
