@@ -50,6 +50,15 @@ public class EventRemindersTests
         var two = EventReminders.Explicit([new("popup", 10), new("popup", 10)]);
 
         one.SameAs(two).Should().BeFalse();
+
+        // Deferred minor #1: the pair above differs in Overrides.Count, so SameAs never reaches the
+        // multiset comparison — it is short-circuited by the count check above it. Same COUNT,
+        // different DISTRIBUTION is the case that actually exercises the multiset logic: a naive
+        // "same distinct values" comparison would wrongly call these equal (both contain 10 and 20).
+        var twoTens = EventReminders.Explicit([new("popup", 10), new("popup", 10), new("popup", 20)]);
+        var twoTwenties = EventReminders.Explicit([new("popup", 10), new("popup", 20), new("popup", 20)]);
+
+        twoTens.SameAs(twoTwenties).Should().BeFalse();
     }
 
     [Fact]
