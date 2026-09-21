@@ -40,4 +40,11 @@ public class SimulatedEvent
     // expansion under singleEvents=true then OMITS that slot entirely. A cancellation overrides
     // any prior content exception on the same slot — the occurrence simply disappears.
     public bool IsCancelled { get; set; }
+
+    // FHQ-189 (I3): the raw `reminders` object as sent/returned to the app, stored as its JSON text
+    // rather than shredded into columns — the simulator only needs to round-trip it, not query it.
+    // Null means the create/update never carried a `reminders` key (the app's own read path already
+    // treats that as "not synced" — see EventReminders). See FHQ-192 for faithful write semantics
+    // (clamping, de-duplication, dropping an unknown method): this wave only makes the field exist.
+    public string? RemindersJson { get; set; }
 }

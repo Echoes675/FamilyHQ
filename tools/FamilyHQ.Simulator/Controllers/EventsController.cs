@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.Calendar.Recurrence;
 using FamilyHQ.Core.Interfaces;
@@ -202,7 +203,10 @@ public class EventsController : ControllerBase
             // FHQ-18.11: events.insert with a recurrence array creates a series MASTER. The first
             // RRULE line is stored so the subsequent reconcile list (singleEvents=true) expands it
             // into per-occurrence instances. A non-recurring insert leaves this null.
-            RecurrenceRule = ExtractRrule(body.Recurrence)
+            RecurrenceRule = ExtractRrule(body.Recurrence),
+            // FHQ-189 (I3): stored so a round trip through the simulator is coherent (FHQ-192 owns
+            // faithful write semantics). Null when the create body carried no `reminders` key.
+            RemindersJson = SerializeReminders(body.Reminders)
         };
 
         _db.Events.Add(newEvent);
@@ -303,6 +307,10 @@ public class EventsController : ControllerBase
         existing.StartTimeZone = body.Start?.TimeZone;
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
+        // FHQ-189 (I3): events.update (PUT) is a full-resource replace like Location/Description
+        // above — an omitted `reminders` key clears it, mirroring how a real PUT would. Faithful
+        // write semantics (what Google actually preserves/rejects) are FHQ-192's concern.
+        existing.RemindersJson = SerializeReminders(body.Reminders);
 
         // FHQ-18.11: events.update (PUT) carries a recurrence array only when the event is (or is
         // becoming) a series master — this is the toggle-ON path where a previously non-recurring
@@ -389,7 +397,8 @@ public class EventsController : ControllerBase
             body.Description is not null ||
             body.Start.DateTime != null || body.Start.Date != null ||
             body.End.DateTime != null || body.End.Date != null ||
-            body.ExtendedProperties?.Private is not null);
+            body.ExtendedProperties?.Private is not null ||
+            body.Reminders is not null);
 
         if (!hasRecurrence && !hasScalarFields)
         {
@@ -454,6 +463,9 @@ public class EventsController : ControllerBase
         }
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
+        // FHQ-189 (I3): a PATCH is a merge — only overwrite when the body actually carries the key.
+        if (body.Reminders is not null)
+            existing.RemindersJson = SerializeReminders(body.Reminders);
 
         // recurrence: null → preserve the existing rule; ["RRULE:…"] → set; [] → clear.
         ApplyRecurrence(existing, body.Recurrence);
@@ -588,9 +600,20 @@ public class EventsController : ControllerBase
             // instances never do — they reference the master via recurringEventId instead.
             recurrence = includeRecurrence && !string.IsNullOrWhiteSpace(e.RecurrenceRule)
                 ? (object)new[] { e.RecurrenceRule }
-                : null
+                : null,
+            // FHQ-189 (I3): round-trips whatever was last stored — see SerializeReminders/
+            // DeserializeReminders. Null when nothing was ever sent for this event.
+            reminders = DeserializeReminders(e.RemindersJson)
         };
     }
+
+    // FHQ-189 (I3): one shared DTO (GoogleEventReminders) both directions bind against, so this is a
+    // plain round trip — no reshaping needed between the stored text and the wire shape.
+    private static string? SerializeReminders(GoogleEventReminders? reminders) =>
+        reminders is null ? null : JsonSerializer.Serialize(reminders);
+
+    private static GoogleEventReminders? DeserializeReminders(string? remindersJson) =>
+        remindersJson is null ? null : JsonSerializer.Deserialize<GoogleEventReminders>(remindersJson);
 
     // FHQ-18.11: expands a series master into the per-occurrence INSTANCES that fall inside the
     // sync window [windowStart, windowEnd). Each instance mirrors what Google emits with

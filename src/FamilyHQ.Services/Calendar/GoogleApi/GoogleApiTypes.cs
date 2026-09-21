@@ -30,6 +30,18 @@ internal record GoogleApiExtendedProperties(
     // FamilyHQ only writes to extendedProperties.private; shared namespace intentionally omitted.
     [property: JsonPropertyName("private")] GoogleApiPrivateExtendedProperties? Private);
 
+// FHQ-189. `minutes` is a signed int and `method` a plain string on purpose — see EventReminders.
+// Neither is validated here: this is the READ path, and Google is the authority on its own values.
+internal record GoogleApiEventReminder(
+    [property: JsonPropertyName("method")]  string? Method,
+    [property: JsonPropertyName("minutes")] int?    Minutes);
+
+// `overrides` is absent — not empty — when an event explicitly has no reminders, so the list is
+// nullable and a missing list is read as empty (never as "unknown").
+internal record GoogleApiEventReminders(
+    [property: JsonPropertyName("useDefault")] bool?                            UseDefault,
+    [property: JsonPropertyName("overrides")]  List<GoogleApiEventReminder>?    Overrides);
+
 internal record GoogleApiEvent(
     [property: JsonPropertyName("id")]                   string                   Id,
     [property: JsonPropertyName("iCalUID")]              string?                  ICalUID,
@@ -45,7 +57,8 @@ internal record GoogleApiEvent(
     // recurrence carries the RRULE/EXDATE/RDATE lines and is present only on the master.
     [property: JsonPropertyName("recurringEventId")]     string?                  RecurringEventId = null,
     [property: JsonPropertyName("originalStartTime")]    GoogleApiEventDateTime?  OriginalStartTime = null,
-    [property: JsonPropertyName("recurrence")]           List<string>?            Recurrence = null);
+    [property: JsonPropertyName("recurrence")]           List<string>?            Recurrence = null,
+    [property: JsonPropertyName("reminders")]            GoogleApiEventReminders? Reminders = null);
 
 internal record GoogleApiEventList(
     [property: JsonPropertyName("items")]         IReadOnlyList<GoogleApiEvent> Items,
@@ -56,13 +69,14 @@ internal record GoogleApiEventList(
 // this calendar that carries none of its own. Marked optional on Google's calendar resource, which
 // is why the discovery ladder states a terminal behaviour rather than assuming it is always present.
 internal record GoogleApiCalendarListEntry(
-    [property: JsonPropertyName("id")]              string  Id,
-    [property: JsonPropertyName("summary")]         string? Summary,
-    [property: JsonPropertyName("summaryOverride")] string? SummaryOverride,
-    [property: JsonPropertyName("backgroundColor")] string? BackgroundColor,
-    [property: JsonPropertyName("foregroundColor")] string? ForegroundColor,
-    [property: JsonPropertyName("accessRole")]      string? AccessRole,
-    [property: JsonPropertyName("timeZone")]        string? TimeZone = null);
+    [property: JsonPropertyName("id")]               string  Id,
+    [property: JsonPropertyName("summary")]          string? Summary,
+    [property: JsonPropertyName("summaryOverride")]  string? SummaryOverride,
+    [property: JsonPropertyName("backgroundColor")]  string? BackgroundColor,
+    [property: JsonPropertyName("foregroundColor")]  string? ForegroundColor,
+    [property: JsonPropertyName("accessRole")]       string? AccessRole,
+    [property: JsonPropertyName("timeZone")]         string? TimeZone = null,
+    [property: JsonPropertyName("defaultReminders")] List<GoogleApiEventReminder>? DefaultReminders = null);
 
 internal record GoogleApiCalendarList(
     [property: JsonPropertyName("items")]         IReadOnlyList<GoogleApiCalendarListEntry> Items,

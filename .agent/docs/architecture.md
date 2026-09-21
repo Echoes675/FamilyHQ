@@ -28,6 +28,25 @@
 
 ## Key Entities
 - **CalendarEvent**: Google Calendar event data.
+- **CalendarEvent.Reminders / CalendarInfo.DefaultReminders** (FHQ-189): Google's `reminders` object,
+  stored as `jsonb`, in Google's own **key casing** as well as its own shape —
+  `{ useDefault, overrides: [{ method, minutes }] }` (`HasJsonPropertyName` on both configurations).
+  `method` is the **string Google sent** (not an enum) and `minutes` is **signed**: the read path never
+  validates, clamps, de-duplicates or reorders, because Google is the authority on its own values.
+  Four states: `null` = not yet synced (drives the backfill); `useDefault:true` = inherits the
+  calendar's defaults (**timed events only** — an all-day event never inherits, Google materialises
+  the default into explicit overrides); explicit overrides; and `useDefault:false` with an empty list
+  = explicitly none. **On an all-day event that last state is ambiguous** — Google reports it for
+  reminders that fire *after* the event starts, which its API will not show at all (FHQ-193), so
+  nothing may render it as "no reminders". Order is not meaningful: Google reorders the array, so
+  compare with `EventReminders.SameAs`. Nothing writes reminders back to Google yet — that is FHQ-190.
+  `CalendarInfo.DefaultReminders` is kept current for calendars FamilyHQ already knows about too —
+  `CalendarSyncService.RefreshCalendarDefaultsAsync` adopts it (alongside `IanaTimeZone`) from the
+  `calendarList` response every sync already fetches, the same way `AddCalendarAsync` seeds it for a
+  brand-new calendar — because in production every calendar already exists.
+- **SyncState.RemindersSyncedAt** (FHQ-189): when this calendar was first synced with `reminders` in
+  the field mask. Null forces exactly one full sync, because incremental sync never re-sends an
+  unchanged event and the events already in production would otherwise never gain reminders.
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date, **per kiosk** — unique on (UserId, Date) since FHQ-177. Calculated once per day per kiosk by DayThemeSchedulerService from sunrise/sunset at that kiosk's **saved LocationSetting**. A kiosk with no saved location gets no row and keeps its default theme: the boundaries used to come from a server-side IP lookup, which geolocates the hosting VPS rather than the family, so guessing is choosing a known-wrong answer.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
@@ -105,7 +124,7 @@ FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigra
 The guard is implemented in two halves:
 
 1. **Outbound** — every successful Google write records `(GoogleEventId, hash)` in a singleton `IOutboundWriteHashCache` with a 60-second TTL. Failed writes do not record.
-2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache. On match, the event is skipped: no DB write, no further Google write, single "Self-echo skipped" Information-level log entry.
+2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache via `IsSelfEcho`. On a hash match the event is **usually** skipped — no DB write, no further Google write, single "Self-echo skipped" Information-level log entry — but the hash covers only `(title, start, end, isAllDay, description)`, not reminders (FHQ-189), so a hash match is NOT automatically an echo: `IsSelfEcho` also compares reminders, and treats a locally-unlearned reminder set (`existing.Reminders is null`) paired with an inbound value as new information rather than an echo, so that event is processed (a DB write) even though its hash matched.
 
 ### Production verification
 

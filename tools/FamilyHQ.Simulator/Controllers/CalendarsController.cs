@@ -1,4 +1,6 @@
+using System.Text.Json;
 using FamilyHQ.Simulator.Data;
+using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -46,7 +48,13 @@ public class CalendarsController : ControllerBase
                 // entry, and the app stores it as the last Google-supplied rung of its series-zone
                 // discovery ladder. Omitted when the calendar has none configured, which is what an
                 // unset value means here — Google's field is optional on the resource.
-                timeZone = c.TimeZone
+                timeZone = c.TimeZone,
+                // FHQ-189 (I3): Google sends a bare array here, not a `reminders` object — mirrored
+                // by GoogleCalendarClient.GetCalendarsAsync. Null when the calendar has none
+                // configured, same convention as timeZone above.
+                defaultReminders = c.DefaultRemindersJson is null
+                    ? null
+                    : JsonSerializer.Deserialize<List<GoogleEventReminderOverride>>(c.DefaultRemindersJson)
             })
         };
 

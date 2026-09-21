@@ -12,4 +12,8 @@ public class SimulatedCalendar
     // It is the last Google-supplied rung of the app's series-zone discovery ladder, so a Simulator
     // that never reports one leaves that rung unexercised everywhere. Null = not configured.
     public string? TimeZone { get; set; }
+
+    // FHQ-189 (I3): the calendar's `defaultReminders` array (Google sends a bare array here, not a
+    // `reminders` object), stored as its JSON text. Null = not configured, mirroring TimeZone above.
+    public string? DefaultRemindersJson { get; set; }
 }

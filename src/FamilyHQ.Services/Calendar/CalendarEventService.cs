@@ -1340,6 +1340,9 @@ public class CalendarEventService(
                 existing.IanaTimeZone = string.IsNullOrWhiteSpace(fetchedEvent.IanaTimeZone)
                     ? existing.IanaTimeZone
                     : fetchedEvent.IanaTimeZone;
+                // FHQ-189: mirrors CalendarSyncService.SyncCoreAsync — a null fetched value means
+                // "Google said nothing about reminders", not "none", so the stored value stands.
+                existing.Reminders = fetchedEvent.Reminders ?? existing.Reminders;
                 existing.Members = members;
                 await calendarRepository.UpdateEventAsync(existing, ct);
                 persisted.Add(existing);
@@ -1419,6 +1422,9 @@ public class CalendarEventService(
                     stored.IanaTimeZone = string.IsNullOrWhiteSpace(insert.IanaTimeZone)
                         ? stored.IanaTimeZone
                         : insert.IanaTimeZone;
+                    // FHQ-189: same rule as the reconcile above — a null value means "Google said
+                    // nothing about reminders", not "none".
+                    stored.Reminders = insert.Reminders ?? stored.Reminders;
                     stored.Members = insert.Members;
                     await calendarRepository.UpdateEventAsync(stored, ct);
                 }

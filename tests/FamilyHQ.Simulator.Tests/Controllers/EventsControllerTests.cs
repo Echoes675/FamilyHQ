@@ -85,6 +85,49 @@ public class EventsControllerTests
         created.CalendarId.Should().Be("cal-alice");
     }
 
+    [Fact]
+    public async Task CreateEvent_WithReminders_StoresAndReturnsThem()
+    {
+        // FHQ-189 (I3): before this fix the Simulator had zero mentions of reminders, so this whole
+        // path was dead in every E2E/CI run.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest
+        {
+            Summary = "New Meeting",
+            Start = new GoogleDateTime { DateTime = DateTime.UtcNow },
+            End = new GoogleDateTime { DateTime = DateTime.UtcNow.AddHours(1) },
+            Reminders = new GoogleEventReminders(UseDefault: false, Overrides: [new("popup", 15)])
+        };
+
+        var result = await sut.CreateEvent("cal-alice", body);
+
+        var created = await db.Events.FirstAsync(e => e.Summary == "New Meeting");
+        created.RemindersJson.Should().NotBeNull();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("\"reminders\":{\"useDefault\":false,\"overrides\":[{\"method\":\"popup\",\"minutes\":15}]}");
+    }
+
+    [Fact]
+    public async Task CreateEvent_WithNoRemindersKey_LeavesRemindersJsonNull()
+    {
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest
+        {
+            Summary = "New Meeting",
+            Start = new GoogleDateTime { DateTime = DateTime.UtcNow },
+            End = new GoogleDateTime { DateTime = DateTime.UtcNow.AddHours(1) }
+        };
+
+        await sut.CreateEvent("cal-alice", body);
+
+        var created = await db.Events.FirstAsync(e => e.Summary == "New Meeting");
+        created.RemindersJson.Should().BeNull();
+    }
+
     // ── UpdateEvent ───────────────────────────────────────────────────────────
 
     [Fact]
@@ -118,6 +161,35 @@ public class EventsControllerTests
         result.Should().BeOfType<OkObjectResult>();
         var updated = await db.Events.FindAsync("evt-1");
         updated!.Summary.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task UpdateEvent_PUT_IsAFullReplace_OmittedRemindersClearThem()
+    {
+        // FHQ-189 (I3): mirrors how this handler already treats Location/Description on a PUT —
+        // full-resource replace, not a merge. Faithful write semantics are FHQ-192's concern; this
+        // wave only needs a coherent round trip.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1", CalendarId = "cal-alice", Summary = "Original",
+            StartTime = DateTime.UtcNow, EndTime = DateTime.UtcNow.AddHours(1), UserId = "alice",
+            RemindersJson = """{"useDefault":true}"""
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest
+        {
+            Summary = "Updated",
+            Start = new GoogleDateTime { DateTime = DateTime.UtcNow },
+            End = new GoogleDateTime { DateTime = DateTime.UtcNow.AddHours(1) }
+        };
+
+        await sut.UpdateEvent("cal-alice", "evt-1", body);
+
+        var updated = await db.Events.FindAsync("evt-1");
+        updated!.RemindersJson.Should().BeNull();
     }
 
     [Fact]
@@ -314,6 +386,57 @@ public class EventsControllerTests
 
         // Assert
         result.Should().BeOfType<NotFoundObjectResult>();
+    }
+
+    // ── PatchEvent (reminders merge semantics) ────────────────────────────────
+
+    [Fact]
+    public async Task PatchEvent_WithRemindersOnly_MergesWithoutTouchingOtherFields()
+    {
+        // FHQ-189 (I3): a PATCH is a merge, unlike PUT — only apply the field when the body actually
+        // carries the key, and a reminders-only patch must not be swallowed by the historical
+        // attendee-patch no-op short-circuit above.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1", CalendarId = "cal-org", Summary = "Untouched", UserId = "alice",
+            StartTime = DateTime.UtcNow, EndTime = DateTime.UtcNow.AddHours(1)
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest
+        {
+            Reminders = new GoogleEventReminders(UseDefault: false, Overrides: [new("email", 1440)])
+        };
+
+        var result = await sut.PatchEvent("cal-org", "evt-1", body);
+
+        result.Should().BeOfType<OkObjectResult>();
+        var updated = await db.Events.FindAsync("evt-1");
+        updated!.Summary.Should().Be("Untouched", "a patch is a merge — omitted fields must survive");
+        updated.RemindersJson.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PatchEvent_WithoutRemindersKey_LeavesStoredRemindersUntouched()
+    {
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1", CalendarId = "cal-org", Summary = "Original", UserId = "alice",
+            StartTime = DateTime.UtcNow, EndTime = DateTime.UtcNow.AddHours(1),
+            RemindersJson = """{"useDefault":true}"""
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var body = new GoogleEventRequest { Summary = "Renamed" };
+
+        await sut.PatchEvent("cal-org", "evt-1", body);
+
+        var updated = await db.Events.FindAsync("evt-1");
+        updated!.RemindersJson.Should().Be("""{"useDefault":true}""");
     }
 
     // ── PatchEvent (no-op without a recurrence array) ─────────────────────────

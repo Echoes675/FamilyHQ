@@ -83,6 +83,44 @@ public class CalendarsControllerTests
     }
 
     [Fact]
+    public async Task GetCalendarList_ReportsTheCalendarsDefaultReminders()
+    {
+        // FHQ-189 (I3): before this fix the Simulator emitted no `defaultReminders` at all, so the
+        // GetCalendarsAsync mapping this exercises was dead in every CI run.
+        using var db = CreateDb();
+        db.Calendars.Add(new SimulatedCalendar
+        {
+            Id = "cal-alice", Summary = "Alice Cal", UserId = "alice",
+            DefaultRemindersJson = """[{"method":"popup","minutes":30}]"""
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.GetCalendarList();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("\"defaultReminders\":[{\"method\":\"popup\",\"minutes\":30}]");
+    }
+
+    [Fact]
+    public async Task GetCalendarList_WithNoDefaultRemindersConfigured_OmitsThemAsNull()
+    {
+        using var db = CreateDb();
+        db.Calendars.Add(new SimulatedCalendar { Id = "cal-alice", Summary = "Alice Cal", UserId = "alice" });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.GetCalendarList();
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var json = JsonSerializer.Serialize(ok.Value);
+        json.Should().Contain("\"defaultReminders\":null");
+    }
+
+    [Fact]
     public async Task GetCalendarList_WhenNoTokenPresent_ReturnsEmptyList()
     {
         // Arrange
