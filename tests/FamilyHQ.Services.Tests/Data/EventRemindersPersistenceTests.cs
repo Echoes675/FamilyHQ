@@ -252,6 +252,62 @@ public class EventRemindersPersistenceTests
         property.CurrentValue.Should().BeNull();
     }
 
+    [Fact]
+    public void DetachedUpdate_MarksEventRemindersModified_WhenTheValueChanged()
+    {
+        // m2: the same assertion for CalendarEvent. The two entities carry the IDENTICAL mapping,
+        // and it was CalendarInfo that took production down purely because that path ran first.
+        using var context = CreateContext();
+
+        var calendarEvent = new CalendarEvent
+        {
+            Id = Guid.NewGuid(),
+            GoogleEventId = "event-detached-update",
+            Title = "Detached",
+            OwnerCalendarInfoId = Guid.NewGuid(),
+            Reminders = Reminders(15)
+        };
+        context.Events.Update(calendarEvent);
+
+        var property = context.Entry(calendarEvent).Property(e => e.Reminders);
+
+        property.IsModified.Should().BeTrue(
+            "an event's reminders must be written as part of its UPDATE statement");
+        property.CurrentValue.Should().NotBeNull();
+    }
+
+    // ── The comparer is part of the mapping, not an optional extra ────────────────────
+
+    [Theory]
+    [InlineData(typeof(CalendarInfo), nameof(CalendarInfo.DefaultReminders))]
+    [InlineData(typeof(CalendarEvent), nameof(CalendarEvent.Reminders))]
+    public void RemindersProperty_UsesTheStructuralValueComparer(Type entityType, string propertyName)
+    {
+        // FHQ-205 review finding M1. Deleting EventRemindersConversion.Comparer from the
+        // HasConversion(...) calls leaves the ENTIRE unit suite green, while against a real
+        // database that build silently drops an in-place mutation of Overrides (EF compares the
+        // two EventReminders instances by reference, sees no change, and writes nothing) AND
+        // reports a change on every sync where Google merely reordered the array -- which makes
+        // SyncResult.HadChanges true every hourly cycle, firing a placement reconcile and a kiosk
+        // EventsUpdated broadcast on every no-op sync, breaking FHQ-44.
+        //
+        // Without a value comparer EF cannot compare a converted reference type structurally, so
+        // the comparer is load-bearing rather than decorative. Nothing else pins it, and "a change
+        // no test can see" is precisely the shape that caused this incident.
+        using var context = CreateContext();
+
+        var property = context.Model.FindEntityType(entityType)!.FindProperty(propertyName)!;
+
+        property.GetValueComparer().Should().BeSameAs(
+            EventRemindersConversion.Comparer,
+            "EF needs a structural comparer to detect a change to a converted reference type; " +
+            "without it, reminder changes are silently not written and unchanged reminders are " +
+            "reported as changed");
+        property.GetValueConverter().Should().BeSameAs(
+            EventRemindersConversion.Converter,
+            "both entities must share one converter so their stored JSON cannot drift apart");
+    }
+
     // ── Converter round-trip ──────────────────────────────────────────────────────────────
 
     private static EventReminders? RoundTrip(EventReminders? value)
