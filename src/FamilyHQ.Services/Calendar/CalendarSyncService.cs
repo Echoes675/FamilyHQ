@@ -89,7 +89,7 @@ public class CalendarSyncService(
             }
             else
             {
-                await RefreshCalendarZoneAsync(localCal, googleCal, ct);
+                await RefreshCalendarDefaultsAsync(localCal, googleCal, ct);
             }
             calendarIdsToSync.Add(localCal.Id);
         }
@@ -446,34 +446,53 @@ public class CalendarSyncService(
     }
 
     /// <summary>
-    /// FHQ-164 Decision 4 applied to the CALENDAR row: adopt the default zone Google reports for a
-    /// calendar FamilyHQ already knows about.
+    /// FHQ-164 Decision 4 / FHQ-189 applied to the CALENDAR row: adopt the default zone and the
+    /// default reminders Google reports for a calendar FamilyHQ already knows about.
     /// </summary>
     /// <remarks>
     /// Nothing else refreshes an existing calendar's fields from Google — every
     /// <c>UpdateCalendarAsync</c> call site persists a flag the user changed locally — so without
-    /// this, every calendar already in production would keep a null zone forever and the series-zone
-    /// ladder's rung 4 would be dead code in the one environment that matters. The value arrives on
-    /// the <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so it costs no
-    /// extra API call.
+    /// this, every calendar already in production would keep a null zone (and a null
+    /// <c>DefaultReminders</c>) forever: <see cref="AddCalendarAsync"/>-equivalent backfill only ever
+    /// runs for a BRAND NEW calendar, and in production every calendar already exists. The values
+    /// arrive on the <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so
+    /// this costs no extra API call, and no separate backfill machinery is needed — the calendar
+    /// list is refetched on every sync.
     /// <para>
-    /// Idempotent: written only when Google reports a zone that differs from the stored one. A blank
-    /// or absent value never blanks a stored one — <c>timeZone</c> is optional on Google's calendar
-    /// resource, and dropping a known value would cost the ladder a rung. The write is bookkeeping,
-    /// not a material change, so it stays out of the change count (FHQ-44): a calendar's default zone
-    /// is not something the dashboard renders.
+    /// Idempotent: each field is written only when Google reports a value that differs from the
+    /// stored one. A blank/absent zone or a null <c>DefaultReminders</c> never blanks a stored value
+    /// — both are optional on Google's calendar resource, and dropping a known value would cost the
+    /// zone ladder a rung or make a change on someone's phone unreachable. Both writes are
+    /// bookkeeping, not a material change, so they stay out of the change count (FHQ-44): neither a
+    /// calendar's default zone nor its default reminders is something the dashboard renders.
     /// </para>
     /// </remarks>
-    private async Task RefreshCalendarZoneAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
+    private async Task RefreshCalendarDefaultsAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(googleCal.IanaTimeZone) || googleCal.IanaTimeZone == localCal.IanaTimeZone)
+        var zoneChanged = !string.IsNullOrWhiteSpace(googleCal.IanaTimeZone)
+            && googleCal.IanaTimeZone != localCal.IanaTimeZone;
+        var remindersChanged = googleCal.DefaultReminders is not null
+            && !googleCal.DefaultReminders.SameAs(localCal.DefaultReminders);
+
+        if (!zoneChanged && !remindersChanged)
             return;
 
-        logger.LogDebug(
-            "Calendar {CalendarInfoId} adopting Google's default time zone {IanaTimeZone}.",
-            localCal.Id, googleCal.IanaTimeZone);
+        if (zoneChanged)
+        {
+            logger.LogDebug(
+                "Calendar {CalendarInfoId} adopting Google's default time zone {IanaTimeZone}.",
+                localCal.Id, googleCal.IanaTimeZone);
+            localCal.IanaTimeZone = googleCal.IanaTimeZone;
+        }
 
-        localCal.IanaTimeZone = googleCal.IanaTimeZone;
+        if (remindersChanged)
+        {
+            logger.LogDebug(
+                "Calendar {CalendarInfoId} adopting Google's default reminders.",
+                localCal.Id);
+            localCal.DefaultReminders = googleCal.DefaultReminders;
+        }
+
         await calendarRepository.UpdateCalendarAsync(localCal, ct);
         await calendarRepository.SaveChangesAsync(ct);
     }
@@ -487,15 +506,29 @@ public class CalendarSyncService(
     /// So a reminder added on a phone within the cache's 60-second window arrives carrying the hash
     /// the kiosk last stamped, and the hash test alone would discard it silently and permanently.
     /// An event is therefore only an echo if its reminders match what we already hold as well.
+    /// <para>
+    /// I2 (FHQ-189): a kiosk-created event starts with <c>Reminders = null</c> —
+    /// <see cref="CalendarEventService.CreateAsync"/> discards Google's create response except the
+    /// id — and Google's own echo of that create is the FIRST place its reminders (typically
+    /// <c>useDefault:true</c>) ever arrive. Treating <c>existing.Reminders is null</c> as "nothing to
+    /// compare, assume echo" (as the hash-only fallback below effectively did) would suppress that
+    /// echo forever: incremental sync never re-sends an unchanged event, so the row would keep a
+    /// null Reminders indefinitely and FHQ-191's timeline would never see it. When the inbound event
+    /// reports reminders and we hold none yet, there is something to learn, so this is NOT an echo —
+    /// the update is idempotent for every hashed field regardless.
+    /// </para>
     /// </remarks>
     private bool IsSelfEcho(CalendarEvent evt, CalendarEvent? existing)
     {
         if (string.IsNullOrEmpty(evt.ContentHash)) return false;
         if (!outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash)) return false;
 
-        // Google said nothing about reminders, or we hold nothing to compare: fall back to the
-        // hash decision alone, exactly as before this change.
-        if (evt.Reminders is null || existing?.Reminders is null) return true;
+        // No locally-stored row (the FHQ-66 create race) or Google said nothing about reminders:
+        // fall back to the hash decision alone, exactly as before FHQ-189.
+        if (existing is null || evt.Reminders is null) return true;
+
+        // I2: existing has never learned any reminders but Google now reports some — not an echo.
+        if (existing.Reminders is null) return false;
 
         return evt.Reminders.SameAs(existing.Reminders);
     }

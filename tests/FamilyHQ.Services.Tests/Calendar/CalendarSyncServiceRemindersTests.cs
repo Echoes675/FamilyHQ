@@ -129,6 +129,117 @@ public class CalendarSyncServiceRemindersTests
         repo.Saved.Should().BeEmpty("a genuine self-echo is still suppressed");
     }
 
+    [Fact]
+    public async Task AKioskCreatedEventsFirstEcho_PopulatesItsReminders()
+    {
+        // I2: CalendarEventService.CreateAsync discards Google's create response except the id, so
+        // a kiosk-created row starts with Reminders = null. Google's echo of that very create is the
+        // FIRST place its reminders (typically useDefault:true) ever arrive. The OLD guard read
+        // "existing.Reminders is null" as "nothing to compare, assume echo" and discarded that echo
+        // forever — incremental sync never re-sends an unchanged event, so the row kept Reminders =
+        // null indefinitely and FHQ-191's timeline never saw it.
+        var existing = new CalendarEvent { GoogleEventId = "g1", Title = "Dentist", Reminders = null };
+        var echoed   = new CalendarEvent { GoogleEventId = "g1", Title = "Dentist",
+                                           ContentHash = "hash-the-kiosk-just-wrote",
+                                           Reminders = EventReminders.InheritsCalendarDefault };
+
+        var repo = await SyncOneEventAsync(existing, echoed, recentlyWrittenHash: "hash-the-kiosk-just-wrote");
+
+        repo.Saved.Should().ContainSingle(
+            "an event whose reminders were never learned locally must not be discarded as a self-echo");
+        repo.Saved.Single().Reminders!.SameAs(EventReminders.InheritsCalendarDefault).Should().BeTrue();
+    }
+
+    // ── I1: an existing calendar's DefaultReminders (RefreshCalendarDefaultsAsync) ──────────
+    // Mirrors CalendarSyncServiceTests.SyncAllAsync_ExistingCalendar_AdoptsGooglesDefaultZoneWithoutEverBlankingIt
+    // (FHQ-164 rung 4) for the FHQ-189 field: AddCalendarAsync only ever runs for a BRAND NEW
+    // calendar, so without this fix every calendar already in production keeps a null
+    // DefaultReminders forever.
+
+    [Fact]
+    public async Task ExistingCalendar_AdoptsGooglesDefaultReminders_WhenNeverObservedBefore()
+    {
+        var (localCalendar, repo) = await RunCalendarDefaultsRefreshAsync(
+            googleReminders: EventReminders.Explicit([new("popup", 30)]),
+            storedReminders: null);
+
+        localCalendar.DefaultReminders!.SameAs(EventReminders.Explicit([new("popup", 30)])).Should().BeTrue();
+        repo.Verify(r => r.UpdateCalendarAsync(localCalendar, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExistingCalendar_AdoptsGooglesDefaultReminders_GoogleIsSystemOfRecord()
+    {
+        var (localCalendar, repo) = await RunCalendarDefaultsRefreshAsync(
+            googleReminders: EventReminders.Explicit([new("popup", 30)]),
+            storedReminders: EventReminders.Explicit([new("email", 1440)]));
+
+        localCalendar.DefaultReminders!.SameAs(EventReminders.Explicit([new("popup", 30)])).Should().BeTrue();
+        repo.Verify(r => r.UpdateCalendarAsync(localCalendar, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExistingCalendar_AbsentDefaultReminders_NeverBlanksAKnownValue()
+    {
+        var stored = EventReminders.Explicit([new("popup", 30)]);
+
+        var (localCalendar, repo) = await RunCalendarDefaultsRefreshAsync(
+            googleReminders: null,
+            storedReminders: stored);
+
+        localCalendar.DefaultReminders.Should().BeSameAs(stored);
+        repo.Verify(r => r.UpdateCalendarAsync(localCalendar, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExistingCalendar_SameDefaultReminders_IsIdempotent_NoWrite()
+    {
+        var (localCalendar, repo) = await RunCalendarDefaultsRefreshAsync(
+            googleReminders: EventReminders.Explicit([new("popup", 30)]),
+            storedReminders: EventReminders.Explicit([new("popup", 30)]));
+
+        repo.Verify(r => r.UpdateCalendarAsync(localCalendar, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static async Task<(CalendarInfo localCalendar, Mock<ICalendarRepository> repo)> RunCalendarDefaultsRefreshAsync(
+        EventReminders? googleReminders, EventReminders? storedReminders)
+    {
+        var startDate = DateTimeOffset.UtcNow.AddDays(-30);
+        var endDate = DateTimeOffset.UtcNow.AddDays(30);
+        var calendarId = Guid.NewGuid();
+        const string googleCalendarId = "defaults@group.calendar.google.com";
+
+        var googleCalendar = new CalendarInfo
+        {
+            Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Defaults",
+            DefaultReminders = googleReminders
+        };
+        var localCalendar = new CalendarInfo
+        {
+            Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Defaults",
+            DefaultReminders = storedReminders
+        };
+
+        var (client, repo, sut) = CreateSut(new Mock<IOutboundWriteHashCache>());
+
+        client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { localCalendar });
+        repo.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(localCalendar);
+        repo.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+        repo.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        await sut.SyncAllAsync(startDate, endDate);
+
+        return (localCalendar, repo);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
     // Mirrors CalendarSyncServiceTests.CreateSutWithAllDeps: same mocked dependency set, wired
     // fresh per call so tests don't share mutable mock state.

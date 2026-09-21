@@ -120,6 +120,86 @@ public class GoogleCalendarClientRemindersTests
         events[0].Reminders!.Overrides.Should().ContainSingle().Which.Minutes.Should().Be(30);
     }
 
+    // ── I1: GetCalendarsAsync's DefaultReminders mapping ─────────────────────────────────
+    // The plan never covered this mapping with a test. Real payload shapes are in
+    // D:\Obsidian Vault\FamilyHQ\Done\FHQ-193\fixtures\00-calendarlist-primary.json and
+    // 60-calendarlist.json — "present" and "empty array" below are taken from those fixtures.
+
+    private static async Task<IReadOnlyList<CalendarInfo>> MapCalendarsAsync(string itemsJson)
+    {
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.RequestUri!.ToString().Contains("calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent($$"""{"items": {{itemsJson}}}""")
+            });
+
+        var result = await sut.GetCalendarsAsync(CancellationToken.None);
+        return result.ToList();
+    }
+
+    [Fact]
+    public async Task DefaultReminders_Present_MapsToExplicitOverrides()
+    {
+        // fixture 00-calendarlist-primary.json / 60-calendarlist.json (primary entry).
+        var calendars = await MapCalendarsAsync("""
+            [{"id":"cal-1","summary":"Primary","defaultReminders":[{"method":"popup","minutes":30}]}]
+            """);
+
+        calendars.Should().ContainSingle();
+        calendars[0].DefaultReminders!.SameAs(EventReminders.Explicit([new EventReminder("popup", 30)]))
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DefaultReminders_AbsentKey_MapsToNull()
+    {
+        // Google is not guaranteed to send defaultReminders at all (it is optional on the resource).
+        var calendars = await MapCalendarsAsync("""
+            [{"id":"cal-1","summary":"Primary"}]
+            """);
+
+        calendars[0].DefaultReminders.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DefaultReminders_EmptyArray_MapsToExplicitlyNoneShape_NotNull()
+    {
+        // fixture 60-calendarlist.json — "Holidays in United Kingdom" / "Work" / "Personal" entries.
+        // An empty array is a real answer ("no default reminders"), not "unknown" — must not collapse
+        // to null, which would mean "never synced".
+        var calendars = await MapCalendarsAsync("""
+            [{"id":"cal-1","summary":"Work","defaultReminders":[]}]
+            """);
+
+        calendars[0].DefaultReminders.Should().NotBeNull();
+        calendars[0].DefaultReminders!.SameAs(EventReminders.ExplicitlyNone).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DefaultReminders_EntryMissingMethodOrMinutes_IsSkippedNotDefaulted()
+    {
+        // Same no-invention rule as the per-event override mapping: an entry Google could not have
+        // sent from a real UI is dropped rather than defaulted.
+        var calendars = await MapCalendarsAsync("""
+            [{"id":"cal-1","summary":"Primary","defaultReminders":[
+                {"method":"popup","minutes":30},
+                {"method":"email"},
+                {"minutes":15}
+            ]}]
+            """);
+
+        calendars[0].DefaultReminders!.Overrides.Should().ContainSingle()
+            .Which.Should().Be(new EventReminder("popup", 30));
+    }
+
     [Fact]
     public async Task EventsListRequest_AsksGoogleForTheRemindersField()
     {
