@@ -524,6 +524,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     /// An override with no method or no minutes is skipped rather than defaulted — inventing a
     /// value would be the substitution the prime directive forbids.
     /// </summary>
+    /// <remarks>
+    /// Allocates a FRESH <see cref="EventReminders"/> every call — never
+    /// <see cref="EventReminders.InheritsCalendarDefault"/> or <see cref="EventReminders.ExplicitlyNone"/>
+    /// directly. EF owned types (JSON-mapped included) cannot share one CLR instance across two
+    /// owners: the second `useDefault:true` event in a sync scope would throw when tracked, or be
+    /// silently re-parented onto it in a batch save, leaving the first row's reminders NULL. This
+    /// also stops discarding any overrides Google sends alongside `useDefault:true` — closer to
+    /// "store what Google sent" than the two-branch version this replaced.
+    /// </remarks>
     private static EventReminders? MapReminders(GoogleApiEventReminders? reminders)
     {
         if (reminders is null) return null;
@@ -533,9 +542,11 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             .Select(o => new EventReminder(o.Method!, o.Minutes!.Value))
             .ToList();
 
-        return reminders.UseDefault == true
-            ? EventReminders.InheritsCalendarDefault
-            : EventReminders.Explicit(overrides);
+        return new EventReminders
+        {
+            UseDefault = reminders.UseDefault == true,
+            Overrides = overrides
+        };
     }
 
     /// <summary>

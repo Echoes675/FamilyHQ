@@ -44,13 +44,24 @@ public sealed class EventReminders
     /// The event's own reminders. Never null. Order is NOT meaningful — Google reorders the array
     /// (FHQ-193, fixture 25) — so compare with <see cref="SameAs"/> rather than by sequence.
     /// </summary>
-    public IReadOnlyList<EventReminder> Overrides { get; init; } = [];
+    // NOT `= []`: for an IReadOnlyList target that compiles to Array.Empty<T>(), which is fixed-size.
+    // EF's navigation fixup Adds into this collection when materialising a TRACKED query, and throws
+    // NotSupportedException on a fixed-size one — taking down every tracked read of an event that has
+    // reminders (sync updates, kiosk edit, kiosk delete). A mutable List is required. EF mutates it
+    // during fixup, so this type is immutable by convention, not by construction.
+    public IReadOnlyList<EventReminder> Overrides { get; init; } = new List<EventReminder>();
 
     /// <summary>Follows the calendar's defaults, and changes with them.</summary>
-    public static readonly EventReminders InheritsCalendarDefault = new() { UseDefault = true };
+    /// <remarks>
+    /// A factory PROPERTY, not a <c>static readonly</c> field: EF owned types (JSON-mapped included)
+    /// cannot share one CLR instance across two owners, so every access must yield a fresh instance.
+    /// A shared field is a trap directly in the path of the next person who assigns it to two events.
+    /// </remarks>
+    public static EventReminders InheritsCalendarDefault => new() { UseDefault = true };
 
     /// <summary>Google sent <c>useDefault:false</c> with no overrides. See the remarks on the class.</summary>
-    public static readonly EventReminders ExplicitlyNone = new() { UseDefault = false };
+    /// <remarks>A factory property for the same reason as <see cref="InheritsCalendarDefault"/>.</remarks>
+    public static EventReminders ExplicitlyNone => new() { UseDefault = false };
 
     /// <summary>The event carries its own reminders. An empty sequence yields the explicitly-none shape.</summary>
     public static EventReminders Explicit(IEnumerable<EventReminder> overrides) =>
