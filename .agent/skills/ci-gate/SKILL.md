@@ -14,6 +14,23 @@ This skill verifies a branch is in a good state via Jenkins. It has two modes:
 
 If in doubt, use **pre-PR** (3 runs).
 
+## When Deploy-Dev does not apply: agent-facing docs only
+
+A branch whose diff touches **only** files the running application never reads — `.agent/**`,
+`AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/**`, `.env.example` — needs the **branch build only**.
+That build compiles the solution and runs every unit test, which is the whole of what such a change
+can break. A Deploy-Dev run deploys an image whose behaviour is byte-identical and then spends ~10
+minutes proving it, on a CI host shared with staging and preprod (user's ruling, 2026-09-21, after
+FHQ-204: *"No need for E2E runs on this change as it is agent only changes"*).
+
+The exemption is **all-or-nothing**: one file outside that list — any `src/**`, `tests/**`,
+`Jenkinsfile*`, `docker-compose*`, `*.csproj`, `Directory.*.props`, `global.json`, or a `scripts/**`
+file a pipeline runs — and the branch takes the full pre-PR gate. Skill and doc text steers agents
+rather than the app, so a wrong edit is caught by reading it, not by an E2E suite.
+
+State in the PR which applied, and why, so a reviewer is not left wondering whether the gate was
+skipped or forgotten.
+
 ## Before starting
 
 Confirm:
