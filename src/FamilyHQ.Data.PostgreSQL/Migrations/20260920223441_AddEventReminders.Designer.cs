@@ -663,7 +663,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         {
                             b1.Property<Guid>("CalendarEventId");
 
-                            b1.Property<bool>("UseDefault");
+                            b1.Property<bool>("UseDefault")
+                                .HasJsonPropertyName("useDefault");
 
                             b1.HasKey("CalendarEventId");
 
@@ -684,13 +685,17 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                                         .ValueGeneratedOnAdd();
 
                                     b2.Property<string>("Method")
-                                        .IsRequired();
+                                        .IsRequired()
+                                        .HasJsonPropertyName("method");
 
-                                    b2.Property<int>("Minutes");
+                                    b2.Property<int>("Minutes")
+                                        .HasJsonPropertyName("minutes");
 
                                     b2.HasKey("EventRemindersCalendarEventId", "__synthesizedOrdinal");
 
                                     b2.ToTable("Events");
+
+                                    b2.HasJsonPropertyName("overrides");
 
                                     b2.WithOwner()
                                         .HasForeignKey("EventRemindersCalendarEventId");
@@ -708,7 +713,8 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                         {
                             b1.Property<Guid>("CalendarInfoId");
 
-                            b1.Property<bool>("UseDefault");
+                            b1.Property<bool>("UseDefault")
+                                .HasJsonPropertyName("useDefault");
 
                             b1.HasKey("CalendarInfoId");
 
@@ -729,13 +735,17 @@ namespace FamilyHQ.Data.PostgreSQL.Migrations
                                         .ValueGeneratedOnAdd();
 
                                     b2.Property<string>("Method")
-                                        .IsRequired();
+                                        .IsRequired()
+                                        .HasJsonPropertyName("method");
 
-                                    b2.Property<int>("Minutes");
+                                    b2.Property<int>("Minutes")
+                                        .HasJsonPropertyName("minutes");
 
                                     b2.HasKey("EventRemindersCalendarInfoId", "__synthesizedOrdinal");
 
                                     b2.ToTable("Calendars");
+
+                                    b2.HasJsonPropertyName("overrides");
 
                                     b2.WithOwner()
                                         .HasForeignKey("EventRemindersCalendarInfoId");

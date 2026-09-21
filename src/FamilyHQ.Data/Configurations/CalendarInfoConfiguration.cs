@@ -45,10 +45,18 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
             .HasMaxLength(64);
 
         // FHQ-189: the calendar's default reminders (see CalendarInfo.DefaultReminders).
+        // HasJsonPropertyName matches the stored shape to Google's own casing — see the identical
+        // configuration (and its rationale) on CalendarEventConfiguration.Reminders.
         builder.OwnsOne(c => c.DefaultReminders, r =>
         {
             r.ToJson();
-            r.OwnsMany(x => x.Overrides);
+            r.Property(x => x.UseDefault).HasJsonPropertyName("useDefault");
+            r.OwnsMany(x => x.Overrides, o =>
+            {
+                o.HasJsonPropertyName("overrides");
+                o.Property(x => x.Method).HasJsonPropertyName("method");
+                o.Property(x => x.Minutes).HasJsonPropertyName("minutes");
+            });
         });
 
         builder.HasIndex(c => new { c.GoogleCalendarId, c.UserId }).IsUnique();
