@@ -45,19 +45,14 @@ public class CalendarInfoConfiguration : IEntityTypeConfiguration<CalendarInfo>
             .HasMaxLength(64);
 
         // FHQ-189: the calendar's default reminders (see CalendarInfo.DefaultReminders).
-        // HasJsonPropertyName matches the stored shape to Google's own casing — see the identical
-        // configuration (and its rationale) on CalendarEventConfiguration.Reminders.
-        builder.OwnsOne(c => c.DefaultReminders, r =>
-        {
-            r.ToJson();
-            r.Property(x => x.UseDefault).HasJsonPropertyName("useDefault");
-            r.OwnsMany(x => x.Overrides, o =>
-            {
-                o.HasJsonPropertyName("overrides");
-                o.Property(x => x.Method).HasJsonPropertyName("method");
-                o.Property(x => x.Minutes).HasJsonPropertyName("minutes");
-            });
-        });
+        // FHQ-205: stored through a value converter rather than OwnsOne(...).ToJson() — see the
+        // identical configuration (and its rationale) on CalendarEventConfiguration.Reminders.
+        // This is the property whose owned-collection shadow key took calendar syncing down:
+        // RefreshCalendarDefaultsAsync assigns it on a detached calendar that
+        // CalendarRepository.UpdateCalendarAsync then saves through Calendars.Update(...).
+        builder.Property(c => c.DefaultReminders)
+            .HasConversion(EventRemindersConversion.Converter, EventRemindersConversion.Comparer)
+            .HasColumnType(EventRemindersConversion.ColumnType);
 
         builder.HasIndex(c => new { c.GoogleCalendarId, c.UserId }).IsUnique();
 
