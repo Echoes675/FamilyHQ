@@ -27,6 +27,13 @@ public class WebhookRegistrationConfiguration : IEntityTypeConfiguration<Webhook
             .IsRequired()
             .HasMaxLength(128);
 
+        // RegisteredAddressHash (FHQ-196) - optional, 64 hex characters of SHA-256. Optional
+        // because every row written before this column existed has no value; a null reads as
+        // "registered for an address we never recorded" and re-registers once.
+        builder.Property(w => w.RegisteredAddressHash)
+            .IsRequired(false)
+            .HasMaxLength(64);
+
         // ExpiresAt - required, convert to UTC
         builder.Property(w => w.ExpiresAt)
             .IsRequired()

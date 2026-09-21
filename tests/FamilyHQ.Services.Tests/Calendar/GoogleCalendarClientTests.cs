@@ -1673,7 +1673,7 @@ public class GoogleCalendarClientTests
         // Assert
         capturedUrl.Should().NotBeNull();
         var unescapedUrl = Uri.UnescapeDataString(capturedUrl!);
-        unescapedUrl.Should().Contain("nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)");
+        unescapedUrl.Should().Contain("nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status,reminders)");
         capturedUrl.Should().Contain("singleEvents=true");
         // Verify critical fields that would silently break sync if missing:
         capturedUrl.Should().Contain("id");

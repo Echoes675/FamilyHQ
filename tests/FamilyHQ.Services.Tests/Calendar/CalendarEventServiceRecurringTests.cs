@@ -609,6 +609,28 @@ public class CalendarEventServiceRecurringTests
         storedRow.IanaTimeZone.Should().Be(expectedZone);
     }
 
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisOnly_ReconcileCopiesRemindersOntoTheExistingRow()
+    {
+        // Minor (FHQ-189 final-review fix wave): ReconcileWindowAsync is a second copy of the
+        // sync's update block and did not copy Reminders onto existing rows before this fix.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var storedRow = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        storedRow.Reminders = EventReminders.Explicit([new("popup", 30)]);
+        f.ArrangeExistingRow(storedRow);
+
+        var fetched = f.GoogleInstance("inst-2", InstanceStart, isException: true);
+        fetched.Reminders = EventReminders.Explicit([new("email", 10)]);
+        f.ArrangeReconcileWindow([fetched]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated Title", InstanceStart, "Lunch"), RecurrenceScope.ThisOnly);
+
+        storedRow.Reminders!.SameAs(EventReminders.Explicit([new("email", 10)])).Should().BeTrue();
+    }
+
     // ── Every rung is filtered for usability ──────────────────────────────────────────────────
     //
     // Google's zone names run ahead of a bundled tz database (Europe/Kyiv, America/Ciudad_Juarez are

@@ -25,6 +25,14 @@ public class CalendarInfo
     // Null until a calendar-list sync reports one; never defaulted.
     public string? IanaTimeZone { get; set; }
 
+    // FHQ-189: the calendar's default reminders, as Google reports them on the calendarList entry
+    // ("the default reminders that the authenticated user has for this calendar"). Needed to show
+    // what a `useDefault` event will actually do. Null until a calendar-list sync reports one.
+    //
+    // Google's own UI keeps a SEPARATE default for all-day events; the API does not expose it
+    // (FHQ-193 Q2), so this is the timed default only.
+    public EventReminders? DefaultReminders { get; set; }
+
     // Navigation properties
     public SyncState? SyncState { get; set; }
 }

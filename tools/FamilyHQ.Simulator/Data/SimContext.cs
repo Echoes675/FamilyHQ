@@ -29,6 +29,8 @@ public class SimContext : DbContext
             entity.Property(e => e.RecurrenceRule).HasMaxLength(1000);
             entity.Property(e => e.RecurringEventId).HasMaxLength(255);
             entity.Property(e => e.StartTimeZone).HasMaxLength(255);
+            // FHQ-189 (I3): raw JSON text, mirroring how FamilyHQ.Data stores the same field.
+            entity.Property(e => e.RemindersJson).HasColumnType("jsonb");
         });
 
         modelBuilder.Entity<SimulatedCalendar>(entity =>
@@ -40,6 +42,7 @@ public class SimContext : DbContext
             entity.Property(e => e.BackgroundColor).HasMaxLength(50);
             entity.Property(e => e.UserId).HasMaxLength(255);
             entity.Property(e => e.TimeZone).HasMaxLength(255);
+            entity.Property(e => e.DefaultRemindersJson).HasColumnType("jsonb");
         });
 
         modelBuilder.Entity<SimulatedUser>(entity =>

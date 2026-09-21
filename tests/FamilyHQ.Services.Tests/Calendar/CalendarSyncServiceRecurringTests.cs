@@ -370,8 +370,13 @@ public class CalendarSyncServiceRecurringTests
     {
         repo.Setup(r => r.GetCalendarByIdAsync(calendar.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendar);
+        // FHQ-189: RemindersSyncedAt must be stamped here too, or every "incremental" case in this
+        // file gets silently promoted to a forced backfill full sync (null token/window mismatch
+        // against the incremental setups below) — this helper models an already-backfilled calendar.
         repo.Setup(r => r.GetSyncStateAsync(calendar.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(isFullSync ? (SyncState?)null : new SyncState { CalendarInfoId = calendar.Id, SyncToken = syncToken });
+            .ReturnsAsync(isFullSync
+                ? (SyncState?)null
+                : new SyncState { CalendarInfoId = calendar.Id, SyncToken = syncToken, RemindersSyncedAt = DateTimeOffset.UtcNow });
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendar });
         repo.Setup(r => r.GetEventsByOwnerCalendarAsync(calendar.Id, It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))

@@ -30,6 +30,12 @@ public static class ServiceCollectionExtensions
             redactionSalt,
             sp.GetRequiredService<ILogger<Core.Logging.SaltedHashPiiRedactor>>()));
 
+        // FHQ-196: bind eagerly and fail-fast at boot — a missing or non-absolute webhook address
+        // is otherwise invisible, because registration warns once per calendar and carries on.
+        var syncOptions = configuration
+            .GetSection(SyncOptions.SectionName)
+            .Get<SyncOptions>() ?? new SyncOptions();
+        syncOptions.Validate();
         services.Configure<SyncOptions>(configuration.GetSection(SyncOptions.SectionName));
 
         // FHQ-91: bind eagerly and fail-fast at boot (JwtSessionOptions precedent) — a bad timeout

@@ -31,13 +31,15 @@ D:\Obsidian Vault\FamilyHQ\
 ├── _Templates/        (9 templates: Idea, Feature, Bug, Investigation, Chore, Epic, Subtask, Spec, Plan)
 ├── _Dashboards/       (6 dashboards: Inbox, Backlog, Active, Done, All Tickets, Epics)
 ├── Tickets/
-│   └── FHQ-N/                  (active tickets: Inbox / Ready / In Progress / In Review)
+│   └── FHQ-N/                  (active tickets: Inbox / Planning / Ready / In Progress / In Review /
+│                                Staging / Ready for release)
 │       ├── FHQ-N.md
 │       ├── FHQ-N-spec.md       (created when brainstorming for this ticket)
 │       ├── FHQ-N-plan.md       (created when planning for this ticket)
 │       └── FHQ-N.X.md          (subtasks, flat files)
 ├── Done/
-│   └── FHQ-N/                  (Done tickets — folder moved here automatically when PR merges)
+│   └── FHQ-N/                  (Done tickets — folder moved here when the ticket reaches Done, not
+│                                when its PR merges)
 └── Archive/
     └── FHQ-N/                  (Cancelled tickets moved here on user confirmation)
 ```
@@ -70,11 +72,45 @@ signal was seen and misread.)
 
 ## Lifecycle states
 
-**Top-level:** `Inbox → Ready → In Progress → In Review → Done` (terminal) | `Cancelled` (terminal)
+**Top-level:** `Inbox → Planning → Ready → In Progress → In Review → Staging → Ready for release → Done` (terminal) | `Cancelled` (terminal)
 
-**Subtasks:** `Ready → In Progress → In Review → Done` (terminal) | `Cancelled` (terminal) | `Promoted` (terminal — became a top-level ticket). Subtasks have no branch, no PR. "Done" means local sign-off (review agent finds no Blocker/Major, tests green).
+| State | Means | Evidence |
+|---|---|---|
+| Inbox | Logged, awaiting planning and design | — |
+| Planning | Design and plans being written | — |
+| Ready | Design agreed; plan written where the path needs one | spec/plan files |
+| In Progress | Implementation and verification | `branch` |
+| In Review | Code complete with its evidence; PR open for the user | `pr` |
+| Staging | Merged to `dev`, awaiting a green staging run on the merged code | `merged` |
+| Ready for release | `FamilyHQ-Deploy-Staging` green on `dev` | `staged` |
+| Done | **Live in production**, or merged with a recorded reason no release applies | `released` |
+
+`Done` means the change reached production. FamilyHQ's release chain runs `master` build → staging →
+**preprod** → production, each link triggering the next; preprod is a rung of that chain, not a state
+of its own. Frontmatter carries `staged:` (date + the run that proved it) and `released:` (version +
+date); `merged:` keeps meaning merged-to-`dev`.
+
+**No backward transitions, anywhere.** A failed staging run leaves the ticket in `Staging` while
+fixes go round the dev pipeline and merge again. PR comments leave it in `In Review` while fixes are
+pushed. Status records how far the work has reached, not whether one attempt survived.
+
+**`Done` without a release is legitimate** for work no pipeline deploys — a CI-only change, an
+operator-run script — and requires a recorded reason on the ticket saying why no release applies.
+
+**Tickets marked `Done` before 2026-09-20 mean "merged", not "released"** — they predate this model
+and are deliberately not relabelled.
+
+**Subtasks:** `Ready → In Progress → In Review → Done` (terminal) | `Cancelled` (terminal) | `Promoted` (terminal — became a top-level ticket). Subtasks have no branch, no PR. "Done" means local sign-off (review agent finds no Blocker/Major, tests green) — deliberately **not** the same claim a top-level `Done` makes (live in production).
 
 **Epics:** `Open → Done` (terminal) | `Cancelled` (terminal). No branch/PR, no `In Review`. Members drive their own lifecycle; when *all* members reach a terminal state, prompt to close the epic (moving its folder to `Epics/Done/` or `Epics/Cancelled/`).
+
+## Branch & PR model
+
+FamilyHQ uses `master` (production) / `dev` (integration) / short-lived branches. **One ticket branch
+can target `master`: a hotfix cut from `master`, when what is already on `dev` is not safe to ship.**
+Everything else targets `dev`, and a `master`-cut hotfix owes a back-merge into `dev` afterwards. The
+two paths, the merge-base check that tells them apart, and the back-merge check are in the
+`git-workflow` skill.
 
 ## Trigger → action rules
 
@@ -83,16 +119,18 @@ signal was seen and misread.)
 | 1 | User says "add an idea / log a bug / throw in the vault" | Compute next `FHQ-N`. Create `Tickets/FHQ-N/FHQ-N.md` from the appropriate template (Idea/Bug/Feature/etc.), `status: Inbox`, with `title:` set to the ticket's title. Confirm: "Logged as FHQ-N." |
 | 2 | User says "let's flesh out FHQ-N" | Open the ticket. Walk through the structured body sections. Promote `type` if needed (e.g., Idea → Feature). |
 | 3 | User says "FHQ-N is ready" OR every acceptance-criteria checkbox in the ticket body is ticked | Set `status: Ready`, bump `updated`. |
-| 4a | About to write a spec via `superpowers:brainstorming` for FHQ-N | Save spec output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-spec.md` (overrides skill default `docs/superpowers/specs/...`). Status remains `Ready`. |
+| 4a | About to write a spec via `superpowers:brainstorming` for FHQ-N | Set `status: Planning`, bump `updated` (so design work in flight is visible rather than leaving the ticket looking untouched). Save spec output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-spec.md` (overrides skill default `docs/superpowers/specs/...`). `Ready` then means the plans exist — set it when design is agreed. |
 | 4b | About to invoke `superpowers:writing-plans` for FHQ-N | Set `status: In Progress`, bump `updated`. Save plan output to `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\FHQ-N-plan.md` (overrides skill default `docs/superpowers/plans/...`). |
 | 5 | After plan completes for FHQ-N (the plan file `FHQ-N-plan.md` was just written and FHQ-N is `In Progress`). M = count of numbered top-level tasks in the plan body (lines matching `### Task <N>:`). | Auto-create M subtasks `FHQ-N.1` through `FHQ-N.M`, each from the Subtask template with `parent: FHQ-N`, `plan_step: <i>`, `status: Ready`. Each subtask body must include `Parent: [[FHQ-N]]` directly under the H1 heading. **Idempotent**: if `FHQ-N.1` already exists, skip the rule entirely (no partial creation). |
-| 6 | A branch matching `<feat\|fix\|chore\|spike>/FHQ-N-<slug>` is created (by user or agent) | Set `branch: <full branch name>` on the parent ticket, bump `updated`. |
+| 6 | A branch matching `<feat\|fix\|chore\|spike\|hotfix>/FHQ-N-<slug>` is created (by user or agent) | Set `branch: <full branch name>` on the parent ticket, bump `updated`. |
 | 7 | `gh pr create` succeeds and a PR is opened (by user or agent) | Refuse if any subtask is not in terminal state (`Done` / `Cancelled` / `Promoted`); list which. Otherwise set `pr: <PR URL>`, `status: In Review`, bump `updated`. |
-| 8 | Session start, for each ticket with `status: In Review` (**runs before Rule #11** so the summary reflects today's merges) | Run `gh pr view <pr-stored-value> --json state,mergedAt` (the URL stored in `pr:` works for `gh pr view`). If state is `MERGED`: set `status: Done`, `merged: <mergedAt date>`, bump `updated`, **then move the ticket folder from `Tickets/FHQ-N/` to `Done/FHQ-N/`** (the parent's folder, with all its subtask/spec/plan files inside, moves as one unit). If state is `CLOSED` and not merged: prompt the user — "FHQ-N's PR was closed without merging; revert to Ready, leave at In Review, or Cancel?" — and act on the response. |
-| 9 | User says "I merged FHQ-N" or "close FHQ-N" | Same as #8 on demand, including the folder move to `Done/FHQ-N/`. |
+| 8 | Session start, for each ticket with `status: In Review` (**runs before Rule #11** so the summary reflects today's merges) | Run `gh pr view <pr-stored-value> --json state,mergedAt` (the URL stored in `pr:` works for `gh pr view`). If state is `MERGED`: set `status: Staging`, `merged: <mergedAt date>`, bump `updated`. **Do not move the folder** — the move happens only at `Done`. If state is `CLOSED` and not merged: prompt the user — "FHQ-N's PR was closed without merging; leave at In Review, or Cancel?" — and act on the response. A closed PR never sends the ticket back to `Ready`: `status` tracks how far the work has reached, not whether this particular PR survived. |
+| 9 | User says "I merged FHQ-N" | Same as Rule #8's merged path — set `status: Staging`, `merged: <date>`, bump `updated`. Do not move the folder. |
+| 9a | Session start, for each ticket with `status: Staging` (runs after Rule #8, so tickets it just moved there are included) | Check whether a `FamilyHQ-Deploy-Staging` run started by the `dev` build of that merge has succeeded since the ticket's `merged` date (`jk run ls FamilyHQ-Deploy-Staging --limit 5`). **Prompt the user with the run number rather than transitioning silently** — one staging run often covers several merged tickets, so it is the user's call. On confirmation: set `status: Ready for release`, `staged: <date the run passed>`, bump `updated`, and note the run number in the ticket body. **Exception — a `master`-cut hotfix:** no `dev` run will ever cover it, so look instead for the staging run the `master` build started with a `SEMVER_TAG`. That run also promotes onward, so such a ticket usually clears 9a and 9b in one session — and it still owes its back-merge PR before it is genuinely finished. |
+| 9b | User says a release has gone out (e.g. "I released FHQ-N" / "v1.1.20 is out"), naming which `Ready for release` tickets it carried — **or** records that no release applies to one (a CI-only change, an operator-run script) | For each named ticket: set `status: Done`, `released: <version + date>`, bump `updated`, and **move the ticket folder to `Done/FHQ-N/`** (with all its subtask/spec/plan files, as one unit). Note the release version in the ticket body — or, on the no-release path, the recorded reason no release applies. A release is `Done` only once `FamilyHQ-Deploy-Production` has succeeded; a chain that stopped at staging or preprod leaves the ticket where it is. |
 | 10 | User says "cancel FHQ-N" | Set `status: Cancelled`, bump `updated`. Ask whether to move folder to `Archive/FHQ-N/`. On yes, move the ticket folder (with all subtask/spec/plan files) as one unit. |
 | 8b | A PR merge is detected by Rule #8 or #9 | Check the `dev` branch build: `jk run ls FamilyHQ/dev --limit 1`. Two independently-green PRs can merge cleanly and still leave `dev` red (FHQ-168 — a semantic merge conflict; it happened on 2026-08-20 and the failing `dev` build sat unread). If red, follow the fix-forward procedure in `ci-gate/SKILL.md`. **Especially important when more than one PR was open at once.** |
-| 11 | Session start (every session) — runs **after Rule #8** | One-line summary: "Backlog: X In Progress, Y In Review, Z Ready, W Inbox." Skip silently if vault unreachable. |
+| 11 | Session start (every session) — runs **after Rules #8 and #9a** | One-line summary: "Backlog: X In Progress, Y In Review, Z Ready, W Inbox, P Planning, S Staging, F Ready for release." Skip silently if vault unreachable. |
 | 12 | A review-agent skill (`superpowers:code-reviewer`, `superpowers:requesting-code-review`, ultrareview, or any subagent that returns severity-tagged findings) reports while a subtask is `In Review`. The Subtask template provides a `## Review notes` section by default, so this section always exists. | Append the agent's findings under `## Review notes`, prefixing each with severity (Blocker/Major/Minor/Nit). If any Blocker/Major remain: keep status `In Review`. Otherwise: prompt the user to move the subtask to `Done`. |
 | 13 | About to move ticket to `In Progress` | Check `blocked_by`. Refuse if any blocker is not in terminal state (`Done`/`Cancelled`/`Promoted`); list which. |
 | 14 | A blocker becomes `Done` | For each ticket whose `blocked_by` array contained this blocker, recompute remaining open blockers. Surface "FHQ-X is now unblocked." individually for each that has no remaining open blockers (multiple unblockings on a single transition are surfaced as separate lines). When a blocker becomes `Cancelled` or `Promoted` instead, do NOT auto-unblock — those terminal states abandoned/redirected the dependency rather than resolving it. Prompt the user: "FHQ-N's blocker FHQ-X was <Cancelled|Promoted to FHQ-M>; should FHQ-N be unblocked, point at FHQ-M, or stay blocked?" |

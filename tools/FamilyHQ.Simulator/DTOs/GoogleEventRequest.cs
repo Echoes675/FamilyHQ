@@ -28,6 +28,12 @@ public class GoogleEventRequest
     [JsonPropertyName("recurrence")]
     public List<string>? Recurrence { get; set; }
 
+    // FHQ-189 (I3): accepted and stored so a round trip through the simulator is coherent. Null
+    // means the body carried no `reminders` key at all — distinct from an explicit
+    // {"useDefault":false} the app sent on purpose.
+    [JsonPropertyName("reminders")]
+    public GoogleEventReminders? Reminders { get; set; }
+
     public class GoogleEventExtendedPropertiesRequest
     {
         [JsonPropertyName("private")]

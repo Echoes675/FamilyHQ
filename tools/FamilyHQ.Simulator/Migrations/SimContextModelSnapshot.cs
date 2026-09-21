@@ -33,6 +33,9 @@ namespace FamilyHQ.Simulator.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("DefaultRemindersJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<string>("Summary")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -94,6 +97,9 @@ namespace FamilyHQ.Simulator.Migrations
                     b.Property<string>("RecurringEventId")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<string>("RemindersJson")
+                        .HasColumnType("jsonb");
 
                     b.Property<DateTime>("StartTime")
                         .HasColumnType("timestamp with time zone");

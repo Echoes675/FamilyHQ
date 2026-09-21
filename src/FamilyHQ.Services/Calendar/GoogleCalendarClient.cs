@@ -54,7 +54,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
     public const int MaxSyncPages = 20;
     private const string EventsListFields =
-        "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status)";
+        "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status,reminders)";
 
     private async Task ThrowIfFailedAsync(HttpResponseMessage response, string operation, CancellationToken ct)
     {
@@ -200,7 +200,14 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             Color = item.BackgroundColor,
             // FHQ-164: the calendar's default zone, carried so the series-zone ladder's last
             // Google-supplied rung costs no extra call at split time.
-            IanaTimeZone = item.TimeZone
+            IanaTimeZone = item.TimeZone,
+            // FHQ-189: the calendar's default reminders. Google sends a bare array here, not a
+            // `reminders` object, so there is no useDefault to read — an explicit list is what it is.
+            DefaultReminders = item.DefaultReminders is null
+                ? null
+                : EventReminders.Explicit(item.DefaultReminders
+                    .Where(o => o.Method is not null && o.Minutes.HasValue)
+                    .Select(o => new EventReminder(o.Method!, o.Minutes!.Value)))
         }) ?? Array.Empty<CalendarInfo>();
     }
 
@@ -295,7 +302,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                         // Series link from pass 1. RecurrenceRule is filled in pass 2 by the
                         // two-pass master fetch in CalendarSyncService.
                         GoogleRecurringEventId = item.RecurringEventId,
-                        OriginalStartTime = originalStart
+                        OriginalStartTime = originalStart,
+                        Reminders = MapReminders(item.Reminders)
                     });
                 }
 
@@ -508,6 +516,37 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         // start.timeZone carries the zone the recurrence is anchored to; the split-count enumeration
         // needs it to hold the series' wall clock across a DST transition (FHQ-161).
         return new SeriesMaster(rrule, start.Value, apiEvent.Start?.TimeZone);
+    }
+
+    /// <summary>
+    /// FHQ-189: Google's `reminders` object → <see cref="EventReminders"/>, with no validation of
+    /// any kind. A missing object is null ("not synced"); a missing `overrides` array is EMPTY.
+    /// An override with no method or no minutes is skipped rather than defaulted — inventing a
+    /// value would be the substitution the prime directive forbids.
+    /// </summary>
+    /// <remarks>
+    /// Allocates a FRESH <see cref="EventReminders"/> every call — never
+    /// <see cref="EventReminders.InheritsCalendarDefault"/> or <see cref="EventReminders.ExplicitlyNone"/>
+    /// directly. EF owned types (JSON-mapped included) cannot share one CLR instance across two
+    /// owners: the second `useDefault:true` event in a sync scope would throw when tracked, or be
+    /// silently re-parented onto it in a batch save, leaving the first row's reminders NULL. This
+    /// also stops discarding any overrides Google sends alongside `useDefault:true` — closer to
+    /// "store what Google sent" than the two-branch version this replaced.
+    /// </remarks>
+    private static EventReminders? MapReminders(GoogleApiEventReminders? reminders)
+    {
+        if (reminders is null) return null;
+
+        var overrides = (reminders.Overrides ?? [])
+            .Where(o => o.Method is not null && o.Minutes.HasValue)
+            .Select(o => new EventReminder(o.Method!, o.Minutes!.Value))
+            .ToList();
+
+        return new EventReminders
+        {
+            UseDefault = reminders.UseDefault == true,
+            Overrides = overrides
+        };
     }
 
     /// <summary>

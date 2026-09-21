@@ -72,4 +72,38 @@ public class WebhookRegistrationRepositoryTests
         mockSet.Verify(s => s.Add(It.IsAny<WebhookRegistration>()), Times.Never);
         _db.SaveChangesCount.Should().Be(1);
     }
+
+    [Fact]
+    public async Task UpsertAsync_ExistingRegistration_ReplacesTheRegisteredAddressHash()
+    {
+        // FHQ-196: re-registering after the address changed goes through the UPDATE branch. If the
+        // hash were not copied across, the row would keep the old address's hash (or stay null) and
+        // every later pass would re-register again — a fresh channel on every renewal cycle.
+        var calendarInfoId = Guid.NewGuid();
+        var existing = new WebhookRegistration
+        {
+            CalendarInfoId = calendarInfoId,
+            ChannelId = "chan-1",
+            ResourceId = "res-1",
+            ChannelToken = "old-token",
+            RegisteredAddressHash = null,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(7),
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
+        _db.Setup<WebhookRegistration>([existing]);
+        var sut = CreateSut();
+
+        await sut.UpsertAsync(new WebhookRegistration
+        {
+            CalendarInfoId = calendarInfoId,
+            ChannelId = "chan-2",
+            ResourceId = "res-2",
+            ChannelToken = "new-token",
+            RegisteredAddressHash = "a-hash-of-the-new-address",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(14),
+            RegisteredAt = DateTimeOffset.UtcNow
+        });
+
+        existing.RegisteredAddressHash.Should().Be("a-hash-of-the-new-address");
+    }
 }

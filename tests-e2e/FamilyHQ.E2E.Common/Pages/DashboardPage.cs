@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using FamilyHQ.E2E.Common.Configuration;
 using FamilyHQ.E2E.Common.Helpers;
+using FluentAssertions;
 using Microsoft.Playwright;
 
 namespace FamilyHQ.E2E.Common.Pages;
@@ -1134,6 +1135,95 @@ public class DashboardPage : BasePage
     // toggle row, then compose the full native-create and toggle-off flows.
 
     private ILocator RecurrenceSection => EventModal.GetByTestId("recurrence-section");
+
+    // FHQ-199: the event modal is tabbed (Details · Repeat). It always opens on Details, and the
+    // recurrence picker lives on the Repeat tab — hidden, but still mounted, until that tab is shown.
+    // Every helper below that touches the picker calls ShowModalTabAsync("repeat") first, so the
+    // feature files did not have to change when the tabs arrived. Save is in the footer and is
+    // reachable from either tab.
+    private ILocator ModalTab(string tab) => EventModal.GetByTestId($"event-modal-tab-{tab}");
+
+    /// <summary>Shows the named event-modal tab ("details" or "repeat"). Does nothing if it is already showing.</summary>
+    public async Task ShowModalTabAsync(string tab)
+    {
+        var tabButton = ModalTab(tab);
+        if (await tabButton.GetAttributeAsync("aria-selected") != "true")
+        {
+            await tabButton.ClickAsync();
+            await Assertions.Expect(tabButton).ToHaveAttributeAsync("aria-selected", "true", new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>Asserts the named event-modal tab is the one showing.</summary>
+    public async Task AssertModalTabActiveAsync(string tab)
+        => await Assertions.Expect(ModalTab(tab)).ToHaveAttributeAsync("aria-selected", "true", new() { Timeout = 5000 });
+
+    /// <summary>Asserts the Repeat tab carries its "unfinished" marker.</summary>
+    public async Task AssertRepeatTabIncompleteAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-repeat-incomplete"))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+
+    /// <summary>Asserts the footer explains that an unfinished Repeat tab is what disables Save.</summary>
+    public async Task AssertSaveHintVisibleAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-save-hint"))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+
+    /// <summary>Asserts the Repeat tab's badge reads <paramref name="expected"/> (e.g. "Weekly").</summary>
+    public async Task AssertRepeatTabBadgeAsync(string expected)
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-repeat-badge"))
+            .ToHaveTextAsync(expected, new() { Timeout = 5000 });
+
+    /// <summary>
+    /// Clicks Save without waiting for the modal to close. Used where a validation failure is
+    /// expected to keep the modal open — e.g. <see cref="BeginCreatingEventAsync"/> leaves the
+    /// title blank, so this exercises the missing-title validation (FHQ-199: that error must stay
+    /// visible even while the Repeat tab is showing).
+    /// </summary>
+    public async Task AttemptSaveAsync() => await SaveEventBtn.ClickAsync();
+
+    /// <summary>Asserts the Details tab carries its "unfinished" marker (FHQ-199 Fix 2: no calendar selected).</summary>
+    public async Task AssertDetailsTabIncompleteAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-details-incomplete"))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+
+    /// <summary>Asserts the Details tab's "unfinished" marker is gone (a calendar is now selected).</summary>
+    public async Task AssertDetailsTabNotIncompleteAsync()
+        => await Assertions.Expect(EventModal.GetByTestId("event-modal-tab-details-incomplete"))
+            .ToHaveCountAsync(0, new() { Timeout = 5000 });
+
+    /// <summary>
+    /// FHQ-199 Fix 1: asserts the modal's bounding box (position AND size) is unchanged, within 1px
+    /// for sub-pixel rounding, as the active tab moves from Details to Repeat and back. Each switch
+    /// is synchronised on the tab's aria-selected flip inside <see cref="ShowModalTabAsync"/> — no
+    /// sleep — before the box is re-measured, so a pass proves the CSS grid-stacking fix, not timing.
+    /// </summary>
+    public async Task AssertModalStaysStillAcrossTabsAsync()
+    {
+        var initial = await ModalBoundingBoxAsync();
+
+        await ShowModalTabAsync("repeat");
+        await AssertModalBoxMatchesAsync(initial);
+
+        await ShowModalTabAsync("details");
+        await AssertModalBoxMatchesAsync(initial);
+    }
+
+    private async Task AssertModalBoxMatchesAsync(LocatorBoundingBoxResult expected)
+    {
+        var actual = await ModalBoundingBoxAsync();
+        actual.X.Should().BeApproximately(expected.X, 1f, "the modal must not shift horizontally when the tab changes.");
+        actual.Y.Should().BeApproximately(expected.Y, 1f, "the modal must not shift vertically when the tab changes (it would if the dialog resized and re-centred).");
+        actual.Width.Should().BeApproximately(expected.Width, 1f, "the modal must not resize when the tab changes.");
+        actual.Height.Should().BeApproximately(expected.Height, 1f, "the modal must not resize when the tab changes.");
+    }
+
+    private async Task<LocatorBoundingBoxResult> ModalBoundingBoxAsync()
+    {
+        var box = await EventModal.BoundingBoxAsync();
+        box.Should().NotBeNull("the event modal must be visible with a measurable layout box.");
+        return box!;
+    }
+
     private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
     private ILocator ScopePromptOkBtn => Page.GetByTestId("recurrence-scope-ok");
 
@@ -1153,6 +1243,7 @@ public class DashboardPage : BasePage
     /// <summary>Toggles Repeat ON if it is not already, so the frequency pills are revealed.</summary>
     private async Task EnsureRepeatOnAsync()
     {
+        await ShowModalTabAsync("repeat");
         var pressed = await RepeatToggle.GetAttributeAsync("aria-pressed");
         if (pressed != "true")
         {
@@ -1164,6 +1255,7 @@ public class DashboardPage : BasePage
     /// <summary>Toggles Repeat OFF if it is not already (the new "Does not repeat" affordance).</summary>
     private async Task EnsureRepeatOffAsync()
     {
+        await ShowModalTabAsync("repeat");
         var pressed = await RepeatToggle.GetAttributeAsync("aria-pressed");
         if (pressed != "false")
         {
@@ -1203,6 +1295,7 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task AssertRecurrenceOffAndNoFrequenciesAsync()
     {
+        await ShowModalTabAsync("repeat");
         await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "false", new() { Timeout = 5000 });
         await Assertions.Expect(RepeatToggle).ToContainTextAsync("Does not repeat", new() { Timeout = 5000 });
         await Assertions.Expect(RecurrenceSection.GetByTestId("recurrence-mode-weekly"))
@@ -1218,6 +1311,7 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task AssertRepeatOnNoFrequencySelectedAndSaveDisabledAsync()
     {
+        await ShowModalTabAsync("repeat");
         await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
         await Assertions.Expect(RepeatToggle).ToContainTextAsync("Repeats", new() { Timeout = 5000 });
 
@@ -1254,7 +1348,10 @@ public class DashboardPage : BasePage
 
     /// <summary>Asserts the Custom drawer interval input holds the given value.</summary>
     public async Task AssertIntervalValueAsync(string expected)
-        => await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+    {
+        await ShowModalTabAsync("repeat");
+        await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
+    }
 
     /// <summary>
     /// Asserts the Custom drawer interval input holds <paramref name="expected"/> (the floor, "1")
@@ -1262,6 +1359,7 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task AssertIntervalAtFloorWithDecrementDisabledAsync(string expected)
     {
+        await ShowModalTabAsync("repeat");
         await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
         await Assertions.Expect(IntervalDecrement).ToBeDisabledAsync(new() { Timeout = 5000 });
     }
@@ -1269,6 +1367,7 @@ public class DashboardPage : BasePage
     /// <summary>Taps the interval increment stepper and asserts the input rises to the given value.</summary>
     public async Task IncrementIntervalAndAssertValueAsync(string expected)
     {
+        await ShowModalTabAsync("repeat");
         await IntervalIncrement.ClickAsync();
         await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
     }
@@ -1276,6 +1375,7 @@ public class DashboardPage : BasePage
     /// <summary>Taps the interval decrement stepper and asserts the input falls to the given value.</summary>
     public async Task DecrementIntervalAndAssertValueAsync(string expected)
     {
+        await ShowModalTabAsync("repeat");
         await IntervalDecrement.ClickAsync();
         await Assertions.Expect(IntervalInput).ToHaveValueAsync(expected, new() { Timeout = 5000 });
     }
@@ -1301,6 +1401,7 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task AssertRepeatingWeeklySelectedAsync()
     {
+        await ShowModalTabAsync("repeat");
         await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
         await Assertions.Expect(RepeatToggle).ToContainTextAsync("Repeats", new() { Timeout = 5000 });
         await Assertions.Expect(RecurrenceSection.GetByTestId("recurrence-mode-weekly"))
@@ -1310,6 +1411,7 @@ public class DashboardPage : BasePage
     /// <summary>Selects a custom-drawer frequency pill (e.g. "weekly"). Requires Custom mode.</summary>
     private async Task SelectRecurrenceFrequencyAsync(string frequency)
     {
+        await ShowModalTabAsync("repeat");
         var pill = RecurrenceSection.GetByTestId($"recurrence-frequency-{frequency}");
         await pill.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         await pill.ClickAsync();
@@ -1319,15 +1421,31 @@ public class DashboardPage : BasePage
     /// <summary>Toggles a weekday button on in the custom weekly drawer (DayOfWeek name, e.g. "Tuesday").</summary>
     private async Task ToggleRecurrenceWeekdayAsync(string dayOfWeekName)
     {
+        await ShowModalTabAsync("repeat");
         var toggle = RecurrenceSection.GetByTestId($"recurrence-weekday-{dayOfWeekName}");
         await toggle.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 5000 });
         await toggle.ClickAsync();
         await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
     }
 
-    /// <summary>Activates the named calendar chip in the open modal if it is not already active.</summary>
-    private async Task EnsureCalendarChipActiveAsync(string calendarName)
+    /// <summary>
+    /// Activates the named calendar chip in the open modal if it is not already active. Public so a
+    /// scenario can select a calendar without also saving (FHQ-199: clearing the Details tab's
+    /// "no calendar selected" marker) as well as via the composed create/edit flows below.
+    /// </summary>
+    /// <remarks>
+    /// FHQ-199: the chip selector lives on the Details pane, so this shows that tab first — mirrors
+    /// <see cref="EnsureRepeatOnAsync"/> calling <c>ShowModalTabAsync("repeat")</c> first, so callers
+    /// do not need a tab-switch step of their own regardless of which tab is currently showing. A
+    /// freshly-opened modal is already on Details, so this is a no-op for the create/edit flows below;
+    /// it only does work for a caller that selects a calendar while the Repeat tab is active. The
+    /// inactive Details pane is `visibility: hidden` (Fix 1), so the chip genuinely cannot be clicked
+    /// without switching first — Playwright times out waiting for it to become visible.
+    /// </remarks>
+    public async Task EnsureCalendarChipActiveAsync(string calendarName)
     {
+        await ShowModalTabAsync("details");
+
         var chip = EventModal.Locator(".chip").Filter(new() { HasText = calendarName });
         var classes = await chip.GetAttributeAsync("class") ?? "";
         if (!classes.Contains("chip-active"))

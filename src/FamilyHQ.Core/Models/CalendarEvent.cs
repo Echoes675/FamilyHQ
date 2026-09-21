@@ -36,6 +36,15 @@ public class CalendarEvent
     // one — the backfill is lazy and opportunistic (FHQ-164 Decision 4), never defaulted.
     public string? IanaTimeZone { get; set; }
 
+    // FHQ-189: Google's `reminders` object for this event, stored in Google's own shape.
+    //
+    // NULL means "not yet synced" — the marker the one-off backfill keys on — NOT "no reminders".
+    // The three non-null states are on EventReminders. Note that on an ALL-DAY event the
+    // explicitly-none state is ambiguous: Google also reports it for reminders that fire after the
+    // event starts, which its API refuses to show at all (FHQ-193). Nothing downstream may render
+    // that state as "no reminders".
+    public EventReminders? Reminders { get; set; }
+
     // True when this event belongs to a recurring series.
     public bool IsRecurring => GoogleRecurringEventId is not null;
 

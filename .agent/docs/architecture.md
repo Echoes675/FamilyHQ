@@ -28,12 +28,31 @@
 
 ## Key Entities
 - **CalendarEvent**: Google Calendar event data.
+- **CalendarEvent.Reminders / CalendarInfo.DefaultReminders** (FHQ-189): Google's `reminders` object,
+  stored as `jsonb`, in Google's own **key casing** as well as its own shape —
+  `{ useDefault, overrides: [{ method, minutes }] }` (`HasJsonPropertyName` on both configurations).
+  `method` is the **string Google sent** (not an enum) and `minutes` is **signed**: the read path never
+  validates, clamps, de-duplicates or reorders, because Google is the authority on its own values.
+  Four states: `null` = not yet synced (drives the backfill); `useDefault:true` = inherits the
+  calendar's defaults (**timed events only** — an all-day event never inherits, Google materialises
+  the default into explicit overrides); explicit overrides; and `useDefault:false` with an empty list
+  = explicitly none. **On an all-day event that last state is ambiguous** — Google reports it for
+  reminders that fire *after* the event starts, which its API will not show at all (FHQ-193), so
+  nothing may render it as "no reminders". Order is not meaningful: Google reorders the array, so
+  compare with `EventReminders.SameAs`. Nothing writes reminders back to Google yet — that is FHQ-190.
+  `CalendarInfo.DefaultReminders` is kept current for calendars FamilyHQ already knows about too —
+  `CalendarSyncService.RefreshCalendarDefaultsAsync` adopts it (alongside `IanaTimeZone`) from the
+  `calendarList` response every sync already fetches, the same way `AddCalendarAsync` seeds it for a
+  brand-new calendar — because in production every calendar already exists.
+- **SyncState.RemindersSyncedAt** (FHQ-189): when this calendar was first synced with `reminders` in
+  the field mask. Null forces exactly one full sync, because incremental sync never re-sends an
+  unchanged event and the events already in production would otherwise never gain reminders.
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date, **per kiosk** — unique on (UserId, Date) since FHQ-177. Calculated once per day per kiosk by DayThemeSchedulerService from sunrise/sunset at that kiosk's **saved LocationSetting**. A kiosk with no saved location gets no row and keeps its default theme: the boundaries used to come from a server-side IP lookup, which geolocates the hosting VPS rather than the family, so guessing is choosing a known-wrong answer.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).
 - **WeatherDataPoint**: Stores weather data (current, hourly, daily) for a location. Keyed by LocationSettingId + DataType + Timestamp. `Condition` is persisted as the `WeatherCondition` **ordinal**, so new enum members must be appended — inserting one re-labels every stored row (pinned by `WeatherConditionTests`).
 - **WeatherSetting**: Stores weather preferences (Enabled, PollIntervalMinutes, TemperatureUnit, WindThresholdKmh). One row per UserId.
-- **WebhookRegistration**: Tracks Google Calendar push notification watch channel registrations. One row per CalendarInfo. Stores ChannelId (UUID sent to Google), ResourceId (returned by Google), ExpiresAt, RegisteredAt.
+- **WebhookRegistration**: Tracks Google Calendar push notification watch channel registrations. One row per CalendarInfo. Stores ChannelId (UUID sent to Google), ResourceId (returned by Google), ExpiresAt, RegisteredAt, and `RegisteredAddressHash` — SHA-256 hex of the full address the channel was registered with (FHQ-196). The hash, not the address: a RelayRobin address embeds its route key, which is the credential authorising a notification POST. Nullable, because rows written before FHQ-196 have no value; a null reads as a mismatch, so those channels re-register once and fill it in.
 
 ## Key Services
 - **ISunCalculatorService / SunCalculatorService**: Calculates sunrise/sunset times for a lat/lon using the SunCalcNet NuGet package.
@@ -48,7 +67,7 @@
 - **IWeatherService / WeatherService**: Reads stored weather data, applies temperature conversion, serves DTOs.
 - **IWeatherRefreshService**: Shared between WeatherPollerService and the refresh endpoint. Extracts the poll logic (fetch, store, broadcast) into a reusable service.
 - **WeatherPollerService** (IHostedService): Background poller that fetches weather data at configurable intervals and broadcasts `WeatherUpdated` via SignalR. `SettingsController.SaveLocation` also triggers an immediate weather refresh after saving. Each cycle refreshes only the users that are **due**; a user's interval doubles per consecutive failure up to `Weather:MaxFailureBackoffMinutes` and resets on the first success (FHQ-109), so a rate-limited Open-Meteo is no longer re-hit every 60s. Per-user state is pruned to the current enabled-user set each cycle, so it cannot grow with churn. The cycle sleep is clamped to `Weather:PollIntervalMinutes` so a backed-off user never stops the loop discovering someone who has just enabled weather. Only the escalation transition is logged at Error; once the interval plateaus at the cap it drops to Debug, with a Warning re-emitted every 10th consecutive failure so an ongoing outage stays visible in production.
-- **IWebhookRegistrationService / WebhookRegistrationService**: Registers Google Calendar push notification watch channels per-calendar. Called after login and periodically by WebhookRenewalService. Config-gated via `Sync:WebhookRegistrationEnabled`.
+- **IWebhookRegistrationService / WebhookRegistrationService**: Registers Google Calendar push notification watch channels per-calendar. Called after login and periodically by WebhookRenewalService. Config-gated via `Sync:WebhookRegistrationEnabled`. A channel with more than 24h left is skipped **only** when `WebhookRegistration.RegisteredAddressHash` equals the hash of the address configured now (FHQ-196) — so a changed `Sync:WebhookBaseUrl` takes effect on the next registration pass instead of being ignored for up to ~6 days, via the normal new-channel-then-stop-old sequence. Any log line carrying the address masks the path segment after `/h/` (`WebhookAddress.Mask`). When registration is enabled, `Sync:WebhookBaseUrl` must be an absolute http(s) URL or `AddFamilyHqServices` refuses to boot (`SyncOptions.Validate`); http is deliberately allowed, because dev and staging register against the Simulator at `http://webapi:8080`.
 - **WebhookRenewalService** (IHostedService, lives in WebApi): Background service that re-registers all webhook watch channels on startup (1-min delay) and every 6 days. Iterates all users via ITokenStore. Disabled when `Sync:WebhookRegistrationEnabled` is false.
 - **IWeatherUiService / WeatherUiService** (Blazor WASM): Fetches weather data via HTTP, subscribes to SignalR `WeatherUpdated` events, exposes `OnWeatherChanged` for components.
 
@@ -105,7 +124,7 @@ FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigra
 The guard is implemented in two halves:
 
 1. **Outbound** — every successful Google write records `(GoogleEventId, hash)` in a singleton `IOutboundWriteHashCache` with a 60-second TTL. Failed writes do not record.
-2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache. On match, the event is skipped: no DB write, no further Google write, single "Self-echo skipped" Information-level log entry.
+2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache via `IsSelfEcho`. On a hash match the event is **usually** skipped — no DB write, no further Google write, single "Self-echo skipped" Information-level log entry — but the hash covers only `(title, start, end, isAllDay, description)`, not reminders (FHQ-189), so a hash match is NOT automatically an echo: `IsSelfEcho` also compares reminders, and treats a locally-unlearned reminder set (`existing.Reminders is null`) paired with an inbound value as new information rather than an echo, so that event is processed (a DB write) even though its hash matched.
 
 ### Production verification
 

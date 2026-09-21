@@ -68,7 +68,7 @@ public class CalendarSyncServiceTests
         var googleCalendarId = "test@group.calendar.google.com";
 
         var calendarInfo      = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var existingSyncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
+        var existingSyncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token", RemindersSyncedAt = DateTimeOffset.UtcNow };
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendarInfo);
@@ -454,7 +454,7 @@ public class CalendarSyncServiceTests
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendar);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "tok" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "tok", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendar });
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-zone", It.IsAny<CancellationToken>()))
@@ -498,7 +498,7 @@ public class CalendarSyncServiceTests
             .ReturnsAsync(family);
         // Existing sync token => incremental sync (skips the full-sync tombstone branch).
         calendarRepository.Setup(r => r.GetSyncStateAsync(familyId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = familyId, SyncToken = "tok" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = familyId, SyncToken = "tok", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { work, personal, family });
 
@@ -569,7 +569,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendar);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "incremental-token" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = calendarId, SyncToken = "incremental-token", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendar });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental-token", It.IsAny<CancellationToken>()))
@@ -918,7 +918,7 @@ public class CalendarSyncServiceTests
         var calendarId = Guid.Parse("33333333-3333-3333-3333-333333333333");
         var googleCalendarId = "test@group.calendar.google.com";
         var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
+        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token", RemindersSyncedAt = DateTimeOffset.UtcNow };
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendarInfo);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
@@ -941,7 +941,7 @@ public class CalendarSyncServiceTests
         var calendarId = Guid.Parse("44444444-4444-4444-4444-444444444444");
         var googleCalendarId = "test@group.calendar.google.com";
         var calendarInfo = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token" };
+        var syncState = new SyncState { CalendarInfoId = calendarId, SyncToken = "old_token", RemindersSyncedAt = DateTimeOffset.UtcNow };
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(calendarInfo);
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
@@ -989,7 +989,7 @@ public class CalendarSyncServiceTests
         // Incremental sync (token exists) — no tombstone pass, no full-sync window
         calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid id, CancellationToken _) =>
-                new SyncState { CalendarInfoId = id, SyncToken = "old_token" });
+                new SyncState { CalendarInfoId = id, SyncToken = "old_token", RemindersSyncedAt = DateTimeOffset.UtcNow });
 
         // Each calendar returns one new event
         client.Setup(c => c.GetEventsAsync(googleCalAId, null, null, "old_token", It.IsAny<CancellationToken>()))
@@ -1025,7 +1025,7 @@ public class CalendarSyncServiceTests
         var endDate          = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddDays(365);
 
         var calendarInfo  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var existingState = new SyncState { CalendarInfoId = calendarId, SyncToken = "stale-token" };
+        var existingState = new SyncState { CalendarInfoId = calendarId, SyncToken = "stale-token", RemindersSyncedAt = DateTimeOffset.UtcNow };
 
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(calendarInfo);
@@ -1137,7 +1137,7 @@ public class CalendarSyncServiceTests
             .ReturnsAsync(work);
         // Incremental sync (token exists) — skips the full-sync tombstone branch.
         calendarRepository.Setup(r => r.GetSyncStateAsync(workId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { work, familyA, familyB });
 
@@ -1210,7 +1210,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(workId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(work);
         calendarRepository.Setup(r => r.GetSyncStateAsync(workId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok" });
+            .ReturnsAsync(new SyncState { CalendarInfoId = workId, SyncToken = "tok", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { work, familyA, familyB });
 

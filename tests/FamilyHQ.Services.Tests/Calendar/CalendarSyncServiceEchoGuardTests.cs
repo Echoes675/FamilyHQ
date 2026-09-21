@@ -48,8 +48,11 @@ public class CalendarSyncServiceEchoGuardTests
         };
         calendarRepo.Setup(r => r.GetCalendarByIdAsync(_calendarInfoId, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(calendarInfo);
+        // FHQ-189: RemindersSyncedAt must be stamped, or every test here gets silently promoted to
+        // a forced backfill full sync instead of the incremental sync these echo-guard tests exist
+        // to exercise. This helper models an already-backfilled calendar.
         calendarRepo.Setup(r => r.GetSyncStateAsync(_calendarInfoId, It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(new SyncState { CalendarInfoId = _calendarInfoId, SyncToken = "tok" });
+                    .ReturnsAsync(new SyncState { CalendarInfoId = _calendarInfoId, SyncToken = "tok", RemindersSyncedAt = DateTimeOffset.UtcNow });
         calendarRepo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
                     .ReturnsAsync(new List<CalendarInfo> { calendarInfo });
 

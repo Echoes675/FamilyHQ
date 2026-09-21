@@ -1,5 +1,7 @@
 namespace FamilyHQ.Simulator.Data;
 
+using System.Text.Json;
+using FamilyHQ.Simulator.DTOs;
 using FamilyHQ.Simulator.Models;
 
 public class DataSeeder
@@ -14,7 +16,14 @@ public class DataSeeder
             var familyCalendarId = "simulated_calendar_family" + Guid.NewGuid().ToString("N");
             var workCalendarId = "simulated_calendar_work" + Guid.NewGuid().ToString("N");
             db.Calendars.AddRange(
-                new SimulatedCalendar { Id = familyCalendarId, Summary = "Family Calendar", BackgroundColor = "#b39ddb", UserId = defaultUserId },
+                new SimulatedCalendar
+                {
+                    Id = familyCalendarId, Summary = "Family Calendar", BackgroundColor = "#b39ddb", UserId = defaultUserId,
+                    // FHQ-189 (I3): exercises GetCalendarsAsync's defaultReminders mapping in CI —
+                    // the Simulator emitted no reminders at all before this fix.
+                    DefaultRemindersJson = JsonSerializer.Serialize(
+                        new List<GoogleEventReminderOverride> { new("popup", 30) })
+                },
                 new SimulatedCalendar { Id = "simulated_calendar_work", Summary = "Work Calendar", BackgroundColor = "#9e9e9e", UserId = defaultUserId }
             );
 
@@ -31,7 +40,9 @@ public class DataSeeder
                     StartTime = startOfMonth.AddDays(10).AddHours(14),
                     EndTime = startOfMonth.AddDays(10).AddHours(15),
                     IsAllDay = false,
-                    UserId = defaultUserId
+                    UserId = defaultUserId,
+                    // FHQ-189 (I3): state 1 of 4 — inherits the calendar's defaults.
+                    RemindersJson = JsonSerializer.Serialize(new GoogleEventReminders(UseDefault: true, Overrides: null))
                 },
                 new SimulatedEvent
                 {
@@ -42,7 +53,11 @@ public class DataSeeder
                     StartTime = startOfMonth.AddDays(15).AddHours(18),
                     EndTime = startOfMonth.AddDays(15).AddHours(20),
                     IsAllDay = false,
-                    UserId = defaultUserId
+                    UserId = defaultUserId,
+                    // FHQ-189 (I3): state 2 of 4 — an explicit override list of its own.
+                    RemindersJson = JsonSerializer.Serialize(new GoogleEventReminders(
+                        UseDefault: false,
+                        Overrides: [new("popup", 10), new("email", 60)]))
                 },
                 new SimulatedEvent
                 {
@@ -53,7 +68,9 @@ public class DataSeeder
                     StartTime = startOfMonth.AddDays(12).AddHours(9),
                     EndTime = startOfMonth.AddDays(12).AddHours(10),
                     IsAllDay = false,
-                    UserId = defaultUserId
+                    UserId = defaultUserId,
+                    // FHQ-189 (I3): state 3 of 4 — explicitly none (useDefault:false, no overrides key).
+                    RemindersJson = JsonSerializer.Serialize(new GoogleEventReminders(UseDefault: false, Overrides: null))
                 },
                 new SimulatedEvent
                 {
@@ -65,6 +82,8 @@ public class DataSeeder
                     EndTime = startOfMonth.AddDays(20).AddHours(15),
                     IsAllDay = false,
                     UserId = defaultUserId
+                    // FHQ-189 (I3): deliberately left with no reminders at all (RemindersJson null) —
+                    // "not yet synced", the fourth shape the read path must tell apart from the three above.
                 },
                 new SimulatedEvent
                 {
@@ -74,7 +93,14 @@ public class DataSeeder
                     StartTime = startOfMonth.AddDays(5),
                     EndTime = startOfMonth.AddDays(6),
                     IsAllDay = true,
-                    UserId = defaultUserId
+                    UserId = defaultUserId,
+                    // FHQ-189 (I3): state 4 of 4 — an all-day event carrying the calendar default
+                    // MATERIALISED into an explicit override (Google never lets an all-day event
+                    // inherit — see EventReminders remarks), matching the family calendar's own
+                    // DefaultRemindersJson above.
+                    RemindersJson = JsonSerializer.Serialize(new GoogleEventReminders(
+                        UseDefault: false,
+                        Overrides: [new("popup", 30)]))
                 }
             );
 

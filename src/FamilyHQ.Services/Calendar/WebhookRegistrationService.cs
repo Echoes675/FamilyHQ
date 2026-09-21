@@ -36,20 +36,34 @@ public class WebhookRegistrationService(
         }
 
         var existing = await webhookRegistrationRepository.GetByCalendarIdAsync(calendarInfoId, ct);
+        var webhookUrl = $"{syncOptions.WebhookBaseUrl.TrimEnd('/')}{WebhookPath}";
+        var addressHash = WebhookAddress.Hash(webhookUrl);
 
         if (!force && existing is not null && existing.ExpiresAt > DateTimeOffset.UtcNow.AddHours(24))
         {
+            // FHQ-196: a channel with days left is only worth keeping if it points at the address
+            // we are configured for NOW. A null hash is a row written before this column existed
+            // and counts as a mismatch — the alternative is trusting an address never recorded.
+            if (string.Equals(existing.RegisteredAddressHash, addressHash, StringComparison.Ordinal))
+            {
+                logger.LogInformation(
+                    "Webhook for calendar {CalendarInfoId} still valid until {ExpiresAt}, skipping registration",
+                    calendarInfoId, existing.ExpiresAt);
+                return;
+            }
+
+            // Masked: a RelayRobin address carries its route key in the path, and that key is the
+            // credential authorising a notification POST to FamilyHQ.
             logger.LogInformation(
-                "Webhook for calendar {CalendarInfoId} still valid until {ExpiresAt}, skipping registration",
-                calendarInfoId, existing.ExpiresAt);
-            return;
+                "Webhook for calendar {CalendarInfoId} is registered for a different address; " +
+                "re-registering against {WebhookAddress} before the channel expires at {ExpiresAt}.",
+                calendarInfoId, WebhookAddress.Mask(webhookUrl), existing.ExpiresAt);
         }
 
         try
         {
             var channelId = Guid.NewGuid().ToString();
             var channelToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-            var webhookUrl = $"{syncOptions.WebhookBaseUrl.TrimEnd('/')}{WebhookPath}";
 
             var response = await googleCalendarClient.WatchEventsAsync(googleCalendarId, channelId, webhookUrl, channelToken, ct);
 
@@ -59,6 +73,7 @@ public class WebhookRegistrationService(
                 ChannelId = response.ChannelId,
                 ResourceId = response.ResourceId,
                 ChannelToken = channelToken,
+                RegisteredAddressHash = addressHash,
                 ExpiresAt = DateTimeOffset.FromUnixTimeMilliseconds(response.Expiration),
                 RegisteredAt = DateTimeOffset.UtcNow
             };
