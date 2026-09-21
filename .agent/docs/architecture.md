@@ -30,7 +30,12 @@
 - **CalendarEvent**: Google Calendar event data.
 - **CalendarEvent.Reminders / CalendarInfo.DefaultReminders** (FHQ-189): Google's `reminders` object,
   stored as `jsonb`, in Google's own **key casing** as well as its own shape —
-  `{ useDefault, overrides: [{ method, minutes }] }` (`HasJsonPropertyName` on both configurations).
+  `{ useDefault, overrides: [{ method, minutes }] }`. Mapped with a **value converter** plus a
+  structural `ValueComparer` (`EventRemindersConversion`), *not* `OwnsOne(...).ToJson()`:
+  `EventReminders` is a **value**, and modelling it as an owned entity graph gave its `Overrides`
+  collection a shadow key (`__synthesizedOrdinal`) that cannot survive a detached `Update()` — which
+  is how `CalendarRepository` saves a calendar, and which stopped all production syncing for five
+  hours (FHQ-205). The stored JSON is byte-identical either way, so no data changed.
   `method` is the **string Google sent** (not an enum) and `minutes` is **signed**: the read path never
   validates, clamps, de-duplicates or reorders, because Google is the authority on its own values.
   Four states: `null` = not yet synced (drives the backfill); `useDefault:true` = inherits the
