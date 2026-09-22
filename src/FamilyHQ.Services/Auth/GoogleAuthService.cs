@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace FamilyHQ.Services.Auth;
 
-public class GoogleAuthService
+public class GoogleAuthService : IGoogleTokenRefresher
 {
     private readonly HttpClient _httpClient;
     private readonly GoogleCalendarOptions _options;
