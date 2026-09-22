@@ -144,7 +144,7 @@ Read the relevant skill file before starting any task of that type:
 All FamilyHQ work is tracked in the Obsidian vault at `D:\Obsidian Vault\FamilyHQ`. Two non-negotiables:
 
 - Specs and plans for any `FHQ-N` ticket land in the vault at `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\` — **not** `docs/superpowers/`.
-- A session-start scan runs at the start of every session in this repo: list the in-flight tickets (`Planning`, `In Progress`, `In Review`, `Staging`, `Ready for release`), check `gh pr view` for merged PRs that should move to `Staging`, prompt on any `Staging` ticket a green staging run now covers, and produce a one-line summary.
+- A session-start scan runs at the start of every session in this repo: list the in-flight tickets (`Planning`, `In Progress`, `In Review`, `Staging`, `Ready for release`), check `gh pr view` for merged PRs that should move to `Staging`, advance any `Staging` ticket a green staging run now covers to `Ready for release`, and produce a one-line summary.
 - `Done` means **live in production**, not merged. A merged PR moves a ticket to `Staging`, and its folder stays in `Tickets/` until it is released.
 
 See `.agent/skills/obsidian-tickets/SKILL.md` for the full trigger → action playbook.
