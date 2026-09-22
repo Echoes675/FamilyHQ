@@ -54,25 +54,18 @@ public class CalendarEventConfiguration : IEntityTypeConfiguration<CalendarEvent
         // writes it together with its event, so it is stored as one JSON document rather than a
         // child table. A child table would add a join to the reminders-timeline query that runs on
         // every kiosk load, plus a delete-and-reinsert on every sync — the race FHQ-111 was about.
-        // OwnsOne(...).ToJson() keeps FamilyHQ.Data provider-agnostic; Npgsql maps it to jsonb.
         //
-        // HasJsonPropertyName below makes the STORED shape match Google's own casing
+        // FHQ-205: mapped with a VALUE CONVERTER rather than OwnsOne(...).ToJson(). EventReminders
+        // is a value, not an entity; modelling it as an owned graph gave its Overrides collection a
+        // shadow key that cannot survive a detached Update(), which took production calendar
+        // syncing down. EventRemindersConversion holds the converter, the structural comparer and
+        // the full reasoning. The stored JSON keeps Google's own casing
         // (useDefault/overrides/method/minutes), matching architecture.md's claim that this column
-        // holds Google's own shape rather than a .NET-cased approximation of it. Safe to do here
-        // rather than as a follow-up migration: this column has not shipped to any deployed
-        // database yet (FHQ-189 is still an open branch), so there is no existing production data
-        // to reshape.
-        builder.OwnsOne(e => e.Reminders, r =>
-        {
-            r.ToJson();
-            r.Property(x => x.UseDefault).HasJsonPropertyName("useDefault");
-            r.OwnsMany(x => x.Overrides, o =>
-            {
-                o.HasJsonPropertyName("overrides");
-                o.Property(x => x.Method).HasJsonPropertyName("method");
-                o.Property(x => x.Minutes).HasJsonPropertyName("minutes");
-            });
-        });
+        // holds Google's own shape rather than a .NET-cased approximation of it, so existing rows
+        // are unaffected. The column type is named explicitly so the mapping stays jsonb.
+        builder.Property(e => e.Reminders)
+            .HasConversion(EventRemindersConversion.Converter, EventRemindersConversion.Comparer)
+            .HasColumnType(EventRemindersConversion.ColumnType);
 
         builder.HasIndex(e => e.GoogleEventId).IsUnique();
         builder.HasIndex(e => e.Start);

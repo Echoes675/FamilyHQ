@@ -55,6 +55,11 @@ public class CalendarSyncWorker(
             await queue.RecoverOrphansAsync(opts.OrphanRecoveryThreshold, stoppingToken);
         }
 
+        // FHQ-205: jobs whose processing escaped ProcessJobAsync entirely during THIS drain cycle.
+        // Claiming one marks it InProgress, so ClaimNextAsync should not hand it back; if it does,
+        // something reset it and re-processing it immediately would spin the loop at full speed.
+        var unrecoverableJobIds = new HashSet<Guid>();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             using var scope = scopeFactory.CreateScope();
@@ -63,11 +68,36 @@ public class CalendarSyncWorker(
             var job = await queue.ClaimNextAsync(stoppingToken);
             if (job is null) break;
 
+            if (!unrecoverableJobIds.Add(job.Id))
+            {
+                // Leave it claimed and end the cycle. The next poll interval is the backoff, and
+                // orphan recovery returns the job to Pending if it really is stuck.
+                logger.LogError("Sync job {JobId} was claimed twice in one drain cycle after failing to be "
+                    + "recorded; ending the cycle rather than re-processing it.", job.Id);
+                break;
+            }
+
             // FHQ-65: each job gets a fresh CorrelationId so all its logs (sync, broadcast,
             // retry/reauth) group together in Seq.
             using (logger.BeginCorrelationScope())
             {
-                await ProcessJobAsync(scope, queue, job, opts, stoppingToken);
+                try
+                {
+                    await ProcessJobAsync(scope, queue, job, opts, stoppingToken);
+                    unrecoverableJobIds.Remove(job.Id);
+                }
+                // FHQ-205: one calendar must not stop every calendar. A job that escapes
+                // ProcessJobAsync — including one whose failure could not even be recorded — is
+                // logged and the drain moves on to the next job. Previously such an exception
+                // escaped DrainAsync, was caught in ExecuteAsync as "drain cycle failed", and took
+                // every remaining calendar down with it: that is what turned one broken calendar
+                // into a five-hour total outage. Genuine cancellation still propagates, so shutdown
+                // semantics are unchanged.
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogError(ex, "Sync job {JobId} could not be processed or recorded as failed; "
+                        + "continuing with the next job.", job.Id);
+                }
             }
         }
     }
@@ -126,9 +156,12 @@ public class CalendarSyncWorker(
         }
         catch (GoogleReauthRequiredException ex)
         {
-            var tokenStore = scope.ServiceProvider.GetRequiredService<ITokenStore>();
+            // FHQ-205: recorded in a FRESH scope — see RecordFailureAsync.
+            using var failureScope = scopeFactory.CreateScope();
+            var tokenStore = failureScope.ServiceProvider.GetRequiredService<ITokenStore>();
             await tokenStore.MarkNeedsReauthAsync(job.UserId, ex.ErrorDescription, stoppingToken);
-            await queue.FailAsync(job.Id, $"Reauth required: {ex.ErrorDescription}", retryable: false, retryAfter: null, stoppingToken);
+            await failureScope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>()
+                .FailAsync(job.Id, $"Reauth required: {ex.ErrorDescription}", retryable: false, retryAfter: null, stoppingToken);
             logger.LogWarning("Sync job {JobId} for user {UserId} needs re-auth.", job.Id, job.UserId);
         }
         // FHQ-91: an HttpClient per-attempt timeout surfaces as TaskCanceledException wrapping
@@ -151,12 +184,28 @@ public class CalendarSyncWorker(
                 && ex is GoogleApiException { RetryAfter: { } retryAfter } && retryAfter > expBackoff)
                 backoff = retryAfter;
 
-            await queue.FailAsync(job.Id, ex.Message, retryable, backoff, stoppingToken);
+            await RecordFailureAsync(job.Id, ex.Message, retryable, backoff, stoppingToken);
             logger.LogWarning(ex, "Sync job {JobId} failed (attempt {Attempt}, retryable={Retryable}).", job.Id, job.AttemptCount, retryable);
         }
         finally
         {
             BackgroundUserContext.Current = null;
         }
+    }
+
+    /// <summary>Records a job failure in a fresh scope, so a poisoned change tracker cannot hide it.</summary>
+    /// <remarks>
+    /// FHQ-205: the sync that just threw may have left THIS scope's DbContext holding an entry that
+    /// can never be saved — the incident was exactly that, a detached calendar whose owned
+    /// collection had an unresolvable shadow key. Calling FailAsync on that same DbContext threw
+    /// again, the exception escaped ProcessJobAsync and DrainAsync, and the job was never even
+    /// marked failed. A clean DbContext records the failure regardless of what the sync left
+    /// behind. Same reasoning as the placementScope block in ProcessJobAsync.
+    /// </remarks>
+    private async Task RecordFailureAsync(Guid jobId, string error, bool retryable, TimeSpan? retryAfter, CancellationToken stoppingToken)
+    {
+        using var failureScope = scopeFactory.CreateScope();
+        var queue = failureScope.ServiceProvider.GetRequiredService<ICalendarSyncJobQueue>();
+        await queue.FailAsync(jobId, error, retryable, retryAfter, stoppingToken);
     }
 }
