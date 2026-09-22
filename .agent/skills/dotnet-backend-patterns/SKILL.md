@@ -35,6 +35,28 @@ Master C#/.NET patterns for building production-grade APIs, MCP servers, and ent
 - Add tests and observability for critical flows.
 - If detailed patterns are required, open `resources/implementation-playbook.md`.
 
+## Required question for any new owned or JSON-mapped property
+
+Before adding `OwnsOne`, `OwnsMany` or `ToJson()` to an entity, ask:
+
+> **Does this repository ever save this entity DETACHED?**
+
+Grep the repository for `AsNoTracking` reads of it followed by `Update(...)`. If the answer is yes —
+and for `CalendarInfo` and `CalendarEvent` it is — do not use an owned collection. EF gives every
+owned-collection element a shadow key (`__synthesizedOrdinal`) that exists only on a tracked entity,
+so `SaveChanges` throws `"The value of shadow key property … is unknown when attempting to save
+changes"`, and a detached *clear* of the property silently does not clear. FHQ-205 stopped all
+production calendar syncing for five hours this way.
+
+Map a **value** (no identity of its own, always read and written whole) with `HasConversion` plus a
+structural `ValueComparer` and an explicit `HasColumnType`, so EF treats the column as one opaque
+scalar. See `EventRemindersConversion`. A comparer is not optional: without one EF compares by
+reference and never detects a change, and its hash must agree with its equality or updates go
+missing. Its snapshot must deep-copy, or a mutation of the collection is invisible.
+
+Adding such a property to an entity that was already saved detached is the risky case — a scalar has
+no shadow key, so the existing save path gives no warning that it is about to stop working.
+
 ## Resources
 
 - `resources/implementation-playbook.md` for detailed .NET patterns and examples.
