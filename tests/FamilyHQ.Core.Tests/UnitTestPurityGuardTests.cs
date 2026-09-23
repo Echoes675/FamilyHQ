@@ -99,6 +99,11 @@ public class UnitTestPurityGuardTests
         [("FamilyHQ.Simulator.Tests/Controllers/SimulatorConfigControllerTests.cs", "UseInMemoryDatabase")] =
             "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
         [("FamilyHQ.Simulator.Tests/Controllers/WebhookControllerTests.cs", "UseInMemoryDatabase")] =
+            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
+        // FHQ-207: same constraint as its five neighbours above. The real proof of that ticket is
+        // the E2E scenario that makes RefreshCalendarDefaultsAsync write; these three tests only
+        // pin the backdoor's own contract, so a bespoke harness would cost more than it is worth.
+        [("FamilyHQ.Simulator.Tests/Controllers/BackdoorCalendarsControllerTests.cs", "UseInMemoryDatabase")] =
             "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162)."
     };
 
