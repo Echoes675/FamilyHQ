@@ -89,7 +89,10 @@ public class CalendarSyncService(
             }
             else
             {
-                await RefreshCalendarDefaultsAsync(localCal, googleCal, ct);
+                // FHQ-211: a name or colour adopted from Google IS a material change — the dashboard
+                // renders both, and the kiosk only refetches the calendar list when the sync reports
+                // one. The zone and reminders it also adopts stay bookkeeping.
+                changeCount += await RefreshCalendarDefaultsAsync(localCal, googleCal, ct);
             }
             calendarIdsToSync.Add(localCal.Id);
         }
@@ -446,36 +449,83 @@ public class CalendarSyncService(
     }
 
     /// <summary>
-    /// FHQ-164 Decision 4 / FHQ-189 applied to the CALENDAR row: adopt the default zone and the
-    /// default reminders Google reports for a calendar FamilyHQ already knows about.
+    /// FHQ-164 Decision 4 / FHQ-189 / FHQ-211 applied to the CALENDAR row: adopt the name, colour,
+    /// default zone and default reminders Google reports for a calendar FamilyHQ already knows about.
     /// </summary>
     /// <remarks>
     /// Nothing else refreshes an existing calendar's fields from Google — every
     /// <c>UpdateCalendarAsync</c> call site persists a flag the user changed locally — so without
     /// this, every calendar already in production would keep a null zone (and a null
-    /// <c>DefaultReminders</c>) forever: <see cref="AddCalendarAsync"/>-equivalent backfill only ever
-    /// runs for a BRAND NEW calendar, and in production every calendar already exists. The values
-    /// arrive on the <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so
-    /// this costs no extra API call, and no separate backfill machinery is needed — the calendar
-    /// list is refetched on every sync.
+    /// <c>DefaultReminders</c>) forever, and would keep the name and colour it was first inserted
+    /// with forever: <see cref="AddCalendarAsync"/>-equivalent backfill only ever runs for a BRAND
+    /// NEW calendar, and in production every calendar already exists. The values arrive on the
+    /// <c>calendarList</c> response <see cref="SyncAllAsync"/> already fetches, so this costs no
+    /// extra API call, and no separate backfill machinery is needed — the calendar list is refetched
+    /// on every sync, so a stale row self-heals on the next one.
+    /// <para>
+    /// FHQ-211: the name and colour are NOT cosmetic. Google is the system of record and a rename
+    /// made in the Google Calendar app was being dropped on the floor, while the stale name stayed
+    /// load-bearing: <see cref="IMemberTagParser"/> resolves members by matching calendar DISPLAY
+    /// NAMES in an event's description, so after a rename a description naming the new name stopped
+    /// resolving and one naming the old name still did — event-to-member assignment broke silently in
+    /// both directions. There is no local rename to protect: <c>CalendarSettingsRequest</c> carries
+    /// only <c>IsVisible</c>/<c>IsShared</c>, so FamilyHQ has never let anyone rename or recolour a
+    /// calendar and Google's value is unambiguously authoritative. Compared against
+    /// <see cref="CalendarInfo.DisplayName"/>, which is where <c>GoogleCalendarClient</c> has already
+    /// resolved <c>summaryOverride ?? summary</c> — the same field the add path stores.
+    /// </para>
     /// <para>
     /// Idempotent: each field is written only when Google reports a value that differs from the
-    /// stored one. A blank/absent zone or a null <c>DefaultReminders</c> never blanks a stored value
-    /// — both are optional on Google's calendar resource, and dropping a known value would cost the
-    /// zone ladder a rung or make a change on someone's phone unreachable. Both writes are
-    /// bookkeeping, not a material change, so they stay out of the change count (FHQ-44): neither a
-    /// calendar's default zone nor its default reminders is something the dashboard renders.
+    /// stored one. A blank/absent name, colour or zone, or a null <c>DefaultReminders</c>, never
+    /// blanks a stored value — all are optional on Google's calendar resource, and dropping a known
+    /// value would cost the zone ladder a rung, make a change on someone's phone unreachable, or
+    /// leave a calendar nameless (which would take member resolution down with it).
+    /// </para>
+    /// <para>
+    /// The change count (FHQ-44) splits along what the dashboard RENDERS, which is why the returned
+    /// count is not simply zero as it was before FHQ-211. A calendar's default zone and default
+    /// reminders are invisible on screen, so adopting them stays bookkeeping. A calendar's name and
+    /// colour are rendered — every Agenda column header and event chip — and
+    /// <c>CalendarSyncWorker</c> broadcasts <c>EventsUpdated</c> (whose kiosk handler refetches the
+    /// calendar list) only when <see cref="SyncResult.HadChanges"/>. Counting a rename as
+    /// bookkeeping would therefore fix the database and leave the kiosk showing a name the family no
+    /// longer uses until some unrelated event changed. Exactly one row is written per refresh, so
+    /// the count reported here is that row's.
     /// </para>
     /// </remarks>
-    private async Task RefreshCalendarDefaultsAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
+    /// <returns>The number of MATERIAL rows written — 1 when a rendered field changed, else 0.</returns>
+    private async Task<int> RefreshCalendarDefaultsAsync(CalendarInfo localCal, CalendarInfo googleCal, CancellationToken ct)
     {
+        var nameChanged = !string.IsNullOrWhiteSpace(googleCal.DisplayName)
+            && googleCal.DisplayName != localCal.DisplayName;
+        var colourChanged = !string.IsNullOrWhiteSpace(googleCal.Color)
+            && googleCal.Color != localCal.Color;
         var zoneChanged = !string.IsNullOrWhiteSpace(googleCal.IanaTimeZone)
             && googleCal.IanaTimeZone != localCal.IanaTimeZone;
         var remindersChanged = googleCal.DefaultReminders is not null
             && !googleCal.DefaultReminders.SameAs(localCal.DefaultReminders);
 
-        if (!zoneChanged && !remindersChanged)
-            return;
+        if (!nameChanged && !colourChanged && !zoneChanged && !remindersChanged)
+            return 0;
+
+        if (nameChanged)
+        {
+            // FHQ-166: neither the old nor the new name may reach Seq. A calendar's display name is
+            // its Google `summary` — a family member's name, or the account's email address for a
+            // primary calendar. The calendar's own id correlates just as well.
+            logger.LogDebug(
+                "Calendar {CalendarInfoId} adopting Google's calendar name (renamed in Google).",
+                localCal.Id);
+            localCal.DisplayName = googleCal.DisplayName;
+        }
+
+        if (colourChanged)
+        {
+            logger.LogDebug(
+                "Calendar {CalendarInfoId} adopting Google's calendar colour {Color}.",
+                localCal.Id, googleCal.Color);
+            localCal.Color = googleCal.Color;
+        }
 
         if (zoneChanged)
         {
@@ -494,7 +544,9 @@ public class CalendarSyncService(
         }
 
         await calendarRepository.UpdateCalendarAsync(localCal, ct);
-        await calendarRepository.SaveChangesAsync(ct);
+        var saved = await calendarRepository.SaveChangesAsync(ct);
+
+        return nameChanged || colourChanged ? saved : 0;
     }
 
     /// <summary>

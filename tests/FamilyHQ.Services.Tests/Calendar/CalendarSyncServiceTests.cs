@@ -142,8 +142,14 @@ public class CalendarSyncServiceTests
         var calendarId       = Guid.Parse("44444444-4444-4444-4444-444444444444");
         var googleCalendarId = "test@group.calendar.google.com";
 
+        // FHQ-211: the local row used to be arranged with a DIFFERENT name ("Tests Local") from
+        // Google's, and the SaveChangesAsync(Times.Once) assertion below therefore pinned the bug —
+        // it asserted that a calendar renamed in Google produced no write at all. The names now
+        // agree, so this test is back to its actual subject: an already-known calendar is not
+        // re-added and its events are synced. Adoption of a changed name is covered by
+        // CalendarSyncServiceRenameTests.
         var googleCalendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
-        var localCalendar  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests Local" };
+        var localCalendar  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
