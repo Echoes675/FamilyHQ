@@ -89,6 +89,7 @@ would never populate a newly added column.
 - **Database**: PostgreSQL / EF Core
 - **Primary Tooling**: dotnet CLI (build, test, run)
 - **E2E Acceptance testing**: Read `.agent\docs\e2e-testing-maintenance.md`
+- **Preprod smoke testing (real Google, RelayRobin, Open-Meteo)**: Read `.agent\docs\preprod-smoke-maintenance.md`
 
 ## Rules of Engagement (Safety)
 
@@ -116,6 +117,7 @@ Refer to these files in the .agent/ directory for specific implementation detail
 - Project Architecture &amp; Structure: `.agent/docs/architecture.md`
 - UI Design System (themes, CSS variables, layer model, touch rules): `.agent/docs/ui-design-system.md`
 - Intermittent / flaky issues tracker (read before dismissing a CI failure as flake): `.agent/docs/intermittent-issues.md`
+- Preprod smoke suite — third-party interactions against the real Google account (`tests-smoke/`): `.agent/docs/preprod-smoke-maintenance.md`
 
 ## Skills
 

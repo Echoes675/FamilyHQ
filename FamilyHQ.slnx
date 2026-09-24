@@ -13,6 +13,12 @@
     <Project Path="tests-e2e/FamilyHQ.E2E.Features/FamilyHQ.E2E.Features.csproj" />
     <Project Path="tests-e2e/FamilyHQ.E2E.Steps/FamilyHQ.E2E.Steps.csproj" />
   </Folder>
+  <Folder Name="/tests-smoke/">
+    <Project Path="tests-smoke/FamilyHQ.Smoke.Common/FamilyHQ.Smoke.Common.csproj" />
+    <Project Path="tests-smoke/FamilyHQ.Smoke.Data/FamilyHQ.Smoke.Data.csproj" />
+    <Project Path="tests-smoke/FamilyHQ.Smoke.Features/FamilyHQ.Smoke.Features.csproj" />
+    <Project Path="tests-smoke/FamilyHQ.Smoke.Steps/FamilyHQ.Smoke.Steps.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FamilyHQ.Simulator.Tests/FamilyHQ.Simulator.Tests.csproj" />
     <Project Path="tests/FamilyHQ.WebUi.Tests/FamilyHQ.WebUi.Tests.csproj" />
