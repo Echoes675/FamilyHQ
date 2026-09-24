@@ -49,6 +49,23 @@
   `CalendarSyncService.RefreshCalendarDefaultsAsync` adopts it (alongside `IanaTimeZone`) from the
   `calendarList` response every sync already fetches, the same way `AddCalendarAsync` seeds it for a
   brand-new calendar — because in production every calendar already exists.
+- **What `RefreshCalendarDefaultsAsync` adopts** (FHQ-211): `DisplayName`, `Color`, `IanaTimeZone` and
+  `DefaultReminders` — the only path that refreshes an EXISTING calendar from Google, on idempotent
+  terms (write only when Google's value differs; an absent or blank value never blanks a stored one).
+  `DisplayName` and `Color` were missing until FHQ-211, so a calendar renamed or recoloured in the
+  Google Calendar app kept its original values in FamilyHQ forever. That was not cosmetic:
+  `MemberTagParser` resolves members by matching calendar **display names** in an event's
+  description, so a stale name broke event-to-member assignment in both directions — a description
+  naming the new name stopped resolving and one naming the old name still did. Google is the system
+  of record and there is no local rename to protect (`CalendarSettingsRequest` carries only
+  `IsVisible`/`IsShared`), so its value is unambiguously authoritative. Self-healing: the next sync
+  adopts the difference, no backfill needed. **Change count**: a name or colour change is counted as
+  material (the dashboard renders both, and `CalendarSyncWorker` broadcasts `EventsUpdated` — whose
+  kiosk handler refetches the calendar list — only when `SyncResult.HadChanges`); a zone or reminder
+  change stays bookkeeping, because neither is rendered. Note that events whose **Google
+  description** still carries the old name inside a `[members: …]` tag lose that membership when
+  Google next re-sends them, since sync re-derives `Members` from the description each time — the
+  intended consequence of the name no longer existing, not a separate defect.
 - **SyncState.RemindersSyncedAt** (FHQ-189): when this calendar was first synced with `reminders` in
   the field mask. Null forces exactly one full sync, because incremental sync never re-sends an
   unchanged event and the events already in production would otherwise never gain reminders.
