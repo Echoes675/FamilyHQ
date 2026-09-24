@@ -31,11 +31,4 @@ public class CalendarDefaultRemindersSteps
             calendarId,
             new[] { new { method = "popup", minutes } });
     }
-
-    [When(@"the active calendar's default reminders are cleared in Google")]
-    public async Task WhenTheActiveCalendarsDefaultRemindersAreCleared()
-    {
-        var calendarId = _scenarioContext.GetCurrentCalendarId();
-        await _simulatorApi.SetCalendarDefaultRemindersAsync(calendarId, null);
-    }
 }
