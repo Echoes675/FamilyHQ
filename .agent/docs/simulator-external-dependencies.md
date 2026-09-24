@@ -37,6 +37,7 @@ For E2E test isolation, the simulator exposes `POST/DELETE /api/simulator/backdo
 | `POST /api/simulator/backdoor/events` | Seed calendar events |
 | `GET /api/simulator/backdoor/webhooks` | Query registered watch channels |
 | `DELETE /api/simulator/backdoor/webhooks` | Clear registered watch channels |
+| `PUT /api/simulator/backdoor/calendars/{calendarId}/default-reminders` | Change a calendar's Google-side `defaultReminders` mid-run (body `{"overrides":[{"method":"popup","minutes":45}]}`, or `{"overrides":null}` to clear). FHQ-207: without a *change*, `RefreshCalendarDefaultsAsync` early-returns and CI never reaches the write path that caused the FHQ-205 outage. |
 
 ## Seeded Locations
 
