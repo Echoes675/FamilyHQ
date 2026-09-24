@@ -95,6 +95,65 @@ pipeline {
             }
         }
 
+        stage('Validate Production Config') {
+            steps {
+                echo '======= Validate Production Config ======='
+                // FHQ-139. Layer one of three: refuse the deployment BEFORE the env file is shipped to
+                // the server, so a production container can never be started with the preprod smoke
+                // token endpoints switched on (the other two layers are a startup refusal in the WebApi
+                // and the PreprodSmokeAccess policy itself).
+                //
+                // This stage never prints the env file, a matched line, or any value - only the name of
+                // the rule that failed. A future pattern change must not be able to leak a secret into a
+                // console log that outlives it.
+                withCredentials([file(credentialsId: 'familyhq-prod-env', variable: 'ENV_FILE')]) {
+                    sh '''
+                        set -eu
+
+                        # Echoes nothing: takes the last assignment of one key, strips quotes, control
+                        # characters and surrounding whitespace, and lower-cases it for comparison.
+                        read_key() {
+                            grep -E "^[[:space:]]*$1[[:space:]]*=" "$ENV_FILE" |
+                                tail -n 1 |
+                                cut -d= -f2- |
+                                tr -d '[:cntrl:]' |
+                                tr -d '"' |
+                                tr -d "'" |
+                                tr '[:upper:]' '[:lower:]' |
+                                sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+                        }
+
+                        ISSUE_TOKEN_ENABLED="$(read_key Auth__IssueTokenEndpoint__Enabled)"
+                        DEPLOYMENT_TIER="$(read_key Deployment__Tier)"
+
+                        FAILED=0
+
+                        # Fail closed: absent or an explicitly falsey value passes; anything else fails,
+                        # including a value this check does not recognise.
+                        case "$ISSUE_TOKEN_ENABLED" in
+                            ""|false|0|no|off) ;;
+                            *)
+                                echo "FAIL: Auth__IssueTokenEndpoint__Enabled must be absent or false in the production env file."
+                                FAILED=1
+                                ;;
+                        esac
+
+                        if [ "$DEPLOYMENT_TIER" != "prod" ]; then
+                            echo "FAIL: Deployment__Tier must be set to prod in the production env file."
+                            FAILED=1
+                        fi
+
+                        if [ "$FAILED" -ne 0 ]; then
+                            echo "Production config validation failed. Fix the familyhq-prod-env credential; nothing was deployed."
+                            exit 1
+                        fi
+
+                        echo "Production config validated: deployment tier is prod and the issue-token endpoints are off."
+                    '''
+                }
+            }
+        }
+
         stage('Prepare') {
             steps {
                 echo '======= Prepare ======='

@@ -153,6 +153,16 @@ builder.Services.AddAuthentication(Microsoft.AspNetCore.Authentication.JwtBearer
 // authenticated user; public endpoints carry an explicit [AllowAnonymous] / .AllowAnonymous().
 builder.Services.AddFallbackAuthorizationPolicy();
 
+// FHQ-139: the preprod smoke token endpoints — the SmokeClient authentication scheme (registered here
+// deliberately AFTER the JWT bearer default above, so it can never become the application default), the
+// PreprodSmokeAccess policy and its requirement handlers. Fail-fast: this refuses to boot when the
+// endpoints are enabled on the prod tier, or enabled without a shared secret.
+builder.Services.AddPreprodSmokeAccess(builder.Configuration);
+
+// Scoped: reads the smoke account's stored refresh token through the scoped ITokenStore.
+builder.Services.AddScoped<FamilyHQ.WebApi.Services.ISmokeGoogleAccessTokenService,
+    FamilyHQ.WebApi.Services.SmokeGoogleAccessTokenService>();
+
 // CORS — use FrontendBaseUrl from configuration
 var frontendBaseUrl = builder.Configuration["FrontendBaseUrl"]
     ?? throw new InvalidOperationException("FrontendBaseUrl must be configured.");
