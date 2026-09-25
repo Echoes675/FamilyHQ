@@ -154,15 +154,20 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
         await EventModal.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible });
 
         await ShowTabAsync("details");
-        await TitleInput.FillAsync(draft.Title);
-        await DescriptionInput.FillAsync(draft.Description);
+        await CommitFieldAsync(TitleInput, draft.Title);
+        await CommitFieldAsync(DescriptionInput, draft.Description);
 
         if (draft.Location is not null)
         {
-            await LocationInput.FillAsync(draft.Location);
+            await CommitFieldAsync(LocationInput, draft.Location);
         }
 
         await SetDateRangeAsync(draft.Date);
+
+        // Start before end, and never the other way round. The modal's start-time setter preserves the
+        // event's duration by shifting the end by the same delta (moving 09:00→10:00 drags a 10:00 end to
+        // 11:00), so a start set afterwards would silently move an end that was already correct. Setting
+        // the end second is safe because its setter is absolute.
         await SetTimeAsync("start", draft.StartTime);
         await SetTimeAsync("end", draft.EndTime);
 
@@ -188,7 +193,7 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     {
         await OpenEventAsync(currentTitleFragment, date);
         await ShowTabAsync("details");
-        await TitleInput.FillAsync(newTitle);
+        await CommitFieldAsync(TitleInput, newTitle);
         await SaveAndAwaitWriteAsync("PUT", $"rename to '{newTitle}'");
     }
 
@@ -240,22 +245,93 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
         await Assertions.Expect(EventModal.GetByTestId($"event-modal-panel-{tab}")).ToBeVisibleAsync();
     }
 
+    /// <summary>
+    /// Types a value into a Blazor-bound field <b>and makes it stick</b>.
+    /// <para>
+    /// Playwright's <c>FillAsync</c> sets the value and raises <c>input</c>, but the <c>change</c> event that
+    /// Blazor's <c>@bind</c> and <c>@onchange</c> actually listen for does not follow until the field is
+    /// blurred. Elsewhere in a test suite that is invisible: the next thing a flow does is usually click
+    /// another control, the click blurs the field, <c>change</c> fires, and the value commits just in time.
+    /// It is sequencing luck, and FHQ-141's first preprod run is what it looks like when the luck runs out —
+    /// the value sat in the DOM while the component's model kept its old one.
+    /// </para>
+    /// <para>
+    /// Pressing Tab makes the commit explicit and ordered, so no field depends on what happens to it next.
+    /// </para>
+    /// </summary>
+    private static async Task CommitFieldAsync(ILocator field, string value)
+    {
+        await field.FillAsync(value);
+        await field.PressAsync("Tab");
+    }
+
     private async Task SetDateRangeAsync(DateOnly date)
     {
         var value = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var dateInputs = EventModal.Locator("input[type='date']");
-        await dateInputs.Nth(0).FillAsync(value);
-        await dateInputs.Nth(1).FillAsync(value);
+
+        await CommitFieldAsync(dateInputs.Nth(0), value);
+        await CommitFieldAsync(dateInputs.Nth(1), value);
+
+        // Read back from the DOM, which after a commit is re-rendered from the component's model — so this
+        // is a check that the model took the date, not merely that the keystrokes landed.
+        foreach (var index in new[] { 0, 1 })
+        {
+            var actual = await dateInputs.Nth(index).InputValueAsync();
+            if (!string.Equals(actual, value, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The event modal did not accept {value} as its "
+                    + $"{(index == 0 ? "start" : "end")} date; it reads '{actual}'.");
+            }
+        }
     }
 
+    /// <summary>
+    /// Sets one of the two time pickers and confirms the component's <b>model</b> took the value.
+    /// <para>
+    /// The stepper readouts are rendered from the model, and the text box is not — so asserting the
+    /// readouts is the only way to tell "the value committed" from "the value is merely on screen". That
+    /// distinction is the whole bug: a typed value that never committed left the picker showing 10:00 over
+    /// a model still holding 09:00, and the scenario went on to fail somewhere else entirely.
+    /// </para>
+    /// <para>
+    /// On failure it says what it wanted, what the model holds and what the box shows, rather than leaving
+    /// a bare locator timeout for someone to reverse-engineer from a screenshot.
+    /// </para>
+    /// </summary>
     private async Task SetTimeAsync(string which, TimeOnly time)
     {
-        // The time picker's text field accepts HH:mm and commits on change, which is the one affordance
-        // that does not depend on how many times a stepper has to be pressed.
-        var textField = EventModal.GetByTestId($"{which}-time-picker").Locator("input[type='text']");
-        await textField.FillAsync(time.ToString("HH\\:mm", CultureInfo.InvariantCulture));
-        await Assertions.Expect(EventModal.GetByTestId($"{which}-time-picker").Locator(".time-picker-display").Nth(0))
-            .ToHaveTextAsync(time.Hour.ToString("00", CultureInfo.InvariantCulture));
+        var picker = EventModal.GetByTestId($"{which}-time-picker");
+        var textField = picker.Locator("input[type='text']");
+        var displays = picker.Locator(".time-picker-display");
+
+        var wanted = time.ToString("HH\\:mm", CultureInfo.InvariantCulture);
+        await CommitFieldAsync(textField, wanted);
+
+        try
+        {
+            await Assertions.Expect(displays.Nth(0))
+                .ToHaveTextAsync(time.Hour.ToString("00", CultureInfo.InvariantCulture));
+            await Assertions.Expect(displays.Nth(1))
+                .ToHaveTextAsync(time.Minute.ToString("00", CultureInfo.InvariantCulture));
+        }
+        catch (PlaywrightException ex)
+        {
+            var model = $"{(await displays.Nth(0).InnerTextAsync()).Trim()}"
+                        + $":{(await displays.Nth(1).InnerTextAsync()).Trim()}";
+            var shown = await textField.InputValueAsync();
+            var classes = await textField.GetAttributeAsync("class") ?? string.Empty;
+
+            throw new InvalidOperationException(
+                $"The {which} time picker did not accept {wanted}. Its steppers — which render the "
+                + $"component's model — read {model}, and its text box reads '{shown}'"
+                + (classes.Contains("is-invalid", StringComparison.Ordinal)
+                    ? " and is flagged invalid, so the value was rejected as unparseable."
+                    : ", so the typed value never committed to the model.")
+                + " Nothing downstream of this can be trusted, so the scenario stops here.",
+                ex);
+        }
     }
 
     private async Task ActivateCalendarChipAsync(string calendarName)
@@ -353,6 +429,8 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
 
     private async Task SaveAndAwaitWriteAsync(string method, string what)
     {
+        await AssertSaveIsNotBlockedAsync(what);
+
         var writeResponse = Page.WaitForResponseAsync(
             response => response.Url.Contains("/api/events", StringComparison.Ordinal)
                         && string.Equals(response.Request.Method, method, StringComparison.Ordinal),
@@ -360,9 +438,87 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
 
         await SaveButton.ClickAsync();
         await ConfirmScopePromptIfShownAsync();
-        await AssertWriteSucceededAsync(await writeResponse, what);
+
+        IResponse response;
+        try
+        {
+            response = await writeResponse;
+        }
+        catch (TimeoutException ex)
+        {
+            // The modal swallowed the click. Say what it is showing now, rather than reporting only that no
+            // request arrived within thirty seconds.
+            throw new InvalidOperationException(
+                $"The kiosk never issued the {method} for '{what}'. The modal is still showing: "
+                + await DescribeModalStateAsync(),
+                ex);
+        }
+
+        await AssertWriteSucceededAsync(response, what);
         await EventModal.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden });
         await WaitForCalendarVisibleAsync();
+    }
+
+    /// <summary>
+    /// Refuses to click a Save the modal has disabled.
+    /// <para>
+    /// The modal gates Save on its own validation — an unselected calendar, a repeat that has been switched
+    /// on without a frequency — and a disabled button swallows the click silently. Without this the symptom
+    /// arrives much later and somewhere else: a thirty-second wait for a request that was never going to be
+    /// made, or an assertion about an event that was never created. Checking first turns that into one
+    /// sentence naming the control that is incomplete.
+    /// </para>
+    /// </summary>
+    private async Task AssertSaveIsNotBlockedAsync(string what)
+    {
+        if (await SaveButton.IsEnabledAsync())
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"The kiosk will not let the suite {what}: Save is disabled. {await DescribeModalStateAsync()}");
+    }
+
+    /// <summary>
+    /// What the modal is currently complaining about, in one line. Best-effort — a diagnostic that threw
+    /// would replace the real failure with a worse one.
+    /// </summary>
+    private async Task<string> DescribeModalStateAsync()
+    {
+        var parts = new List<string>();
+
+        try
+        {
+            foreach (var tab in new[] { "details", "repeat" })
+            {
+                if (await EventModal.GetByTestId($"event-modal-tab-{tab}-incomplete").CountAsync() > 0)
+                {
+                    parts.Add($"the {tab} tab is marked incomplete");
+                }
+            }
+
+            var hint = EventModal.GetByTestId("event-save-hint");
+            if (await hint.CountAsync() > 0)
+            {
+                parts.Add($"save hint: '{(await hint.InnerTextAsync()).Trim()}'");
+            }
+
+            var error = EventModal.GetByTestId("event-modal-error");
+            if (await error.CountAsync() > 0)
+            {
+                parts.Add($"error banner: '{(await error.InnerTextAsync()).Trim()}'");
+            }
+
+            var activeChips = await EventModal.Locator(".chip-active").CountAsync();
+            parts.Add($"{activeChips} calendar chip(s) selected");
+        }
+        catch (PlaywrightException ex)
+        {
+            parts.Add($"(modal state could not be read: {ex.Message})");
+        }
+
+        return parts.Count == 0 ? "no validation markers are showing." : string.Join("; ", parts) + ".";
     }
 
     /// <summary>

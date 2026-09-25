@@ -70,11 +70,19 @@ dotnet test tests-smoke/FamilyHQ.Smoke.Features/FamilyHQ.Smoke.Features.csproj \
 ### One scenario
 
 Filter on the Reqnroll-generated method name — the scenario title in PascalCase with punctuation
-removed, exactly as in the E2E suite:
+removed, exactly as in the E2E suite. Note that a **hyphen becomes an underscore**, so
+"A two-member event…" generates `ATwo_MemberEventIsWrittenOnceToTheSharedCalendar`:
 
 ```bash
 dotnet test tests-smoke/FamilyHQ.Smoke.Features/FamilyHQ.Smoke.Features.csproj \
-  --filter "FullyQualifiedName~ATwoMemberEventIsWrittenOnceToTheSharedCalendar"
+  --filter "FullyQualifiedName~ATwo_MemberEventIsWrittenOnceToTheSharedCalendar"
+```
+
+If a filter resolves to zero tests, read the generated name out of the `.feature.cs` beside the
+feature file rather than guessing at the punctuation:
+
+```bash
+grep -oE "Task [A-Za-z0-9_]+\(\)" tests-smoke/FamilyHQ.Smoke.Features/KioskToGoogle.feature.cs
 ```
 
 `--filter "Scenario=<title>"` resolves to zero tests; Reqnroll does not expose the human title as a
@@ -328,6 +336,30 @@ fragile thing in the suite.
 
 That is the health gate, and the environment is the problem, not the suite. The message carries the
 whole preflight failure list. Fix the environment; nothing in the suite will.
+
+### "A typed value shows on screen but the app behaves as though it were never entered"
+
+This is the FHQ-141 kiosk-create defect, and it will come back if anyone adds a field.
+
+Playwright's `FillAsync` sets a field's value and raises `input`, but **not** the `change` event that
+Blazor's `@bind` and `@onchange` actually listen for — that follows only when the field is blurred.
+A flow usually gets away with it, because the next thing it does is click another control and the
+click blurs the field just in time. The first preprod run is what it looks like when that sequencing
+luck runs out: the start time picker showed `10:00` in its text box over a model still holding
+`09:00`, the modal blocked Save on unrelated validation, and the scenario died five seconds later on
+an assertion that had nothing to do with the cause.
+
+Two rules follow, both enforced in `SmokeDashboardPage`:
+
+- Type through `CommitFieldAsync`, which fills **and presses Tab**. Never call `FillAsync` directly on
+  a bound field.
+- Assert against whatever the component renders **from its model**, not against the input you just
+  typed into. For the time picker that is the `+`/`-` stepper readouts; for a date input, the value
+  read back after the commit.
+
+Set the **start** time before the end, too: the modal's start-time setter preserves the event's
+duration by shifting the end by the same delta, so a start set afterwards silently moves an end that
+was already right.
 
 ### "Preflight passes but every kiosk scenario times out on a locator"
 
