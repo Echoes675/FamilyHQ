@@ -23,6 +23,7 @@ public class DiagnosticsController : ControllerBase
     private readonly ISyncFailureRepository _syncFailureRepository;
     private readonly ICalendarSyncJobQueue _syncJobQueue;
     private readonly ICurrentUserService _currentUser;
+    private readonly IWebhookRegistrationRepository _webhookRegistrationRepository;
     private readonly IOptions<SyncOptions> _syncOptions;
     private readonly ILogger<DiagnosticsController> _logger;
 
@@ -32,6 +33,7 @@ public class DiagnosticsController : ControllerBase
         ISyncFailureRepository syncFailureRepository,
         ICalendarSyncJobQueue syncJobQueue,
         ICurrentUserService currentUser,
+        IWebhookRegistrationRepository webhookRegistrationRepository,
         IOptions<SyncOptions> syncOptions,
         ILogger<DiagnosticsController> logger)
     {
@@ -40,6 +42,7 @@ public class DiagnosticsController : ControllerBase
         _syncFailureRepository = syncFailureRepository;
         _syncJobQueue = syncJobQueue;
         _currentUser = currentUser;
+        _webhookRegistrationRepository = webhookRegistrationRepository;
         _syncOptions = syncOptions;
         _logger = logger;
     }
@@ -134,6 +137,44 @@ public class DiagnosticsController : ControllerBase
             return Unauthorized();
 
         return Ok(await _calendarRepository.GetAllDayBoundaryAuditAsync(ct));
+    }
+
+    /// <summary>
+    /// The current user's Google push channel registrations (FHQ-141). Read-only, and it repairs
+    /// nothing: re-registering is <c>POST /api/sync/register-webhooks</c>, deliberately a separate,
+    /// explicit act.
+    /// </summary>
+    /// <remarks>
+    /// Added so the preprod smoke suite can assert, before it trusts any Google-to-kiosk scenario, that
+    /// each pushable calendar still has a live channel. Google publishes no way to list channels, so
+    /// FamilyHQ's own registrations are the only available answer — and a silently expired channel
+    /// otherwise presents as a FamilyHQ sync bug.
+    /// <para>
+    /// Scoped to the caller's own calendars, and carrying neither the channel id nor the channel token:
+    /// the token authorises posting a notification to FamilyHQ, and the question this answers needs
+    /// nothing but the calendar and the expiry. Expired rows are returned rather than filtered, because
+    /// "expired two days ago" and "never registered" are different faults with different fixes, and the
+    /// caller can only tell them apart if it sees the row.
+    /// </para>
+    /// </remarks>
+    [HttpGet("webhook-registrations")]
+    public async Task<IActionResult> GetWebhookRegistrations(CancellationToken ct = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        var calendars = await _calendarRepository.GetCalendarsByUserIdAsync(userId, ct);
+        var ownCalendarIds = calendars.Select(c => c.Id).ToHashSet();
+
+        var registrations = await _webhookRegistrationRepository.GetAllAsync(ct);
+
+        IReadOnlyList<WebhookRegistrationStatusDto> dtos = registrations
+            .Where(r => ownCalendarIds.Contains(r.CalendarInfoId))
+            .Select(r => new WebhookRegistrationStatusDto(r.CalendarInfoId, r.ExpiresAt, r.RegisteredAt))
+            .ToList();
+
+        return Ok(dtos);
     }
 
     /// <summary>

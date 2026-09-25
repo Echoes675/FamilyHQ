@@ -151,6 +151,19 @@ public class SimulatorApiClient : IDisposable
     }
 
     /// <summary>
+    /// FHQ-207: changes a calendar's Google-side default reminders mid-run, so the next sync-all
+    /// makes RefreshCalendarDefaultsAsync actually WRITE rather than early-return.
+    /// Pass null to clear them (Google reporting no defaults for the calendar).
+    /// </summary>
+    public async Task SetCalendarDefaultRemindersAsync(string calendarId, object? overrides)
+    {
+        var response = await _httpClient.PutAsJsonAsync(
+            $"api/simulator/backdoor/calendars/{Uri.EscapeDataString(calendarId)}/default-reminders",
+            new { overrides });
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
     /// Seeds weather data for a specific location via the Simulator backdoor.
     /// </summary>
     public async Task SetWeatherAsync(object weatherRequest)

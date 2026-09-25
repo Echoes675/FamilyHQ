@@ -14,6 +14,32 @@ This skill verifies a branch is in a good state via Jenkins. It has two modes:
 
 If in doubt, use **pre-PR** (3 runs).
 
+## Smoke-suite-only changes: one dev run plus a real preprod run
+
+A branch whose diff touches **only** `tests-smoke/**` (with or without agent-facing docs) takes a
+different gate, because the three-run pre-PR gate proves almost nothing about it: no pipeline runs
+the smoke suite yet (`Jenkinsfile.build` tests only `tests/*/*.csproj`), and nothing in
+`tests-smoke/` ships in the image, so all three runs would be re-proving the same untouched
+application (user's ruling, 2026-09-25).
+
+Instead:
+
+| | |
+|---|---|
+| **One** `FamilyHQ-Deploy-Dev` run | proves the solution still builds and the E2E suite is undisturbed |
+| **A real run of the branch against preprod** | deploy the branch to preprod, then run the smoke suite against it — this is the only thing that actually exercises the changed code |
+
+Both green, then raise the PR and ask for review.
+
+The preprod half is not optional and not substitutable: a smoke suite that has never run against the
+environment it was written for is unverified, however green CI looks. FHQ-141's first real run is the
+argument — every Google-originated scenario passed while all four kiosk-*create* scenarios failed on
+a defect (a typed value that never committed to the Blazor model) that no unit test, no branch build
+and no Deploy-Dev run could have surfaced.
+
+The exemption is all-or-nothing in the same way as the docs one: one file outside `tests-smoke/**`
+and the agent-facing doc list, and the branch takes the full pre-PR gate.
+
 ## When Deploy-Dev does not apply: agent-facing docs only
 
 A branch whose diff touches **only** files the running application never reads — `.agent/**`,

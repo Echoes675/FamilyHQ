@@ -49,6 +49,23 @@
   `CalendarSyncService.RefreshCalendarDefaultsAsync` adopts it (alongside `IanaTimeZone`) from the
   `calendarList` response every sync already fetches, the same way `AddCalendarAsync` seeds it for a
   brand-new calendar — because in production every calendar already exists.
+- **What `RefreshCalendarDefaultsAsync` adopts** (FHQ-211): `DisplayName`, `Color`, `IanaTimeZone` and
+  `DefaultReminders` — the only path that refreshes an EXISTING calendar from Google, on idempotent
+  terms (write only when Google's value differs; an absent or blank value never blanks a stored one).
+  `DisplayName` and `Color` were missing until FHQ-211, so a calendar renamed or recoloured in the
+  Google Calendar app kept its original values in FamilyHQ forever. That was not cosmetic:
+  `MemberTagParser` resolves members by matching calendar **display names** in an event's
+  description, so a stale name broke event-to-member assignment in both directions — a description
+  naming the new name stopped resolving and one naming the old name still did. Google is the system
+  of record and there is no local rename to protect (`CalendarSettingsRequest` carries only
+  `IsVisible`/`IsShared`), so its value is unambiguously authoritative. Self-healing: the next sync
+  adopts the difference, no backfill needed. **Change count**: a name or colour change is counted as
+  material (the dashboard renders both, and `CalendarSyncWorker` broadcasts `EventsUpdated` — whose
+  kiosk handler refetches the calendar list — only when `SyncResult.HadChanges`); a zone or reminder
+  change stays bookkeeping, because neither is rendered. Note that events whose **Google
+  description** still carries the old name inside a `[members: …]` tag lose that membership when
+  Google next re-sends them, since sync re-derives `Members` from the description each time — the
+  intended consequence of the name no longer existing, not a separate defect.
 - **SyncState.RemindersSyncedAt** (FHQ-189): when this calendar was first synced with `reminders` in
   the field mask. Null forces exactly one full sync, because incremental sync never re-sends an
   unchanged event and the events already in production would otherwise never gain reminders.
@@ -174,6 +191,8 @@ Distinct from the per-event `SyncEventFailure` subsystem (individual events that
 - `GET  /api/settings/weather` → WeatherSettingDto — requires auth; scoped to current user
 - `PUT  /api/settings/weather` → upserts user's weather settings; requires auth
 - `POST /api/weather/refresh` — triggers immediate weather data poll and SignalR broadcast
+- `POST /api/auth/issue-token` `{ userId }` → `{ token }` — **preprod smoke only**, see "Deployment tier" below. Mints a FamilyHQ JWT for a user whose Google refresh token is already stored; never calls Google.
+- `POST /api/auth/issue-google-access-token` `{ userId }` → `{ accessToken, expiresAt }` — **preprod smoke only**. Refreshes that stored grant through the normal refresh path. `409 { error: "reauth_required" }` when Google reports the grant revoked — the one answer that is not a 404, because a smoke run must react to it ("sign in to preprod again") rather than retry.
 
 ### Rate limiting (FHQ-101)
 Four named fixed-window policies (`Configuration/RateLimitingConfiguration.cs`, applied via `[EnableRateLimiting]`; NO global limiter — kiosk polling and the SignalR hub must never be limited). Rejections return 429 + Retry-After + a ProblemDetails body, logged at Warning. All limits/windows configurable via the `RateLimiting` config section (env-var overridable per environment); defaults sized ≥5× over observed Deploy-Dev E2E peaks:
@@ -226,6 +245,24 @@ Runtime feature flags are exposed to Blazor WASM via a `FeatureFlags` POCO, regi
 The Settings page has a fifth tab, **Weather Override**, rendered only when `FeatureFlags.WeatherOverrideEnabled` is true. The flag is sourced from the WebUi's `appsettings.json` key `FeatureWeatherOverride`, which is injected into the published bundle at container startup by `docker/webui/docker-entrypoint.sh` based on the `FEATURE_WEATHER_OVERRIDE_ENABLED` environment variable. Dev and staging set this to `true`; preprod and production set it to `false`. Local `dotnet run` inherits `true` from `wwwroot/appsettings.Development.json`.
 
 When the tab's "Override active" pill is on, a developer can tap any `WeatherCondition` and optionally toggle the Windy modifier to immediately force the full-screen weather animation (`WeatherOverlay`) to that condition. The override is purely client-side transient state held in a scoped `IWeatherOverrideService` and is never persisted — refreshing the browser reverts to the real weather pipeline. The `WeatherStrip`, backend API, user `WeatherSetting`, and real weather data flow are untouched.
+
+## Deployment tier & the preprod smoke endpoints (FHQ-139)
+
+`Deployment__Tier` (`dev | staging | preprod | prod`) is the only thing that distinguishes preprod from prod at runtime. **Preprod deliberately runs `ASPNETCORE_ENVIRONMENT=Production`** so it loads prod settings and takes prod code paths, so `IsProduction()` cannot gate anything preprod-only; and the same image is promoted preprod → prod, so nothing can be compiled out. **A missing or unrecognised tier counts as not-allowed** — forgetting the key fails safe, and no environment fails to boot for lacking it.
+
+The two smoke endpoints above are guarded by the named policy `PreprodSmokeAccess`, applied with `[Authorize(Policy = ...)]` on `PreprodSmokeTokenController` (class level, so a new action cannot be added unguarded). Three requirements, all of which must pass:
+
+1. **Available** — `Auth__IssueTokenEndpoint__Enabled=true` **and** the tier is set and is not `prod` (`SmokeEndpointAvailableRequirement`).
+2. **Shared secret** — `Authorization: Bearer <Auth__IssueTokenEndpoint__Secret>`, validated by its own `SmokeClient` authentication scheme with a constant-time compare over SHA-256 digests. Separate from the JWT scheme on purpose: the secret can never satisfy a user login (its principal carries no `sub` claim), and a valid user JWT can never satisfy the policy (the policy accepts only `SmokeClient`).
+3. **Smoke account** — the body's `userId` must equal `Smoke__UserId`. Unset is a deny, never a wildcard. This is the requirement that prevents token theft: even with flag, tier and secret all wrong, only the test account can be minted for.
+
+Every failure answers **404** with no `WWW-Authenticate` (the scheme's challenge/forbid handlers), so a probe cannot tell a shut endpoint from an unknown route — which is also why these two endpoints are deliberately **not** rate limited: a 429 would announce the route. Each decision is audit-logged; no secret, JWT or access token is ever logged.
+
+Three layers keep this out of production:
+
+- `Jenkinsfile.deploy-prod` → `Validate Production Config`, before the env file is shipped: fails if the flag is truthy or the tier is not `prod`, printing only which rule failed.
+- Startup: `AddPreprodSmokeAccess` → `PreprodSmokeAccessGuard.Validate` refuses to boot on tier `prod` + enabled, or enabled without a secret (the `SyncOptions.Validate()` fail-fast precedent).
+- The policy itself re-checks the tier, so prod refuses even with the flag on.
 
 ## Versioning
 

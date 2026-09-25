@@ -49,6 +49,10 @@ public static class ServiceCollectionExtensions
         // a login request hostage on a hung Google endpoint). Worst-case wall-time math lives on
         // GoogleResilienceOptions.CalendarTimeout.
         services.AddHttpClient<GoogleAuthService>(client => client.Timeout = googleResilience.AuthTimeout);
+        // FHQ-139: the refresh-grant seam. An alias for the SAME typed client (transient, as
+        // AddHttpClient registers it), so there is exactly one refresh implementation and a caller that
+        // needs only the refresh can be unit-tested without an HttpClient.
+        services.AddTransient<IGoogleTokenRefresher>(sp => sp.GetRequiredService<GoogleAuthService>());
         services.AddSingleton<IIdTokenValidator, JwksIdTokenValidator>();
         // FHQ-154: register the concrete typed client, then decorate it with the retry wrapper.
         services.AddHttpClient<GoogleCalendarClient>(client => client.Timeout = googleResilience.CalendarTimeout);

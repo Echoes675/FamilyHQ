@@ -332,6 +332,45 @@ public class ServiceCollectionExtensionsTests
             .WithMessage($"*{SaltedHashPiiRedactor.SaltConfigurationKey}*");
     }
 
+    /// <summary>
+    /// FHQ-139. The Google refresh grant is exposed as a seam so callers that only need "turn this
+    /// stored refresh token into an access token" can depend on that one operation — while there
+    /// remains exactly ONE refresh implementation behind it.
+    /// </summary>
+    [Fact]
+    public void AddFamilyHqServices_RegistersTheGoogleTokenRefresherSeam()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var configuration = BuildConfiguration();
+
+        // Act
+        services.AddFamilyHqServices(configuration);
+
+        // Assert
+        services.Should().Contain(sd =>
+            sd.ServiceType == typeof(IGoogleTokenRefresher) &&
+            sd.Lifetime == ServiceLifetime.Transient);
+    }
+
+    [Fact]
+    public void AddFamilyHqServices_TheGoogleTokenRefresherSeamResolvesToTheOneRefreshImplementation()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(new Mock<ITokenStore>().Object);
+        services.AddFamilyHqServices(BuildConfiguration());
+        using var provider = services.BuildServiceProvider();
+
+        // Act
+        var refresher = provider.GetRequiredService<IGoogleTokenRefresher>();
+
+        // Assert
+        refresher.Should().BeOfType<GoogleAuthService>(
+            "a second refresh implementation would be a bug, not a new registration");
+    }
+
     private static IConfiguration BuildConfiguration(params KeyValuePair<string, string?>[] settings) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(

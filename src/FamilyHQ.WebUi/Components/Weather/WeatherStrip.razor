@@ -9,15 +9,17 @@
    there is nothing fresh to show, which is the same reflow as weather being unconfigured. *@
 @if (WeatherService.IsEnabled && (Current is not null || ForecastDays.Count > 0))
 {
-    <div class="weather-strip glass-surface">
+    @* FHQ-141: testids on the strip and its current-conditions block, so the preprod smoke suite can
+       assert Open-Meteo really answered for the saved location without depending on CSS class names. *@
+    <div class="weather-strip glass-surface" data-testid="weather-strip">
         @if (Current is not null)
         {
-            <div class="weather-strip__current">
+            <div class="weather-strip__current" data-testid="weather-strip-current">
                 <WeatherIcon IconName="@Current.IconName"
                              IsWindy="@Current.IsWindy"
                              Size="22" />
-                <span class="weather-strip__temp">@FormatTemp(Current.Temperature)</span>
-                <span class="weather-strip__condition">@FormatCondition(Current.Condition)</span>
+                <span class="weather-strip__temp" data-testid="weather-strip-temp">@FormatTemp(Current.Temperature)</span>
+                <span class="weather-strip__condition" data-testid="weather-strip-condition">@FormatCondition(Current.Condition)</span>
             </div>
         }
 

@@ -14,6 +14,43 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 14. "Event updated in Google Calendar shows live on open Day View" timed out once on staging, unexplained (2026-09-25)
+
+**Shape:** the webhook-driven live-update scenario fails its 5-second budget on one staging run, and
+passes everywhere else on the same commit. Seen once; not reproduced.
+
+```
+TimeoutException: Dashboard did not live-update within 5s after webhook notification
+  (expected to show 'School Holiday (Cancelled)')
+  at WebhookDataSteps.ThenTheDashboardLiveUpdatesToShow
+```
+
+**What it was on:** `FamilyHQ-Deploy-Staging` **#260**, the run carrying the FHQ-211 merge. The
+previous run, #259 (the FHQ-139 merge), passed, so the delta was exactly FHQ-211 and it was
+investigated as a real regression rather than re-run.
+
+**Ruled out, with evidence:**
+
+- **Host contention.** #260 started **one second after** #259 finished and nothing else was running —
+  no Deploy-Dev, no branch build, no preprod deploy. The usual "shared CI host" explanation does not
+  apply here, so do not reach for it by reflex.
+- **Determinism.** The same merged commit then passed Deploy-Dev **#754, #755, #756** and staging
+  **#261**. Four green to one red.
+- **FHQ-211's own mechanism** — a name/colour difference now counts as a *material* change, which
+  broadcasts over SignalR and triggers `PlacementReconciler` on syncs that previously counted zero.
+  Plausible, and **still unverified**: see the trap below.
+
+**The trap that cost the most time:** the adoption path logs at **Debug**, and neither dev nor staging
+emits Debug at all (`docker logs familyhq-webapi-{dev,staging} | grep -c "DBG]"` → 0). A grep for
+"adopting Google's calendar name" returning zero therefore proves **nothing**, in either direction.
+It was briefly taken as exoneration. If this recurs, raise the log level first, or the same dead end
+awaits.
+
+**Worth weighing if it recurs, as a decision rather than a reflex:** the 5-second budget covers
+Simulator → webhook → sync worker → SignalR → browser render, and FHQ-189 added reminder mapping to
+every synced event on that path. Re-examine whether the budget still matches the work — but do not
+simply raise the number to make red go green; that is the masking this file exists to prevent.
+
 ### 13. A "barrier" assertion that matches a value already on screen synchronises nothing (FHQ-177)
 
 **Shape:** an E2E step is added to wait for an async operation to finish, it looks correct, it passes
