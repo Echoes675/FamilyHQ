@@ -413,6 +413,85 @@ public class DiagnosticsControllerTests
         calendarRepo.Verify(r => r.GetAllDayBoundaryAuditAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── GetWebhookRegistrations (FHQ-141) ────────────────────────────────────
+
+    [Fact]
+    public async Task GetWebhookRegistrations_WhenAuthenticated_ReturnsOnlyTheCallersOwnCalendarsChannels()
+    {
+        // The repository hands back every registration in the database, so the scoping has to happen
+        // here — a caller must never learn the channel expiry of a calendar that is not theirs.
+        var (calendarRepo, webhookRepo, currentUser, sut) = CreateSutWithWebhookRepo();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+
+        var expiresAt = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        var registeredAt = new DateTimeOffset(2026, 9, 24, 12, 0, 0, TimeSpan.Zero);
+
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { new() { Id = CalAId, DisplayName = "A", UserId = "u-1" } });
+
+        webhookRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<WebhookRegistration>
+            {
+                new()
+                {
+                    CalendarInfoId = CalAId, ChannelId = "chan-a", ChannelToken = "tok-a",
+                    ExpiresAt = expiresAt, RegisteredAt = registeredAt
+                },
+                new()
+                {
+                    CalendarInfoId = CalBId, ChannelId = "chan-b", ChannelToken = "tok-b",
+                    ExpiresAt = expiresAt, RegisteredAt = registeredAt
+                }
+            });
+
+        var result = await sut.GetWebhookRegistrations(CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dtos = ok.Value.Should().BeAssignableTo<IReadOnlyList<WebhookRegistrationStatusDto>>().Subject;
+        dtos.Should().HaveCount(1);
+        dtos[0].CalendarInfoId.Should().Be(CalAId);
+        dtos[0].ExpiresAt.Should().Be(expiresAt);
+        dtos[0].RegisteredAt.Should().Be(registeredAt);
+    }
+
+    [Fact]
+    public async Task GetWebhookRegistrations_WhenAChannelHasExpired_StillReportsItSoTheCallerCanTellWhy()
+    {
+        // "Expired last Tuesday" and "never registered" are different faults with different fixes.
+        // Filtering expired rows out here would collapse them into the same empty list.
+        var (calendarRepo, webhookRepo, currentUser, sut) = CreateSutWithWebhookRepo();
+        currentUser.SetupGet(c => c.UserId).Returns("u-1");
+
+        var expiredAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { new() { Id = CalAId, DisplayName = "A", UserId = "u-1" } });
+
+        webhookRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<WebhookRegistration>
+            {
+                new() { CalendarInfoId = CalAId, ExpiresAt = expiredAt, RegisteredAt = expiredAt }
+            });
+
+        var result = await sut.GetWebhookRegistrations(CancellationToken.None);
+
+        var dtos = result.Should().BeOfType<OkObjectResult>()
+            .Which.Value.Should().BeAssignableTo<IReadOnlyList<WebhookRegistrationStatusDto>>().Subject;
+        dtos.Should().ContainSingle().Which.ExpiresAt.Should().Be(expiredAt);
+    }
+
+    [Fact]
+    public async Task GetWebhookRegistrations_WhenNotAuthenticated_ReturnsUnauthorizedAndDoesNotQuery()
+    {
+        var (_, webhookRepo, currentUser, sut) = CreateSutWithWebhookRepo();
+        currentUser.SetupGet(c => c.UserId).Returns((string?)null);
+
+        var result = await sut.GetWebhookRegistrations(CancellationToken.None);
+
+        result.Should().BeOfType<UnauthorizedResult>();
+        webhookRepo.Verify(r => r.GetAllAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static (
         Mock<ICalendarRepository> CalendarRepo,
         Mock<ITokenStore> TokenStore,
@@ -426,21 +505,59 @@ public class DiagnosticsControllerTests
         var failureRepoMock  = new Mock<ISyncFailureRepository>();
         var syncJobQueueMock = new Mock<ICalendarSyncJobQueue>();
         var currentUserMock  = new Mock<ICurrentUserService>();
-        var loggerMock       = new Mock<ILogger<DiagnosticsController>>();
-        var options = Options.Create(new SyncOptions
-        {
-            TerminalJobRetention = terminalJobRetention ?? TimeSpan.FromDays(14)
-        });
 
-        var sut = new DiagnosticsController(
-            calendarRepoMock.Object,
-            tokenStoreMock.Object,
-            failureRepoMock.Object,
-            syncJobQueueMock.Object,
-            currentUserMock.Object,
-            options,
-            loggerMock.Object);
+        var sut = Build(
+            calendarRepoMock, tokenStoreMock, failureRepoMock, syncJobQueueMock, currentUserMock,
+            new Mock<IWebhookRegistrationRepository>(), terminalJobRetention);
 
         return (calendarRepoMock, tokenStoreMock, failureRepoMock, syncJobQueueMock, currentUserMock, sut);
     }
+
+    /// <summary>
+    /// A second factory rather than a seventh element on <see cref="CreateSut"/>: only the
+    /// webhook-registration tests need that mock, and widening the shared tuple would have rewritten
+    /// every call site in this file to say nothing.
+    /// </summary>
+    private static (
+        Mock<ICalendarRepository> CalendarRepo,
+        Mock<IWebhookRegistrationRepository> WebhookRepo,
+        Mock<ICurrentUserService> CurrentUser,
+        DiagnosticsController Sut) CreateSutWithWebhookRepo()
+    {
+        var calendarRepoMock = new Mock<ICalendarRepository>();
+        var webhookRepoMock  = new Mock<IWebhookRegistrationRepository>();
+        var currentUserMock  = new Mock<ICurrentUserService>();
+
+        var sut = Build(
+            calendarRepoMock,
+            new Mock<ITokenStore>(),
+            new Mock<ISyncFailureRepository>(),
+            new Mock<ICalendarSyncJobQueue>(),
+            currentUserMock,
+            webhookRepoMock,
+            terminalJobRetention: null);
+
+        return (calendarRepoMock, webhookRepoMock, currentUserMock, sut);
+    }
+
+    private static DiagnosticsController Build(
+        Mock<ICalendarRepository> calendarRepo,
+        Mock<ITokenStore> tokenStore,
+        Mock<ISyncFailureRepository> failureRepo,
+        Mock<ICalendarSyncJobQueue> syncJobQueue,
+        Mock<ICurrentUserService> currentUser,
+        Mock<IWebhookRegistrationRepository> webhookRepo,
+        TimeSpan? terminalJobRetention) =>
+        new(
+            calendarRepo.Object,
+            tokenStore.Object,
+            failureRepo.Object,
+            syncJobQueue.Object,
+            currentUser.Object,
+            webhookRepo.Object,
+            Options.Create(new SyncOptions
+            {
+                TerminalJobRetention = terminalJobRetention ?? TimeSpan.FromDays(14)
+            }),
+            new Mock<ILogger<DiagnosticsController>>().Object);
 }

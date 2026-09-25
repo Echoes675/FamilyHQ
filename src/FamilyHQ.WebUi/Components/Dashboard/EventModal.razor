@@ -97,7 +97,10 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Event Title</label>
-                            <input type="text" class="form-input" @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
+                            @* FHQ-141: stable testid so the preprod smoke suite addresses this field by
+                               identity rather than by its placeholder, which is user-facing copy. *@
+                            <input type="text" class="form-input" data-testid="event-title-input"
+                                   @bind="_eventModel.Title" placeholder="e.g. Doctor Appointment" />
                         </div>
                         <div class="pill-toggle-row mb-3">
                             <span class="pill-toggle-label" id="allDayLabel">All Day Event</span>
@@ -135,11 +138,13 @@
                         }
                         <div class="mb-3">
                             <label class="form-label">Location (Optional)</label>
-                            <input type="text" class="form-input" @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
+                            <input type="text" class="form-input" data-testid="event-location-input"
+                                   @bind="_eventModel.Location" placeholder="e.g. 123 Main St" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Description (Optional)</label>
-                            <textarea class="form-input" rows="3" @bind="_eventModel.Description"
+                            <textarea class="form-input" rows="3" data-testid="event-description-input"
+                                      @bind="_eventModel.Description"
                                       placeholder="Notes, details…"></textarea>
                         </div>
                     </div>
@@ -176,7 +181,8 @@
                     <div>
                         @if (_isEditingEvent)
                         {
-                            <button type="button" class="btn btn-danger" @onclick="DeleteEvent">Delete</button>
+                            <button type="button" class="btn btn-danger" data-testid="event-delete-btn"
+                                    @onclick="DeleteEvent">Delete</button>
                         }
                     </div>
                     <div>

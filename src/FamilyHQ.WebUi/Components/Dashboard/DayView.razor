@@ -72,7 +72,9 @@
                 <div @key="cal.Id" class="all-day-col">
                     @foreach (var evt in calAllDayEvents)
                     {
-                        <div @key="evt.Id" class="event-capsule" style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
+                        @* FHQ-141: testid so a smoke assertion can address a tile by identity. *@
+                        <div @key="evt.Id" class="event-capsule" data-testid="event-capsule"
+                             style="background-color: @(evt.CalendarColor ?? "var(--theme-accent)");"
                              title="@evt.Title"
                              @onclick="() => OnEditEvent.InvokeAsync(evt)">
                             @evt.Title
@@ -122,7 +124,8 @@
                     <div @key="cal.Id" class="calendar-col" @onclick="(e) => HandleGridClick(e, SelectedDate, cal.Id)">
                         @foreach (var p in placedEvents)
                         {
-                            <div @key="p.Event.Id" class="day-event-block"
+                            @* FHQ-141: testid so a smoke assertion can address a tile by identity. *@
+                            <div @key="p.Event.Id" class="day-event-block" data-testid="day-event-block"
                                  style="@GetEventStyle(p, SelectedDate)"
                                  title="@($"{p.Event.Title}\n{p.Event.StartLocal():t} - {p.Event.EndLocal():t}\n{p.Event.Location}")"
                                  @onclick:stopPropagation="true"

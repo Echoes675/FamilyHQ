@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- FHQ-141: preprod's API and Google's API, over plain HTTP + System.Text.Json.
+       No Npgsql, no EF Core, no Data Protection: the smoke suite has no database access by design. -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyHQ.Smoke.Common\FamilyHQ.Smoke.Common.csproj" />
+  </ItemGroup>
+
+</Project>

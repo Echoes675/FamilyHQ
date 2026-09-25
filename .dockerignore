@@ -12,6 +12,7 @@
 **/scripts
 **/tests
 **/tests-e2e
+**/tests-smoke
 **/*.user
 **/*.DotSettings.user
 **/FamilyHQ.sln.DotSettings.user
