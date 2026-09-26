@@ -20,6 +20,23 @@ pipeline {
         DEPLOY_HOST = 'jenkins_docker@192.168.86.23'
         DEPLOY_PATH = '/Docker/deployed_apps/preprod/familyhq'
         APP_BASE_URL = 'https://preprod.familyhq.alphaepsilon.co.uk:8400'
+
+        // FHQ-142 — the preprod smoke suite's non-secret configuration. These are not settings for
+        // preprod: they are the suite's *expectations* about it, which preflight asserts and the suite
+        // never writes. They live here rather than in the familyhq-preprod-env credential because
+        // nothing about them is secret, and whoever reads a red smoke run needs to see the expected
+        // names next to the stages that used them instead of opening a Jenkins credential to find out
+        // what the run believed. The two values that must not be committed — the issue-token secret and
+        // the smoke account's id — stay in that credential and are read from it in runSmokeSuite().
+        // Declarative exports every entry in this block into each sh step's environment, which is how
+        // the suite receives them; nothing interpolates them into a command line.
+        SMOKE_PROJECT = 'tests-smoke/FamilyHQ.Smoke.Features/FamilyHQ.Smoke.Features.csproj'
+        Smoke__BaseUrl = "${APP_BASE_URL}"
+        Smoke__ExpectedLocation = 'dublin'
+        Smoke__ExpectedTimeZone = 'Europe/Dublin'
+        Smoke__SharedCalendar = 'Household'
+        Smoke__MemberCalendars = 'James,Kirk,Lars,Rob'
+        Smoke__PushIncapableCalendars = 'Holidays in United Kingdom'
     }
 
     stages {
@@ -189,37 +206,207 @@ pipeline {
                 }
             }
         }
+
+        // FHQ-142. The preprod smoke suite (tests-smoke/, FHQ-141) runs here because preprod is the
+        // only environment with a real Google account, a real push path and a real weather provider
+        // behind it — the Simulator that E2E runs against models none of them.
+        //
+        // Both smoke stages are deliberately NON-GATING: catchError marks the build UNSTABLE so a
+        // failure is impossible to miss, while the deploy itself stays SUCCESS and promotion to prod
+        // is unaffected. Making smoke a gate is FHQ-143. Until then, an UNSTABLE build means "preprod
+        // deployed; something about the real third-party path did not hold" — read it, do not ignore it.
+        //
+        // See .agent/docs/preprod-smoke-maintenance.md for what each check and scenario proves, where
+        // the trx and the screenshots land, and how to diagnose a red run.
+        stage('Smoke: Preflight') {
+            steps {
+                echo '======= Smoke: Preflight ======='
+                script {
+                    // Read by 'Smoke: Scenarios'. Set before the work, not after a failure, so a stage
+                    // that dies anywhere — library extraction, build, browser install or the checks
+                    // themselves — leaves it false.
+                    env.SMOKE_PREFLIGHT_OK = 'false'
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                        sh '''
+                            echo "Checking for browser + ICU libraries..."
+                            if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
+                                echo "Missing libs, extracting from playwright/dotnet image..."
+                                CID=$(docker create mcr.microsoft.com/playwright/dotnet:v1.50.0-noble)
+                                mkdir -p /tmp/pw-libs
+                                docker cp $CID:/usr/lib/x86_64-linux-gnu/ /tmp/pw-libs/
+                                docker rm $CID
+                                cp -n /tmp/pw-libs/x86_64-linux-gnu/*.so* /usr/lib/ 2>/dev/null || true
+                                ldconfig 2>/dev/null || true
+                                rm -rf /tmp/pw-libs
+                                echo "Library extraction complete"
+                            else
+                                echo "All required libraries already present"
+                            fi
+                        '''
+                        // The build and the browser install belong to this stage alone; 'Smoke: Scenarios'
+                        // reuses the same workspace and runs --no-build.
+                        withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
+                            sh 'dotnet build $SMOKE_PROJECT -c Release'
+                            sh '''
+                                dotnet tool install --global PowerShell 2>/dev/null || true
+                                export PATH="$PATH:$HOME/.dotnet/tools"
+                                pwsh tests-smoke/FamilyHQ.Smoke.Features/bin/Release/net10.0/playwright.ps1 install chromium
+                            '''
+                        }
+                        runSmokeSuite('FullyQualifiedName~PreprodEnvironmentHealth', 'smoke-preflight-results.trx')
+                        env.SMOKE_PREFLIGHT_OK = 'true'
+                    }
+                }
+            }
+            post {
+                always {
+                    mstest testResultsFile: '**/smoke-preflight-results.trx', failOnError: false
+                    archiveArtifacts artifacts: '**/TestResults/smoke-artifacts/*.png', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Smoke: Scenarios') {
+            steps {
+                echo '======= Smoke: Scenarios ======='
+                script {
+                    // Guarded rather than run-and-fail: the suite gates every scenario on a healthy
+                    // preflight (principle 1), so against a bad environment all of them refuse in turn
+                    // and spend two minutes reporting the fault preflight has already named once.
+                    if (env.SMOKE_PREFLIGHT_OK != 'true') {
+                        echo 'SKIPPED: preflight did not pass, so preprod is not fit to test against. Every scenario is gated on a healthy preflight and would refuse to run for the same reason, so they are not attempted here. Read the Smoke: Preflight stage above — its failures name what to change — then re-run this pipeline. See .agent/docs/preprod-smoke-maintenance.md.'
+                        return
+                    }
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                        runSmokeSuite('FullyQualifiedName!~PreprodEnvironmentHealth', 'smoke-scenario-results.trx')
+                    }
+                }
+            }
+            post {
+                always {
+                    mstest testResultsFile: '**/smoke-scenario-results.trx', failOnError: false
+                    // The kiosk scenarios screenshot on failure. Losing them means diagnosing from the
+                    // message alone; FHQ-141's first real failure was read off one of these.
+                    archiveArtifacts artifacts: '**/TestResults/smoke-artifacts/*.png', allowEmptyArchive: true
+                }
+            }
+        }
     }
 
     post {
         success {
             echo "PreProd deployment successful: ${env.RESOLVED_IMAGE_TAG}"
             script {
-                // Chain to production only when this run was triggered from upstream
-                // (i.e. from Jenkinsfile.deploy-staging's post.success on a master
-                // release run) AND a SemVer tag was threaded through. Manual runs
-                // never chain to prod. Use currentBuild.upstreamBuilds rather than
-                // getBuildCauses('hudson.model.Cause$UpstreamCause') because the
-                // class-filtered getBuildCauses overload returns empty under this
-                // Jenkins/Pipeline version even when the upstream cause is set.
-                def upstreamBuilds = currentBuild.upstreamBuilds
-                def semverTag = params.SEMVER_TAG?.trim()
-                if (upstreamBuilds && semverTag) {
-                    echo "Chaining to FamilyHQ-Deploy-Production with SEMVER_TAG=${semverTag}"
-                    build job: 'FamilyHQ-Deploy-Production',
-                          parameters: [
-                              string(name: 'DIRECTION', value: 'specific'),
-                              string(name: 'SEMVER_TAG', value: semverTag)
-                          ],
-                          wait: false,
-                          propagate: false
-                } else {
-                    echo "Not chaining to prod (upstreamBuilds=${upstreamBuilds ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
-                }
+                chainToProduction()
+            }
+        }
+        unstable {
+            // FHQ-142. UNSTABLE here means the deploy itself succeeded and a non-gating smoke stage
+            // failed — nothing else in this pipeline sets it. The release chain therefore has to behave
+            // exactly as it did before the smoke stages existed: if post.success were the only place
+            // that chained, a smoke failure would quietly become a promotion gate. Making smoke a gate
+            // is FHQ-143, and it should happen there, on purpose, not here by omission.
+            echo "PreProd deployment successful with smoke failures (UNSTABLE): ${env.RESOLVED_IMAGE_TAG}"
+            echo 'Read the Smoke: Preflight / Smoke: Scenarios stages above. Smoke is non-gating for now (FHQ-143), so promotion is unaffected.'
+            script {
+                chainToProduction()
             }
         }
         failure {
             echo "PreProd deployment failed: ${env.RESOLVED_IMAGE_TAG}"
+        }
+    }
+}
+
+// Chain to production only when this run was triggered from upstream
+// (i.e. from Jenkinsfile.deploy-staging's post.success on a master
+// release run) AND a SemVer tag was threaded through. Manual runs
+// never chain to prod. Use currentBuild.upstreamBuilds rather than
+// getBuildCauses('hudson.model.Cause$UpstreamCause') because the
+// class-filtered getBuildCauses overload returns empty under this
+// Jenkins/Pipeline version even when the upstream cause is set.
+//
+// Called from both post.success and post.unstable (FHQ-142): a non-gating smoke
+// failure must not change which runs promote.
+def chainToProduction() {
+    def upstreamBuilds = currentBuild.upstreamBuilds
+    def semverTag = params.SEMVER_TAG?.trim()
+    if (upstreamBuilds && semverTag) {
+        echo "Chaining to FamilyHQ-Deploy-Production with SEMVER_TAG=${semverTag}"
+        build job: 'FamilyHQ-Deploy-Production',
+              parameters: [
+                  string(name: 'DIRECTION', value: 'specific'),
+                  string(name: 'SEMVER_TAG', value: semverTag)
+              ],
+              wait: false,
+              propagate: false
+    } else {
+        echo "Not chaining to prod (upstreamBuilds=${upstreamBuilds ? 'yes' : 'no'}, semverTag=${semverTag ? 'yes' : 'no'})"
+    }
+}
+
+// FHQ-142. Runs the preprod smoke suite against the environment this pipeline just deployed.
+//
+// The two values that must not be committed — the shared secret for the FHQ-139 token endpoints and
+// the smoke account's id — are read out of the familyhq-preprod-env credential rather than duplicated
+// into a second Jenkins credential: preprod's environment file already carries both, and one place to
+// update beats two. The suite's own key for the secret is Smoke__IssueTokenSecret; in the env file it
+// is Auth__IssueTokenEndpoint__Secret, because that is what preprod's WebApi reads.
+//
+// Nothing here can print either value, and that is structural rather than careful:
+//   - the script is a single-quoted Groovy string, so Groovy interpolates nothing into it and neither
+//     value ever reaches a command line the console log would show;
+//   - `set +x` is the script's first statement, because Jenkins otherwise runs `sh -xe` and a traced
+//     assignment prints what it assigned;
+//   - read_key echoes nothing: the value goes from the file straight into a shell variable, and only
+//     its emptiness is ever reported;
+//   - the suite keeps them out of its own output (SecretGuard, and principle 7 of
+//     .agent/docs/preprod-smoke-maintenance.md).
+// Never add an echo, a cat, a `set -x` or an interpolated sh string to this function.
+def runSmokeSuite(String testFilter, String trxFileName) {
+    withEnv([
+        "SMOKE_FILTER=${testFilter}",
+        "SMOKE_TRX=${trxFileName}",
+        'DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false'
+    ]) {
+        withCredentials([file(credentialsId: 'familyhq-preprod-env', variable: 'ENV_FILE')]) {
+            sh '''
+                # Jenkins invokes `sh` as `sh -xe`, so every command is traced unless told otherwise -
+                # and a traced assignment prints its value. This must be the first statement in the
+                # script, before anything reads the env file. Do not move it and do not remove it.
+                set +x
+                set -eu
+
+                # Takes the last assignment of one key, strips control characters, surrounding
+                # whitespace and a surrounding double quote on each end. Unlike the equivalent helper in
+                # Jenkinsfile.deploy-prod's Validate Production Config stage, this one preserves case
+                # and every other character: those values are compared, these are used. No backslash
+                # appears in the sed programs on purpose - a Groovy string literal would consume it and
+                # what reaches sh would no longer be what is written here.
+                read_key() {
+                    grep -E "^[[:space:]]*$1[[:space:]]*=" "$ENV_FILE" |
+                        tail -n 1 |
+                        cut -d= -f2- |
+                        tr -d '[:cntrl:]' |
+                        sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//'
+                }
+
+                Smoke__IssueTokenSecret="$(read_key Auth__IssueTokenEndpoint__Secret)"
+                Smoke__UserId="$(read_key Smoke__UserId)"
+                export Smoke__IssueTokenSecret Smoke__UserId
+
+                if [ -z "$Smoke__IssueTokenSecret" ]; then
+                    echo "FAIL: Auth__IssueTokenEndpoint__Secret is missing from the familyhq-preprod-env credential."
+                    exit 1
+                fi
+
+                if [ -z "$Smoke__UserId" ]; then
+                    echo "FAIL: Smoke__UserId is missing from the familyhq-preprod-env credential."
+                    exit 1
+                fi
+
+                dotnet test "$SMOKE_PROJECT" -c Release --no-build --filter "$SMOKE_FILTER" --logger "trx;LogFileName=$SMOKE_TRX" --logger "console;verbosity=detailed"
+            '''
         }
     }
 }
