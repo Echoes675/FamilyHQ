@@ -7,6 +7,7 @@ using FamilyHQ.Services.Options;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 
 namespace FamilyHQ.Services.Tests.Calendar;
@@ -23,6 +24,15 @@ public class WebhookRegistrationServiceTests
 
     /// <summary>FHQ-196. A RelayRobin-shaped address whose path segment after /h/ is the route key.</summary>
     private const string RelayBaseUrl = "https://relay.example.com/h/s3cr3t-route-key";
+
+    /// <summary>
+    /// FHQ-213. When production's own watch channels were registered, straight from the ticket's
+    /// evidence table; they expired seven days later, on 2026-09-28 13:13.
+    /// </summary>
+    private static readonly DateTimeOffset ChannelRegisteredAt = new(2026, 9, 21, 13, 13, 0, TimeSpan.Zero);
+
+    /// <summary>FHQ-213. The part of the already-expired Warning that says what the family lost.</summary>
+    private const string ExpiredWarningFragment = "push notifications have been missing";
 
     [Fact]
     public async Task RegisterForCalendarAsync_CallsWatchAndUpserts_WhenNoExistingRegistration()
@@ -863,6 +873,177 @@ public class WebhookRegistrationServiceTests
         VerifySomethingLoggedContaining(logger, "https://relay.example.com/h/***/api/sync/webhook");
     }
 
+    [Theory]
+    [InlineData(0)]   // restarted the instant the channel was registered
+    [InlineData(1)]
+    [InlineData(25)]  // production's case: a restart a day in reset the old 6-day sleep
+    [InlineData(120)]
+    [InlineData(167)] // restarted with an hour of channel life left
+    public async Task RegisterForCalendarAsync_PolledFromAnyRestartPoint_RenewsBeforeTheChannelExpires(
+        int restartHoursAfterRegistration)
+    {
+        // Arrange - FHQ-213's core guarantee: renewal depends on the channel's own clock, never on
+        // when the process started. WebhookRenewalService now polls every WebhookRenewalPollInterval,
+        // so this replays the passes a process restarted at an arbitrary point in the channel's life
+        // would make, and asserts one of them lands inside the 24-hour window.
+        var expiresAt = ChannelRegisteredAt.AddDays(7);
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddHours(restartHoursAfterRegistration));
+        var (client, webhookRepo, _, _, sut) = CreateSut(clock: clock);
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(expiresAt));
+
+        DateTimeOffset? renewedAt = null;
+        client.Setup(c => c.WatchEventsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => renewedAt ??= clock.GetUtcNow())
+            .ReturnsAsync(new WatchChannelResponse(
+                "renewed-channel", "renewed-resource", expiresAt.AddDays(7).ToUnixTimeMilliseconds()));
+
+        // Act
+        var pollInterval = new SyncOptions().WebhookRenewalPollInterval;
+        while (renewedAt is null && clock.GetUtcNow() < expiresAt)
+        {
+            await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+            clock.Advance(pollInterval);
+        }
+
+        // Assert
+        renewedAt.Should().NotBeNull(
+            "a process restarted {0}h into a 7-day channel must still renew it, whatever the old 6-day timer said",
+            restartHoursAfterRegistration);
+        renewedAt!.Value.Should().BeBefore(expiresAt,
+            "renewing after expiry means push notifications had already stopped for the family");
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenNothingIsDue_MakesNoGoogleCallsAtAll()
+    {
+        // Arrange - FHQ-213: polling hourly is only affordable because a pass with nothing due never
+        // leaves the database. Not "no WatchEventsAsync" - no call on the Google client at all.
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(1));
+        var (client, webhookRepo, _, _, sut) = CreateSut(clock: clock);
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenTheChannelHasAlreadyExpired_LogsAWarning()
+    {
+        // Arrange - FHQ-213: an expired channel was indistinguishable from a quiet calendar. Nothing
+        // said push had stopped, which is how the scheduling defect stayed hidden for months.
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(8));
+        var (client, webhookRepo, _, _, sut, logger) = CreateSutWithLogger(clock: clock);
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+        StubSuccessfulWatch(client, clock.GetUtcNow().AddDays(7));
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert
+        VerifyWarningLogged(logger, ExpiredWarningFragment, Times.Once());
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenTheChannelHasAlreadyExpired_StillReRegistersIt()
+    {
+        // Arrange - the Warning must not replace the recovery: a lapsed channel is re-registered.
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(8));
+        var (client, webhookRepo, _, _, sut) = CreateSut(clock: clock);
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+        StubSuccessfulWatch(client, clock.GetUtcNow().AddDays(7));
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert
+        client.Verify(c => c.WatchEventsAsync(
+            GoogleCalendarId, It.IsAny<string>(), ExpectedWebhookUrl, It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterAllAsync_ReturnsATallyOfWhatItCheckedAndWhatItRenewed()
+    {
+        // Arrange — FHQ-213: WebhookRenewalService's one-line-per-pass summary is only worth reading if
+        // these counts are honest, and only this class knows the per-calendar outcome.
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(6).AddHours(12)); // inside the final day
+        var (client, webhookRepo, calendarRepo, _, sut) = CreateSut(clock: clock);
+
+        var dueCalendarId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new CalendarInfo { Id = CalendarInfoId, GoogleCalendarId = GoogleCalendarId, UserId = "u1", WebhooksSupported = true },
+                new CalendarInfo { Id = dueCalendarId, GoogleCalendarId = "second@group.calendar.google.com", UserId = "u1", WebhooksSupported = true }
+            ]);
+
+        // The first channel has a fortnight left; the second is inside its final 24 hours.
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(14)));
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(dueCalendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+        StubSuccessfulWatch(client, clock.GetUtcNow().AddDays(7));
+
+        // Act
+        var tally = await sut.RegisterAllAsync("u1");
+
+        // Assert
+        tally.Should().Be(new WebhookRegistrationTally(CalendarsChecked: 2, ChannelsRegistered: 1, ChannelsFoundExpired: 0));
+    }
+
+    [Fact]
+    public async Task RegisterAllAsync_WhenAChannelHadAlreadyLapsed_CountsItInTheTally()
+    {
+        // Arrange
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(8));
+        var (client, webhookRepo, calendarRepo, _, sut) = CreateSut(clock: clock);
+
+        calendarRepo.Setup(r => r.GetCalendarsByUserIdAsync("u1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new CalendarInfo { Id = CalendarInfoId, GoogleCalendarId = GoogleCalendarId, UserId = "u1", WebhooksSupported = true }
+            ]);
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+        StubSuccessfulWatch(client, clock.GetUtcNow().AddDays(7));
+
+        // Act
+        var tally = await sut.RegisterAllAsync("u1");
+
+        // Assert — a lapsed channel is both "found expired" and "re-registered"; the summary says both.
+        tally.Should().Be(new WebhookRegistrationTally(CalendarsChecked: 1, ChannelsRegistered: 1, ChannelsFoundExpired: 1));
+    }
+
+    [Fact]
+    public async Task RegisterForCalendarAsync_WhenTheChannelIsStillValid_DoesNotWarn()
+    {
+        // Arrange - the expiry Warning now runs on every hourly pass, so prove the healthy path stays
+        // quiet rather than warning about six days of perfectly good channel.
+        var clock = new FakeTimeProvider(ChannelRegisteredAt.AddDays(1));
+        var (_, webhookRepo, _, _, sut, logger) = CreateSutWithLogger(clock: clock);
+
+        webhookRepo.Setup(r => r.GetByCalendarIdAsync(CalendarInfoId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ExistingChannel(ChannelRegisteredAt.AddDays(7)));
+
+        // Act
+        await sut.RegisterForCalendarAsync(CalendarInfoId, GoogleCalendarId);
+
+        // Assert
+        VerifyWarningLogged(logger, ExpiredWarningFragment, Times.Never());
+    }
+
     private static void VerifyNothingLoggedContaining(Mock<ILogger<WebhookRegistrationService>> logger, string fragment) =>
         logger.Verify(l => l.Log(
             It.IsAny<LogLevel>(),
@@ -883,6 +1064,34 @@ public class WebhookRegistrationServiceTests
             Times.AtLeastOnce,
             $"masking must leave '{fragment}' behind, or the line cannot say which address was used");
 
+    private static void VerifyWarningLogged(
+        Mock<ILogger<WebhookRegistrationService>> logger, string fragment, Times times) =>
+        logger.Verify(l => l.Log(
+            LogLevel.Warning,
+            It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((v, _) => Carries(v, fragment)),
+            It.IsAny<Exception?>(),
+            It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            times);
+
+    /// <summary>FHQ-213. A channel registered at <see cref="ChannelRegisteredAt"/>, for the address currently configured.</summary>
+    private static WebhookRegistration ExistingChannel(DateTimeOffset expiresAt) =>
+        new()
+        {
+            CalendarInfoId = CalendarInfoId,
+            ChannelId = "existing-channel",
+            ResourceId = "existing-resource",
+            RegisteredAddressHash = CurrentAddressHash,
+            ExpiresAt = expiresAt,
+            RegisteredAt = ChannelRegisteredAt
+        };
+
+    private static void StubSuccessfulWatch(Mock<IGoogleCalendarClient> client, DateTimeOffset expiresAt) =>
+        client.Setup(c => c.WatchEventsAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WatchChannelResponse(
+                "renewed-channel", "renewed-resource", expiresAt.ToUnixTimeMilliseconds()));
+
     private static bool Carries(object? state, string fragment)
     {
         if (state?.ToString()?.Contains(fragment, StringComparison.OrdinalIgnoreCase) == true)
@@ -899,9 +1108,9 @@ public class WebhookRegistrationServiceTests
         Mock<IWebhookRegistrationRepository> webhookRepo,
         Mock<ICalendarRepository> calendarRepo,
         Mock<ITokenStore> tokenStore,
-        WebhookRegistrationService sut) CreateSut(bool webhookEnabled = true)
+        WebhookRegistrationService sut) CreateSut(bool webhookEnabled = true, TimeProvider? clock = null)
     {
-        var (client, webhookRepo, calendarRepo, tokenStore, sut, _) = CreateSutWithLogger(webhookEnabled);
+        var (client, webhookRepo, calendarRepo, tokenStore, sut, _) = CreateSutWithLogger(webhookEnabled, clock: clock);
 
         return (client, webhookRepo, calendarRepo, tokenStore, sut);
     }
@@ -913,7 +1122,7 @@ public class WebhookRegistrationServiceTests
         Mock<ITokenStore> tokenStore,
         WebhookRegistrationService sut,
         Mock<ILogger<WebhookRegistrationService>> logger) CreateSutWithLogger(
-            bool webhookEnabled = true, string webhookBaseUrl = WebhookBaseUrl)
+            bool webhookEnabled = true, string webhookBaseUrl = WebhookBaseUrl, TimeProvider? clock = null)
     {
         var clientMock = new Mock<IGoogleCalendarClient>();
         var webhookRepoMock = new Mock<IWebhookRegistrationRepository>();
@@ -934,6 +1143,9 @@ public class WebhookRegistrationServiceTests
             calendarRepoMock.Object,
             tokenStoreMock.Object,
             optionsMock,
+            // FHQ-202: frozen at the real "now" by default, so the older tests that express expiry as
+            // UtcNow +/- n keep meaning what they meant; the FHQ-213 tests pass their own instant.
+            clock ?? new FakeTimeProvider(DateTimeOffset.UtcNow),
             loggerMock.Object);
 
         return (clientMock, webhookRepoMock, calendarRepoMock, tokenStoreMock, sut, loggerMock);
