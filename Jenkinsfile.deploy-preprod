@@ -211,10 +211,17 @@ pipeline {
         // only environment with a real Google account, a real push path and a real weather provider
         // behind it — the Simulator that E2E runs against models none of them.
         //
-        // Both smoke stages are deliberately NON-GATING: catchError marks the build UNSTABLE so a
-        // failure is impossible to miss, while the deploy itself stays SUCCESS and promotion to prod
-        // is unaffected. Making smoke a gate is FHQ-143. Until then, an UNSTABLE build means "preprod
-        // deployed; something about the real third-party path did not hold" — read it, do not ignore it.
+        // FHQ-143: both smoke stages now GATE. A failure fails this build, so post.success never
+        // fires, so nothing is promoted to production. That includes preflight: a run that cannot
+        // establish the environment is healthy has not established anything about the release either,
+        // and promoting on it would be promoting on an unread test.
+        //
+        // The cost is accepted deliberately: promotion now depends on the smoke Google account's
+        // grant staying valid and on preprod's calendars matching the configured expectations, so a
+        // lapsed grant stops releases as surely as a broken build. The break-glass is a MANUAL
+        // FamilyHQ-Deploy-Production run (DIRECTION=specific, SEMVER_TAG=vX.Y.Z), which does not go
+        // through this chain — see .agent/docs/preprod-smoke-maintenance.md, next to the re-sign-in
+        // runbook.
         //
         // See .agent/docs/preprod-smoke-maintenance.md for what each check and scenario proves, where
         // the trx and the screenshots land, and how to diagnose a red run.
@@ -226,36 +233,34 @@ pipeline {
                     // that dies anywhere — library extraction, build, browser install or the checks
                     // themselves — leaves it false.
                     env.SMOKE_PREFLIGHT_OK = 'false'
-                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh '''
+                        echo "Checking for browser + ICU libraries..."
+                        if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
+                            echo "Missing libs, extracting from playwright/dotnet image..."
+                            CID=$(docker create mcr.microsoft.com/playwright/dotnet:v1.50.0-noble)
+                            mkdir -p /tmp/pw-libs
+                            docker cp $CID:/usr/lib/x86_64-linux-gnu/ /tmp/pw-libs/
+                            docker rm $CID
+                            cp -n /tmp/pw-libs/x86_64-linux-gnu/*.so* /usr/lib/ 2>/dev/null || true
+                            ldconfig 2>/dev/null || true
+                            rm -rf /tmp/pw-libs
+                            echo "Library extraction complete"
+                        else
+                            echo "All required libraries already present"
+                        fi
+                    '''
+                    // The build and the browser install belong to this stage alone; 'Smoke: Scenarios'
+                    // reuses the same workspace and runs --no-build.
+                    withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
+                        sh 'dotnet build $SMOKE_PROJECT -c Release'
                         sh '''
-                            echo "Checking for browser + ICU libraries..."
-                            if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
-                                echo "Missing libs, extracting from playwright/dotnet image..."
-                                CID=$(docker create mcr.microsoft.com/playwright/dotnet:v1.50.0-noble)
-                                mkdir -p /tmp/pw-libs
-                                docker cp $CID:/usr/lib/x86_64-linux-gnu/ /tmp/pw-libs/
-                                docker rm $CID
-                                cp -n /tmp/pw-libs/x86_64-linux-gnu/*.so* /usr/lib/ 2>/dev/null || true
-                                ldconfig 2>/dev/null || true
-                                rm -rf /tmp/pw-libs
-                                echo "Library extraction complete"
-                            else
-                                echo "All required libraries already present"
-                            fi
+                            dotnet tool install --global PowerShell 2>/dev/null || true
+                            export PATH="$PATH:$HOME/.dotnet/tools"
+                            pwsh tests-smoke/FamilyHQ.Smoke.Features/bin/Release/net10.0/playwright.ps1 install chromium
                         '''
-                        // The build and the browser install belong to this stage alone; 'Smoke: Scenarios'
-                        // reuses the same workspace and runs --no-build.
-                        withEnv(['DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false']) {
-                            sh 'dotnet build $SMOKE_PROJECT -c Release'
-                            sh '''
-                                dotnet tool install --global PowerShell 2>/dev/null || true
-                                export PATH="$PATH:$HOME/.dotnet/tools"
-                                pwsh tests-smoke/FamilyHQ.Smoke.Features/bin/Release/net10.0/playwright.ps1 install chromium
-                            '''
-                        }
-                        runSmokeSuite('FullyQualifiedName~PreprodEnvironmentHealth', 'smoke-preflight-results.trx')
-                        env.SMOKE_PREFLIGHT_OK = 'true'
                     }
+                    runSmokeSuite('FullyQualifiedName~PreprodEnvironmentHealth', 'smoke-preflight-results.trx')
+                    env.SMOKE_PREFLIGHT_OK = 'true'
                 }
             }
             post {
@@ -270,16 +275,17 @@ pipeline {
             steps {
                 echo '======= Smoke: Scenarios ======='
                 script {
-                    // Guarded rather than run-and-fail: the suite gates every scenario on a healthy
-                    // preflight (principle 1), so against a bad environment all of them refuse in turn
-                    // and spend two minutes reporting the fault preflight has already named once.
+                    // Belt and braces since FHQ-143: with the catchError wrappers gone, a failed
+                    // preflight fails its stage and declarative aborts the pipeline, so this guard is
+                    // not normally reached. It is kept because it is the thing that stops 34 scenarios
+                    // each refusing in turn against a bad environment — the behaviour anyone would
+                    // want back the moment a wrapper is reintroduced, and cheaper to keep than to
+                    // rediscover.
                     if (env.SMOKE_PREFLIGHT_OK != 'true') {
                         echo 'SKIPPED: preflight did not pass, so preprod is not fit to test against. Every scenario is gated on a healthy preflight and would refuse to run for the same reason, so they are not attempted here. Read the Smoke: Preflight stage above — its failures name what to change — then re-run this pipeline. See .agent/docs/preprod-smoke-maintenance.md.'
                         return
                     }
-                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                        runSmokeSuite('FullyQualifiedName!~PreprodEnvironmentHealth', 'smoke-scenario-results.trx')
-                    }
+                    runSmokeSuite('FullyQualifiedName!~PreprodEnvironmentHealth', 'smoke-scenario-results.trx')
                 }
             }
             post {
@@ -300,20 +306,15 @@ pipeline {
                 chainToProduction()
             }
         }
-        unstable {
-            // FHQ-142. UNSTABLE here means the deploy itself succeeded and a non-gating smoke stage
-            // failed — nothing else in this pipeline sets it. The release chain therefore has to behave
-            // exactly as it did before the smoke stages existed: if post.success were the only place
-            // that chained, a smoke failure would quietly become a promotion gate. Making smoke a gate
-            // is FHQ-143, and it should happen there, on purpose, not here by omission.
-            echo "PreProd deployment successful with smoke failures (UNSTABLE): ${env.RESOLVED_IMAGE_TAG}"
-            echo 'Read the Smoke: Preflight / Smoke: Scenarios stages above. Smoke is non-gating for now (FHQ-143), so promotion is unaffected.'
-            script {
-                chainToProduction()
-            }
-        }
+        // FHQ-143 removed the post.unstable → chainToProduction() path that FHQ-142 added. That path
+        // existed to keep smoke non-gating; leaving it here while removing the catchError wrappers
+        // would have made this ticket a no-op, because nothing else in this pipeline sets UNSTABLE.
+        // Promotion now happens from post.success alone, so a smoke failure fails the build and
+        // nothing reaches production.
         failure {
-            echo "PreProd deployment failed: ${env.RESOLVED_IMAGE_TAG}"
+            echo "PreProd deployment or smoke suite failed: ${env.RESOLVED_IMAGE_TAG}"
+            echo 'Nothing was promoted to production. If the Smoke stages are the red ones, read them: preflight failures name what to change about the environment, scenario failures are a real disagreement with Google.'
+            echo 'To ship regardless, run FamilyHQ-Deploy-Production manually with DIRECTION=specific and SEMVER_TAG — it does not go through this chain. See .agent/docs/preprod-smoke-maintenance.md.'
         }
     }
 }
