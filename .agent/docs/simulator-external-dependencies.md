@@ -39,6 +39,64 @@ For E2E test isolation, the simulator exposes `POST/DELETE /api/simulator/backdo
 | `DELETE /api/simulator/backdoor/webhooks` | Clear registered watch channels |
 | `PUT /api/simulator/backdoor/calendars/{calendarId}/default-reminders` | Change a calendar's Google-side `defaultReminders` mid-run (body `{"overrides":[{"method":"popup","minutes":45}]}`, or `{"overrides":null}` to clear). FHQ-207: without a *change*, `RefreshCalendarDefaultsAsync` early-returns and CI never reaches the write path that caused the FHQ-205 outage. |
 
+## Event Reminders
+
+Google's reminder behaviour was captured from live API responses and is modelled in
+`tools/FamilyHQ.Simulator/Google/ReminderSemantics.cs`. The three write paths (insert, update, patch)
+and the read projection in `EventsController` all go through it.
+
+### What is faithfully modelled
+
+These are **Google's** behaviours, not this class's inventions:
+
+| Request | What Google does |
+|---|---|
+| `minutes` below 0 | clamps to `0`, HTTP 200 |
+| `minutes` above 40320 (four weeks) | clamps to `40320`, HTTP 200 |
+| duplicate `(method, minutes)` | de-duplicates, HTTP 200 |
+| `method` other than `popup`/`email` | drops that override **entirely**, HTTP 200 |
+| a 6th override | `400 eventRemindersCountExceedsLimit` |
+| `useDefault:true` **with** a non-empty `overrides` | `400 cannotUseDefaultRemindersAndSpecifyOverride` |
+| `useDefault:true, overrides:[]` | accepted — this is how a client reverts to the calendar default |
+| a PATCH carrying `reminders` | replaces the whole object; it does not merge into it |
+| a PATCH omitting `reminders` | leaves the stored value untouched |
+
+| Read | What Google returns |
+|---|---|
+| nothing stored, **timed** event | `{"useDefault":true}` |
+| nothing stored, **all-day** event | `{"useDefault":false,"overrides":[…the calendar's defaults…]}` — Google *materialises* them, so an all-day event never inherits |
+| stored `useDefault:false, overrides:[]` | `{"useDefault":false}` — **no `overrides` key** |
+| any overrides | returned **reordered**; the order they were sent in is never preserved |
+| an expanded instance of a series | the master's reminders |
+| an exception occurrence | its own reminders |
+
+Both rejections sit in Google's `calendar` error domain, and both carry Google's own `message` text.
+
+### Why the Simulator accepts bad input
+
+Because Google does. It answers `200` and silently rewrites. A Simulator that rejected the same input
+would be the more correct-*looking* double and the more dangerous one: the kiosk's tests would then
+assert an error path production never takes, and the silent-rewrite path — where a caller believes it
+set a reminder that does not exist — would go untested.
+
+### Known divergence: reminders that fire after the event starts
+
+Google can store a reminder *after* an all-day event starts ("on the day at 09:00") and shows it in
+its own UI, but **never returns it from the API**. The response is `{"useDefault":false}` with no
+overrides — byte-for-byte identical to "explicitly no reminders". The Simulator cannot model a state
+the API does not expose, and neither can FamilyHQ.
+
+The consequence worth carrying: on an all-day event, `useDefault:false` with no overrides means *"no
+reminders, **or** reminders the API will not show you"*. Nothing may describe that state to a user as
+"no reminders".
+
+### Known divergence: `etag` and `updated` are not modelled at all
+
+Neither field exists on the simulated event, so neither behaviour can be observed here. Against real
+Google, a reminder-only change **leaves `updated` untouched** and **moves the `etag`** (and does
+appear in a sync-token delta). Anything that decided whether an event had changed by comparing
+`updated` would therefore be wrong against real Google — and this double would not catch it.
+
 ## Seeded Locations
 
 The simulator seeds the following locations on startup for manual testing. Enter any of these place names on the Settings page to save a location and see weather data.
