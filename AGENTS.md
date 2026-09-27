@@ -88,6 +88,8 @@ would never populate a newly added column.
 - **Framework**: .NET 10 (Blazor WASM Frontend, ASP.NET Core Backend)
 - **Database**: PostgreSQL / EF Core
 - **Primary Tooling**: dotnet CLI (build, test, run)
+- **Testing strategy — which layer proves what, and the rule that every smoke scenario needs an E2E twin**: Read `.agent\docs	esting-strategy.md`
+- **Which test layer proves what** (and the rule that a smoke scenario needs an E2E twin unless the Simulator would lie): Read `.agent\docs\testing-strategy.md`
 - **E2E Acceptance testing**: Read `.agent\docs\e2e-testing-maintenance.md`
 - **Preprod smoke testing (real Google, RelayRobin, Open-Meteo)**: Read `.agent\docs\preprod-smoke-maintenance.md`
 
@@ -117,6 +119,7 @@ Refer to these files in the .agent/ directory for specific implementation detail
 - Project Architecture &amp; Structure: `.agent/docs/architecture.md`
 - UI Design System (themes, CSS variables, layer model, touch rules): `.agent/docs/ui-design-system.md`
 - Intermittent / flaky issues tracker (read before dismissing a CI failure as flake): `.agent/docs/intermittent-issues.md`
+- Testing strategy — unit / E2E-against-Simulator / preprod-smoke-against-real-Google, what each proves, and when a Simulator twin would be dishonest: `.agent/docs/testing-strategy.md`
 - Preprod smoke suite — third-party interactions against the real Google account (`tests-smoke/`): `.agent/docs/preprod-smoke-maintenance.md`
 
 ## Skills
