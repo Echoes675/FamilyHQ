@@ -53,6 +53,31 @@ public sealed class SmokeScenarioState
     public DateOnly EventDate { get; set; }
 
     /// <summary>
+    /// A day of this scenario's own, allocated at the start of it. Events put here cannot end up under
+    /// another scenario's tile on the kiosk's day view, which is what happens when every scenario shares one
+    /// day and the click for the tile a scenario wants never lands.
+    /// </summary>
+    public required DateOnly EventDay { get; init; }
+
+    /// <summary>
+    /// The recurrence rule this scenario wrote into Google, when it seeded a series there. Kept so a later
+    /// step can truncate <i>that</i> rule rather than compose a fresh one that merely resembles it.
+    /// </summary>
+    public string? SeededRecurrenceRule { get; set; }
+
+    /// <summary>
+    /// The series master(s) Google holds for this scenario. One for an ordinary series; two once a
+    /// "this and following" change has split one, in which case the occurrence set is the union.
+    /// </summary>
+    public IReadOnlyList<SmokeSeriesMaster> SeriesMasters { get; set; } = [];
+
+    /// <summary>
+    /// How far forward this scenario's Google window reaches, in days. A yearly series needs more than the
+    /// default, and nothing else does.
+    /// </summary>
+    public int WindowDaysAfter { get; set; } = SmokeLookup.DefaultWindowDaysAfter;
+
+    /// <summary>
     /// preprod's API. Any scenario past the health gate has one; reaching this without a session token means
     /// the gate was bypassed, and the message says so rather than reading as a null dereference.
     /// </summary>

@@ -18,7 +18,7 @@ account.
 4. [Principles you must not quietly relax](#principles-you-must-not-quietly-relax)
 5. [Project structure](#project-structure)
 6. [Preflight: what each check proves and what each failure means](#preflight-what-each-check-proves-and-what-each-failure-means)
-7. [Core scenarios: what each one proves](#core-scenarios-what-each-one-proves)
+7. [Scenarios: what each one proves](#scenarios-what-each-one-proves)
 8. [Re-signing in when the Google grant is revoked](#re-signing-in-when-the-google-grant-is-revoked)
 9. [Diagnosing a failure](#diagnosing-a-failure)
 10. [Adding a scenario](#adding-a-scenario)
@@ -122,6 +122,7 @@ saying where the real values come from; **never commit a value into it.**
 | `Smoke__GoogleCalendarApiBaseUrl` | Google Calendar API root. Defaults to the real one; configurable so the oracle's address is explicit rather than assumed. |
 | `Smoke__PushWaitSeconds` | How long a scenario waits for a change made in Google to reach preprod through the live push path. Default 180. |
 | `Smoke__GoogleWaitSeconds` | How long a scenario waits for a kiosk write to become visible in Google. Default 60. |
+| `Smoke__SyncHorizonDays` | How far ahead preprod's own sync reaches, in days (default 365). Not an environment expectation — a **product** bound. Only the yearly-series scenarios reach past it; without it their second occurrence would be reported as a disagreement with Google rather than as the designed edge of the sync window. If the product's horizon moves, move this with it. |
 | `Smoke__Headless` | Run the kiosk browser headless. Default true. |
 | `Smoke__AllowUntrustedCertificate` | Skip TLS chain validation. Default **false**; see the prerequisites. |
 
@@ -160,7 +161,11 @@ not hold."* That is something to investigate, not a flake to re-run — see
 [`intermittent-issues.md`](intermittent-issues.md).
 
 One consequence worth knowing: the smoke stages run before `post`, so a release chain now waits the
-length of a smoke run (a few minutes) before the production deploy is triggered.
+length of a smoke run before the production deploy is triggered. That wait grew with full coverage. The
+scenarios run one at a time by necessity (see [parallelism](#parallelism-one)), the Google-originated ones
+each wait for a live push, and several of them make two changes in sequence — so budget tens of minutes
+rather than a few. The cost is deliberate: the alternative is either fewer third-party interactions proven
+or a sync triggered by hand, and a triggered sync would pass on an environment whose push path is dead.
 
 ### Scenarios are skipped when preflight fails
 
@@ -284,6 +289,35 @@ Notable files:
 | `FamilyHQ.Smoke.Steps/Preflight/SmokePreflight.cs` | The seven checks. Runs once per run; repairs nothing. |
 | `FamilyHQ.Smoke.Steps/Hooks/SmokeScenarioHooks.cs` | Correlation, the health gate, the kiosk, failure forensics. |
 | `FamilyHQ.Smoke.Steps/SmokeLookup.cs` | "What does Google hold for this scenario, and what does preprod serve?" |
+| `FamilyHQ.Smoke.Steps/SmokeSeries.cs` | Google's answer about a series, and the one comparison every recurrence scenario ends in. |
+| `FamilyHQ.Smoke.Steps/SmokeIcal.cs` | The RRULE lines the suite writes *into* Google — stated in the standard's own syntax rather than borrowed from FamilyHQ's rule builder, so one shared misunderstanding cannot satisfy both sides. |
+| `FamilyHQ.Smoke.Steps/SmokeScenarioDays.cs` | A day of its own per scenario — see [why no scenario shares a day](#why-no-scenario-shares-a-day). |
+
+### Why no scenario shares a day
+
+Every scenario puts its events on a day of its own, handed to it as `state.EventDay` by
+`SmokeScenarioDays` — a plain counter, allocated in the scenario hook, starting tomorrow.
+
+It looks like over-engineering and it is not. The suite's events are **kept** (principle 5), so a day
+accumulates every event every run has ever put there. While the suite was small and ran once per preprod
+deploy, one shared day held three or four tiles and nothing went wrong. Past that, the kiosk's day view lays
+overlapping tiles over one another, Playwright finds the tile a scenario wants, another scenario's tile
+intercepts the click, and thirty seconds later the scenario fails with a locator timeout that reads exactly
+like a product fault. It surfaced while this coverage was being written, as two *core* scenarios failing after
+the suite had been run several times in one afternoon — nothing to do with the code under test.
+
+A counter rather than a hash of the scenario's id, because a hash collides: with a dozen scenarios over even a
+couple of months of days, two landing on the same day is more likely than not. The cost of a counter is that a
+scenario run on its own sits on a different day than it would in a full run, which is harmless — nothing about
+a scenario depends on its date, and its events are always found by the correlation id and the short title id.
+
+Two rules follow:
+
+- **Never compute a date in a step.** Take `state.EventDay`, or a date derived from it (the first Wednesday on
+  or after it, the day before the next daylight-saving change). `SmokeEventShape` deliberately offers no day
+  at all.
+- **Never assume a day is empty.** It holds this run's events and nothing else, which is enough; it is not a
+  clean slate and the retained events from earlier runs are the point.
 
 ### `data-testid` attributes this suite relies on
 
@@ -296,7 +330,9 @@ predates this branch:
 `event-capsule`, `day-event-block`.
 
 Everything else it uses (`add-event-btn`, `event-save-btn`, `day-tab`, `day-picker-*`,
-`event-modal-tab-*`, `recurrence-*`, `recurrence-scope-*`) already existed for E2E.
+`event-modal-tab-*`, `all-day-toggle`, `recurrence-*`, `recurrence-scope-*`) already existed for E2E. The
+full-coverage pass added no new ones: the all-day toggle, the recurrence interval stepper, the frequency
+pills and the three scope pills were all already addressable.
 
 ---
 
@@ -326,7 +362,7 @@ fixes.
 
 ---
 
-## Core scenarios: what each one proves
+## Scenarios: what each one proves
 
 Verification style throughout: compare the **full set** through preprod's API against Google, and
 spot-check in the UI. Do not reproduce E2E's UI coverage here.
@@ -361,12 +397,128 @@ environment whose push path is completely dead.
 | **GK2** | A shared-calendar event naming two members appears for both of them | The inbound half of the calendar model: member names matched as whole words anywhere in a free-text description (no `[members:]` tag is used here on purpose — the tag is the easy path, and real phone-made events do not carry one). Plus one UI spot-check. | An extra member: the matcher is too greedy. A missing one: too strict. Nothing at all after the wait: the push path did not deliver — preflight already confirmed a live channel, so start with RelayRobin and `Sync:WebhookBaseUrl`. |
 | **GK4** | An event deleted in Google disappears from the kiosk | Deletions travel inbound too. | An event the family removed on a phone but that stays on the kiosk is the visible half of a broken inbound sync. |
 
+### All-day events — `AllDayEvents.feature`
+
+Google describes an all-day event with a pair of calendar **dates**, and its end date is the day *after* the
+last day the event covers. Nothing else in the suite exercises that convention, and it is the one shape that
+carries no time zone at all.
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **AD1** | A one-day all-day event created on the kiosk is dated the way Google dates one | The kiosk writes `start.date` = the day, `end.date` = the following day, and **no** `dateTime` and no `timeZone` on either boundary. | An end date equal to the start describes an event that is over before it begins and Google rejects it. An end date a day later gives the family a two-day event. A `timeZone` on an all-day event is FamilyHQ asserting something about the event the family never stated. |
+| **AD2** | A one-day all-day event created in Google covers that day alone on the kiosk | The exclusive end date survives as an exclusive end: preprod serves `IsAllDay`, starts on the day Google named and ends at the *next* day's boundary — and the kiosk draws it on that day and **not** on the next. | A tile on the following day is the exclusive end read as inclusive: every all-day event runs a day longer than the phone says, and the write-back then tells Google the same thing. |
+
 ### Recurrence — `Recurrence.feature`
 
 | ID | Scenario | What it proves | What a failure means |
 |---|---|---|---|
 | **RK1** | A bounded weekly series created on the kiosk matches Google's expansion | Google holds **one** master with exactly one `RRULE`, `FREQ=WEEKLY`, `COUNT=3` and no `UNTIL`; `start.timeZone` is the family's zone; and the occurrence set preprod serves is exactly Google's `events.instances`. | Two masters: the series was written twice. No `recurrence` array: the rule was lost and it went out as a single event. Wrong `start.timeZone`: every future occurrence is re-anchored, which is FHQ-170 — the damage shows up at the next DST transition, not today. A different occurrence set: preprod and Google disagree about what the rule means. |
 | **RG1** | A bounded two-weekday series created in Google shows exactly its instances | A `BYDAY=TU,TH;COUNT=3` series made in Google expands on the kiosk to exactly Google's instances, at the same **wall-clock** time, marked recurring. | Same instants but a different displayed hour means the phone and the wall show the same event at different times. Missing recurrence glyph: an occurrence the family cannot tell is part of a series is one they will edit expecting to change only that day. |
+
+### The shape of a series the kiosk writes — `RecurrenceShapes.feature`
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RK2** | A fortnightly series carries both its interval and its chosen weekday to Google | The rule that arrives carries `INTERVAL=2` **and** `BYDAY` naming the weekday the user chose, which is deliberately *not* the start date's weekday. | A dropped interval turns a fortnightly series weekly, and the family finds an event on a week they had free. A missing `BYDAY` lets Google derive the weekday from the start date — which agrees with the choice right up until the two differ. |
+| **RK3** | A yearly all-day series falls on the same date each year | `FREQ=YEARLY` with a count, dates rather than times, and Google's two occurrences on the same month and day in consecutive years. | A second occurrence that has slipped a day is an occurrence derived by adding a fixed number of days across a leap year. A `dateTime` means the all-day nature was lost on the way out. |
+| **RK4** | A two-member series is written once, to the shared calendar, and belongs to both members | Multi-member placement applied to a *series*: one master in the shared container with the `[members: …]` tag on it, and every occurrence preprod serves belonging to both. | A copy on each member's calendar is two series the family edits twice and sees twice. An occurrence belonging to one member only is one the other never sees. |
+| **RK12** | Switching the repeat off collapses the series to a single event | The recurrence-off toggle actually clears the rule on Google, and leaves the event it started from where it was. | A rule left behind keeps expanding on the family's calendar and the series reappears on the next sync. A moved start means clearing the rule also relocated the survivor. |
+
+### Editing a series from the kiosk, at each scope — `RecurrenceEditScope.feature`
+
+The three scopes are three different writes. `ThisOnly` patches the instance into an exception, `ThisAndFollowing`
+creates a forward series and *then* truncates the original, `AllInSeries` patches the master. Each scenario
+creates its own bounded series in the Background and then applies one of them to the **middle** occurrence, so
+"only this one", "everything from here" and "everything" are three visibly different outcomes.
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RK5** | Changing one occurrence leaves the master and the other occurrences alone | Google holds exactly one exception, carrying the new title, linked to the master by `recurringEventId` and recording the slot it replaces in `originalStartTime`; the master keeps its own title and its rule. | No `originalStartTime`: the series expands its own occurrence in that slot too and the family sees both. A master that took the new title renamed every other occurrence — the outcome the user explicitly did not choose. |
+| **RK6** | Changing this and following ends the original series and starts a replacement | Two masters: the original bounded by `UNTIL` (and no `COUNT` — two end conditions on one rule is not a rule), and a replacement starting exactly at the split occurrence with the new title. The union of their instances is the *same* set of instants as before the split. | The original gone: the occurrences before the split went with it, and those are the family's history. An untruncated original: the two series overlap and every later occurrence shows twice. Moved instants: the calendar was re-timed by an edit that asked for a rename. |
+| **RK7** | Changing all events over an occurrence that was already singled out | Ordering matters, and the messages say which half went wrong: the single-occurrence edit must produce an exception **first** (a failure there is reported as the precondition, not as the behaviour under test), and the whole-series rename must then leave that exception standing as *one* exception still pinned to the slot it replaces, leave the series' dates alone, and leave the kiosk showing exactly what Google holds for each occurrence. See [what Google actually does to an override](#what-google-actually-does-to-an-occurrence-override) — it does **not** preserve the title, so the scenario does not ask FamilyHQ to. | An exception deleted takes the family's one deliberately different occurrence with it. Two exceptions means the slot is now filled twice and they see both. Moved dates mean a rename re-anchored the series. A kiosk out of step with Google's titles means the phone and the wall disagree. |
+
+### A phone-made series edited on the kiosk — `RecurrenceGoldenRule.feature`
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RK11** | Renaming a series made in another time zone leaves its zone, its rule and its other fields alone | **The golden rule, applied to a series.** The series is created in Google anchored to `America/New_York` — deliberately not the family's zone, and asserted to differ from it, so a substitution cannot hide behind a coincidentally equal offset. A title-only edit at "all events" must leave `start.timeZone`, `end.timeZone`, the `RRULE`, the free-text description, the location, the `colorId`, the boundaries and the reminders exactly as Google held them. | A zone replaced by the family's configured one re-anchors every future occurrence: the series still shows the right time until the two zones' daylight-saving schedules diverge, and then it moves — on the phone, months from now, with nothing to connect it to the edit. A rewritten rule moves which days the series falls on. |
+
+### Deleting from a series on the kiosk, at each scope — `RecurrenceDeleteScope.feature`
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RK8** | Deleting one occurrence cancels that occurrence alone | Google stops expanding the cancelled slot and expands every other occurrence unchanged. | More than one occurrence gone is a delete that took days the family never offered up — and a delete has nothing to undo it. |
+| **RK9** | Deleting this and following ends the series before that occurrence | The master's rule gains an `UNTIL` before the split, and exactly the occurrences before it survive. | A rule left as it was means nothing was removed on Google's side and the occurrences come back on the next sync. |
+| **RK10** | Deleting all events removes the series from Google | Nothing carrying the scenario's marker is left in Google, and preprod serves nothing. | A master left behind keeps expanding, and the family sees the series they deleted reappear. |
+
+### Series made and unmade in Google — `RecurrenceFromGoogle.feature`
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RG2** | A series Google bounds by an end date stops exactly where Google stops it | The **other** of Google's two bounds. `UNTIL` is inclusive and stated in UTC, and the rule is written so the end date lands exactly on the last wanted occurrence's start — the boundary an exclusive reading drops. | Stopping a week early drops an occurrence the family put in the calendar; running a week late invents one Google never expanded. Only the boundary shows the fault, which is why nothing else would. |
+| **RG3** | A yearly all-day series created in Google lands on the same date each year | The inbound half of the yearly shape: two occurrences, same month and day, consecutive years, expanded as dates. | A slipped date is a fixed-days calculation across a leap year. A `dateTime` means the all-day nature was lost inbound. |
+| **RG8** | Changing the members named on a Google series changes who every occurrence belongs to | A membership change made on a phone reaches **every** occurrence of the series (two members before, a different two after — the count stays at two, so this is a membership change and not also a move between the shared container and a member calendar). | An occurrence left behind is one a member still sees that is no longer theirs, and one the new member never sees. |
+| **RG9** | A series deleted in Google disappears from the kiosk | Deletion of a whole series travels inbound. | Occurrences of a deleted series still on the kiosk are the visible half of a broken inbound sync. |
+
+### A series edited in Google, the way the phone app edits one — `RecurrenceEditedInGoogle.feature`
+
+The Google Calendar app has no "scope": it performs each choice as a different edit to the data. These
+scenarios make those edits directly, with the oracle credential, and then ask whether the kiosk shows what
+Google now holds. Expectations are derived from Google's expansion in every case, so the scenario is correct
+whatever Google's rules turn out to be — what is asserted is that FamilyHQ agrees with it.
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RG4** | One occurrence moved and renamed in Google changes on the kiosk and nothing else does | Google holds one exception, at its new time, recording the slot it replaces; preprod serves the whole set instant for instant and **title by title**. | A kiosk that shows the old time for the edited occurrence, or the new title on its neighbours, has read an exception as a change to the series. |
+| **RG5** | One occurrence deleted in Google disappears from the kiosk and the others stay | The cancelled slot is gone from Google's expansion *and* from what preprod serves, and the others are untouched. | A single occurrence the family removed on a phone that stays on the kiosk is the shape of a broken inbound sync most easily mistaken for the series being intact. |
+| **RG6** | A series split in Google at one occurrence shows as both halves on the kiosk | The phone-app split: the original truncated with `UNTIL`, a second series inserted from the split point, and the kiosk showing the union of the two expansions with the right title on each half. | Showing only one half means the kiosk followed the truncation and missed the replacement, or vice versa — and the family loses or duplicates part of the series. |
+| **RG7** | Renaming a Google series reaches the occurrence that had already been singled out | That the exception survives the master rename as one exception on its original slot, and that whatever titles Google now holds are the titles the kiosk shows. Ordering is enforced: singling one out has to have worked before the rename, and a failure there is reported as the precondition. | A kiosk still showing a per-occurrence title Google has overwritten is a stale occurrence the family sees one way on the phone and another way on the wall. An exception that lost its original slot is expanded twice. |
+
+#### What Google actually does to an occurrence override
+
+Both RK7 and RG7 were written on the assumption — the reasonable one, and the one the ticket carried — that
+Google leaves an already-singled-out occurrence alone when the master is changed, the way its UI implies.
+**It does not.** Patching a master's `summary` through the API overwrites the `summary` an exception was
+carrying; the exception survives as an exception, on its original slot, but with the series' new title.
+
+This was established the only way it can be: by making that exact patch against real Google with the oracle
+credential and reading the result back, seconds later, before FamilyHQ could have touched anything (RG7's own
+run). It is not a FamilyHQ behaviour and it is not something the Simulator would ever have shown.
+
+The consequence for this suite is the point of the prime directive. The kiosk's "all events" edit overwrites
+the override too — and that is FamilyHQ being **compatible**, not FamilyHQ being wrong. A scenario demanding
+the override survive would have been demanding that FamilyHQ diverge from the system of record. So both
+scenarios assert the *structure* Google leaves behind (one exception, still on its slot) and defer the titles
+to the title-by-title comparison against Google's own expansion, which is correct whatever Google decides.
+
+If a future run goes red here because Google has changed its mind, that is this suite doing its job: re-read
+this section, re-establish what Google does now, and move the assertion — do not relax it.
+
+### A series that spans the next daylight-saving change — `DaylightSaving.feature`
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RD1** | A series created on the kiosk keeps its wall-clock time across the change | A **daily** series of three — the day before the next transition, the day of it, the day after — written by the kiosk, expands in Google to three occurrences at one unchanged wall-clock time and at **two different UTC offsets**, and preprod serves exactly those instants. | An occurrence an hour out is a series stepped forward in fixed units instead of in its own zone. A skipped or repeated date is a daily rule that lost a day at the transition. |
+| **RD2** | A series created in Google keeps its wall-clock time across the change | The same, inbound. | The same, seen from the other direction: the phone and the wall would show the same event at different times. |
+
+**How the transition is found, and why it is not a date in the source.** `FamilyClock.NextOffsetChangeDate()`
+asks the family's own zone when it next changes its UTC offset, sampling midday on each candidate date from
+tomorrow onwards and stopping at the first day whose offset differs. The series is then placed at
+`transition − 1 day` with a **daily** rule and three occurrences.
+
+Three things follow, and all three are deliberate:
+
+- **A date written into the source would rot silently.** Once it passed, the scenario would keep passing while
+  testing an ordinary three-day series. Coverage that has quietly stopped existing is worse than none, because
+  it still looks like coverage.
+- **Daily, not weekly.** Three consecutive days is the shortest bounded series that can straddle a transition.
+  A weekly series would have to start a week before it, which is not always in the future, and would place the
+  whole scenario further out for no extra coverage.
+- **The straddle is asserted, not assumed.** The scenario requires the three occurrences to sit at **more than
+  one** UTC offset, and requires their dates to be exactly the day before, the day of and the day after the
+  discovered date. If the placement ever stops spanning a change — the zone's rules change, the arithmetic
+  drifts — the scenario fails and says so instead of passing vacuously. A zone with no transition at all in the
+  coming year is reported as such rather than searched for for ever.
 
 ---
 
@@ -449,6 +601,19 @@ Set the **start** time before the end, too: the modal's start-time setter preser
 duration by shifting the end by the same delta, so a start set afterwards silently moves an end that
 was already right.
 
+### "A recurrence scenario reports the right number of occurrences but the wrong titles"
+
+Almost certainly a comparison that has escaped the bounded wait. A change made in Google very often leaves
+the *number* of occurrences alone — a renamed series, a moved occurrence — so a wait that settles on the count
+and then compares titles or instants returns the moment it is asked and compares against a kiosk the push has
+not reached. It fails against a perfectly healthy environment, and the obvious-looking fix (wait, then look
+again) is exactly the compensation [principle 2](#principles-you-must-not-quietly-relax) forbids.
+
+Every part of the comparison belongs **inside** the wait, which is what
+`SmokeSeries.AssertPreprodAgreesWithGoogle…Async` does. It then makes one further read-only look after the
+deadline purely to turn "still false" into a named difference, and raises the original timeout if that look
+somehow agrees.
+
 ### "Preflight passes but every kiosk scenario times out on a locator"
 
 Check whether the `data-testid` attributes listed [above](#data-testid-attributes-this-suite-relies-on)
@@ -461,13 +626,14 @@ cannot satisfy them.
 
 1. **Ask first whether it belongs here.** If the behaviour can be proved against the Simulator, it
    belongs in E2E. This suite is for interactions with third parties that the Simulator does not model.
-   FHQ-195 tracks the remaining coverage.
 2. Write the scenario in the relevant `.feature` file. Keep it to five steps or fewer, and describe the
    outcome rather than the clicks.
 3. Tag it `@kiosk` if it drives the browser. Feature-level tags count — the hooks read the scenario's
    tags **and** its feature's, because both tags in this suite are declared once at feature level.
-4. Reuse `SmokeEventShape` for the event's date and times, and `SmokeCorrelation.Title` /
-   `.Description` for its title and description. Never write a title or description without them.
+4. Reuse `SmokeEventShape` for the event's times, **`state.EventDay`** for its date, and
+   `SmokeCorrelation.Title` / `.Description` for its title and description. Never write a title or a
+   description without them, and never compute a date of your own — see
+   [why no scenario shares a day](#why-no-scenario-shares-a-day).
 5. If it creates a series, it is bounded. `SmokeWeeklyRecurrence` gives you no other option.
 6. Assert against Google or against preprod's API — never against FamilyHQ's opinion of its own write.
    `SmokeLookup` is the way in.
@@ -483,8 +649,11 @@ cannot satisfy them.
 
 - **A new kind of third-party interaction.** A new Google API call, a new outbound field, a new
   provider. That is what this suite is for.
-- **A change to the Google write path.** Ask whether KG3's field list still covers the fields that
-  could be lost.
+- **A change to the Google write path.** Ask whether KG3's and RK11's field lists still cover the fields that
+  could be lost. RK11 is the series-shaped version of KG3 and the one that guards the anchor zone.
+- **A change in what Google itself does.** The suite encodes observed third-party behaviour in a few places —
+  see [what Google actually does to an occurrence override](#what-google-actually-does-to-an-occurrence-override).
+  A red run there is a report about Google, not about FamilyHQ.
 - **A change to the calendar model** (placement, membership, the `[members:]` tag) — KG1, KG1b and GK2
   encode the current model.
 - **A change to a `data-testid`** the suite uses. Keep the list above accurate.
@@ -497,6 +666,19 @@ cannot satisfy them.
   fault; relaxing the assertion removes the only thing that would have caught it.
 - To add UI coverage. That is E2E's job.
 - To add a retry. See principle 2.
+
+### Deliberately not covered
+
+- **Moving an event between calendars** (a member change that crosses the single-member / multi-member
+  boundary). FamilyHQ implements it as create-on-target plus delete-from-source, which changes the Google event
+  id and drops every field FamilyHQ does not model. Scenarios for it would be permanently red, and with the
+  suite gating releases a permanently red scenario blocks every release. They belong with the fix, as its proof.
+- **`MoveEventAsync`** on the Google client: it has no production call sites at all, so there is nothing to
+  smoke-test.
+- **Stopping a push channel.** It only fires on re-registration or expiry, neither of which a scenario can
+  force without waiting days. Covered by the renewal check instead.
+- **Interactive Google sign-in** and **geocoding** — see [out of scope](#re-signing-in-when-the-google-grant-is-revoked)
+  above and the manual sign-in procedure.
 
 ### Related documents
 

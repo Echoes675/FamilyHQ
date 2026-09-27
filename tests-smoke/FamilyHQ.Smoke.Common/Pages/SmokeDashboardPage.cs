@@ -58,11 +58,11 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
 
     private ILocator DeleteButton => EventModal.GetByTestId("event-delete-btn");
 
+    private ILocator AllDayToggle => EventModal.GetByTestId("all-day-toggle");
+
     private ILocator RecurrenceSection => EventModal.GetByTestId("recurrence-section");
 
     private ILocator RepeatToggle => RecurrenceSection.GetByTestId("recurrence-repeat-toggle");
-
-    private ILocator CountInput => RecurrenceSection.GetByTestId("recurrence-count");
 
     private ILocator ScopePrompt => Page.GetByTestId("recurrence-scope-prompt");
 
@@ -162,14 +162,21 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
             await CommitFieldAsync(LocationInput, draft.Location);
         }
 
+        // All-day first, because it decides whether the time pickers are rendered at all. Setting it
+        // afterwards would leave a pair of times that the modal has since stopped showing.
+        await SetAllDayAsync(draft.IsAllDay);
+
         await SetDateRangeAsync(draft.Date);
 
-        // Start before end, and never the other way round. The modal's start-time setter preserves the
-        // event's duration by shifting the end by the same delta (moving 09:00→10:00 drags a 10:00 end to
-        // 11:00), so a start set afterwards would silently move an end that was already correct. Setting
-        // the end second is safe because its setter is absolute.
-        await SetTimeAsync("start", draft.StartTime);
-        await SetTimeAsync("end", draft.EndTime);
+        if (!draft.IsAllDay)
+        {
+            // Start before end, and never the other way round. The modal's start-time setter preserves
+            // the event's duration by shifting the end by the same delta (moving 09:00→10:00 drags a
+            // 10:00 end to 11:00), so a start set afterwards would silently move an end that was
+            // already correct. Setting the end second is safe because its setter is absolute.
+            await SetTimeAsync("start", draft.StartTime);
+            await SetTimeAsync("end", draft.EndTime);
+        }
 
         foreach (var calendarName in draft.CalendarNames)
         {
@@ -178,7 +185,7 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
 
         if (draft.Recurrence is not null)
         {
-            await SetBoundedWeeklyRepeatAsync(draft.Recurrence);
+            await SetBoundedRepeatAsync(draft.Recurrence);
         }
 
         await SaveAndAwaitWriteAsync("POST", $"create '{draft.Title}'");
@@ -198,7 +205,61 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     }
 
     /// <summary>Deletes an event from the kiosk.</summary>
-    public async Task DeleteEventAsync(string titleFragment, DateOnly date)
+    public Task DeleteEventAsync(string titleFragment, DateOnly date) =>
+        DeleteThroughModalAsync(titleFragment, date, scope: null);
+
+    /// <summary>
+    /// Renames one occurrence of a series and applies the change at <paramref name="scope"/> — the
+    /// choice the kiosk asks for after Save.
+    /// <para>
+    /// Only the title changes, so whatever else Google holds afterwards is FamilyHQ's own choice of
+    /// what to send back, exactly as in the single-event golden-rule flow.
+    /// </para>
+    /// </summary>
+    public async Task RenameOccurrenceAsync(
+        string currentTitleFragment, string newTitle, DateOnly occurrenceDate, SmokeRecurrenceScope scope)
+    {
+        await OpenEventAsync(currentTitleFragment, occurrenceDate);
+        await ShowTabAsync("details");
+        await CommitFieldAsync(TitleInput, newTitle);
+        await SaveAndAwaitWriteAsync("PUT", $"rename to '{newTitle}' at scope {scope}", scope);
+    }
+
+    /// <summary>Deletes one occurrence of a series, applying the delete at <paramref name="scope"/>.</summary>
+    public Task DeleteOccurrenceAsync(
+        string titleFragment, DateOnly occurrenceDate, SmokeRecurrenceScope scope) =>
+        DeleteThroughModalAsync(titleFragment, occurrenceDate, scope);
+
+    /// <summary>
+    /// Switches the repeat off on an existing series, which collapses it to the single event the
+    /// series started from.
+    /// <para>
+    /// The kiosk still asks which occurrences to change, and the answer is stated rather than defaulted:
+    /// a collapse is inherently a whole-series operation, so "all events" is the only honest answer — and
+    /// stating it means the prompt is <b>waited for</b> instead of glanced at, which is the difference
+    /// between a reliable step and one that depends on the prompt having rendered by the time it is
+    /// looked at.
+    /// </para>
+    /// </summary>
+    public async Task TurnOffRecurrenceAsync(string titleFragment, DateOnly date)
+    {
+        await OpenEventAsync(titleFragment, date);
+        await ShowTabAsync("repeat");
+
+        if (await RepeatToggle.GetAttributeAsync("aria-pressed") == "true")
+        {
+            await RepeatToggle.ClickAsync();
+        }
+
+        await Assertions.Expect(RepeatToggle).ToHaveAttributeAsync("aria-pressed", "false");
+        await SaveAndAwaitWriteAsync(
+            "PUT", $"switch the repeat off on '{titleFragment}'", SmokeRecurrenceScope.AllEvents);
+    }
+
+    // ── Internals ───────────────────────────────────────────────────────────────
+
+    private async Task DeleteThroughModalAsync(
+        string titleFragment, DateOnly date, SmokeRecurrenceScope? scope)
     {
         await OpenEventAsync(titleFragment, date);
 
@@ -208,13 +269,11 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
             new PageWaitForResponseOptions { Timeout = configuration.DefaultTimeoutMs });
 
         await DeleteButton.ClickAsync();
-        await ConfirmScopePromptIfShownAsync();
+        await ConfirmScopePromptAsync(scope, $"delete '{titleFragment}'");
         await AssertWriteSucceededAsync(await deleteResponse, $"delete '{titleFragment}'");
         await EventModal.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden });
         await WaitForCalendarVisibleAsync();
     }
-
-    // ── Internals ───────────────────────────────────────────────────────────────
 
     private ILocator TileWithText(string titleFragment) =>
         Page.Locator("[data-testid='day-event-block'], [data-testid='event-capsule']")
@@ -348,11 +407,28 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     }
 
     /// <summary>
-    /// Drives the recurrence picker to a bounded weekly rule. The Custom drawer is the only place the
-    /// picker offers an end condition, so a bounded series is created there by construction — the
-    /// Weekly preset would produce an endless one.
+    /// Sets the all-day toggle to <paramref name="on"/> and confirms the component took it. The
+    /// toggle renders its own state, so the pressed attribute is the model's answer rather than the
+    /// click's.
     /// </summary>
-    private async Task SetBoundedWeeklyRepeatAsync(SmokeWeeklyRecurrence recurrence)
+    private async Task SetAllDayAsync(bool on)
+    {
+        var wanted = on ? "true" : "false";
+
+        if (await AllDayToggle.GetAttributeAsync("aria-pressed") != wanted)
+        {
+            await AllDayToggle.ClickAsync();
+        }
+
+        await Assertions.Expect(AllDayToggle).ToHaveAttributeAsync("aria-pressed", wanted);
+    }
+
+    /// <summary>
+    /// Drives the recurrence picker to a bounded rule. The Custom drawer is the only place the picker
+    /// offers an end condition, so a bounded series is created there by construction — every preset
+    /// would produce an endless one.
+    /// </summary>
+    private async Task SetBoundedRepeatAsync(SmokeRecurrence recurrence)
     {
         await ShowTabAsync("repeat");
 
@@ -363,15 +439,22 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
         }
 
         await PressPillAsync(RecurrenceSection.GetByTestId("recurrence-mode-custom"));
-        await PressPillAsync(RecurrenceSection.GetByTestId("recurrence-frequency-weekly"));
+        await PressPillAsync(
+            RecurrenceSection.GetByTestId(
+                $"recurrence-frequency-{recurrence.Frequency.ToString().ToLowerInvariant()}"));
 
-        if (recurrence.Weekdays.Count > 0)
+        if (recurrence.Interval != 1)
         {
-            await SetWeekdaysAsync(recurrence.Weekdays);
+            await SetStepperAsync("recurrence-interval", recurrence.Interval);
+        }
+
+        if (recurrence.SelectedWeekdays.Count > 0)
+        {
+            await SetWeekdaysAsync(recurrence.SelectedWeekdays);
         }
 
         await PressPillAsync(RecurrenceSection.GetByTestId("recurrence-end-count"));
-        await SetOccurrenceCountAsync(recurrence.Occurrences);
+        await SetStepperAsync("recurrence-count", recurrence.Occurrences);
     }
 
     private static async Task PressPillAsync(ILocator pill)
@@ -403,31 +486,35 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     }
 
     /// <summary>
-    /// Steps the occurrence count to <paramref name="occurrences"/> using the picker's own +/- buttons
-    /// rather than typing into the field, because the stepper is what a kiosk user has and it commits
+    /// Steps a numeric recurrence field to <paramref name="wanted"/> using the picker's own +/-
+    /// buttons rather than typing into it, because the stepper is what a kiosk user has and it commits
     /// on every click.
     /// </summary>
-    private async Task SetOccurrenceCountAsync(int occurrences)
+    private async Task SetStepperAsync(string fieldTestId, int wanted)
     {
-        var increment = RecurrenceSection.GetByTestId("recurrence-count-increment");
-        var decrement = RecurrenceSection.GetByTestId("recurrence-count-decrement");
+        var field = RecurrenceSection.GetByTestId(fieldTestId);
+        var increment = RecurrenceSection.GetByTestId($"{fieldTestId}-increment");
+        var decrement = RecurrenceSection.GetByTestId($"{fieldTestId}-decrement");
 
         for (var click = 0; click < MaxStepperClicks; click++)
         {
-            var current = int.Parse(await CountInput.InputValueAsync(), CultureInfo.InvariantCulture);
-            if (current == occurrences)
+            var current = int.Parse(await field.InputValueAsync(), CultureInfo.InvariantCulture);
+            if (current == wanted)
             {
                 return;
             }
 
-            await (current < occurrences ? increment : decrement).ClickAsync();
+            await (current < wanted ? increment : decrement).ClickAsync();
         }
 
         throw new InvalidOperationException(
-            $"The recurrence count stepper did not reach {occurrences} within {MaxStepperClicks} clicks.");
+            $"The '{fieldTestId}' stepper did not reach {wanted} within {MaxStepperClicks} clicks.");
     }
 
-    private async Task SaveAndAwaitWriteAsync(string method, string what)
+    private Task SaveAndAwaitWriteAsync(string method, string what) =>
+        SaveAndAwaitWriteAsync(method, what, scope: null);
+
+    private async Task SaveAndAwaitWriteAsync(string method, string what, SmokeRecurrenceScope? scope)
     {
         await AssertSaveIsNotBlockedAsync(what);
 
@@ -437,7 +524,7 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
             new PageWaitForResponseOptions { Timeout = configuration.DefaultTimeoutMs });
 
         await SaveButton.ClickAsync();
-        await ConfirmScopePromptIfShownAsync();
+        await ConfirmScopePromptAsync(scope, what);
 
         IResponse response;
         try
@@ -522,17 +609,65 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     }
 
     /// <summary>
-    /// Accepts the recurrence scope prompt at its default ("all events in the series") when the kiosk
-    /// shows one. It only appears for a series, and the smoke scenarios that touch a series mean the
-    /// whole series, so there is no scope to choose.
+    /// Answers the recurrence scope prompt.
+    /// <para>
+    /// With no <paramref name="scope"/> the prompt is accepted at its default ("all events") if one is
+    /// showing, and its absence is fine — a single event is never asked.
+    /// </para>
+    /// <para>
+    /// With a scope, the prompt <b>must</b> appear: the scope is the thing the scenario is testing, and
+    /// an edit that was silently applied as a single event would otherwise be reported much later as a
+    /// wrong occurrence set with no hint of why. Each control is waited for before the next is clicked,
+    /// and the pill's own pressed state is confirmed, because Save → pill → OK is three renders and
+    /// clicking ahead of one of them loses the click.
+    /// </para>
     /// </summary>
-    private async Task ConfirmScopePromptIfShownAsync()
+    private async Task ConfirmScopePromptAsync(SmokeRecurrenceScope? scope, string what)
     {
-        if (await ScopePrompt.IsVisibleAsync())
+        if (scope is null)
         {
-            await ScopePromptConfirm.ClickAsync();
+            if (await ScopePrompt.IsVisibleAsync())
+            {
+                await ScopePromptConfirm.ClickAsync();
+            }
+
+            return;
         }
+
+        try
+        {
+            await ScopePrompt.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Visible,
+                Timeout = configuration.DefaultTimeoutMs
+            });
+        }
+        catch (PlaywrightException ex)
+        {
+            throw new InvalidOperationException(
+                $"The kiosk never asked which occurrences to change while trying to {what}, so the "
+                + "scope this scenario is about was never chosen. Either the event the suite opened is "
+                + "not part of a series, or the prompt did not appear. "
+                + await DescribeModalStateAsync(),
+                ex);
+        }
+
+        var pill = Page.GetByTestId($"recurrence-scope-{ScopeTestIdSuffix(scope.Value)}");
+        await pill.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible });
+        await pill.ClickAsync();
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true");
+
+        await ScopePromptConfirm.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible });
+        await ScopePromptConfirm.ClickAsync();
     }
+
+    private static string ScopeTestIdSuffix(SmokeRecurrenceScope scope) => scope switch
+    {
+        SmokeRecurrenceScope.ThisEvent => "this",
+        SmokeRecurrenceScope.ThisAndFollowing => "following",
+        SmokeRecurrenceScope.AllEvents => "all",
+        _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, "Not a recurrence scope.")
+    };
 
     private static async Task AssertWriteSucceededAsync(IResponse response, string what)
     {

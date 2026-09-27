@@ -21,7 +21,17 @@ public static class SmokeLookup
     /// </summary>
     private const int WindowDaysBefore = 2;
 
-    private const int WindowDaysAfter = 90;
+    /// <summary>
+    /// The default reach forward. Wide enough for a bounded weekly or daily series; a yearly series asks
+    /// for more, because its second occurrence is a whole year past its first.
+    /// </summary>
+    public const int DefaultWindowDaysAfter = 90;
+
+    /// <summary>
+    /// The reach forward a yearly series needs: a little over a year, so a two-occurrence yearly rule is
+    /// fully inside the window whichever date it starts on.
+    /// </summary>
+    public const int YearlyWindowDaysAfter = 400;
 
     /// <summary>
     /// Every event carrying this scenario's marker, across every calendar the smoke account can be pushed
@@ -34,11 +44,11 @@ public static class SmokeLookup
     /// </summary>
     public static async Task<IReadOnlyList<SmokeGoogleLocation>> FindInGoogleAsync(
         SmokeScenarioState state, DateOnly anchorDate, bool expandInstances = false,
-        CancellationToken ct = default)
+        int daysAfter = DefaultWindowDaysAfter, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        var (from, to) = WindowAround(anchorDate);
+        var (from, to) = WindowAround(anchorDate, daysAfter);
         var found = new List<SmokeGoogleLocation>();
 
         foreach (var calendarName in state.Environment.Configuration.PushCapableCalendarNames)
@@ -63,6 +73,7 @@ public static class SmokeLookup
         Func<IReadOnlyList<SmokeGoogleLocation>, bool> settled,
         string failureDescription,
         bool expandInstances = false,
+        int daysAfter = DefaultWindowDaysAfter,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -71,7 +82,7 @@ public static class SmokeLookup
         return BoundedWait.ForAsync(
             async () =>
             {
-                var found = await FindInGoogleAsync(state, anchorDate, expandInstances, ct);
+                var found = await FindInGoogleAsync(state, anchorDate, expandInstances, daysAfter, ct);
                 return settled(found) ? found : null;
             },
             failureDescription,
@@ -87,12 +98,21 @@ public static class SmokeLookup
     /// kiosk-side match cannot hit an earlier run (FHQ-141 principle 4).
     /// </para>
     /// </summary>
+    public static Task<IReadOnlyList<PreprodEvent>> FindInPreprodAsync(
+        SmokeScenarioState state, DateOnly anchorDate, CancellationToken ct = default) =>
+        FindInPreprodAsync(state, MonthsAround(anchorDate), ct);
+
+    /// <summary>
+    /// The same, for a series whose occurrences are too far apart to sit inside one run of consecutive
+    /// months — a yearly rule, principally. The caller names the months, deriving them from Google's own
+    /// expansion rather than from arithmetic of its own.
+    /// </summary>
     public static async Task<IReadOnlyList<PreprodEvent>> FindInPreprodAsync(
-        SmokeScenarioState state, DateOnly anchorDate, CancellationToken ct = default)
+        SmokeScenarioState state, IReadOnlyList<DateOnly> months, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        var events = await state.RequireApi().GetEventsAsync(MonthsAround(anchorDate), ct);
+        var events = await state.RequireApi().GetEventsAsync(months, ct);
         return [.. events.Where(item => state.Correlation.TitleCarriesShortId(item.Title))];
     }
 
@@ -100,6 +120,15 @@ public static class SmokeLookup
     public static Task<IReadOnlyList<PreprodEvent>> WaitForPreprodAsync(
         SmokeScenarioState state,
         DateOnly anchorDate,
+        Func<IReadOnlyList<PreprodEvent>, bool> settled,
+        string failureDescription,
+        CancellationToken ct = default) =>
+        WaitForPreprodAsync(state, MonthsAround(anchorDate), settled, failureDescription, ct);
+
+    /// <summary>Waits, once and boundedly, until preprod's view across <paramref name="months"/> satisfies <paramref name="settled"/>.</summary>
+    public static Task<IReadOnlyList<PreprodEvent>> WaitForPreprodAsync(
+        SmokeScenarioState state,
+        IReadOnlyList<DateOnly> months,
         Func<IReadOnlyList<PreprodEvent>, bool> settled,
         string failureDescription,
         CancellationToken ct = default)
@@ -110,7 +139,7 @@ public static class SmokeLookup
         return BoundedWait.ForAsync(
             async () =>
             {
-                var found = await FindInPreprodAsync(state, anchorDate, ct);
+                var found = await FindInPreprodAsync(state, months, ct);
                 return settled(found) ? found : null;
             },
             failureDescription,
@@ -118,10 +147,11 @@ public static class SmokeLookup
     }
 
     /// <summary>The Google search window around <paramref name="anchorDate"/>, as absolute instants.</summary>
-    public static (DateTimeOffset From, DateTimeOffset To) WindowAround(DateOnly anchorDate)
+    public static (DateTimeOffset From, DateTimeOffset To) WindowAround(
+        DateOnly anchorDate, int daysAfter = DefaultWindowDaysAfter)
     {
         var from = FamilyClock.ToFamilyOffset(anchorDate.AddDays(-WindowDaysBefore).ToDateTime(TimeOnly.MinValue));
-        var to = FamilyClock.ToFamilyOffset(anchorDate.AddDays(WindowDaysAfter).ToDateTime(TimeOnly.MinValue));
+        var to = FamilyClock.ToFamilyOffset(anchorDate.AddDays(daysAfter).ToDateTime(TimeOnly.MinValue));
         return (from, to);
     }
 
@@ -134,5 +164,31 @@ public static class SmokeLookup
     {
         var first = new DateOnly(anchorDate.Year, anchorDate.Month, 1);
         return [first.AddMonths(-1), first, first.AddMonths(1), first.AddMonths(2)];
+    }
+
+    /// <summary>
+    /// The months preprod has to be asked about to see <paramref name="dates"/> — each date's month plus
+    /// the month either side of it.
+    /// <para>
+    /// The neighbouring months are what keep this an assertion rather than a leading question. Asking only
+    /// about the months Google's own instances fall in would find the expected occurrences and stay blind
+    /// to an extra one a few days off, which is exactly the failure worth catching when two expansions
+    /// disagree.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<DateOnly> MonthsCovering(IEnumerable<DateOnly> dates)
+    {
+        ArgumentNullException.ThrowIfNull(dates);
+
+        var months = new SortedSet<DateOnly>();
+        foreach (var date in dates)
+        {
+            var first = new DateOnly(date.Year, date.Month, 1);
+            months.Add(first.AddMonths(-1));
+            months.Add(first);
+            months.Add(first.AddMonths(1));
+        }
+
+        return [.. months];
     }
 }
