@@ -236,7 +236,201 @@ public class EventsControllerRemindersTests
         db.Events.Should().ContainSingle().Which.Id.Should().Be("evt-master");
     }
 
+    // ── Reading an event ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetEvent_OnATimedEventWithNothingStored_ReportsFollowingTheCalendarDefault()
+    {
+        // Google never omits the reminders object. A timed event with nothing of its own follows the
+        // calendar's default, and says so rather than reporting the default's contents.
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedEventAsync(db, "evt-1", remindersJson: null);
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.GetEvent("cal-alice", "evt-1"));
+
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeTrue();
+        reminders.TryGetProperty("overrides", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetEvent_OnAnAllDayEventWithNothingStored_ReportsTheCalendarDefaultsAsItsOwn()
+    {
+        // An all-day event never inherits: Google copies the calendar's defaults onto it as explicit
+        // overrides, so useDefault:true does not occur on one.
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedEventAsync(db, "evt-1", remindersJson: null, isAllDay: true);
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.GetEvent("cal-alice", "evt-1"));
+
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+        MinutesOf(reminders).Should().Equal(30);
+    }
+
+    [Fact]
+    public async Task GetEvent_OnAnAllDayEventWhenTheCalendarHasNoDefaults_ReportsNeitherDefaultNorOverrides()
+    {
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: null);
+        await SeedEventAsync(db, "evt-1", remindersJson: null, isAllDay: true);
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.GetEvent("cal-alice", "evt-1"));
+
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+        reminders.TryGetProperty("overrides", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetEvent_WhenStoredAsExplicitlyNone_OmitsTheOverridesKey()
+    {
+        // Stored as useDefault:false with an empty array; Google reads it back with no overrides key
+        // at all, so a client must read a missing array as "none" rather than as "unknown".
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedEventAsync(db, "evt-1", """{"useDefault":false,"overrides":[]}""");
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.GetEvent("cal-alice", "evt-1"));
+
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+        reminders.TryGetProperty("overrides", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetEvent_DoesNotReportOverridesInTheOrderTheyWereStored()
+    {
+        using var db = CreateDb();
+        await SeedEventAsync(
+            db,
+            "evt-1",
+            """{"useDefault":false,"overrides":[{"method":"popup","minutes":10},{"method":"popup","minutes":60}]}""");
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.GetEvent("cal-alice", "evt-1"));
+
+        MinutesOf(reminders).Should().NotEqual(new[] { 10, 60 }).And.BeEquivalentTo(new[] { 10, 60 });
+    }
+
+    [Fact]
+    public async Task CreateEvent_WithNoRemindersKey_ReportsFollowingTheCalendarDefault()
+    {
+        // The create response is a read like any other, so it reports the object too — the app never
+        // sees a missing reminders key from Google.
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        var sut = CreateSut(db, userId: "alice");
+
+        var reminders = RemindersOf(await sut.CreateEvent("cal-alice", TimedBody(reminders: null)));
+
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeTrue();
+    }
+
+    // ── Reading a recurring series ────────────────────────────────────────────
+
+    [Fact]
+    public async Task ListEvents_OnAnExpandedInstance_ReportsTheMastersReminders()
+    {
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedSeriesMasterAsync(
+            db, """{"useDefault":false,"overrides":[{"method":"popup","minutes":25}]}""");
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents(
+            "cal-alice", singleEvents: true, timeMin: "2027-01-01T00:00:00Z", timeMax: "2027-02-01T00:00:00Z");
+
+        var instance = ItemWithId(result, "evt-master_20270119T140000Z");
+        MinutesOf(instance.GetProperty("reminders")).Should().Equal(25);
+    }
+
+    [Fact]
+    public async Task ListEvents_OnAnExceptionOverride_ReportsItsOwnRemindersNotTheMasters()
+    {
+        // Editing one occurrence's reminders makes that occurrence an exception with reminders of its
+        // own; its siblings still report the master's.
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedSeriesMasterAsync(
+            db, """{"useDefault":false,"overrides":[{"method":"popup","minutes":25}]}""");
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-master_20270119T140000Z",
+            CalendarId = "cal-alice",
+            Summary = "Weekly",
+            UserId = "alice",
+            StartTime = new DateTime(2027, 1, 19, 14, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2027, 1, 19, 15, 0, 0, DateTimeKind.Utc),
+            RecurringEventId = "evt-master",
+            OriginalStartTime = new DateTime(2027, 1, 19, 14, 0, 0, DateTimeKind.Utc),
+            RemindersJson = """{"useDefault":false,"overrides":[{"method":"popup","minutes":5}]}"""
+        });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents(
+            "cal-alice", singleEvents: true, timeMin: "2027-01-01T00:00:00Z", timeMax: "2027-02-01T00:00:00Z");
+
+        MinutesOf(ItemWithId(result, "evt-master_20270119T140000Z").GetProperty("reminders"))
+            .Should().Equal(5);
+        MinutesOf(ItemWithId(result, "evt-master_20270126T140000Z").GetProperty("reminders"))
+            .Should().Equal(new[] { 25 }, "a sibling occurrence still follows the master");
+    }
+
+    [Fact]
+    public async Task ListEvents_ReportsEachAllDayEventsOwnCalendarsDefaults()
+    {
+        // Two calendars with different defaults, several events each: the defaults a listing reports
+        // come from each event's own calendar. The projection is handed one pre-loaded lookup for the
+        // whole request rather than querying per event, which a listing of a family's month would
+        // otherwise turn into an N+1 against a double the E2E suite waits on.
+        using var db = CreateDb();
+        await SeedCalendarAsync(db, "cal-alice", defaults: [new("popup", 30)]);
+        await SeedCalendarAsync(db, "cal-other", defaults: [new("email", 120)]);
+        await SeedEventAsync(db, "evt-1", remindersJson: null, isAllDay: true);
+        await SeedEventAsync(db, "evt-2", remindersJson: null, isAllDay: true);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-3",
+            CalendarId = "cal-other",
+            Summary = "Elsewhere",
+            UserId = "alice",
+            StartTime = new DateTime(2027, 1, 12, 0, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2027, 1, 13, 0, 0, 0, DateTimeKind.Utc),
+            IsAllDay = true
+        });
+        await db.SaveChangesAsync();
+        var sut = CreateSut(db, userId: "alice");
+
+        var result = await sut.ListEvents("cal-alice");
+
+        MinutesOf(ItemWithId(result, "evt-1").GetProperty("reminders")).Should().Equal(30);
+        MinutesOf(ItemWithId(result, "evt-2").GetProperty("reminders")).Should().Equal(30);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>The <c>reminders</c> object a single-event response reported.</summary>
+    private static JsonElement RemindersOf(IActionResult result)
+    {
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        return JsonSerializer.SerializeToElement(ok.Value).GetProperty("reminders");
+    }
+
+    private static JsonElement ItemWithId(IActionResult result, string id)
+    {
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        return JsonSerializer.SerializeToElement(ok.Value)
+            .GetProperty("items")
+            .EnumerateArray()
+            .Single(item => item.GetProperty("id").GetString() == id);
+    }
+
+    private static int[] MinutesOf(JsonElement reminders) =>
+        [.. reminders.GetProperty("overrides").EnumerateArray().Select(o => o.GetProperty("minutes").GetInt32())];
 
     /// <summary>The reminder error <c>reason</c> a rejected write answered with.</summary>
     private static string? ReasonOf(IActionResult result)
@@ -284,7 +478,8 @@ public class EventsControllerRemindersTests
         Reminders = reminders
     };
 
-    private static async Task SeedEventAsync(SimContext db, string id, string? remindersJson)
+    private static async Task SeedEventAsync(
+        SimContext db, string id, string? remindersJson, bool isAllDay = false)
     {
         db.Events.Add(new SimulatedEvent
         {
@@ -294,6 +489,38 @@ public class EventsControllerRemindersTests
             UserId = "alice",
             StartTime = new DateTime(2027, 1, 12, 14, 0, 0, DateTimeKind.Utc),
             EndTime = new DateTime(2027, 1, 12, 15, 0, 0, DateTimeKind.Utc),
+            IsAllDay = isAllDay,
+            RemindersJson = remindersJson
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SeedCalendarAsync(
+        SimContext db, string id, List<GoogleEventReminderOverride>? defaults)
+    {
+        db.Calendars.Add(new SimulatedCalendar
+        {
+            Id = id,
+            Summary = id,
+            UserId = "alice",
+            DefaultRemindersJson = defaults is null ? null : JsonSerializer.Serialize(defaults)
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>A three-occurrence weekly series starting 2027-01-12T14:00Z.</summary>
+    private static async Task SeedSeriesMasterAsync(SimContext db, string? remindersJson)
+    {
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-master",
+            CalendarId = "cal-alice",
+            Summary = "Weekly",
+            UserId = "alice",
+            StartTime = new DateTime(2027, 1, 12, 14, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2027, 1, 12, 15, 0, 0, DateTimeKind.Utc),
+            StartTimeZone = "Europe/London",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;COUNT=3",
             RemindersJson = remindersJson
         });
         await db.SaveChangesAsync();
