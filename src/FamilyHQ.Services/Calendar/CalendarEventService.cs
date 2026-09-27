@@ -209,7 +209,9 @@ public class CalendarEventService(
         if (reconciled.All(r => r.Id != originalRowId))
         {
             await calendarRepository.DeleteEventAsync(originalRowId, ct);
-            await calendarRepository.SaveChangesAsync(ct);
+            // FHQ-214: Google's push for the promotion replaces this single with expanded instances,
+            // so a concurrent sync can tombstone this very row before the commit lands.
+            await CommitRowRemovalAsync([calendarEvent], ct);
         }
 
         // Return a recurring row from the reconciled set (the now-series), not the stale single.
@@ -248,15 +250,14 @@ public class CalendarEventService(
 
         // Delete every former expanded-instance row (compound id != seriesId). The reconcile only
         // touched the collapsed single (id == seriesId), so these rows are now orphaned.
-        var removedAny = false;
-        foreach (var row in instanceRows.Where(r => r.GoogleEventId != seriesId))
-        {
+        var orphaned = instanceRows.Where(r => r.GoogleEventId != seriesId).ToList();
+        foreach (var row in orphaned)
             await calendarRepository.DeleteEventAsync(row.Id, ct);
-            removedAny = true;
-        }
 
-        if (removedAny)
-            await calendarRepository.SaveChangesAsync(ct);
+        // FHQ-214: the collapse Google has just applied tombstones exactly these expanded instances,
+        // so a concurrent sync can remove them before the commit lands.
+        if (orphaned.Count > 0)
+            await CommitRowRemovalAsync(orphaned, ct);
 
         // The surviving clean single is the reconciled row whose id == the (former) series id and which
         // now carries no recurrence link or rule.
@@ -340,7 +341,7 @@ public class CalendarEventService(
 
         await googleCalendarClient.DeleteEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent.GoogleEventId, ct);
         await calendarRepository.DeleteEventAsync(eventId, ct);
-        await calendarRepository.SaveChangesAsync(ct);
+        await CommitRowRemovalAsync([calendarEvent], ct);
 
         logger.LogInformation("Event {EventId} deleted.", eventId);
     }
@@ -408,7 +409,7 @@ public class CalendarEventService(
             case RecurrenceScope.ThisOnly:
                 await googleCalendarClient.DeleteEventAsync(ownerCalendar.GoogleCalendarId, calendarEvent.GoogleEventId, ct);
                 await calendarRepository.DeleteEventAsync(eventId, ct);
-                await calendarRepository.SaveChangesAsync(ct);
+                await CommitRowRemovalAsync([calendarEvent], ct);
                 break;
 
             case RecurrenceScope.ThisAndFollowing:
@@ -1252,19 +1253,101 @@ public class CalendarEventService(
     private async Task RemoveSeriesRowsFromSplitAsync(string seriesId, DateTimeOffset? splitFrom, CancellationToken ct)
     {
         var rows = await calendarRepository.GetEventsBySeriesIdAsync(seriesId, ct);
-        var toRemove = splitFrom is { } from
+        var toRemove = (splitFrom is { } from
             ? rows.Where(r => r.Start >= from)
-            : rows;
+            : rows).ToList();
 
-        var removedAny = false;
         foreach (var row in toRemove)
-        {
             await calendarRepository.DeleteEventAsync(row.Id, ct);
-            removedAny = true;
-        }
 
-        if (removedAny)
-            await calendarRepository.SaveChangesAsync(ct);
+        if (toRemove.Count > 0)
+            await CommitRowRemovalAsync(toRemove, ct);
+    }
+
+    // ── FHQ-214: committing a local row removal is idempotent ─────────────────
+    //
+    // Every caller of CommitRowRemovalAsync has just told Google to remove something and then marked
+    // the matching local rows for deletion. Google's push for that write arrives within seconds
+    // (RelayRobin on preprod, always fast in production), so a targeted sync can delete the very same
+    // rows in the gap between the Google call returning and this commit. EF's DELETE then reports
+    // zero rows affected where it expected one and raises DbUpdateConcurrencyException — a conflict
+    // in form only. The desired end state of every one of these paths is "these rows do not exist",
+    // and another writer having got there first is success, not a failure: before this, the family
+    // saw an HTTP 500 on a delete that had fully succeeded, with the kiosk modal stuck open on an
+    // event that no longer existed (preprod smoke run, Deploy-PreProd #90).
+    //
+    // Why zero rows is unambiguous here: CalendarEvent carries no optimistic-concurrency token —
+    // only CalendarSyncJob and UserToken do, and ConcurrencyTokenModelGuard enforces exactly those
+    // two — so for a Deleted event row "affected 0 rows" can only mean the row is absent. It can
+    // never mean "still present but changed underneath us".
+    //
+    // Why it re-reads instead of simply swallowing the exception:
+    //   * A failed SaveChanges rolls its whole batch back, and a series delete removes N rows at
+    //     once, so rows the other writer did NOT remove are still there. Accepting the exception
+    //     outright would silently leave them behind; the survivors are re-deleted instead.
+    //   * It keeps the catch honest. A conflict raised by any other entity leaves all of these rows
+    //     in place, so it falls through to the rethrow rather than being swallowed.
+    //
+    // The delete on Google is never repeated: this helper only ever touches local rows.
+    //
+    // The tracked delete is deliberately left as it is rather than replaced with ExecuteDelete by
+    // predicate. Its cascade is the EventMembers junction — EF deletes the loaded join rows and the
+    // FK FK_EventMembers_Events_CalendarEventId is ON DELETE CASCADE besides — and it is the only
+    // FK pointing at Events, so nothing is dropped by keeping it. ExecuteDelete would also commit
+    // immediately, outside the pending change set, splitting these batched delete+save units of work
+    // in two; and ICalendarRepository.DeleteEventAsync is shared with CalendarSyncService, whose
+    // `changeCount += SaveChangesAsync(...)` return value decides whether the placement reconcile
+    // runs, which an ExecuteDelete would silently zero.
+    private const int MaxRowRemovalAttempts = 3;
+
+    private async Task CommitRowRemovalAsync(IReadOnlyList<CalendarEvent> removed, CancellationToken ct)
+    {
+        var pending = removed;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await calendarRepository.SaveChangesAsync(ct);
+                return;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // The failed entries stay tracked as Deleted and would poison the next save.
+                foreach (var row in pending)
+                    await calendarRepository.DetachEventAsync(row, ct);
+
+                var survivors = new List<CalendarEvent>();
+                foreach (var row in pending)
+                {
+                    var stored = await calendarRepository.GetEventAsync(row.Id, ct);
+                    if (stored is not null)
+                        survivors.Add(stored);
+                }
+
+                if (survivors.Count == 0)
+                {
+                    logger.LogInformation(
+                        "All {RowCount} local event row(s) this operation removes were already gone; a concurrent " +
+                        "sync reached the same end state first, so the operation is complete.",
+                        pending.Count);
+                    return;
+                }
+
+                if (attempt >= MaxRowRemovalAttempts)
+                    throw;
+
+                logger.LogInformation(
+                    "Local event-row removal raced a concurrent sync (attempt {Attempt}/{MaxAttempts}); " +
+                    "{GoneCount} of {RowCount} row(s) were already gone, re-deleting the {SurvivorCount} that remain.",
+                    attempt, MaxRowRemovalAttempts, pending.Count - survivors.Count, pending.Count, survivors.Count);
+
+                foreach (var survivor in survivors)
+                    await calendarRepository.DeleteEventAsync(survivor.Id, ct);
+
+                pending = survivors;
+            }
+        }
     }
 
     // Re-fetch the owner calendar's sync window from Google and upsert every instance by
