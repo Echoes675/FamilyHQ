@@ -347,6 +347,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
+        ApplyRemindersGoogleReturned(calendarEvent, result);
         return calendarEvent;
     }
 
@@ -368,6 +369,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
         calendarEvent.GoogleEventId = result!.Id;
+        ApplyRemindersGoogleReturned(calendarEvent, result);
         return calendarEvent;
     }
 
@@ -439,7 +441,40 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
         await ThrowIfFailedAsync(response, "PatchEventFields", ct);
+
+        // Read back only when this write carried reminders. Google rewrites what it is sent and
+        // answers with what it actually stored, so a reminder write has to learn the outcome. An
+        // edit that sent no reminders has nothing to learn and its response body stays unread,
+        // which keeps every other edit path exactly as it was.
+        if (reminders is not null)
+        {
+            var result = await response.Content.ReadFromJsonAsync<GoogleApiEvent>(cancellationToken: ct);
+            if (result is not null)
+                ApplyRemindersGoogleReturned(calendarEvent, result);
+        }
     }
+
+    /// <summary>
+    /// Copies the reminders from a write's response onto the event, so what FamilyHQ holds is what
+    /// Google stored rather than what FamilyHQ asked for.
+    /// </summary>
+    /// <remarks>
+    /// Google accepts almost any reminder value with a <c>200</c> and then quietly rewrites it: a
+    /// negative <c>minutes</c> becomes <c>0</c>, anything above the ceiling is clamped down to it,
+    /// duplicates collapse, the array comes back in a different order, and a method it does not
+    /// recognise is dropped entirely — leaving the event with no reminders while the request looked
+    /// successful. Trusting the request would leave the kiosk showing a reminder the family will
+    /// never receive.
+    /// <para>
+    /// A response that mentions no reminders at all leaves the stored value alone: it says nothing
+    /// about them, which is not the same as saying there are none. <see cref="MapReminders"/>
+    /// returns null for exactly that case, and it is the one mapper for Google's shape — the read
+    /// path uses it too, so a value can never be interpreted one way inbound and another after a
+    /// write.
+    /// </para>
+    /// </remarks>
+    private static void ApplyRemindersGoogleReturned(CalendarEvent calendarEvent, GoogleApiEvent result) =>
+        calendarEvent.Reminders = MapReminders(result.Reminders) ?? calendarEvent.Reminders;
 
     public async Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
     {

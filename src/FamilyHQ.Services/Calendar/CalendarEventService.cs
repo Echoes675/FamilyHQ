@@ -58,17 +58,19 @@ public class CalendarEventService(
             IanaTimeZone = null
         };
 
+        // The reminders the REQUEST carries, never the ones an event happens to hold: null means the
+        // user did not touch reminders, and the write must then say nothing about them.
         var hash = EventContentHash.Compute(
             calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
-            calendarEvent.IsAllDay, calendarEvent.Description);
+            calendarEvent.IsAllDay, calendarEvent.Description, request.Reminders);
 
         if (request.RecurrenceRule is { } rrule)
         {
-            return await CreateRecurringSeriesAsync(calendarEvent, targetCalendar, hash, rrule, ct);
+            return await CreateRecurringSeriesAsync(calendarEvent, targetCalendar, hash, rrule, request.Reminders, ct);
         }
 
         calendarEvent = await googleCalendarClient.CreateEventAsync(
-            targetCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+            targetCalendar.GoogleCalendarId, calendarEvent, hash, ct, request.Reminders);
 
         outboundCache.Record(calendarEvent.GoogleEventId, hash);
         logger.LogDebug(
@@ -91,13 +93,14 @@ public class CalendarEventService(
     // reconcile the owner's window so the expanded instances persist with GoogleRecurringEventId +
     // RecurrenceRule set and each echoed instance hash recorded for the FHQ-30 self-echo guard.
     private async Task<CalendarEvent> CreateRecurringSeriesAsync(
-        CalendarEvent master, CalendarInfo targetCalendar, string hash, string rrule, CancellationToken ct)
+        CalendarEvent master, CalendarInfo targetCalendar, string hash, string rrule,
+        EventReminders? reminders, CancellationToken ct)
     {
         // Validate/canonicalise the supplied RRULE before any Google mutation (fail fast).
         var canonicalRule = RecurrenceRuleBuilder.ToRRuleString(RecurrenceRuleBuilder.ParseRRuleString(rrule));
 
         var created = await googleCalendarClient.CreateRecurringEventAsync(
-            targetCalendar.GoogleCalendarId, master, hash, canonicalRule, ct);
+            targetCalendar.GoogleCalendarId, master, hash, canonicalRule, ct, reminders);
         RecordOutbound(created.GoogleEventId, hash);
 
         var reconciled = await ReconcileWindowAsync(
@@ -153,11 +156,16 @@ public class CalendarEventService(
         calendarEvent.Location = request.Location;
         calendarEvent.Description = fullDescription;
 
+        // request.Reminders, not calendarEvent.Reminders: the stored value is what Google holds, and
+        // sending it back on an edit that did not ask for it would rewrite reminders on every save.
+        // The client puts Google's answer onto the event, so the row saved below is what Google
+        // stored rather than what was asked for.
         var hash = EventContentHash.Compute(
             calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
-            calendarEvent.IsAllDay, calendarEvent.Description);
+            calendarEvent.IsAllDay, calendarEvent.Description, request.Reminders);
 
-        await googleCalendarClient.PatchEventFieldsAsync(ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct);
+        await googleCalendarClient.PatchEventFieldsAsync(
+            ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct, request.Reminders);
 
         outboundCache.Record(calendarEvent.GoogleEventId, hash);
         logger.LogDebug(
@@ -188,8 +196,9 @@ public class CalendarEventService(
         // Write the field edits to the existing single event by its own id, then add the recurrence
         // array onto that same id so Google promotes it to the series master in place.
         ApplyRequestFields(calendarEvent, request, normalisedDescription);
-        var hash = ComputeHash(calendarEvent);
-        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
+        var hash = ComputeHash(calendarEvent, request.Reminders);
+        await googleCalendarClient.PatchEventFieldsAsync(
+            owner.GoogleCalendarId, calendarEvent, hash, ct, request.Reminders);
         RecordOutbound(calendarEvent.GoogleEventId, hash);
 
         // After promotion Google promotes the single event to the series MASTER in place, so the
@@ -480,8 +489,9 @@ public class CalendarEventService(
         // events.patch on the instance's OWN GoogleEventId — Google turns it into an exception.
         ApplyRequestFields(calendarEvent, request, normalisedDescription);
 
-        var hash = ComputeHash(calendarEvent);
-        await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, calendarEvent, hash, ct);
+        var hash = ComputeHash(calendarEvent, request.Reminders);
+        await googleCalendarClient.PatchEventFieldsAsync(
+            owner.GoogleCalendarId, calendarEvent, hash, ct, request.Reminders);
         RecordOutbound(calendarEvent.GoogleEventId, hash);
     }
 
@@ -596,8 +606,9 @@ public class CalendarEventService(
 
         if (masterAnchor.MasterResolved)
         {
-            var hash = ComputeHash(master);
-            await googleCalendarClient.PatchEventFieldsAsync(owner.GoogleCalendarId, master, hash, ct);
+            var hash = ComputeHash(master, request.Reminders);
+            await googleCalendarClient.PatchEventFieldsAsync(
+                owner.GoogleCalendarId, master, hash, ct, request.Reminders);
             RecordOutbound(master.GoogleEventId, hash);
             return;
         }
@@ -606,13 +617,15 @@ public class CalendarEventService(
         // sent at all, so Google keeps the master's own DTSTART and duration. See the reachability
         // note above — this is a guard against destroying series history, with no demonstrated
         // production trigger after Change 1, not the fix for the reported defect.
-        var partialHash = ComputeHashWithoutTimes(master);
+        var partialHash = ComputeHashWithoutTimes(master, request.Reminders);
         logger.LogInformation(
             "Patching series master {SeriesId} (calendar {CalendarInfoId}) without start or end: the master's own origin could not be read, so it is left as Google holds it and only the edited fields are written.",
             seriesId, owner.Id);
 
+        // Reminders are unaffected by the omitted start and end — they are a field of their own — so a
+        // reminder edit is still honoured on this path rather than silently dropped.
         await googleCalendarClient.PatchEventFieldsPreservingTimesAsync(
-            owner.GoogleCalendarId, master, partialHash, ct);
+            owner.GoogleCalendarId, master, partialHash, ct, request.Reminders);
         RecordOutbound(master.GoogleEventId, partialHash);
     }
 
@@ -1525,8 +1538,14 @@ public class CalendarEventService(
         target.Description = normalisedDescription;
     }
 
-    private static string ComputeHash(CalendarEvent evt) =>
-        EventContentHash.Compute(evt.Title, evt.Start, evt.End, evt.IsAllDay, evt.Description);
+    /// <param name="remindersSent">
+    /// The reminders this write is sending, or null when it sends none. Deliberately a parameter
+    /// rather than read off <paramref name="evt"/>: the event's own reminders are what Google holds,
+    /// and folding them in would change the stamp of every ordinary edit — including on the events
+    /// already in production, whose stamps were computed before reminders existed.
+    /// </param>
+    private static string ComputeHash(CalendarEvent evt, EventReminders? remindersSent = null) =>
+        EventContentHash.Compute(evt.Title, evt.Start, evt.End, evt.IsAllDay, evt.Description, remindersSent);
 
     /// <summary>
     /// FHQ-172: the content hash for a write that deliberately carries no start and no end.
@@ -1563,8 +1582,8 @@ public class CalendarEventService(
     /// a constant is a faithful description of that.
     /// </para>
     /// </remarks>
-    private static string ComputeHashWithoutTimes(CalendarEvent evt) =>
-        EventContentHash.Compute(evt.Title, TimesNotSent, TimesNotSent, AllDayNotSent, evt.Description);
+    private static string ComputeHashWithoutTimes(CalendarEvent evt, EventReminders? remindersSent = null) =>
+        EventContentHash.Compute(evt.Title, TimesNotSent, TimesNotSent, AllDayNotSent, evt.Description, remindersSent);
 
     /// <summary>Placeholder standing for "this write sent no start/end" — see <see cref="ComputeHashWithoutTimes"/>.</summary>
     private static readonly DateTimeOffset TimesNotSent = DateTimeOffset.UnixEpoch;
