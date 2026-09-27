@@ -700,6 +700,18 @@ public class CalendarEventService(
         // truncation — they are separate events on Google, and freshRule comes from (a) — so the
         // swap costs nothing. The residual duplicate window is a fraction of a second wide, and a
         // sync landing inside it converges as soon as the truncation lands.
+        // The forward half is a continuation of the original series for reminders too, by exactly the
+        // reasoning that applies to its anchor zone below: they are the original series' reminders
+        // carried forward, not a fresh choice. Creating the new series without them makes Google apply
+        // the calendar's defaults instead, which silently drops a custom set made in the Google
+        // Calendar app from every occurrence after the split — an edit changing something the user
+        // never asked to change.
+        //
+        // The request wins when it carries reminders of its own: this fills a gap, it does not
+        // override the user. Null on both — nothing learned about this series yet — sends nothing, so
+        // Google applies the calendar default as it does today; a fabricated set would be worse.
+        var carriedReminders = request.Reminders ?? calendarEvent.Reminders;
+
         var newSeries = new CalendarEvent
         {
             Title = request.Title,
@@ -711,14 +723,16 @@ public class CalendarEventService(
             // FHQ-170: the forward half of a split is a CONTINUATION of the original series, so it
             // is anchored to the same zone Google anchored that series to. Null here (nothing
             // resolvable) leaves the client's family-zone fallback in place — today's behaviour.
-            IanaTimeZone = reshaped.IanaTimeZone
+            IanaTimeZone = reshaped.IanaTimeZone,
+            Reminders = carriedReminders
         };
 
-        var hash = ComputeHash(newSeries);
+        var hash = ComputeHash(newSeries, carriedReminders);
         CalendarEvent created;
         try
         {
-            created = await googleCalendarClient.CreateRecurringEventAsync(owner.GoogleCalendarId, newSeries, hash, freshRule, ct);
+            created = await googleCalendarClient.CreateRecurringEventAsync(
+                owner.GoogleCalendarId, newSeries, hash, freshRule, ct, carriedReminders);
         }
         catch (Exception createFailure) when (GoogleWriteOutcome.MayHaveBeenProcessed(createFailure))
         {

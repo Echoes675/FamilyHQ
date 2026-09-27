@@ -285,9 +285,9 @@ public class GoogleCalendarClientMappingTests
     [Fact]
     public async Task PatchEventFieldsAsync_OmitsUnmappedGoogleFields()
     {
-        // FHQ-145: the merge body must never carry a field this write is not changing, so Google's
-        // existing attendees, colorId, visibility and reminders survive a kiosk edit. Guards against
-        // a future MapToGoogleEvent change re-arming the full-replace data loss.
+        // FHQ-145: the merge body must never carry fields FamilyHQ does not model, so Google's
+        // existing attendees/colorId/reminders survive a kiosk edit. Guards against a future
+        // MapToGoogleEvent change re-arming the full-replace data loss.
         //
         // `reminders` stays in this list even though FamilyHQ now models reminders: this patch passes
         // no reminder intent, which is what an ordinary title/time/location edit does, and the key

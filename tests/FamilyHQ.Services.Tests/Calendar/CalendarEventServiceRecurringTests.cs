@@ -2289,6 +2289,82 @@ public class CalendarEventServiceRecurringTests
                    .Should().ThrowAsync<EventNotFoundException>();
     }
 
+    // ── ThisAndFollowing: the forward series inherits the original's reminders ─
+    //
+    // The forward half of a split is a CONTINUATION of the original series, exactly as its anchor
+    // zone is. Creating it with no reminders makes Google apply the calendar's defaults instead, so
+    // a custom reminder set on a phone disappears from the new tail — an edit changing something the
+    // user never asked to change. These tests pin the intent handed to the create, not the transport.
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ForwardSeriesCarriesTheOriginalsExplicitReminders()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        instance.Reminders = EventReminders.Explicit([new EventReminder("popup", 45), new EventReminder("email", 1440)]);
+        f.ArrangeEvent(instance);
+        var captured = f.ArrangeForwardSeriesCapture();
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        captured.Value.Should().NotBeNull("the forward series must be created WITH the reminders, not left to the calendar default");
+        captured.Value!.SameAs(instance.Reminders).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_SeriesOnTheCalendarDefault_CarriesTheDefaultStateForward()
+    {
+        // "Inherits the calendar's default" and "explicitly no reminders" are different states, and
+        // collapsing the first into the second would stop the new tail pinging at all.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        instance.Reminders = EventReminders.InheritsCalendarDefault;
+        f.ArrangeEvent(instance);
+        var captured = f.ArrangeForwardSeriesCapture();
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        captured.Value.Should().NotBeNull();
+        captured.Value!.UseDefault.Should().BeTrue();
+        captured.Value!.Overrides.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_SeriesWithNoRemindersLearnedYet_SendsNothingAboutThem()
+    {
+        // Nothing has been learned about this series' reminders, so there is nothing to carry. Sending
+        // a fabricated set would be worse than letting Google apply the calendar's own default.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        instance.Reminders = null;
+        f.ArrangeEvent(instance);
+        var captured = f.ArrangeForwardSeriesCapture();
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
+
+        captured.Value.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_ThisAndFollowing_ReminderEditAtThisScope_ReplacesTheCarriedSet()
+    {
+        // When the request itself changes reminders, that is what the forward series is created with —
+        // the carry-forward fills a gap, it does not override the user.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        instance.Reminders = EventReminders.Explicit([new EventReminder("popup", 45)]);
+        f.ArrangeEvent(instance);
+        var captured = f.ArrangeForwardSeriesCapture();
+
+        var asked = EventReminders.Explicit([new EventReminder("email", 120)]);
+        var request = new UpdateEventRequest("Updated", InstanceStart, InstanceStart.AddHours(1),
+            false, "Loc", "Body", null, false, asked);
+
+        await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.ThisAndFollowing);
+
+        captured.Value!.SameAs(asked).Should().BeTrue();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description, bool isAllDay = false) =>
@@ -2403,6 +2479,24 @@ public class CalendarEventServiceRecurringTests
         // upsert takes the UPDATE branch rather than ADD.
         public void ArrangeExistingRow(CalendarEvent evt) =>
             Repo.Setup(r => r.GetEventByGoogleEventIdAsync(evt.GoogleEventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+
+        // Arrange the forward-series create of a "this and following" split and capture the reminder
+        // intent it is handed, so a test can assert on the intent rather than the wire format.
+        public StrongBox<EventReminders?> ArrangeForwardSeriesCapture()
+        {
+            var captured = new StrongBox<EventReminders?>(null);
+            Google.Setup(g => g.CreateRecurringEventAsync(
+                    GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()))
+                .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? reminders) =>
+                {
+                    captured.Value = reminders;
+                    e.GoogleEventId = "new-series-id";
+                    return e;
+                });
+            ArrangeReconcileWindow([GoogleInstance("new-inst-1", InstanceStart, recurringId: "new-series-id")]);
+            return captured;
+        }
 
         // The reconcile re-fetches the owner calendar's window from Google; arrange the returned instances.
         public void ArrangeReconcileWindow(IReadOnlyList<CalendarEvent> instances) =>
