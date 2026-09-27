@@ -53,6 +53,7 @@ public sealed class SmokeScenarioHooks(
         {
             Environment = environment,
             Correlation = correlation,
+            EventDay = SmokeScenarioDays.Next(),
             Api = environment.SessionJwtOrNull is { } jwt
                 ? new PreprodApiClient(environment.Configuration, jwt, correlation.Id)
                 : null

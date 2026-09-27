@@ -10,6 +10,12 @@ namespace FamilyHQ.Smoke.Data.Models;
 /// that changed only the title comes back with the colour gone, FamilyHQ rewrote something nobody asked
 /// it to rewrite.
 /// </para>
+/// <para>
+/// <c>originalStartTime</c> is what makes an exception an exception. When one occurrence of a series is
+/// edited, Google keeps the edited event under the series and records the slot it came from here — so
+/// its presence is the only way to tell "this occurrence was singled out" from "this is a separate event
+/// that happens to look similar".
+/// </para>
 /// </summary>
 public sealed record GoogleEvent(
     [property: JsonPropertyName("id")] string Id,
@@ -22,4 +28,5 @@ public sealed record GoogleEvent(
     [property: JsonPropertyName("end")] GoogleEventDateTime? End,
     [property: JsonPropertyName("recurrence")] IReadOnlyList<string>? Recurrence,
     [property: JsonPropertyName("recurringEventId")] string? RecurringEventId,
-    [property: JsonPropertyName("reminders")] GoogleEventReminders? Reminders);
+    [property: JsonPropertyName("reminders")] GoogleEventReminders? Reminders,
+    [property: JsonPropertyName("originalStartTime")] GoogleEventDateTime? OriginalStartTime = null);
