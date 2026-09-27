@@ -4,6 +4,8 @@ using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Tests.Helpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -183,6 +185,83 @@ public class CalendarEventServiceTests
         repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── FHQ-214: the delete is idempotent against a concurrent inbound sync ────
+    //
+    // Google's push for the DELETE we have just made arrives within seconds, so a targeted sync can
+    // remove the same local row before our own SaveChanges commits. EF then reports zero rows
+    // affected on a DELETE it expected to affect one and raises DbUpdateConcurrencyException. The
+    // delete succeeded end to end — the event is gone from Google and gone from the database — so
+    // the only thing that failed was the bookkeeping of an already-removed row, and the family saw
+    // an HTTP 500 with the modal stuck open on an event that no longer existed.
+
+    [Fact]
+    public async Task DeleteAsync_RowAlreadyRemovedByConcurrentSync_Completes()
+    {
+        var logger = new RecordingLogger<CalendarEventService>();
+        var (google, repo, _, _, sut) = CreateSut(logger);
+        var calA = Cal(CalAId, "cal-a@google.com", "Alice");
+        var evt  = Event(EventId, "gid-1", CalAId, calA);
+
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException(
+                "The database operation was expected to affect 1 row(s), but actually affected 0 row(s)"));
+        // The confirming re-read finds the row genuinely gone: the requested end state holds.
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+
+        await sut.Invoking(s => s.DeleteAsync(EventId)).Should().NotThrowAsync();
+
+        // Exactly one Google DELETE: the race is resolved locally, never by re-issuing the write.
+        google.Verify(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()), Times.Once);
+        // No retry of the save either — the row being absent is already the desired end state.
+        repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RowAlreadyRemovedByConcurrentSync_LogsTheRaceAsAnExpectedOutcome()
+    {
+        var logger = new RecordingLogger<CalendarEventService>();
+        var (_, repo, _, _, sut) = CreateSut(logger);
+        var calA = Cal(CalAId, "cal-a@google.com", "Alice");
+        var evt  = Event(EventId, "gid-1", CalAId, calA);
+
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException("expected to affect 1 row(s), but actually affected 0 row(s)"));
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+
+        await sut.DeleteAsync(EventId);
+
+        // Two writers agreeing is an expected outcome, not a fault: nothing above Information.
+        logger.Records.Should().NotContain(r =>
+            r.Level == LogLevel.Warning || r.Level == LogLevel.Error || r.Level == LogLevel.Critical);
+        logger.Records.Should().Contain(r => r.Level == LogLevel.Information && r.Message.Contains("already gone"));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ConcurrencyFailureWithRowStillPresent_Rethrows()
+    {
+        var logger = new RecordingLogger<CalendarEventService>();
+        var (google, repo, _, _, sut) = CreateSut(logger);
+        var calA = Cal(CalAId, "cal-a@google.com", "Alice");
+        var evt  = Event(EventId, "gid-1", CalAId, calA);
+
+        repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+        repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
+        repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException("a real conflict on something else"));
+        // The row is still there, so this is NOT the benign race — it must not be swallowed.
+        repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync(evt);
+
+        await sut.Invoking(s => s.DeleteAsync(EventId))
+            .Should().ThrowAsync<DbUpdateConcurrencyException>();
+
+        // Even across the bounded re-drive, Google is told exactly once.
+        google.Verify(g => g.DeleteEventAsync("cal-a@google.com", "gid-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── IDOR guard ────────────────────────────────────────────────────────────
 
     [Fact]
@@ -239,7 +318,7 @@ public class CalendarEventServiceTests
 
     private static (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<ICalendarMigrationService> migration, Mock<IMemberTagParser> tagParser,
-        CalendarEventService sut) CreateSut()
+        CalendarEventService sut) CreateSut(ILogger<CalendarEventService>? logger = null)
     {
         var google      = new Mock<IGoogleCalendarClient>();
         var repo        = new Mock<ICalendarRepository>();
@@ -247,7 +326,7 @@ public class CalendarEventServiceTests
         var tagParser   = new Mock<IMemberTagParser>();
         var cache       = new Mock<IOutboundWriteHashCache>();
         var currentUser = new Mock<ICurrentUserService>();
-        var logger      = new Mock<ILogger<CalendarEventService>>();
+        logger ??= new Mock<ILogger<CalendarEventService>>().Object;
 
         currentUser.SetupGet(u => u.UserId).Returns("u-1");
 
@@ -259,7 +338,7 @@ public class CalendarEventServiceTests
 
         var sut = new CalendarEventService(
             google.Object, repo.Object, migration.Object, tagParser.Object, cache.Object, currentUser.Object,
-            new NodaTimeRecurrenceTimeZoneFactory(), logger.Object);
+            new NodaTimeRecurrenceTimeZoneFactory(), logger);
         return (google, repo, migration, tagParser, sut);
     }
 }

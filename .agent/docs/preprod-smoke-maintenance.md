@@ -14,18 +14,23 @@ account.
 
 1. [Running the suite](#running-the-suite)
 2. [Configuration](#configuration)
-3. [Principles you must not quietly relax](#principles-you-must-not-quietly-relax)
-4. [Project structure](#project-structure)
-5. [Preflight: what each check proves and what each failure means](#preflight-what-each-check-proves-and-what-each-failure-means)
-6. [Core scenarios: what each one proves](#core-scenarios-what-each-one-proves)
-7. [Re-signing in when the Google grant is revoked](#re-signing-in-when-the-google-grant-is-revoked)
-8. [Diagnosing a failure](#diagnosing-a-failure)
-9. [Adding a scenario](#adding-a-scenario)
-10. [Maintenance checklist](#maintenance-checklist)
+3. [In the preprod pipeline](#in-the-preprod-pipeline)
+4. [Principles you must not quietly relax](#principles-you-must-not-quietly-relax)
+5. [Project structure](#project-structure)
+6. [Preflight: what each check proves and what each failure means](#preflight-what-each-check-proves-and-what-each-failure-means)
+7. [Core scenarios: what each one proves](#core-scenarios-what-each-one-proves)
+8. [Re-signing in when the Google grant is revoked](#re-signing-in-when-the-google-grant-is-revoked)
+9. [Diagnosing a failure](#diagnosing-a-failure)
+10. [Adding a scenario](#adding-a-scenario)
+11. [Maintenance checklist](#maintenance-checklist)
 
 ---
 
 ## Running the suite
+
+Every preprod deploy runs it already — see [in the preprod pipeline](#in-the-preprod-pipeline). What
+follows is how to run it by hand, which is what you do when a pipeline run went red or when you are
+changing the suite.
 
 ### Prerequisites
 
@@ -125,6 +130,88 @@ landed, two of its calendars still read `Work` and `Personal` because FHQ-211's 
 reached it, and `Household` was not yet flagged shared. The expected names, zone and location live in
 configuration so the suite can follow the environment without a code change — and so that a
 mismatch is reported as an environment fault rather than hidden by a convenient literal.
+
+---
+
+## In the preprod pipeline
+
+`Jenkinsfile.deploy-preprod` runs the suite after every preprod deploy (FHQ-142), in two stages that
+follow `Wait for Services`:
+
+| Stage | What it runs | Why it is separate |
+|---|---|---|
+| **Smoke: Preflight** | `--filter "FullyQualifiedName~PreprodEnvironmentHealth"` — the seven checks and nothing else. It also does the one-off setup: extracts the browser and ICU libraries from the Playwright image if the agent lacks them, builds the suite `-c Release`, and installs Chromium. | It is the fast answer to "is preprod fit to test against?", and it separates an environment fault from a FamilyHQ defect *before* anything else runs. |
+| **Smoke: Scenarios** | `--filter "FullyQualifiedName!~PreprodEnvironmentHealth"` — the rest of the suite, `--no-build` against what the preflight stage built. | So that a red run names which half is wrong in the stage view, without anyone having to read a trx first. |
+
+### They are non-gating, for now
+
+Both stages are wrapped in `catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE')`. A smoke
+failure therefore:
+
+- turns the **build** yellow (UNSTABLE) and the **stage** red, so it cannot be mistaken for a pass;
+- leaves the **deploy** successful — preprod is up and serving whatever was deployed;
+- does **not** block promotion. The master release chain to `FamilyHQ-Deploy-Production` runs from
+  `post.unstable` as well as `post.success`, precisely so that a non-gating stage cannot become a gate by
+  accident. Making smoke an actual promotion gate is **FHQ-143**; it should happen there, on purpose.
+
+Read an UNSTABLE preprod build as: *"preprod deployed fine; something about the real third-party path did
+not hold."* That is something to investigate, not a flake to re-run — see
+[diagnosing a failure](#diagnosing-a-failure) and, before dismissing anything,
+[`intermittent-issues.md`](intermittent-issues.md).
+
+One consequence worth knowing: the smoke stages run before `post`, so a release chain now waits the
+length of a smoke run (a few minutes) before the production deploy is triggered.
+
+### Scenarios are skipped when preflight fails
+
+The preflight stage records its outcome in `SMOKE_PREFLIGHT_OK`, and `Smoke: Scenarios` checks it before
+doing anything. If preflight did not pass, the scenarios stage logs `SKIPPED:` with the reason and stops.
+This is not tidiness: the suite gates every scenario on a healthy preflight
+([principle 1](#principles-you-must-not-quietly-relax)), so all of them would refuse in turn and spend a
+couple of minutes restating the fault preflight has already named once. The flag is set to `false`
+*before* the work, so a stage that dies in library extraction, the build or the browser install also
+skips the scenarios rather than running them against an unbuilt suite.
+
+### Where the configuration comes from
+
+| Where | What | Why there |
+|---|---|---|
+| `Jenkinsfile.deploy-preprod`, the `environment {}` block | `Smoke__ExpectedLocation`, `Smoke__ExpectedTimeZone`, `Smoke__SharedCalendar`, `Smoke__MemberCalendars`, `Smoke__PushIncapableCalendars` and `SMOKE_PROJECT`. `Smoke__BaseUrl` is set from the pipeline's existing `APP_BASE_URL`. | None of it is secret, and all of it is an *expectation* about preprod. Whoever reads a red run needs to see what the run believed, in the diff, rather than opening a Jenkins credential to find out. |
+| The `familyhq-preprod-env` file credential | `Auth__IssueTokenEndpoint__Secret` (the suite reads it as `Smoke__IssueTokenSecret`) and `Smoke__UserId`. | They must not be committed, and preprod's own environment file already carries both — one place to update beats two. |
+
+The `runSmokeSuite()` helper at the foot of the Jenkinsfile reads those two keys out of the credential
+file with an inline `read_key` shell function, modelled on the `Validate Production Config` stage in
+`Jenkinsfile.deploy-prod`. Three things about it are load-bearing, and breaking any of them puts a secret
+in a console log that outlives the build:
+
+- the shell script is a **single-quoted** Groovy string, so Groovy interpolates nothing into it and
+  neither value ever appears in a command line;
+- `set +x` is its **first statement**, because Jenkins otherwise runs `sh` as `sh -xe` and a traced
+  assignment prints what it assigned;
+- nothing echoes either value — only whether it was missing.
+
+Never add a `cat` of the env file, an `echo` of a matched line, or an interpolated `sh` string there.
+
+### Where the results land
+
+| What | Where |
+|---|---|
+| Test results | Published with the `mstest` step from `smoke-preflight-results.trx` and `smoke-scenario-results.trx`, so failures are readable from the build's **Test Result** page instead of by scrolling the console. |
+| Failure screenshots | Archived as build artifacts from `**/TestResults/smoke-artifacts/*.png` by both stages (`allowEmptyArchive`, because preflight never drives a browser and so never produces one). One per failed kiosk scenario, named `<scenario>-<shortid>.png`. |
+| Console output | `--logger "console;verbosity=detailed"`, so each scenario's correlation id and any `kiosk console:` lines are in the log to search Seq with. |
+
+FHQ-141's first real failure was diagnosed from one of those screenshots. Look at it before theorising.
+
+### Two things about the Jenkins agent
+
+- **Globalization must not be invariant.** Both stages run with
+  `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false` and the ICU libraries are part of what the library shim
+  extracts. Without them `Europe/Dublin` cannot be resolved, and every wall-clock and recurrence
+  assertion in the suite is anchored to that zone.
+- **TLS is validated.** The suite validates preprod's certificate; the deploy stages' own health checks
+  use `curl -sk` and therefore prove nothing about trust. Preprod's certificate is issued via DNS-01, so
+  a stock trust store should accept it — but if *every* preflight check fails with a TLS error, fix the
+  agent's trust. Do **not** set `Smoke__AllowUntrustedCertificate` in the pipeline.
 
 ---
 
@@ -327,7 +414,8 @@ fragile thing in the suite.
    Google Calendar UI and look at what was actually written. This is the highest-value step and it is
    the reason nothing is cleaned up.
 4. **Look at the screenshot** in `TestResults/smoke-artifacts/<scenario>-<shortid>.png`, and at the
-   `kiosk console:` lines in the test output.
+   `kiosk console:` lines in the test output. After a pipeline run it is a build artifact of the
+   `Smoke: Scenarios` stage — see [where the results land](#where-the-results-land).
 5. **Do not re-run and hope.** An intermittent smoke failure is a report about a third party or about
    FamilyHQ's handling of one; that is information, not noise. Record it in
    [`intermittent-issues.md`](intermittent-issues.md) before dismissing anything.
@@ -400,7 +488,8 @@ cannot satisfy them.
 - **A change to the calendar model** (placement, membership, the `[members:]` tag) — KG1, KG1b and GK2
   encode the current model.
 - **A change to a `data-testid`** the suite uses. Keep the list above accurate.
-- **The preprod calendar set changes.** Update the Jenkins configuration, not a step definition.
+- **The preprod calendar set changes.** Update `Jenkinsfile.deploy-preprod`'s `environment {}` block (and
+  your local run command), not a step definition.
 
 ### When *not* to
 
