@@ -144,19 +144,33 @@ follow `Wait for Services`:
 | **Smoke: Preflight** | `--filter "FullyQualifiedName~PreprodEnvironmentHealth"` — the seven checks and nothing else. It also does the one-off setup: extracts the browser and ICU libraries from the Playwright image if the agent lacks them, builds the suite `-c Release`, and installs Chromium. | It is the fast answer to "is preprod fit to test against?", and it separates an environment fault from a FamilyHQ defect *before* anything else runs. |
 | **Smoke: Scenarios** | `--filter "FullyQualifiedName!~PreprodEnvironmentHealth"` — the rest of the suite, `--no-build` against what the preflight stage built. | So that a red run names which half is wrong in the stage view, without anyone having to read a trx first. |
 
-### They are non-gating, for now
+### They gate the release (FHQ-143)
 
-Both stages are wrapped in `catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE')`. A smoke
-failure therefore:
+Neither stage is wrapped any more, and the `post.unstable` path that FHQ-142 used to keep them
+advisory is gone. A smoke failure therefore:
 
-- turns the **build** yellow (UNSTABLE) and the **stage** red, so it cannot be mistaken for a pass;
-- leaves the **deploy** successful — preprod is up and serving whatever was deployed;
-- does **not** block promotion. The master release chain to `FamilyHQ-Deploy-Production` runs from
-  `post.unstable` as well as `post.success`, precisely so that a non-gating stage cannot become a gate by
-  accident. Making smoke an actual promotion gate is **FHQ-143**; it should happen there, on purpose.
+- fails the **build**, so `post.success` never fires;
+- **stops the release** — nothing is promoted to `FamilyHQ-Deploy-Production`;
+- leaves preprod itself deployed and serving, since the deploy stages ran before the smoke ones.
 
-Read an UNSTABLE preprod build as: *"preprod deployed fine; something about the real third-party path did
-not hold."* That is something to investigate, not a flake to re-run — see
+**Preflight gates too**, deliberately. A run that cannot establish the environment is healthy has not
+established anything about the release either, so promoting on it would be promoting on an unread
+test. User's ruling, 2026-09-27: *"This should absolutely gate. We do not go to production without a
+green run."*
+
+**The cost, accepted knowingly.** Promotion now depends on things that are not the product: the smoke
+Google account's grant staying valid, preprod's calendars matching the configured names, its saved
+location and time zone. If any of those drift, releases stop until they are fixed — which is the
+point, but it means the environment is now on the release's critical path.
+
+**Break-glass — how to ship anyway.** Run `FamilyHQ-Deploy-Production` **manually** with
+`DIRECTION=specific` and `SEMVER_TAG=vX.Y.Z`. It does not go through this chain, so it is unaffected
+by a red smoke run. Use it when the failure is understood and the release must go — not to skip past
+a failure nobody has read. If the cause is a lapsed grant, the re-sign-in runbook below fixes the
+environment properly in about a minute, which is usually faster than reasoning about a bypass.
+
+Read a red smoke stage as: *"preprod deployed fine; something about the real third-party path did not
+hold."* That is something to investigate, not a flake to re-run — see
 [diagnosing a failure](#diagnosing-a-failure) and, before dismissing anything,
 [`intermittent-issues.md`](intermittent-issues.md).
 
