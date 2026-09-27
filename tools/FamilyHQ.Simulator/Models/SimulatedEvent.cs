@@ -44,7 +44,8 @@ public class SimulatedEvent
     // FHQ-189 (I3): the raw `reminders` object as sent/returned to the app, stored as its JSON text
     // rather than shredded into columns — the simulator only needs to round-trip it, not query it.
     // Null means the create/update never carried a `reminders` key (the app's own read path already
-    // treats that as "not synced" — see EventReminders). See FHQ-192 for faithful write semantics
-    // (clamping, de-duplication, dropping an unknown method): this wave only makes the field exist.
+    // treats that as "not synced" — see EventReminders). What is stored here is what GOOGLE would
+    // store, already clamped and de-duplicated; a read derives the reported object from it, because
+    // Google never omits the object even for an event that has nothing of its own.
     public string? RemindersJson { get; set; }
 }
