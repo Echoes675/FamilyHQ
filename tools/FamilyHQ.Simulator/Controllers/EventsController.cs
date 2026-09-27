@@ -5,6 +5,7 @@ using FamilyHQ.Core.Calendar.Recurrence;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
+using FamilyHQ.Simulator.Google;
 using FamilyHQ.Simulator.Models;
 using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
@@ -185,6 +186,11 @@ public class EventsController : ControllerBase
             return missingTzError;
         }
 
+        if (RejectedReminders(body.Reminders) is { } reminderError)
+        {
+            return reminderError;
+        }
+
         var newEvent = new SimulatedEvent
         {
             Id = "simulated_evt_" + Guid.NewGuid().ToString("N"),
@@ -204,9 +210,10 @@ public class EventsController : ControllerBase
             // RRULE line is stored so the subsequent reconcile list (singleEvents=true) expands it
             // into per-occurrence instances. A non-recurring insert leaves this null.
             RecurrenceRule = ExtractRrule(body.Recurrence),
-            // FHQ-189 (I3): stored so a round trip through the simulator is coherent (FHQ-192 owns
-            // faithful write semantics). Null when the create body carried no `reminders` key.
-            RemindersJson = SerializeReminders(body.Reminders)
+            // Stored as GOOGLE would store it, not as the request sent it: an accepted request may
+            // still have its offsets clamped, its duplicates collapsed and an unrecognised delivery
+            // method dropped. Null when the create body carried no `reminders` key.
+            RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders))
         };
 
         _db.Events.Add(newEvent);
@@ -260,6 +267,13 @@ public class EventsController : ControllerBase
             return missingTzError;
         }
 
+        // Before the event is even looked up: a reminder Google refuses is refused whether the write
+        // would have replaced an event, or turned one occurrence of a series into an exception.
+        if (RejectedReminders(body?.Reminders) is { } reminderError)
+        {
+            return reminderError;
+        }
+
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
 
         // Flexibility for seed/evt mismatch
@@ -308,9 +322,9 @@ public class EventsController : ControllerBase
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
         // FHQ-189 (I3): events.update (PUT) is a full-resource replace like Location/Description
-        // above — an omitted `reminders` key clears it, mirroring how a real PUT would. Faithful
-        // write semantics (what Google actually preserves/rejects) are FHQ-192's concern.
-        existing.RemindersJson = SerializeReminders(body.Reminders);
+        // above — an omitted `reminders` key clears it, mirroring how a real PUT would.
+        // What is stored is what Google would store, which is not always what was sent.
+        existing.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         // FHQ-18.11: events.update (PUT) carries a recurrence array only when the event is (or is
         // becoming) a series master — this is the toggle-ON path where a previously non-recurring
@@ -390,6 +404,10 @@ public class EventsController : ControllerBase
         if (InjectedFailure(userId) is { } injected)
             return injected;
 
+        // A reminder Google refuses is refused before anything is written, on this path too.
+        if (RejectedReminders(body?.Reminders) is { } reminderError)
+            return reminderError;
+
         var hasRecurrence = body?.Recurrence is not null;
         var hasScalarFields = body is not null && (
             body.Summary is not null ||
@@ -464,8 +482,10 @@ public class EventsController : ControllerBase
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
         // FHQ-189 (I3): a PATCH is a merge — only overwrite when the body actually carries the key.
+        // When it does carry it, the whole object is replaced (not merged into) and stored as Google
+        // would store it.
         if (body.Reminders is not null)
-            existing.RemindersJson = SerializeReminders(body.Reminders);
+            existing.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         // recurrence: null → preserve the existing rule; ["RRULE:…"] → set; [] → clear.
         ApplyRecurrence(existing, body.Recurrence);
@@ -605,6 +625,39 @@ public class EventsController : ControllerBase
             // DeserializeReminders. Null when nothing was ever sent for this event.
             reminders = DeserializeReminders(e.RemindersJson)
         };
+    }
+
+    /// <summary>
+    /// The 400 Google answers a reminder it will not accept with, or null when it would accept the
+    /// request — which it usually does, silently rewriting the value rather than complaining.
+    /// </summary>
+    /// <remarks>
+    /// Checked on the body <b>as sent</b>: Google counts the overrides it received, so six that
+    /// de-duplicate to five are still rejected. Only two shapes fail — a sixth override, and asking
+    /// for the calendar's defaults and specific overrides at the same time.
+    /// </remarks>
+    private IActionResult? RejectedReminders(GoogleEventReminders? reminders)
+    {
+        if (ReminderSemantics.Validate(reminders) is not { } reason)
+            return null;
+
+        var message = ReminderSemantics.RejectionMessage(reason);
+        _logger.LogWarning("[SIM] Rejecting reminders: {Reason} (mirrors Google 400).", reason);
+
+        return BadRequest(new
+        {
+            error = new
+            {
+                code = 400,
+                message,
+                errors = new[]
+                {
+                    // Google puts these in the calendar domain, not the global one it uses for a
+                    // missing time zone.
+                    new { domain = "calendar", reason, message }
+                }
+            }
+        });
     }
 
     // FHQ-189 (I3): one shared DTO (GoogleEventReminders) both directions bind against, so this is a
@@ -854,6 +907,12 @@ public class EventsController : ControllerBase
         existingOverride.IsAllDay = isAllDay;
         if (contentHash != null)
             existingOverride.ContentHash = contentHash;
+        // An exception carries reminders of its own from the moment it is created — Google stores what
+        // the single-occurrence write sent, rewritten as on any other write. Only written when the body
+        // carried the key, so this path (shared by the PUT and PATCH forms of the "This event" edit)
+        // never clears reminders the caller did not mention.
+        if (body.Reminders is not null)
+            existingOverride.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         await _db.SaveChangesAsync();
         _logger.LogInformation(

@@ -20,6 +20,12 @@ using FamilyHQ.Simulator.DTOs;
 /// </remarks>
 public static class ReminderSemantics
 {
+    /// <summary>The reason Google gives for a sixth override.</summary>
+    private const string CountExceededReason = "eventRemindersCountExceedsLimit";
+
+    /// <summary>The reason Google gives for asking for the defaults and for specific overrides at once.</summary>
+    private const string UseDefaultConflictReason = "cannotUseDefaultRemindersAndSpecifyOverride";
+
     /// <summary>Google's cap on overrides per event.</summary>
     private const int MaxOverrides = 5;
 
@@ -45,16 +51,32 @@ public static class ReminderSemantics
         var overrides = reminders.Overrides ?? [];
 
         if (overrides.Count > MaxOverrides)
-            return "eventRemindersCountExceedsLimit";
+            return CountExceededReason;
 
         // "Use the calendar's defaults" and "use exactly these" are mutually exclusive. An empty
         // array alongside useDefault:true is fine, and is how a client reverts to the default —
         // useDefault:true on its own is rejected, so the empty array carries real meaning.
         if (reminders.UseDefault == true && overrides.Count > 0)
-            return "cannotUseDefaultRemindersAndSpecifyOverride";
+            return UseDefaultConflictReason;
 
         return null;
     }
+
+    /// <summary>
+    /// The <c>message</c> Google sends alongside a rejection reason, verbatim as the live API sends it.
+    /// </summary>
+    /// <remarks>
+    /// The message lives here rather than at the call site so that the reason and the wording a client
+    /// may show a user cannot drift apart. An unrecognised reason is a programming error, not a
+    /// rejection Google has.
+    /// </remarks>
+    public static string RejectionMessage(string reason) => reason switch
+    {
+        CountExceededReason => "The event exceeds the allowed maximum number of reminders.",
+        UseDefaultConflictReason => "Cannot specify both default reminders and overrides at the same time.",
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(reason), reason, "Not a reminder rejection reason Google gives.")
+    };
 
     /// <summary>
     /// What Google actually stores for an accepted request: offsets clamped into range, unknown
