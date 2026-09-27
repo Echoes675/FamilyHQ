@@ -89,7 +89,7 @@ public class CalendarEventServiceRecurringTests
 
         // New series id assigned by the insert call.
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-series-id"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-series-id"; return e; });
 
         f.ArrangeReconcileWindow([
             f.GoogleInstance("new-inst-1", InstanceStart, recurringId: "new-series-id"),
@@ -119,8 +119,8 @@ public class CalendarEventServiceRecurringTests
 
         string? capturedNewRule = null;
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _, EventReminders? _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => e);
         f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", InstanceStart, recurringId: "new-series-id")]);
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
@@ -154,8 +154,8 @@ public class CalendarEventServiceRecurringTests
 
         string? capturedNewRule = null;
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _, EventReminders? _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => e);
         f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", InstanceStart, recurringId: "new-series-id")]);
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", InstanceStart, "Body"), RecurrenceScope.ThisAndFollowing);
@@ -191,8 +191,8 @@ public class CalendarEventServiceRecurringTests
 
         string? capturedNewRule = null;
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _, EventReminders? _) => { capturedNewRule = r; e.GoogleEventId = "new-series-id"; })
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => e);
         f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", splitStart, recurringId: "new-series-id")]);
 
         await f.Sut.UpdateRecurringAsync(EventId, Req("Updated", splitStart, "Body"), RecurrenceScope.ThisAndFollowing);
@@ -351,12 +351,12 @@ public class CalendarEventServiceRecurringTests
         var captured = new StrongBox<string?>(null);
         f.Google.Setup(g => g.CreateRecurringEventAsync(
                 GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) =>
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _, EventReminders? _) =>
             {
                 captured.Value = r;
                 e.GoogleEventId = "new-series-id";
             })
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => e);
 
         f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", splitStart, recurringId: "new-series-id")]);
         return captured;
@@ -867,13 +867,13 @@ public class CalendarEventServiceRecurringTests
         var capturedEvent = new StrongBox<CalendarEvent?>(null);
         f.Google.Setup(g => g.CreateRecurringEventAsync(
                 GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _) =>
+            .Callback((string _, CalendarEvent e, string _, string r, CancellationToken _, EventReminders? _) =>
             {
                 capturedRule.Value = r;
                 capturedEvent.Value = e;
                 e.GoogleEventId = "new-series-id";
             })
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => e);
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => e);
 
         f.ArrangeReconcileWindow([f.GoogleInstance("new-inst-1", AutumnSplitStart, recurringId: "new-series-id")]);
         return new LadderSplit(capturedRule, capturedEvent, rows);
@@ -1093,7 +1093,7 @@ public class CalendarEventServiceRecurringTests
         var captured = new StrongBox<string?>(null);
         f.Google.Setup(g => g.PatchEventFieldsPreservingTimesAsync(
                 GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback((string _, CalendarEvent _, string h, CancellationToken _) => captured.Value = h)
+            .Callback((string _, CalendarEvent _, string h, CancellationToken _, EventReminders? _) => captured.Value = h)
             .Returns(Task.CompletedTask);
 
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
@@ -1418,7 +1418,7 @@ public class CalendarEventServiceRecurringTests
 
         f.Google.Setup(g => g.CreateRecurringEventAsync(
                 GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string _, CalendarEvent e, string _, string _, CancellationToken _) =>
+            .Returns((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) =>
             {
                 calls.Add(CreateCall);
                 if (createFailure is not null)
@@ -1656,7 +1656,7 @@ public class CalendarEventServiceRecurringTests
         f.ArrangeEvent(instance);
 
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-series-id"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-series-id"; return e; });
 
         // GetEventsAsync only does pass-1: the re-fetched instances carry a NULL RecurrenceRule.
         f.ArrangeReconcileWindow([
@@ -1983,7 +1983,7 @@ public class CalendarEventServiceRecurringTests
     {
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
         f.ArrangeReconcileWindow([
             f.GoogleInstanceNoRule("new-master", InstanceStart, recurringId: "new-master"),
             f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master")
@@ -2003,7 +2003,7 @@ public class CalendarEventServiceRecurringTests
     {
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
         // GetEventsAsync is pass-1 only → instances carry a null RecurrenceRule; the reconcile must
         // stamp the new series' RRULE so they are not persisted RRULE-less.
         f.ArrangeReconcileWindow([
@@ -2025,7 +2025,7 @@ public class CalendarEventServiceRecurringTests
         const string MasterHash = "create-master-hash";
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
         var i1 = f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master"); i1.ContentHash = MasterHash;
         var i2 = f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master"); i2.ContentHash = MasterHash;
         f.ArrangeReconcileWindow([i1, i2]);
@@ -2043,7 +2043,7 @@ public class CalendarEventServiceRecurringTests
     {
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
         f.ArrangeReconcileWindow([
             f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master"),
             f.GoogleInstanceNoRule("inst-2", InstanceStart.AddDays(7), recurringId: "new-master")
@@ -2087,7 +2087,7 @@ public class CalendarEventServiceRecurringTests
         // (or a blank one) must not overwrite it, or the race would quietly cost the series its anchor.
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
 
         var fetched = f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master");
         fetched.IanaTimeZone = "";
@@ -2112,7 +2112,7 @@ public class CalendarEventServiceRecurringTests
     {
         var f = new Fixture();
         f.Google.Setup(g => g.CreateRecurringEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-master"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-master"; return e; });
         f.ArrangeReconcileWindow([f.GoogleInstanceNoRule("inst-1", InstanceStart, recurringId: "new-master")]);
 
         // A genuine, non-transient save failure must not be swallowed: the retry also fails, so the
@@ -2130,7 +2130,7 @@ public class CalendarEventServiceRecurringTests
     {
         var f = new Fixture();
         f.Google.Setup(g => g.CreateEventAsync(GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => { e.GoogleEventId = "single"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "single"; return e; });
 
         await f.Sut.CreateAsync(CreateReq([AliceCalId], "Once", InstanceStart, "Body", recurrenceRule: null));
 
@@ -2343,7 +2343,7 @@ public class CalendarEventServiceRecurringTests
                 .ReturnsAsync([]);
 
             Google.Setup(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
+                .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => e);
 
             // FHQ-172: default to a RESOLVABLE series master, because that is production's
             // overwhelming majority. Moq's own default is null, which this service reads as "the

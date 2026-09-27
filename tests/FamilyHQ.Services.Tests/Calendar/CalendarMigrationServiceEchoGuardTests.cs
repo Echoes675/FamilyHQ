@@ -61,7 +61,7 @@ public class CalendarMigrationServiceEchoGuardTests
         repo.Setup(r => r.GetSharedCalendarAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(SharedCal);
         google.Setup(g => g.CreateEventAsync("shared@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
                   { e.GoogleEventId = "new-google-id"; return e; });
         google.Setup(g => g.DeleteEventAsync("eoin@", "old-google-id", It.IsAny<CancellationToken>()))
               .Returns(Task.CompletedTask);
@@ -105,7 +105,7 @@ public class CalendarMigrationServiceEchoGuardTests
         repo.Setup(r => r.GetSharedCalendarAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(SharedCal);
         google.Setup(g => g.CreateEventAsync("shared@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
                   { e.GoogleEventId = "new-google-id"; return e; });
         google.Setup(g => g.DeleteEventAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
               .ThrowsAsync(new InvalidOperationException("delete failed"));

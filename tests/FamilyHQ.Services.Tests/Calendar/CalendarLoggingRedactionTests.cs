@@ -170,7 +170,7 @@ public class CalendarLoggingRedactionTests
             .Returns(Task.CompletedTask);
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
         google.Setup(g => g.CreateEventAsync(PrimaryCalendarId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
             {
                 e.GoogleEventId = "new-gid";
                 return e;
@@ -205,7 +205,7 @@ public class CalendarLoggingRedactionTests
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
         google.Setup(g => g.CreateEventAsync(SharedCalendarGoogleId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
             {
                 e.GoogleEventId = "gid-2";
                 return e;

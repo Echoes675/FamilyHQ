@@ -36,11 +36,11 @@ public sealed class ResilientGoogleCalendarClient(
         string googleCalendarId, DateTimeOffset? syncWindowStart, DateTimeOffset? syncWindowEnd, string? syncToken = null, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "GetEvents", c => inner.GetEventsAsync(googleCalendarId, syncWindowStart, syncWindowEnd, syncToken, c), ct);
 
-    public Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
-        => WithRetryAsync(RetryPolicy.Full, "PatchEventFields", c => inner.PatchEventFieldsAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
+    public Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null)
+        => WithRetryAsync(RetryPolicy.Full, "PatchEventFields", c => inner.PatchEventFieldsAsync(googleCalendarId, calendarEvent, contentHash, c, reminders), ct);
 
-    public Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
-        => WithRetryAsync(RetryPolicy.Full, "PatchEventFieldsPreservingTimes", c => inner.PatchEventFieldsPreservingTimesAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
+    public Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null)
+        => WithRetryAsync(RetryPolicy.Full, "PatchEventFieldsPreservingTimes", c => inner.PatchEventFieldsPreservingTimesAsync(googleCalendarId, calendarEvent, contentHash, c, reminders), ct);
 
     public Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "DeleteEvent", c => inner.DeleteEventAsync(googleCalendarId, googleEventId, c), ct);
@@ -61,11 +61,11 @@ public sealed class ResilientGoogleCalendarClient(
         => WithRetryAsync(RetryPolicy.Full, "StopChannel", c => inner.StopChannelAsync(channelId, resourceId, c), ct);
 
     // ---- Rejected-only (non-idempotent) operations: never retry 5xx ----
-    public Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default)
-        => WithRetryAsync(RetryPolicy.RejectedOnly, "CreateEvent", c => inner.CreateEventAsync(googleCalendarId, calendarEvent, contentHash, c), ct);
+    public Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null)
+        => WithRetryAsync(RetryPolicy.RejectedOnly, "CreateEvent", c => inner.CreateEventAsync(googleCalendarId, calendarEvent, contentHash, c, reminders), ct);
 
-    public Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default)
-        => WithRetryAsync(RetryPolicy.RejectedOnly, "CreateRecurringEvent", c => inner.CreateRecurringEventAsync(googleCalendarId, calendarEvent, contentHash, rrule, c), ct);
+    public Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default, EventReminders? reminders = null)
+        => WithRetryAsync(RetryPolicy.RejectedOnly, "CreateRecurringEvent", c => inner.CreateRecurringEventAsync(googleCalendarId, calendarEvent, contentHash, rrule, c, reminders), ct);
 
     public Task<string> MoveEventAsync(string sourceCalendarId, string googleEventId, string destinationCalendarId, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.RejectedOnly, "MoveEvent", c => inner.MoveEventAsync(sourceCalendarId, googleEventId, destinationCalendarId, c), ct);

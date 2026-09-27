@@ -331,14 +331,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string googleCalendarId,
         CalendarEvent calendarEvent,
         string contentHash,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        EventReminders? reminders = null)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
         // FHQ-170: correct as it stands. A brand-new event has no prior zone to preserve, so the
         // family's configured zone is the right answer here (ResolveOutboundZone still defers to an
         // explicit zone if a caller ever supplies one).
         var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
-        var body = MapToGoogleEvent(calendarEvent, contentHash, familyZone: familyZone);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, familyZone: familyZone, reminders: reminders);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -354,11 +355,12 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         CalendarEvent calendarEvent,
         string contentHash,
         string rrule,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        EventReminders? reminders = null)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events";
         var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
-        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, familyZone);
+        var body = MapToGoogleEvent(calendarEvent, contentHash, rrule, familyZone, reminders: reminders);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Post, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -402,9 +404,10 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string googleCalendarId,
         CalendarEvent calendarEvent,
         string contentHash,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        EventReminders? reminders = null)
     {
-        await PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: false, ct);
+        await PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: false, reminders, ct);
         return calendarEvent;
     }
 
@@ -412,23 +415,26 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string googleCalendarId,
         CalendarEvent calendarEvent,
         string contentHash,
-        CancellationToken ct = default)
-        => PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: true, ct);
+        CancellationToken ct = default,
+        EventReminders? reminders = null)
+        => PatchEventFieldsCoreAsync(googleCalendarId, calendarEvent, contentHash, omitWhenFields: true, reminders, ct);
 
     private async Task PatchEventFieldsCoreAsync(
         string googleCalendarId,
         CalendarEvent calendarEvent,
         string contentHash,
         bool omitWhenFields,
+        EventReminders? reminders,
         CancellationToken ct)
     {
         var endpoint = $"{_options.CalendarApiBaseUrl}/calendars/{Uri.EscapeDataString(googleCalendarId)}/events/{Uri.EscapeDataString(calendarEvent.GoogleEventId)}";
         var familyZone = await _timeZoneService.GetSendZoneAsync(ct);
         // MapToGoogleEvent emits no `recurrence` key when given no rrule (WhenWritingNull), and PATCH
-        // merges — so the master's existing RRULE, attendees and reminders survive the write.
+        // merges — so the master's existing RRULE and attendees survive the write. The same holds for
+        // reminders while none are passed, which is every edit that is not a reminder edit.
         var body = MapToGoogleEvent(
             calendarEvent, contentHash, familyZone: familyZone,
-            clearCounterpartWhenFields: true, omitWhenFields: omitWhenFields);
+            clearCounterpartWhenFields: true, omitWhenFields: omitWhenFields, reminders: reminders);
         using var request = await BuildAuthorizedRequestAsync(HttpMethod.Patch, endpoint, ct);
         request.Content = JsonContent.Create(body, options: _jsonOptions);
         var response = await _httpClient.SendAsync(request, ct);
@@ -614,7 +620,8 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     /// </param>
     private object MapToGoogleEvent(
         CalendarEvent evt, string contentHash, string? rrule = null, string? familyZone = null,
-        bool clearCounterpartWhenFields = false, bool omitWhenFields = false)
+        bool clearCounterpartWhenFields = false, bool omitWhenFields = false,
+        EventReminders? reminders = null)
     {
         var extendedProperties = new
         {
@@ -623,6 +630,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
         // Google expects the recurrence array only when the event is a series master.
         var recurrence = rrule is null ? null : new[] { rrule };
+
+        // Reminders follow the same rule as recurrence, and for a sharper reason: this one body is
+        // shared by create, create-recurring and patch, so a reminders member that were always
+        // populated would make every title, time or location edit rewrite the account's reminders
+        // too — including a set made in the Google Calendar app on a phone, which is where most of
+        // them come from. Null therefore means "this write says nothing about reminders", and
+        // WhenWritingNull drops the key entirely rather than sending `"reminders": null`, which
+        // events.patch would merge as a value.
+        var remindersPayload = reminders is null ? null : BuildReminders(reminders);
 
         string? startDate = null, startDateTime = null, startZone = null;
         string? endDate = null, endDateTime = null, endZone = null;
@@ -686,9 +702,34 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             start = omitWhenFields ? null : BuildWhen(startDate, startDateTime, startZone, clearCounterpartWhenFields),
             end = omitWhenFields ? null : BuildWhen(endDate, endDateTime, endZone, clearCounterpartWhenFields),
             recurrence,
+            reminders = remindersPayload,
             extendedProperties
         };
     }
+
+    /// <summary>
+    /// Google's <c>reminders</c> object for a write that is deliberately changing reminders.
+    /// </summary>
+    /// <remarks>
+    /// <b>The <c>overrides</c> array is always emitted, even when empty.</b> Reverting an event to the
+    /// calendar's default needs <c>{"useDefault":true,"overrides":[]}</c>; <c>{"useDefault":true}</c>
+    /// on its own is rejected with <c>400 cannotUseDefaultRemindersAndSpecifyOverride</c>, so the
+    /// empty array is required by Google rather than redundant. It is equally required for "the user
+    /// asked for no reminders", which is the same shape with <c>useDefault:false</c>: events.patch
+    /// replaces the whole array, so omitting it would read as "no change" instead of "clear them".
+    /// <para>
+    /// Nothing here validates or normalises the values. The set has either been validated on the way
+    /// in as something the kiosk created, or it came from Google in the first place and is not ours
+    /// to correct.
+    /// </para>
+    /// </remarks>
+    private static object BuildReminders(EventReminders reminders) => new
+    {
+        useDefault = reminders.UseDefault,
+        overrides = reminders.Overrides
+            .Select(o => new { method = o.Method, minutes = o.Minutes })
+            .ToArray()
+    };
 
     /// <summary>
     /// FHQ-170: the zone this write anchors the event to. The event's OWN zone — the value Google
