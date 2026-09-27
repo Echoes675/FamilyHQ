@@ -1836,6 +1836,112 @@ public class CalendarEventServiceRecurringTests
         f.Repo.Verify(r => r.DeleteEventAsync(i2.Id, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── FHQ-214: recurring deletes are idempotent against a concurrent inbound sync ──
+    //
+    // Every recurring delete scope writes to Google and then removes the matching local rows. Google
+    // pushes that write back within seconds, so a targeted sync can remove those very rows before the
+    // local commit lands — and a series delete removes N rows at once, so the sync may have reached
+    // only some of them.
+
+    [Fact]
+    public async Task DeleteRecurringAsync_ThisOnly_RowAlreadyRemovedByConcurrentSync_Completes()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        f.Repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException(
+                "The database operation was expected to affect 1 row(s), but actually affected 0 row(s)"));
+        f.Repo.Setup(r => r.GetEventAsync(EventId, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+
+        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.ThisOnly))
+            .Should().NotThrowAsync();
+
+        f.Google.Verify(g => g.DeleteEventAsync(GoogleCalId, "inst-2", It.IsAny<CancellationToken>()), Times.Once);
+        f.Logger.Records.Should().NotContain(r =>
+            r.Level == LogLevel.Warning || r.Level == LogLevel.Error || r.Level == LogLevel.Critical);
+    }
+
+    [Fact]
+    public async Task DeleteRecurringAsync_AllInSeries_AllSeriesRowsAlreadyRemoved_Completes()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var i1 = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart.AddDays(-7));
+        var i2 = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([i1, i2]);
+
+        f.Repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException("expected to affect 2 row(s), but actually affected 0 row(s)"));
+        f.Repo.Setup(r => r.GetEventAsync(i1.Id, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+        f.Repo.Setup(r => r.GetEventAsync(i2.Id, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+
+        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.AllInSeries))
+            .Should().NotThrowAsync();
+
+        f.Google.Verify(g => g.DeleteEventAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteRecurringAsync_AllInSeries_OnlySomeSeriesRowsRemoved_ReDeletesTheSurvivorsAndCompletes()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(instance);
+
+        var gone = f.RecurringInstance(Guid.NewGuid(), "inst-1", InstanceStart.AddDays(-7));
+        var survivor = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([gone, survivor]);
+
+        // The batch rolls back wholesale, so the row the sync did NOT remove is still present and
+        // must be deleted by the re-drive rather than reported as done.
+        var saves = 0;
+        f.Repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => ++saves == 1
+                ? Task.FromException<int>(new DbUpdateConcurrencyException("expected to affect 2 row(s), but actually affected 1 row(s)"))
+                : Task.FromResult(0));
+        f.Repo.Setup(r => r.GetEventAsync(gone.Id, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+        f.Repo.Setup(r => r.GetEventAsync(survivor.Id, It.IsAny<CancellationToken>())).ReturnsAsync(survivor);
+
+        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.AllInSeries))
+            .Should().NotThrowAsync();
+
+        f.Repo.Verify(r => r.DeleteEventAsync(survivor.Id, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        f.Repo.Verify(r => r.DeleteEventAsync(gone.Id, It.IsAny<CancellationToken>()), Times.Once);
+        f.Repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        f.Google.Verify(g => g.DeleteEventAsync(GoogleCalId, SeriesId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DeleteRecurringAsync_ThisAndFollowing_TailRowsAlreadyRemoved_Completes()
+    {
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        instance.RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=SU";
+        f.ArrangeEvent(instance);
+
+        var atSplit = f.RecurringInstance(Guid.NewGuid(), "inst-2", InstanceStart);
+        var after = f.RecurringInstance(Guid.NewGuid(), "inst-3", InstanceStart.AddDays(7));
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([atSplit, after]);
+
+        f.Repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException("expected to affect 2 row(s), but actually affected 0 row(s)"));
+        f.Repo.Setup(r => r.GetEventAsync(atSplit.Id, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+        f.Repo.Setup(r => r.GetEventAsync(after.Id, It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
+
+        await f.Sut.Invoking(s => s.DeleteRecurringAsync(EventId, RecurrenceScope.ThisAndFollowing))
+            .Should().NotThrowAsync();
+
+        f.Google.Verify(g => g.PatchSeriesRecurrenceAsync(GoogleCalId, SeriesId, It.Is<string>(s => s.Contains("UNTIL=")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Fail-fast on non-recurring ────────────────────────────────────────────
 
     [Fact]
