@@ -61,7 +61,16 @@ description: A set of rules and best practices that guide on how to write, struc
 
 Static calls must be wrapped in an injectable interface with the correct DI lifetime, so a unit test can substitute them. `DateTime.Now`, `Guid.NewGuid()`, file/network/environment access and any other source of ambient non-determinism all fall under this rule.
 
-**Exemption — pure framework functions.** A static call that is a pure function of its arguments (crypto primitives such as `HMACSHA256.HashData`, `Convert.ToHexStringLower`, `Encoding.UTF8.GetBytes`) is exempt. It introduces no ambient non-determinism, so there is nothing for a seam to control; and mocking it would let a test hand back a fixed digest and assert the opposite of what production computes — the substitution would remove the only property worth testing. Assert the real output instead (see `SaltedHashPiiRedactor`, FHQ-166). `RandomNumberGenerator` is not pure, but is exempt at the same call site for the same reason: the observable contract there is "two instances do not agree", and a substitutable RNG could only be used to assert that they do.
+**Exemption — pure framework functions.** A static call that is a pure function of its arguments (crypto primitives such as `HMACSHA256.HashData`, `Convert.ToHexStringLower`, `Encoding.UTF8.GetBytes`) is exempt. It introduces no ambient non-determinism, so there is nothing for a seam to control; and mocking it would let a test hand back a fixed digest and assert the opposite of what production computes — the substitution would remove the only property worth testing. Assert the real output instead (see `SaltedHashPiiRedactor`). `RandomNumberGenerator` is not pure, but is exempt at the same call site for the same reason: the observable contract there is "two instances do not agree", and a substitutable RNG could only be used to assert that they do.
+
+## Comments
+
+- A comment earns its place by explaining **why**, not by restating the code.
+- **Never cite a ticket id.** `FHQ-nnn` in a comment points at an explanation instead of giving one,
+  and it makes the code depend on a vault the reader may not have. State the constraint and the reason
+  directly — "stored through a value converter because an owned JSON collection cannot be saved
+  through a detached Update", not "see the ticket". The full rule, including the commit-message
+  exception, is in `AGENTS.md`.
 
 ## Logging
 - Use structured logging (e.g., _logger.LogInformation("Processing event {EventId}", eventId)).

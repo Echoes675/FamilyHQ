@@ -148,6 +148,13 @@ All FamilyHQ work is tracked in the Obsidian vault at `D:\Obsidian Vault\FamilyH
 - Specs and plans for any `FHQ-N` ticket land in the vault at `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\` — **not** `docs/superpowers/`.
 - A session-start scan runs at the start of every session in this repo: list the in-flight tickets (`Planning`, `In Progress`, `In Review`, `Staging`, `Ready for release`), check `gh pr view` for merged PRs that should move to `Staging`, advance any `Staging` ticket a green staging run now covers to `Ready for release`, and produce a one-line summary.
 - `Done` means **live in production**, not merged. A merged PR moves a ticket to `Staging`, and its folder stays in `Tickets/` until it is released.
+- **Ticket ids do not belong in checked-in files.** No `FHQ-nnn` in code comments, XML doc comments,
+  test names, `.agent/` docs, Jenkinsfiles or scripts. The repository must stand on its own: an id
+  means nothing to a reader without the vault, and it is a *pointer to* an explanation rather than the
+  explanation. Write what the constraint is and why it exists; if removing the id would leave a
+  comment that explains nothing, it was a bookmark, not documentation.
+  **Commit messages and PR titles/bodies are the exception** — traceability belongs in git history,
+  not in the files.
 
 See `.agent/skills/obsidian-tickets/SKILL.md` for the full trigger → action playbook.
 
