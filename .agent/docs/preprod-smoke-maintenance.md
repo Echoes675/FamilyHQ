@@ -421,6 +421,45 @@ Three rules follow:
 - **Never assume a day is empty.** A failed scenario's events stay where they are until somebody clears
   them, and that is deliberate.
 
+#### How much the suite asks of Google, and why it is counted
+
+Google **pauses push delivery to this account for minutes at a time** once it has been worked hard —
+measured at 191s and then 262s of total silence across every channel, on a day of unusually heavy use.
+Those pauses are what make scenarios time out waiting for a change to arrive, so the suite's own
+appetite is now a number rather than a guess.
+
+Every run prints one greppable line:
+
+```
+Google API calls this run: total=323 list=198 instances=52 delete=38 insert=18 get=10 patch=6 calendarList=1
+```
+
+and every scenario prints its own share (`google api: total=… list=…`), cleanup included, so a
+scenario that becomes expensive shows up beside its own name. **Nothing fails on these numbers.** A
+budget that failed the build would be a new way to block a release; this exists to be compared with
+last week's.
+
+FamilyHQ's own calls are separately visible in Seq — filter on
+`Application = 'FamilyHQ.WebApi'` and a message like `Sending HTTP request%googleapis%`. It made 121
+in a 12-minute run, so **the suite, not the product, is the heavier caller.**
+
+**If the total climbs, ask Google for less — do not wait longer.** The three things that made the
+difference:
+
+- **Cleanup lists once, over the calendars the scenario actually touched** — usually one, not all
+  five. The five-calendar breadth in `SmokeLookup.FindInGoogleAsync` is right for an *assertion*
+  ("written once, to the shared calendar only" cannot be checked by looking at one calendar) and
+  pointless for cleanup. Note the trap: a multi-member event lives on the **shared** calendar, not on
+  the members' own, so the shared one is included whenever more than one member is named.
+- **The "did cleanup work?" check runs once per run, not once per scenario** — five calls instead of
+  a hundred and fifty. It is scoped to *this run's* correlation markers, so it cannot report the
+  events a previous run's failure deliberately kept; a warning that cries wolf is one nobody reads,
+  which is how the calendars filled up unnoticed in the first place. It reports and does **not**
+  sweep — deleting on a hunch destroys the evidence the retention exists for.
+- **Waits that ask Google poll every five seconds**, not two (`BoundedWait.GooglePollIntervalMs`).
+  Each poll of those is a listing per calendar. The wait that asks *preprod* still polls at two
+  seconds and is deliberately untouched: it reads preprod's own database and costs Google nothing.
+
 #### The daylight-saving scenarios reserve nothing
 
 They are the only scenarios whose dates the allocator does not hand out — a transition happens when it

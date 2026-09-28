@@ -55,10 +55,13 @@ public sealed class SmokeScenarioHooks(
         {
             Environment = environment,
             Correlation = correlation,
+            GoogleCallsAtStart = environment.OracleOrNull?.Calls.Snapshot(),
             Api = environment.SessionJwtOrNull is { } jwt
                 ? new PreprodApiClient(environment.Configuration, jwt, correlation.Id)
                 : null
         };
+
+        SmokeScenarioCleanup.NoteScenarioStarted(correlation.DescriptionMarker);
 
         scenarioContext.Set(state);
     }
@@ -129,6 +132,8 @@ public sealed class SmokeScenarioHooks(
             return;
         }
 
+        SmokeScenarioCleanup.NoteEventsKeptAfterFailure();
+
         output.WriteLine(
             $"Smoke scenario FAILED. correlation={state.Correlation.Id} short={state.Correlation.ShortId} "
             + "— grep Seq for that correlation id, and look for the short id in the retained events on the "
@@ -174,6 +179,27 @@ public sealed class SmokeScenarioHooks(
         await SmokeScenarioCleanup.RemoveEventsAsync(state, output.WriteLine);
     }
 
+    /// <summary>
+    /// Reports what this scenario asked of Google, cleanup included.
+    /// <para>
+    /// Counted because it was invisible and stopped being academic: Google pauses push delivery to this
+    /// account for minutes when it has been worked hard, and those pauses are what make scenarios time out.
+    /// Nothing fails on this number — it is here so a run can be compared with the last one.
+    /// </para>
+    /// </summary>
+    [AfterScenario(Order = 6)]
+    public void ReportGoogleSpend()
+    {
+        if (!scenarioContext.TryGetValue(out SmokeScenarioState state)
+            || state.Environment.OracleOrNull is not { } oracle
+            || state.GoogleCallsAtStart is not { } before)
+        {
+            return;
+        }
+
+        output.WriteLine($"  google api: {oracle.Calls.Since(before)}");
+    }
+
     [AfterScenario(Order = 10)]
     public async Task DisposeAsync()
     {
@@ -190,9 +216,30 @@ public sealed class SmokeScenarioHooks(
         state.Api?.Dispose();
     }
 
-    /// <summary>Releases the run-scoped Google client once every scenario has finished.</summary>
+    /// <summary>
+    /// Once every scenario has finished: report the run's total spend against Google, check the suite left
+    /// nothing behind, and release the run-scoped Google client.
+    /// <para>
+    /// Console rather than the test output helper, because a run-level hook belongs to no scenario. The
+    /// total is the line to watch over time — if it climbs, the push pauses that make scenarios time out get
+    /// likelier, and the fix is to ask Google for less rather than to wait longer.
+    /// </para>
+    /// </summary>
     [AfterTestRun]
-    public static void ReleaseRunEnvironment() => SmokePreflight.Release();
+    public static async Task FinishRunAsync()
+    {
+        if (SmokePreflight.CurrentEnvironment is { } environment)
+        {
+            if (environment.OracleOrNull is { } oracle)
+            {
+                Console.WriteLine($"Google API calls this run: {oracle.Calls}");
+            }
+
+            await SmokeScenarioCleanup.ReportAnythingLeftBehindAsync(environment, Console.WriteLine);
+        }
+
+        SmokePreflight.Release();
+    }
 
     private async Task TryCaptureScreenshotAsync(SmokeScenarioState state)
     {

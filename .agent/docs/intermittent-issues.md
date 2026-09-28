@@ -41,6 +41,14 @@ Preprod received the notification for that calendar at `17:36:48` — **3m58s af
 
 So the latency is upstream of everything we run: **Google itself took ~4 minutes to send the push.**
 
+**Load reduction, done before accepting the longer wait.** The suite's own Google traffic was
+invisible and turned out to dwarf FamilyHQ's (121 calls in a 12-minute run). It is now counted and
+printed per scenario and per run, and three changes cut it substantially: cleanup lists once over
+only the calendars a scenario touched, the "did cleanup work?" check runs once per run instead of per
+scenario, and Google-facing waits poll at 5s instead of 2s. Watch the
+`Google API calls this run: total=…` line — if it climbs, ask Google for less rather than waiting
+longer.
+
 **Mitigation:** `PushWaitSeconds` raised from 180 to 300. This is a re-statement of how long the live
 path may take, not a retry — nothing is re-driven and no sync is triggered by hand. A change that
 never arrives still fails, which is the failure worth having.
