@@ -221,4 +221,134 @@ public class GoogleCalendarClientRemindersTests
 
         Uri.UnescapeDataString(requestedUrl!).Should().Contain("reminders");
     }
+
+    // ── After a reminder write: store what Google RETURNED ────────────────────
+    //
+    // Google answers a reminder write with a 200 and its own version of what it stored: a negative
+    // minutes clamped to 0, anything above the ceiling clamped down, duplicates collapsed, and a
+    // method it does not recognise dropped outright — leaving the event with no reminders at all.
+    // A path that believes its own request would show the family a reminder that does not exist.
+
+    /// <summary>
+    /// Patches an event with the given reminder intent, answers with the given response body, and
+    /// returns the event as the client left it.
+    /// </summary>
+    private static async Task<CalendarEvent> PatchAndReadBackAsync(
+        string googleEventId, EventReminders? sent, string responseJson, EventReminders? alreadyStored = null)
+    {
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.RequestUri!.ToString().Contains($"events/{googleEventId}")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(responseJson)
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = googleEventId,
+            Title = "Edited on the kiosk",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero),
+            Reminders = alreadyStored
+        };
+
+        return await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None, sent);
+    }
+
+    [Fact]
+    public async Task ReminderWrite_ResponseCarriesADifferentSet_TheDifferentSetIsWhatIsStored()
+    {
+        var result = await PatchAndReadBackAsync("evt-rewritten",
+            sent: EventReminders.Explicit([new EventReminder("popup", 10)]),
+            responseJson: """
+                {"id":"evt-rewritten","reminders":{"useDefault":false,
+                 "overrides":[{"method":"email","minutes":1440},{"method":"popup","minutes":25}]}}
+                """);
+
+        result.Reminders!.UseDefault.Should().BeFalse();
+        result.Reminders!.Overrides.Should().BeEquivalentTo(
+            [new EventReminder("email", 1440), new EventReminder("popup", 25)]);
+    }
+
+    [Fact]
+    public async Task ReminderWrite_GoogleDroppedAnUnknownMethod_TheStoredValueIsNoOverrides()
+    {
+        // Sending method "sms" returns a 200 with the event carrying no reminders at all. Believing
+        // the request would leave the kiosk showing an sms reminder the family will never receive.
+        var result = await PatchAndReadBackAsync("evt-sms",
+            sent: EventReminders.Explicit([new EventReminder("sms", 30)]),
+            responseJson: """{"id":"evt-sms","reminders":{"useDefault":false}}""");
+
+        result.Reminders!.Overrides.Should().BeEmpty();
+        result.Reminders!.UseDefault.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReminderWrite_GoogleClampedANegativeMinutes_TheClampedValueIsWhatIsStored()
+    {
+        var result = await PatchAndReadBackAsync("evt-clamped",
+            sent: EventReminders.Explicit([new EventReminder("popup", -540)]),
+            responseJson: """
+                {"id":"evt-clamped","reminders":{"useDefault":false,"overrides":[{"method":"popup","minutes":0}]}}
+                """);
+
+        result.Reminders!.Overrides.Should().ContainSingle()
+            .Which.Should().Be(new EventReminder("popup", 0));
+    }
+
+    [Fact]
+    public async Task ReminderWrite_ResponseMentionsNoReminders_LeavesTheStoredValueAlone()
+    {
+        // A response that says nothing about reminders is not an instruction to forget them.
+        var alreadyStored = EventReminders.Explicit([new EventReminder("popup", 15)]);
+
+        var result = await PatchAndReadBackAsync("evt-silent",
+            sent: EventReminders.Explicit([new EventReminder("popup", 15)]),
+            responseJson: """{"id":"evt-silent"}""",
+            alreadyStored: alreadyStored);
+
+        result.Reminders!.SameAs(alreadyStored).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CreateWithNoReminderIntent_StoresTheDefaultGoogleMaterialised()
+    {
+        // An all-day event never inherits: created with no reminders key it comes back carrying the
+        // calendar's default as explicit overrides. Reading the response — which the create path
+        // already parses for the event id — is what makes the stored row match the account.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Post && r.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("""
+                    {"id":"evt-new","reminders":{"useDefault":false,"overrides":[{"method":"popup","minutes":600}]}}
+                    """)
+            });
+
+        var created = await sut.CreateEventAsync("cal-1", new CalendarEvent
+        {
+            Title = "All-day created by kiosk",
+            IsAllDay = true,
+            Start = new DateTimeOffset(2026, 6, 10, 0, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 11, 0, 0, 0, TimeSpan.Zero)
+        }, "hash-1", CancellationToken.None);
+
+        created.GoogleEventId.Should().Be("evt-new");
+        created.Reminders!.Overrides.Should().ContainSingle()
+            .Which.Should().Be(new EventReminder("popup", 600));
+    }
 }

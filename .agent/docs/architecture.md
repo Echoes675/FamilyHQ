@@ -44,7 +44,30 @@
   = explicitly none. **On an all-day event that last state is ambiguous** — Google reports it for
   reminders that fire *after* the event starts, which its API will not show at all (FHQ-193), so
   nothing may render it as "no reminders". Order is not meaningful: Google reorders the array, so
-  compare with `EventReminders.SameAs`. Nothing writes reminders back to Google yet — that is FHQ-190.
+  compare with `EventReminders.SameAs`.
+- **Writing reminders back is opt-in, and that is the whole safety property.** `CreateEventRequest`
+  and `UpdateEventRequest` carry an optional `Reminders`: **absent** means the user did not touch
+  reminders, **present** means "replace the event's reminders with exactly this set". The value is
+  threaded to `IGoogleCalendarClient`'s write methods as an optional parameter defaulting to null, and
+  `MapToGoogleEvent` emits the `reminders` key only when it is non-null — the same shape `recurrence`
+  uses, dropped by `WhenWritingNull`. One body is shared by create, create-recurring and patch, so an
+  always-populated member would make every title or time edit rewrite the account's reminders.
+  `GoogleCalendarClientMappingTests` holds both halves: absent on an ordinary patch, present and
+  complete on a reminder write. `overrides` is always emitted alongside `useDefault`, even empty —
+  `{"useDefault":true}` on its own is rejected `400 cannotUseDefaultRemindersAndSpecifyOverride`, and
+  PATCH replaces the whole array, so an omitted array would read as "no change" rather than "clear".
+  Validation (≤ 5 overrides, 0–40320 minutes, `popup`/`email`) lives in `EventRemindersValidator` in
+  `FamilyHQ.Core` and runs **only when the request carries reminders**; values read from Google never
+  pass through it.
+- **After a reminder write, what Google returned is what is stored.** Google accepts almost any value
+  with a `200` and then rewrites it: a negative `minutes` clamps to `0`, above 40320 clamps down,
+  duplicates collapse, the array comes back reordered, and an unrecognised `method` is dropped
+  entirely. The client maps the response through the same `MapReminders` the read path uses; a response
+  that mentions no reminders leaves the stored value alone, because saying nothing is not saying none.
+- **A "this and following" split carries the original series' reminders onto the forward series**, for
+  the same reason it carries the anchor zone: the forward half is a continuation, not a fresh choice.
+  Without it Google applies the calendar's defaults and a phone-set reminder disappears from the tail.
+  A request that changes reminders itself wins; a series with none learned yet still sends nothing.
   `CalendarInfo.DefaultReminders` is kept current for calendars FamilyHQ already knows about too —
   `CalendarSyncService.RefreshCalendarDefaultsAsync` adopts it (alongside `IanaTimeZone`) from the
   `calendarList` response every sync already fetches, the same way `AddCalendarAsync` seeds it for a
@@ -148,7 +171,7 @@ FamilyHQ writes to Google Calendar via `CalendarEventService` and `CalendarMigra
 The guard is implemented in two halves:
 
 1. **Outbound** — every successful Google write records `(GoogleEventId, hash)` in a singleton `IOutboundWriteHashCache` with a 60-second TTL. Failed writes do not record.
-2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache via `IsSelfEcho`. On a hash match the event is **usually** skipped — no DB write, no further Google write, single "Self-echo skipped" Information-level log entry — but the hash covers only `(title, start, end, isAllDay, description)`, not reminders (FHQ-189), so a hash match is NOT automatically an echo: `IsSelfEcho` also compares reminders, and treats a locally-unlearned reminder set (`existing.Reminders is null`) paired with an inbound value as new information rather than an echo, so that event is processed (a DB write) even though its hash matched.
+2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache via `IsSelfEcho`. On a hash match the event is **usually** skipped — no DB write, no further Google write, single "Self-echo skipped" Information-level log entry — but the hash covers `(title, start, end, isAllDay, description)` plus **the reminders a write actually sent** — never the ones an event merely holds, so an edit that did not touch reminders is stamped byte-identically to the way it was before reminders were modelled, and the events already in production keep matching. A phone's reminder-only change therefore still does not move the stamp, so a hash match is NOT automatically an echo: `IsSelfEcho` also compares reminders, and treats a locally-unlearned reminder set (`existing.Reminders is null`) paired with an inbound value as new information rather than an echo, so that event is processed (a DB write) even though its hash matched.
 
 ### Production verification
 

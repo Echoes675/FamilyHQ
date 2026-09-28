@@ -288,6 +288,11 @@ public class GoogleCalendarClientMappingTests
         // FHQ-145: the merge body must never carry fields FamilyHQ does not model, so Google's
         // existing attendees/colorId/reminders survive a kiosk edit. Guards against a future
         // MapToGoogleEvent change re-arming the full-replace data loss.
+        //
+        // `reminders` stays in this list even though FamilyHQ now models reminders: this patch passes
+        // no reminder intent, which is what an ordinary title/time/location edit does, and the key
+        // must be absent for exactly that reason. The paired positive assertions — that a deliberate
+        // reminder write DOES send a complete set — are the tests immediately below.
         var (http, tokenStore, sut) = CreateSut();
         tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
         SetupAuthResponse(http);
@@ -321,6 +326,173 @@ public class GoogleCalendarClientMappingTests
         doc.RootElement.TryGetProperty("colorId", out _).Should().BeFalse();
         doc.RootElement.TryGetProperty("reminders", out _).Should().BeFalse();
         doc.RootElement.TryGetProperty("visibility", out _).Should().BeFalse();
+    }
+
+    // ── The reminders key: absent unless the user changed reminders ────────────
+    //
+    // One outbound body is shared by create, create-recurring and patch. Emitting `reminders`
+    // unconditionally would make every title edit rewrite them, so the parameter defaults to "say
+    // nothing" and these tests hold both halves of that contract in one place.
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_WithNoReminderIntent_SendsNoRemindersKeyAtAll()
+    {
+        var body = await CapturePatchBodyAsync("evt-no-reminder-intent", reminders: null);
+
+        using var doc = JsonDocument.Parse(body);
+        doc.RootElement.TryGetProperty("reminders", out _).Should().BeFalse(
+            "an ordinary edit must leave Google's own reminders exactly as the account holds them");
+        body.Should().NotContain("\"reminders\":null",
+            "an explicit null would be a value Google merges, not an omission");
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_WithAReminderWrite_SendsTheCompleteSet()
+    {
+        // Google replaces the whole overrides array, so a reminder write must carry every reminder
+        // the event is to end up with — a partial set deletes the rest.
+        var body = await CapturePatchBodyAsync("evt-reminder-write",
+            EventReminders.Explicit([new EventReminder("popup", 10), new EventReminder("email", 1440)]));
+
+        using var doc = JsonDocument.Parse(body);
+        var reminders = doc.RootElement.GetProperty("reminders");
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+
+        var overrides = reminders.GetProperty("overrides").EnumerateArray()
+            .Select(o => (Method: o.GetProperty("method").GetString(), Minutes: o.GetProperty("minutes").GetInt32()))
+            .ToList();
+        overrides.Should().BeEquivalentTo([("popup", 10), ("email", 1440)]);
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_RevertToCalendarDefault_SendsUseDefaultTrueWithAnEmptyOverridesArray()
+    {
+        // The empty array is load-bearing, not noise: {"useDefault":true} on its own is rejected
+        // 400 cannotUseDefaultRemindersAndSpecifyOverride. Nobody may tidy it away.
+        var body = await CapturePatchBodyAsync("evt-revert", EventReminders.InheritsCalendarDefault);
+
+        using var doc = JsonDocument.Parse(body);
+        var reminders = doc.RootElement.GetProperty("reminders");
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeTrue();
+        reminders.TryGetProperty("overrides", out var overrides).Should().BeTrue(
+            "Google rejects a revert-to-default body that omits the overrides array");
+        overrides.EnumerateArray().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PatchEventFieldsAsync_ExplicitlyNone_SendsUseDefaultFalseWithAnEmptyOverridesArray()
+    {
+        // "The user asked for no reminders" is a different instruction from "follow the calendar's
+        // default", and the two differ only by useDefault.
+        var body = await CapturePatchBodyAsync("evt-none", EventReminders.ExplicitlyNone);
+
+        using var doc = JsonDocument.Parse(body);
+        var reminders = doc.RootElement.GetProperty("reminders");
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+        reminders.GetProperty("overrides").EnumerateArray().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_WithNoReminderIntent_SendsNoRemindersKey_SoGoogleAppliesItsOwnDefault()
+    {
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-created" }))
+            });
+
+        await sut.CreateEventAsync("cal-1", new CalendarEvent
+        {
+            Title = "Created by kiosk",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        }, "hash-1", CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        doc.RootElement.TryGetProperty("reminders", out _).Should().BeFalse();
+        capturedBody.Should().NotContain("\"reminders\":null");
+    }
+
+    [Fact]
+    public async Task CreateEventAsync_WithAReminderWrite_SendsTheCompleteSet()
+    {
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-created" }))
+            });
+
+        await sut.CreateEventAsync("cal-1", new CalendarEvent
+        {
+            Title = "Created by kiosk with a reminder",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        }, "hash-1", CancellationToken.None,
+            EventReminders.Explicit([new EventReminder("popup", 30)]));
+
+        capturedBody.Should().NotBeNull();
+        using var doc = JsonDocument.Parse(capturedBody!);
+        var reminders = doc.RootElement.GetProperty("reminders");
+        reminders.GetProperty("useDefault").GetBoolean().Should().BeFalse();
+        var only = reminders.GetProperty("overrides").EnumerateArray().Single();
+        only.GetProperty("method").GetString().Should().Be("popup");
+        only.GetProperty("minutes").GetInt32().Should().Be(30);
+    }
+
+    private static async Task<string> CapturePatchBodyAsync(string googleEventId, EventReminders? reminders)
+    {
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains($"events/{googleEventId}")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = googleEventId }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = googleEventId,
+            Title = "Edited on the kiosk",
+            Start = new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 6, 10, 10, 30, 0, TimeSpan.Zero)
+        };
+
+        await sut.PatchEventFieldsAsync("cal-1", evt, "hash-1", CancellationToken.None, reminders);
+
+        capturedBody.Should().NotBeNull();
+        return capturedBody!;
     }
 
     [Fact]

@@ -25,7 +25,7 @@ public class CalendarEventServiceEchoGuardTests
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([calA]);
         google.Setup(g => g.CreateEventAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
                 { e.GoogleEventId = "google-evt-id-123"; return e; });
         repo.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -72,7 +72,7 @@ public class CalendarEventServiceEchoGuardTests
         repo.Setup(r => r.GetEventAsync(EventId, "u-1", It.IsAny<CancellationToken>())).ReturnsAsync(evt);
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([calA]);
         google.Setup(g => g.PatchEventFieldsAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => e);
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
@@ -117,7 +117,7 @@ public class CalendarEventServiceEchoGuardTests
         migration.Setup(m => m.EnsureCorrectCalendarAsync(It.IsAny<CalendarEvent>(), It.IsAny<IReadOnlyList<CalendarInfo>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         google.Setup(g => g.PatchEventFieldsAsync("cal-a@google.com", It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => e);
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => e);
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
 

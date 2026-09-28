@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Models;
+
 namespace FamilyHQ.Core.DTOs;
 
 public record UpdateEventRequest(
@@ -16,4 +18,11 @@ public record UpdateEventRequest(
     //   • Both unset → no recurrence change (legacy non-recurring update behaviour).
     // The presentation layer builds RecurrenceRule from a RecurrenceSpec via RecurrenceRuleBuilder.
     string? RecurrenceRule = null,
-    bool ClearRecurrence = false);
+    bool ClearRecurrence = false,
+    // Absent (the default) means the user did not touch reminders, so the write says nothing about
+    // them and whatever Google holds — including a set made in the Google Calendar app on a phone —
+    // survives untouched. Present means "make the event's reminders exactly this set"; Google
+    // replaces the whole overrides array, so a partial set is a deletion of the rest.
+    // Absent and EventReminders.ExplicitlyNone must never be collapsed: the second is the user
+    // asking for no reminders, and is a write.
+    EventReminders? Reminders = null);
