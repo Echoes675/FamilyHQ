@@ -54,7 +54,7 @@ public sealed class RecurrenceGoldenRuleSteps(ScenarioContext scenarioContext)
 
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
-        var firstDate = state.EventDay;
+        var firstDate = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
         var rule = SmokeIcal.WeeklyOn([firstDate.DayOfWeek], SmokeSeries.Occurrences);
 
         var draft = new GoogleEventDraft(

@@ -116,7 +116,8 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     /// <summary>
     /// Waits until a tile whose text contains <paramref name="titleFragment"/> is on the Day view for
     /// <paramref name="date"/>. Day view rather than Month view on purpose: the month grid renders at
-    /// most three tiles per day, and preprod keeps every event every smoke run has ever created.
+    /// most three tiles per day, and a day can hold more than that — the events a failed scenario leaves
+    /// behind stay on the calendars until somebody clears them.
     /// </summary>
     public async Task WaitForEventOnDayAsync(string titleFragment, DateOnly date)
     {

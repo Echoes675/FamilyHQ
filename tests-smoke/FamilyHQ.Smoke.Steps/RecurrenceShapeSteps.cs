@@ -36,7 +36,14 @@ public sealed class RecurrenceShapeSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = SmokeEventShape.NextDate(state.EventDay, ChosenWeekday);
+
+        // The widest block in the suite: a fortnightly series of three reaches four weeks past its first
+        // occurrence, and that first occurrence is itself pushed forward to the chosen weekday.
+        var date = SmokeEventShape.NextDate(
+            state.ReserveFirstDay(
+                SmokeScenarioDays.PlusWeekdayShift(
+                    SmokeScenarioDays.EveryNWeeks(FortnightlyInterval, SmokeSeries.Occurrences))),
+            ChosenWeekday);
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Fortnightly rehearsal"),
@@ -88,7 +95,7 @@ public sealed class RecurrenceShapeSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = state.EventDay;
+        var date = state.ReserveFirstDay(SmokeScenarioDays.YearlySeries);
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Birthday"),
@@ -123,7 +130,7 @@ public sealed class RecurrenceShapeSteps(ScenarioContext scenarioContext)
         rule.Should().Contain(
             $"COUNT={SmokeSeries.YearlyOccurrences}",
             "a yearly series left unbounded would keep adding an occurrence to a live calendar every year "
-            + "for ever, and the smoke events are deliberately never cleaned up");
+            + "for ever, and a scenario that fails deliberately leaves its events behind");
 
         master.Event.Start!.Date.Should().NotBeNull(
             "an all-day series is a series of dates. A dateTime here means the all-day flag was lost on the "
@@ -154,7 +161,7 @@ public sealed class RecurrenceShapeSteps(ScenarioContext scenarioContext)
         var members = state.Environment.Configuration.MemberCalendarNames.Take(2).ToList();
         members.Should().HaveCount(2, "Smoke__MemberCalendars must name at least two member calendars");
 
-        var date = state.EventDay;
+        var date = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Two-member series"),

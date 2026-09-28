@@ -233,6 +233,22 @@ pipeline {
                     // that dies anywhere — library extraction, build, browser install or the checks
                     // themselves — leaves it false.
                     env.SMOKE_PREFLIGHT_OK = 'false'
+
+                    // The workspace is reused between builds, so last build's trx files are still
+                    // sitting here. They matter because the results are published once, at the end,
+                    // over a pattern that matches both of them: a build whose scenarios never ran
+                    // would otherwise publish the previous build's scenario results as its own — a
+                    // green report for tests this build did not execute. Clearing them first means the
+                    // pattern can only ever match what this build produced.
+                    //
+                    // temporary-junit-reports is the mstest plugin's own conversion directory. It
+                    // fails to delete it on every run ("Unable to delete the file ...") and then reuses
+                    // whatever it finds, so it is cleared here for the same reason.
+                    sh '''
+                        rm -rf tests-smoke/FamilyHQ.Smoke.Features/TestResults
+                        rm -rf temporary-junit-reports
+                    '''
+
                     sh '''
                         echo "Checking for browser + ICU libraries..."
                         if ! ldconfig -p 2>/dev/null | grep -q libnss3 || ! ldconfig -p 2>/dev/null | grep -q libicu; then
@@ -263,12 +279,6 @@ pipeline {
                     env.SMOKE_PREFLIGHT_OK = 'true'
                 }
             }
-            post {
-                always {
-                    mstest testResultsFile: '**/smoke-preflight-results.trx', failOnError: false
-                    archiveArtifacts artifacts: '**/TestResults/smoke-artifacts/*.png', allowEmptyArchive: true
-                }
-            }
         }
 
         stage('Smoke: Scenarios') {
@@ -288,18 +298,28 @@ pipeline {
                     runSmokeSuite('FullyQualifiedName!~PreprodEnvironmentHealth', 'smoke-scenario-results.trx')
                 }
             }
-            post {
-                always {
-                    mstest testResultsFile: '**/smoke-scenario-results.trx', failOnError: false
-                    // The kiosk scenarios screenshot on failure. Losing them means diagnosing from the
-                    // message alone; FHQ-141's first real failure was read off one of these.
-                    archiveArtifacts artifacts: '**/TestResults/smoke-artifacts/*.png', allowEmptyArchive: true
-                }
-            }
         }
     }
 
     post {
+        // Published once, over both trx files, rather than once per stage.
+        //
+        // A stage each was the obvious arrangement and it silently lost most of the report: the two
+        // calls did not reliably combine, and a run that executed all 41 tests showed 7 of them on the
+        // Tests page — the preflight checks alone — with the 34 scenarios nowhere in the UI. Both
+        // stages logged that they had processed their file, so the console gave no hint that anything
+        // was missing. A gate whose evidence cannot be read is most of the way to a gate nobody
+        // trusts, which is the reason this is worth the awkwardness of publishing outside the stage
+        // that produced the results.
+        //
+        // One pattern, one conversion, one publish. The stale results this could otherwise pick up are
+        // cleared at the start of 'Smoke: Preflight' — see the note there.
+        always {
+            mstest testResultsFile: '**/smoke-*-results.trx', failOnError: false
+            // The kiosk scenarios screenshot on failure. Losing them means diagnosing from the
+            // message alone; the suite's first real failure was read off one of these.
+            archiveArtifacts artifacts: '**/TestResults/smoke-artifacts/*.png', allowEmptyArchive: true
+        }
         success {
             echo "PreProd deployment successful: ${env.RESOLVED_IMAGE_TAG}"
             script {

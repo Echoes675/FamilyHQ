@@ -17,8 +17,9 @@ namespace FamilyHQ.Smoke.Steps;
 /// </para>
 /// <para>
 /// Every series created here is bounded — three occurrences, which is enough to prove a weekly step and, for
-/// two weekdays, enough to prove the rule wraps into the following week. The events are left behind for
-/// post-mortem, so an unbounded series would keep generating occurrences on a live calendar for ever.
+/// two weekdays, enough to prove the rule wraps into the following week. A scenario that fails leaves its
+/// events behind for post-mortem, so an unbounded series would keep generating occurrences on a live calendar
+/// for ever.
 /// </para>
 /// </summary>
 [Binding]
@@ -38,7 +39,7 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = state.EventDay;
+        var date = state.ReserveFirstDay(SmokeScenarioDays.Weekly(Occurrences));
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Weekly series from the kiosk"),
@@ -78,8 +79,8 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
         rule.Should().Contain("FREQ=WEEKLY", "the kiosk was asked for a weekly series");
         rule.Should().Contain(
             $"COUNT={Occurrences}",
-            "the series must be bounded by the count the kiosk was given; the smoke events are kept, so an "
-            + "endless series would keep expanding on a live calendar");
+            "the series must be bounded by the count the kiosk was given; a failed scenario keeps its events, "
+            + "so an endless series could be left expanding on a live calendar");
         rule.Should().NotContain(
             "UNTIL=",
             "a COUNT rule and an UNTIL rule are different rules — Google would expand them differently");
@@ -100,10 +101,13 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
 
-        // The first occurrence lands on the first of the two weekdays at or after this scenario's own day,
+        // The first occurrence lands on the first of the two weekdays at or after this scenario's own block,
         // so Google's expansion starts where the rule says it should rather than on whatever day the run
-        // happens to be.
-        var firstDate = SmokeEventShape.NextDate(state.EventDay, FirstWeekday);
+        // happens to be. The block is widened for that shift: the rule's last occurrence is then still inside
+        // the days this scenario reserved, however far forward the first one had to move.
+        var firstDate = SmokeEventShape.NextDate(
+            state.ReserveFirstDay(SmokeScenarioDays.PlusWeekdayShift(SmokeScenarioDays.Weekly(Occurrences))),
+            FirstWeekday);
 
         var rule = SmokeIcal.WeeklyOn([FirstWeekday, SecondWeekday], Occurrences);
 
@@ -190,8 +194,6 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
     private async Task<IReadOnlyList<GoogleEvent>> GoogleInstancesAsync(SmokeScenarioState state)
     {
         var calendarName = state.SeededCalendarName ?? state.MemberNames.First();
-        var calendarId = state.Environment.Calendars.RequireGoogleId(calendarName);
-        var (from, to) = SmokeLookup.WindowAround(state.EventDate);
 
         var masterId = state.SeededGoogleEvent?.Id;
         if (masterId is null)
@@ -202,7 +204,9 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
                 + "expanded").Subject.Event.Id;
         }
 
-        return await state.Environment.Google.ListInstancesAsync(calendarId, masterId, from, to);
+        // Through SmokeSeries rather than straight to the oracle, so this scenario's occurrences are checked
+        // against the days it reserved like every other scenario's are.
+        return await SmokeSeries.InstancesAsync(state, calendarName, masterId, state.EventDate);
     }
 
     private static DateTime StartInstant(GoogleEvent instance) => SmokeSeries.StartOf(instance).UtcDateTime;

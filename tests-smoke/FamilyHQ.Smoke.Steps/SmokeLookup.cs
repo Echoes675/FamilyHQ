@@ -8,8 +8,8 @@ namespace FamilyHQ.Smoke.Steps;
 /// and what does preprod serve for it?
 /// <para>
 /// Both answers are scoped by the scenario's correlation marker or short id rather than by title text
-/// alone. Smoke events are kept after a run, so the calendars carry every previous run's events too, and a
-/// title match on its own would happily find last week's.
+/// alone. A scenario that fails keeps its events, so the calendars can still be carrying an earlier run's,
+/// and a title match on its own would happily find last week's.
 /// </para>
 /// </summary>
 public static class SmokeLookup

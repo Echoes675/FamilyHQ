@@ -126,16 +126,18 @@ public sealed class KioskToGoogleSteps(ScenarioContext scenarioContext)
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
 
+        var date = state.ReserveFirstDay(SmokeScenarioDays.SingleDay);
+
         var draft = SmokeEventShape.PhoneStyleDraft(
             state.Correlation,
             "Phone-made event",
             "Bring the tickets and the flask",
-            state.EventDay);
+            date);
 
         state.SeededGoogleEvent = await state.Environment.Google.InsertEventAsync(calendarId, draft);
         state.SeededCalendarName = member;
         state.MemberNames = [member];
-        state.EventDate = state.EventDay;
+        state.EventDate = date;
         state.ExpectedTitle = draft.Summary;
     }
 
@@ -244,7 +246,7 @@ public sealed class KioskToGoogleSteps(ScenarioContext scenarioContext)
             Title: state.Correlation.Title(baseTitle),
             Description: state.Correlation.Description("Created by the preprod smoke suite"),
             CalendarNames: members,
-            Date: state.EventDay,
+            Date: state.ReserveFirstDay(SmokeScenarioDays.SingleDay),
             StartTime: SmokeEventShape.StartTime,
             EndTime: SmokeEventShape.EndTime);
 

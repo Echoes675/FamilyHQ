@@ -38,7 +38,12 @@ a defect (a typed value that never committed to the Blazor model) that no unit t
 and no Deploy-Dev run could have surfaced.
 
 The exemption is all-or-nothing in the same way as the docs one: one file outside `tests-smoke/**`
-and the agent-facing doc list, and the branch takes the full pre-PR gate.
+and the agent-facing doc list, and the branch takes the full pre-PR gate — **except
+`Jenkinsfile.deploy-preprod`**, which only affects the preprod environment and is never read by
+`FamilyHQ-Deploy-Dev`. Changing it does not pull the branch into three dev runs, because three runs
+of a pipeline that cannot see the file would prove nothing about the change (user's ruling,
+2026-09-28). Verify it the only way that means anything: run `FamilyHQ-Deploy-PreProd` on the branch
+and read the result it produces.
 
 ## When Deploy-Dev does not apply: agent-facing docs only
 
