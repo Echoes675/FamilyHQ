@@ -49,11 +49,12 @@ public sealed class SmokeScenarioHooks(
 
         // The API client is built only when there is a token to build it with. A preflight scenario must be
         // able to run and report on an environment that cannot even mint one.
+        // No days are reserved here. The span a scenario needs depends on the rule it is about to write, and
+        // only the step that writes it knows that — see SmokeScenarioState.ReserveDays.
         var state = new SmokeScenarioState
         {
             Environment = environment,
             Correlation = correlation,
-            EventDay = SmokeScenarioDays.Next(),
             Api = environment.SessionJwtOrNull is { } jwt
                 ? new PreprodApiClient(environment.Configuration, jwt, correlation.Id)
                 : null
@@ -115,8 +116,9 @@ public sealed class SmokeScenarioHooks(
     /// <para>
     /// Strictly read-only, per FHQ-141 principle 2: a screenshot, the correlation id, the browser's console
     /// errors, and what Google currently holds for this scenario's events. Nothing is created, deleted,
-    /// re-synced or retried. The events this scenario made are deliberately left in place for the same
-    /// reason, which is why every series it creates is bounded.
+    /// re-synced or retried. The events a <b>failed</b> scenario made are left exactly where they are, which
+    /// is what a post-mortem reads and why every series the suite creates is bounded. A scenario that passed
+    /// takes its own events away again — see <see cref="RemoveThisScenariosEventsOnSuccessAsync"/>.
     /// </para>
     /// </summary>
     [AfterScenario(Order = 0)]
@@ -138,6 +140,38 @@ public sealed class SmokeScenarioHooks(
         }
 
         await TryCaptureScreenshotAsync(state);
+    }
+
+    /// <summary>
+    /// A scenario that passed removes the events it created; a scenario that failed keeps every one of them.
+    /// <para>
+    /// <b>Why delete at all.</b> The suite's events used to be kept unconditionally, and every run put a new
+    /// set on the same days. By the time the gate was first asked to block a release, one day held
+    /// seventy-six events: the kiosk's day view laid them over one another, the click for the tile a scenario
+    /// wanted landed on a tile belonging to a run three weeks earlier, and the failure read exactly like a
+    /// product fault. Nothing about that gets better on its own.
+    /// </para>
+    /// <para>
+    /// <b>Why only on success.</b> The events are the post-mortem. A scenario that failed has just produced
+    /// the one set of evidence nobody can reconstruct afterwards, so it leaves the calendars untouched —
+    /// which is also why this runs after the forensics above rather than before them.
+    /// </para>
+    /// <para>
+    /// <b>Why through Google.</b> Google is the system of record, so deleting there is the one delete that is
+    /// not a repair of preprod: preprod learns about it down the same push path everything else travels.
+    /// Nothing here touches preprod's settings or its database, and nothing here can turn a scenario that
+    /// passed into one that failed — a delete that goes wrong is reported and the run carries on.
+    /// </para>
+    /// </summary>
+    [AfterScenario(Order = 5)]
+    public async Task RemoveThisScenariosEventsOnSuccessAsync()
+    {
+        if (scenarioContext.TestError is not null || !scenarioContext.TryGetValue(out SmokeScenarioState state))
+        {
+            return;
+        }
+
+        await SmokeScenarioCleanup.RemoveEventsAsync(state, output.WriteLine);
     }
 
     [AfterScenario(Order = 10)]

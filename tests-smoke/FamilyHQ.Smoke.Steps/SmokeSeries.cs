@@ -121,7 +121,54 @@ public static class SmokeSeries
         var calendarId = state.Environment.Calendars.RequireGoogleId(calendarName);
         var (from, to) = SmokeLookup.WindowAround(anchorDate, daysAfter);
 
-        return await state.Environment.Google.ListInstancesAsync(calendarId, masterId, from, to, ct);
+        var instances = await state.Environment.Google.ListInstancesAsync(calendarId, masterId, from, to, ct);
+
+        AssertOccurrencesStayInsideTheReservedBlock(state, instances);
+
+        return instances;
+    }
+
+    /// <summary>
+    /// Asserts that every occurrence Google expanded falls on a day this scenario reserved.
+    /// <para>
+    /// The one check that makes a mis-sized reservation impossible to ship quietly. A scenario that reserves
+    /// a day and then writes a rule spanning a fortnight is not wrong <i>here</i> — it is wrong fourteen
+    /// scenarios later, when another scenario's click lands on a tile this one left on its day, and the
+    /// failure reads like a product fault. Asking Google where the occurrences actually fell turns
+    /// that into an immediate failure, in the scenario that under-reserved, naming the span it needed.
+    /// </para>
+    /// <para>
+    /// An occurrence past every day the allocator hands out is fine: a yearly series' second occurrence is a
+    /// year from its first, so there is no scenario for it to collide with. That is why a yearly series
+    /// reserves one day rather than a year of them.
+    /// </para>
+    /// </summary>
+    private static void AssertOccurrencesStayInsideTheReservedBlock(
+        SmokeScenarioState state, IReadOnlyList<GoogleEvent> instances)
+    {
+        // The daylight-saving scenarios reserve nothing: their dates are the clocks', not the allocator's.
+        if (state.ReservedDays is not { } block)
+        {
+            return;
+        }
+
+        var beyondEverything = SmokeScenarioDays.BeyondEveryAllocatableDay(
+            state.Environment.Configuration.SyncHorizonDays);
+
+        var strays = instances
+            .Select(DateOf)
+            .Where(date => !block.Covers(date) && date < beyondEverything)
+            .Distinct()
+            .OrderBy(date => date)
+            .ToList();
+
+        strays.Should().BeEmpty(
+            $"every occurrence of this scenario's series has to fall inside the {block.Days} day(s) it "
+            + $"reserved ({block}), and these do not: "
+            + $"{string.Join(", ", strays.Select(date => date.ToString("yyyy-MM-dd")))}. A day outside the "
+            + "block belongs to another scenario, and an event left there is what stops that scenario's "
+            + "click from landing. Reserve the span the rule actually covers — SmokeScenarioDays has a "
+            + "factory for each shape the suite writes");
     }
 
     /// <summary>

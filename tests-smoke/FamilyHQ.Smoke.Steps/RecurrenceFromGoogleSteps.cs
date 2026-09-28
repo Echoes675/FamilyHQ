@@ -31,7 +31,7 @@ public sealed class RecurrenceFromGoogleSteps(ScenarioContext scenarioContext)
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
-        var firstDate = state.EventDay;
+        var firstDate = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
 
         // The end date lands exactly on the last wanted occurrence's start, which is the boundary an
         // inclusive UNTIL is supposed to keep and an exclusive reading would drop.
@@ -85,7 +85,7 @@ public sealed class RecurrenceFromGoogleSteps(ScenarioContext scenarioContext)
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
-        var firstDate = state.EventDay;
+        var firstDate = state.ReserveFirstDay(SmokeScenarioDays.YearlySeries);
         var rule = SmokeIcal.Yearly(SmokeSeries.YearlyOccurrences);
 
         var draft = SmokeEventShape.PhoneStyleAllDayDraft(
@@ -148,7 +148,7 @@ public sealed class RecurrenceFromGoogleSteps(ScenarioContext scenarioContext)
 
         var shared = state.Environment.Configuration.SharedCalendar;
         var calendarId = state.Environment.Calendars.RequireGoogleId(shared);
-        var firstDate = state.EventDay;
+        var firstDate = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
         var rule = SmokeIcal.WeeklyOn([firstDate.DayOfWeek], SmokeSeries.Occurrences);
 
         var draft = SmokeEventShape.PhoneStyleDraft(

@@ -20,6 +20,14 @@ namespace FamilyHQ.Smoke.Steps;
 /// family's own zone when it next changes offset, and the assertion below <i>requires</i> the occurrences to
 /// sit at two different offsets. If the placement ever stops spanning a change, the scenario says so.
 /// </para>
+/// <para>
+/// <b>Why these two scenarios reserve no days.</b> They are the only ones in the suite whose dates are not
+/// handed out by <see cref="SmokeScenarioDays"/>, because a transition happens when it happens. The
+/// allocator knows that and leaves the three days around it unallocated, so no other scenario lands on them.
+/// The two scenarios here do share those days with each other, which is safe for one reason only: scenarios
+/// run one at a time, and a scenario that passes takes its events away again — so the second of them starts
+/// on days the first has already cleared.
+/// </para>
 /// </summary>
 [Binding]
 public sealed class DaylightSavingSteps(ScenarioContext scenarioContext)
