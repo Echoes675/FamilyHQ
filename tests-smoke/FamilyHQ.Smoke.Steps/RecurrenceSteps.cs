@@ -1,4 +1,3 @@
-using System.Globalization;
 using FamilyHQ.Smoke.Common.Helpers;
 using FamilyHQ.Smoke.Common.Pages;
 using FamilyHQ.Smoke.Data.Models;
@@ -25,7 +24,7 @@ namespace FamilyHQ.Smoke.Steps;
 [Binding]
 public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
 {
-    private const int Occurrences = 3;
+    private const int Occurrences = SmokeSeries.Occurrences;
 
     private static readonly DayOfWeek FirstWeekday = DayOfWeek.Tuesday;
     private static readonly DayOfWeek SecondWeekday = DayOfWeek.Thursday;
@@ -39,7 +38,7 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = SmokeEventShape.Date;
+        var date = state.EventDay;
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Weekly series from the kiosk"),
@@ -48,7 +47,7 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
             Date: date,
             StartTime: SmokeEventShape.StartTime,
             EndTime: SmokeEventShape.EndTime,
-            Recurrence: new SmokeWeeklyRecurrence([date.DayOfWeek], Occurrences));
+            Recurrence: SmokeRecurrence.Weekly([date.DayOfWeek], Occurrences));
 
         await state.RequireDashboard().CreateEventAsync(draft);
 
@@ -74,15 +73,14 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
             + "single event and the rule was lost");
 
         var master = found.Single().Event;
-        var rules = master.Recurrence!.Where(line => line.StartsWith("RRULE:", StringComparison.Ordinal)).ToList();
+        var rule = SmokeSeries.RequireSingleRule(master);
 
-        rules.Should().ContainSingle("a series has exactly one RRULE; a second would change what it means");
-        rules[0].Should().Contain("FREQ=WEEKLY", "the kiosk was asked for a weekly series");
-        rules[0].Should().Contain(
+        rule.Should().Contain("FREQ=WEEKLY", "the kiosk was asked for a weekly series");
+        rule.Should().Contain(
             $"COUNT={Occurrences}",
             "the series must be bounded by the count the kiosk was given; the smoke events are kept, so an "
             + "endless series would keep expanding on a live calendar");
-        rules[0].Should().NotContain(
+        rule.Should().NotContain(
             "UNTIL=",
             "a COUNT rule and an UNTIL rule are different rules — Google would expand them differently");
 
@@ -102,13 +100,12 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
 
-        // The first occurrence lands on the first of the two weekdays, so Google's expansion starts where the
-        // rule says it should rather than on whatever day the run happens to be.
-        var firstDate = FamilyClock.NextWeekdayAfterToday(FirstWeekday);
+        // The first occurrence lands on the first of the two weekdays at or after this scenario's own day,
+        // so Google's expansion starts where the rule says it should rather than on whatever day the run
+        // happens to be.
+        var firstDate = SmokeEventShape.NextDate(state.EventDay, FirstWeekday);
 
-        var rule = "RRULE:FREQ=WEEKLY"
-                   + $";BYDAY={IcalDay(FirstWeekday)},{IcalDay(SecondWeekday)}"
-                   + $";COUNT={Occurrences}";
+        var rule = SmokeIcal.WeeklyOn([FirstWeekday, SecondWeekday], Occurrences);
 
         var draft = SmokeEventShape.PhoneStyleDraft(
             state.Correlation,
@@ -159,14 +156,12 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
         var served = await SmokeLookup.FindInPreprodAsync(state, state.EventDate);
 
         var googleWallClock = instances
-            .Select(instance => FamilyClock.ToFamilyWallClock(StartOffset(instance)))
-            .Select(wallClock => wallClock.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            .Select(instance => SmokeSeries.WallClock(SmokeSeries.StartOf(instance)))
             .OrderBy(text => text, StringComparer.Ordinal)
             .ToList();
 
         var preprodWallClock = served
-            .Select(occurrence => FamilyClock.ToFamilyWallClock(occurrence.Start))
-            .Select(wallClock => wallClock.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture))
+            .Select(occurrence => SmokeSeries.WallClock(occurrence.Start))
             .OrderBy(text => text, StringComparer.Ordinal)
             .ToList();
 
@@ -210,23 +205,5 @@ public sealed class RecurrenceSteps(ScenarioContext scenarioContext)
         return await state.Environment.Google.ListInstancesAsync(calendarId, masterId, from, to);
     }
 
-    private static DateTime StartInstant(GoogleEvent instance) => StartOffset(instance).UtcDateTime;
-
-    private static DateTimeOffset StartOffset(GoogleEvent instance) =>
-        instance.Start?.DateTime
-        ?? throw new InvalidOperationException(
-            $"Google instance {instance.Id} has no dateTime start. The smoke series are timed, not all-day, "
-            + "so an all-day boundary here means the series was not created as this suite intended.");
-
-    private static string IcalDay(DayOfWeek day) => day switch
-    {
-        DayOfWeek.Monday => "MO",
-        DayOfWeek.Tuesday => "TU",
-        DayOfWeek.Wednesday => "WE",
-        DayOfWeek.Thursday => "TH",
-        DayOfWeek.Friday => "FR",
-        DayOfWeek.Saturday => "SA",
-        DayOfWeek.Sunday => "SU",
-        _ => throw new ArgumentOutOfRangeException(nameof(day), day, "Not a day of the week.")
-    };
+    private static DateTime StartInstant(GoogleEvent instance) => SmokeSeries.StartOf(instance).UtcDateTime;
 }

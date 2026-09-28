@@ -105,6 +105,46 @@ If staging or preprod fails on a master release run, the chain stops at the fail
 - **Re-run the master build** (cleanest) — the build pipeline computes a fresh `SEMVER_TAG` (next patch number) and re-walks the chain end-to-end.
 - **Manually invoke the failed pipeline** with the original `SEMVER_TAG` — this WILL deploy that environment, but will NOT chain further (no `UpstreamCause`). Subsequent environments must be progressed manually too. This is intentional: any human-touched run requires explicit human progression.
 
+## Per-environment sync polling interval
+
+`Sync:PeriodicSyncInterval` drives `SyncOrchestrator`'s safety-net timer — how often each environment
+enqueues a `Periodic` sync-all. It is **not** the same everywhere, and two of the four values cannot
+be found by searching this repository, so this table is the only place they are written down together.
+
+| Environment | Interval | Where it is set |
+|---|---|---|
+| Code default | 1 hour | `SyncOptions.PeriodicSyncInterval` |
+| Dev, Staging | 5 minutes | `appsettings.Development.json` (in this repo) |
+| **PreProd** | **10 minutes** | **`Sync__PeriodicSyncInterval` in the `familyhq-preprod-env` file credential** |
+| Production | 1 hour | `appsettings.json` (in this repo) |
+
+Two things about this are easy to get wrong:
+
+- **PreProd runs as `ASPNETCORE_ENVIRONMENT=Production`** (`docker-compose.preprod.yml`), so it never
+  reads `appsettings.Development.json`. Until the preprod credential set an explicit value, preprod
+  therefore inherited production's one-hour interval *by accident* — nobody had decided that preprod
+  should poll as slowly as production does.
+- **The preprod value lives in a Jenkins file credential, so it is invisible from this repository.**
+  That is the established pattern for deployed non-secret configuration here (the `FEATURE_*_ENABLED`
+  dev flags work the same way), but it means a search for the interval finds one hour and is wrong.
+  Check the credential, or check preprod's Seq logs: `Periodic sync: enqueued sync-all` should appear
+  roughly every 10 minutes.
+
+### Why preprod polls faster than production
+
+A defect on the periodic sync path once stopped all calendar syncing in production for five hours. It
+was invisible to the post-deploy check because that check ran two minutes after the deploy and the
+failing code path does not run until the first periodic sync — an hour later. Sync-affecting changes
+are now soaked on preprod across **at least two polling cycles** before release.
+
+At an hourly interval that soak costs two hours every time, and a cost paid on every release gets
+skipped. At ten minutes it costs twenty, on identical evidence: the same code path, exercised the same
+number of times. Faster feedback rather than more waiting.
+
+Ten minutes rather than five: preprod talks to the **real** Google Calendar API, so this interval also
+sets its background API call rate against a live quota. Five would double that traffic for no extra
+diagnostic value.
+
 ## Auto-Reload Mechanism
 
 Deploys to prod cause the WebApi to restart, dropping the SignalR `CalendarHub` connection. Active WASM clients reconnect via `WithAutomaticReconnect()`; on every reconnect, `IVersionService.CheckAsync()` GETs `/api/health` and compares the server's `version` to the client's baked-in version. On mismatch, the `<UpdateBanner />` shows for 5 seconds and `location.reload()` is called. See `.agent/docs/architecture.md#versioning` for the full surface.

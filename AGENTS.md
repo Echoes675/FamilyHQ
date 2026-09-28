@@ -88,6 +88,8 @@ would never populate a newly added column.
 - **Framework**: .NET 10 (Blazor WASM Frontend, ASP.NET Core Backend)
 - **Database**: PostgreSQL / EF Core
 - **Primary Tooling**: dotnet CLI (build, test, run)
+- **Testing strategy — which layer proves what, and the rule that every smoke scenario needs an E2E twin**: Read `.agent\docs	esting-strategy.md`
+- **Which test layer proves what** (and the rule that a smoke scenario needs an E2E twin unless the Simulator would lie): Read `.agent\docs\testing-strategy.md`
 - **E2E Acceptance testing**: Read `.agent\docs\e2e-testing-maintenance.md`
 - **Preprod smoke testing (real Google, RelayRobin, Open-Meteo)**: Read `.agent\docs\preprod-smoke-maintenance.md`
 
@@ -117,6 +119,7 @@ Refer to these files in the .agent/ directory for specific implementation detail
 - Project Architecture &amp; Structure: `.agent/docs/architecture.md`
 - UI Design System (themes, CSS variables, layer model, touch rules): `.agent/docs/ui-design-system.md`
 - Intermittent / flaky issues tracker (read before dismissing a CI failure as flake): `.agent/docs/intermittent-issues.md`
+- Testing strategy — unit / E2E-against-Simulator / preprod-smoke-against-real-Google, what each proves, and when a Simulator twin would be dishonest: `.agent/docs/testing-strategy.md`
 - Preprod smoke suite — third-party interactions against the real Google account (`tests-smoke/`): `.agent/docs/preprod-smoke-maintenance.md`
 
 ## Skills
@@ -148,6 +151,13 @@ All FamilyHQ work is tracked in the Obsidian vault at `D:\Obsidian Vault\FamilyH
 - Specs and plans for any `FHQ-N` ticket land in the vault at `D:\Obsidian Vault\FamilyHQ\Tickets\FHQ-N\` — **not** `docs/superpowers/`.
 - A session-start scan runs at the start of every session in this repo: list the in-flight tickets (`Planning`, `In Progress`, `In Review`, `Staging`, `Ready for release`), check `gh pr view` for merged PRs that should move to `Staging`, advance any `Staging` ticket a green staging run now covers to `Ready for release`, and produce a one-line summary.
 - `Done` means **live in production**, not merged. A merged PR moves a ticket to `Staging`, and its folder stays in `Tickets/` until it is released.
+- **Ticket ids do not belong in checked-in files.** No `FHQ-nnn` in code comments, XML doc comments,
+  test names, `.agent/` docs, Jenkinsfiles or scripts. The repository must stand on its own: an id
+  means nothing to a reader without the vault, and it is a *pointer to* an explanation rather than the
+  explanation. Write what the constraint is and why it exists; if removing the id would leave a
+  comment that explains nothing, it was a bookmark, not documentation.
+  **Commit messages and PR titles/bodies are the exception** — traceability belongs in git history,
+  not in the files.
 
 See `.agent/skills/obsidian-tickets/SKILL.md` for the full trigger → action playbook.
 

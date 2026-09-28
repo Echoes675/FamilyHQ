@@ -61,7 +61,7 @@ public class CalendarMigrationServiceTests
         repo.Setup(r => r.GetCalendarByIdAsync(IndividualCalId, default)).ReturnsAsync(IndividualCal);
         repo.Setup(r => r.GetSharedCalendarAsync(default)).ReturnsAsync(SharedCal);
         google.Setup(g => g.CreateEventAsync("shared@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), default))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
                 { e.GoogleEventId = "gid2"; return e; });
         google.Setup(g => g.DeleteEventAsync("eoin@", "gid1", default)).Returns(Task.CompletedTask);
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), default)).Returns(Task.CompletedTask);
@@ -88,7 +88,7 @@ public class CalendarMigrationServiceTests
         repo.Setup(r => r.GetCalendarByIdAsync(SharedCalId, default)).ReturnsAsync(SharedCal);
         repo.Setup(r => r.GetSharedCalendarAsync(default)).ReturnsAsync(SharedCal);
         google.Setup(g => g.CreateEventAsync("eoin@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), default))
-            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) =>
                 { e.GoogleEventId = "gid3"; return e; });
         google.Setup(g => g.DeleteEventAsync("shared@", "gid1", default)).Returns(Task.CompletedTask);
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), default)).Returns(Task.CompletedTask);
@@ -112,7 +112,7 @@ public class CalendarMigrationServiceTests
         repo.Setup(r => r.GetCalendarByIdAsync(IndividualCalId, It.IsAny<CancellationToken>())).ReturnsAsync(IndividualCal);
         repo.Setup(r => r.GetSharedCalendarAsync(default)).ReturnsAsync(SharedCal);
         google.Setup(g => g.CreateEventAsync("shared@", It.IsAny<CalendarEvent>(), It.IsAny<string>(), default))
-              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _) => { e.GoogleEventId = "gid2"; return e; });
+              .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "gid2"; return e; });
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), default)).Returns(Task.CompletedTask);
         repo.Setup(r => r.SaveChangesAsync(default)).ReturnsAsync(0);
         google.Setup(g => g.DeleteEventAsync("eoin@", "gid1", default)).Returns(Task.CompletedTask);

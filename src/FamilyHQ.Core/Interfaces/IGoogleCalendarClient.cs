@@ -2,6 +2,13 @@ using FamilyHQ.Core.Models;
 
 namespace FamilyHQ.Core.Interfaces;
 
+/// <remarks>
+/// <b>Why the write methods take <c>reminders</c> after the cancellation token</b>, against the usual
+/// token-last convention: the parameter exists precisely so that no existing caller changes. Dozens
+/// of call sites and test doubles pass the token positionally as the last argument, and inserting a
+/// parameter ahead of it would rewrite every one of them — turning "reminders are opt-in" into a
+/// change that touches every write path, which is the shape of change this parameter exists to avoid.
+/// </remarks>
 public interface IGoogleCalendarClient
 {
     Task<IEnumerable<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default);
@@ -16,14 +23,22 @@ public interface IGoogleCalendarClient
         string? syncToken = null,
         CancellationToken ct = default);
 
-    Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
+    /// <summary>
+    /// Creates an event. When <paramref name="reminders"/> is supplied the event is created with
+    /// exactly those reminders; when it is omitted the request carries no <c>reminders</c> key and
+    /// Google applies the calendar's own default, which is what happens today.
+    /// </summary>
+    Task<CalendarEvent> CreateEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null);
 
     /// <summary>
     /// Creates a recurring series master: the supplied RRULE line is sent in the <c>recurrence</c>
     /// array alongside the event's content (and content-hash extended property). Returns the event
     /// with its Google-assigned series id. Reused by FHQ-18.5 native series creation.
+    /// <para>
+    /// <paramref name="reminders"/> behaves as on <see cref="CreateEventAsync"/>.
+    /// </para>
     /// </summary>
-    Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default);
+    Task<CalendarEvent> CreateRecurringEventAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, string rrule, CancellationToken ct = default, EventReminders? reminders = null);
 
     /// <summary>
     /// Patches only the fields present in the request body (events.patch, HTTP PATCH — a partial
@@ -31,7 +46,15 @@ public interface IGoogleCalendarClient
     /// reminders, colorId and recurrence survive a kiosk edit. This is the only event-field write
     /// path; there is deliberately no full-resource-replace (events.update / PUT) sibling.
     /// </summary>
-    Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
+    /// <param name="reminders">
+    /// The reminders this edit is changing, or <c>null</c> — the default — when the edit is not about
+    /// reminders. Null sends no <c>reminders</c> key at all, so the merge leaves whatever the account
+    /// holds exactly as it is; that is what makes an ordinary title, time or location edit safe for a
+    /// reminder set made in the Google Calendar app. A non-null value <b>replaces</b> the event's
+    /// reminders wholesale, because that is what Google does with the object — so it must be the
+    /// complete set the event is to end up with, never a partial one.
+    /// </param>
+    Task<CalendarEvent> PatchEventFieldsAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null);
 
     /// <summary>
     /// FHQ-172. As <see cref="PatchEventFieldsAsync"/>, except the request body carries <b>no</b>
@@ -56,7 +79,8 @@ public interface IGoogleCalendarClient
     /// not because it is the fix for the reported defect.
     /// </para>
     /// </remarks>
-    Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default);
+    /// <param name="reminders">As on <see cref="PatchEventFieldsAsync"/>.</param>
+    Task PatchEventFieldsPreservingTimesAsync(string googleCalendarId, CalendarEvent calendarEvent, string contentHash, CancellationToken ct = default, EventReminders? reminders = null);
 
     Task DeleteEventAsync(string googleCalendarId, string googleEventId, CancellationToken ct = default);
 

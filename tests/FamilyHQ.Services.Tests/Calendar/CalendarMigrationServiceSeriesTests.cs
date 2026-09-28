@@ -53,7 +53,7 @@ public class CalendarMigrationServiceSeriesTests
 
         // Insert on the shared calendar returns the new series id.
         google.Setup(g => g.CreateRecurringEventAsync(SharedGoogleCal, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-series-id"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-series-id"; return e; });
 
         // Google copies the new master's content-hash onto every expanded instance; GetEventsAsync
         // surfaces that echoed value on ContentHash. The reconcile must record THAT exact value.
@@ -106,7 +106,7 @@ public class CalendarMigrationServiceSeriesTests
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
         google.Setup(g => g.CreateRecurringEventAsync(SharedGoogleCal, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) => { e.GoogleEventId = "new-series-id"; return e; });
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) => { e.GoogleEventId = "new-series-id"; return e; });
 
         // The migrated instance's description explicitly tags Alice AND Bob (Bob now shared).
         var newInst = NewInstance("new-1", WindowStart.AddDays(7));
@@ -149,7 +149,7 @@ public class CalendarMigrationServiceSeriesTests
 
         CalendarEvent? createdMaster = null;
         google.Setup(g => g.CreateRecurringEventAsync(SharedGoogleCal, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _) =>
+            .ReturnsAsync((string _, CalendarEvent e, string _, string _, CancellationToken _, EventReminders? _) =>
             {
                 createdMaster = e;
                 e.GoogleEventId = "new-series-id";

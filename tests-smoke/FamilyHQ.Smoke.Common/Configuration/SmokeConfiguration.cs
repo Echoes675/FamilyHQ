@@ -60,6 +60,18 @@ public class SmokeConfiguration
     /// <summary>Google Calendar API root. Configurable so the oracle's address is explicit rather than assumed.</summary>
     public string GoogleCalendarApiBaseUrl { get; set; } = "https://www.googleapis.com/calendar/v3";
 
+    /// <summary>
+    /// How far ahead, in days, preprod's own sync reaches.
+    /// <para>
+    /// Not an expectation preflight can check — no endpoint reports it — but a bound the suite has to know.
+    /// An occurrence beyond it is <b>legitimately</b> absent from the kiosk: FamilyHQ syncs a window, not
+    /// the whole future. A yearly series is the only shape in this suite that reaches past it, and without
+    /// this value its second occurrence would be reported as a disagreement with Google rather than as the
+    /// designed edge of the window. If the product's horizon moves, this moves with it.
+    /// </para>
+    /// </summary>
+    public int SyncHorizonDays { get; set; } = 365;
+
     /// <summary>Runs the kiosk browser headless. False only for local debugging.</summary>
     public bool Headless { get; set; } = true;
 

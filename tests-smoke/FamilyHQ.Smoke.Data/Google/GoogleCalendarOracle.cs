@@ -150,6 +150,23 @@ public sealed class GoogleCalendarOracle : IDisposable
         return await ReadRequiredAsync<GoogleEvent>(response, "POST", path, ct);
     }
 
+    /// <summary>
+    /// Changes some of an event's fields on <paramref name="calendarId"/>, the way a phone would — a
+    /// merge, so every field the patch does not mention keeps the value Google already holds.
+    /// </summary>
+    public async Task<GoogleEvent> PatchEventAsync(
+        string calendarId, string eventId, GoogleEventPatch patch, CancellationToken ct = default)
+    {
+        var path = $"calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
+        using var request = new HttpRequestMessage(HttpMethod.Patch, path)
+        {
+            Content = JsonContent.Create(patch, options: SmokeJson.Options)
+        };
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        return await ReadRequiredAsync<GoogleEvent>(response, "PATCH", path, ct);
+    }
+
     /// <summary>Deletes an event from <paramref name="calendarId"/>. A 404 or 410 means it was already gone.</summary>
     public async Task DeleteEventAsync(string calendarId, string eventId, CancellationToken ct = default)
     {

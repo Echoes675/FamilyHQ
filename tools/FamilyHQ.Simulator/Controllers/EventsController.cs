@@ -5,6 +5,7 @@ using FamilyHQ.Core.Calendar.Recurrence;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Simulator.Data;
 using FamilyHQ.Simulator.DTOs;
+using FamilyHQ.Simulator.Google;
 using FamilyHQ.Simulator.Models;
 using FamilyHQ.Simulator.State;
 using Microsoft.AspNetCore.Mvc;
@@ -76,6 +77,12 @@ public class EventsController : ControllerBase
             .GroupBy(a => a.EventId)
             .ToDictionary(g => g.Key, g => g.Select(a => a.AttendeeCalendarId).ToList());
 
+        // An all-day event reports its calendar's default reminders as its own, so the projection needs
+        // the owning calendar as well as the event row. Loaded once for the whole request: the listing
+        // projects a month of a family's events, and a query per event would be an N+1 against a double
+        // the E2E suite waits on.
+        var calendarDefaults = await LoadCalendarDefaultsAsync(events.Select(e => e.CalendarId));
+
         // FHQ-18.11: with singleEvents=true (how the app's sync always calls this), a series MASTER
         // is replaced by its expanded per-occurrence INSTANCES bounded by the sync window. This
         // mirrors Google: the bare master row is NOT emitted; each instance carries recurringEventId
@@ -112,11 +119,13 @@ public class EventsController : ControllerBase
             if (singleEvents && !e.IsDeleted && !string.IsNullOrWhiteSpace(e.RecurrenceRule))
             {
                 var overrides = overridesByMaster.TryGetValue(e.Id, out var o) ? o : Array.Empty<SimulatedEvent>();
-                items.AddRange(ExpandSeriesInstances(e, eventAttendees, windowStart, windowEnd, overrides));
+                items.AddRange(ExpandSeriesInstances(
+                    e, eventAttendees, windowStart, windowEnd, overrides,
+                    calendarDefaults.GetValueOrDefault(e.CalendarId)));
             }
             else
             {
-                items.Add(MapEventResponse(e, eventAttendees));
+                items.Add(MapEventResponse(e, eventAttendees, calendarDefaults.GetValueOrDefault(e.CalendarId)));
             }
         }
 
@@ -162,7 +171,11 @@ public class EventsController : ControllerBase
         // FHQ-18.11: this is the two-pass master fetch — when the requested id is a series
         // master, return it WITH a recurrence array so the sync can read the RRULE. The app
         // calls events.get(recurringEventId) for each unknown series discovered in the listing.
-        return Ok(MapEventResponse(existing, attendeeCalendarIds, includeRecurrence: true));
+        return Ok(MapEventResponse(
+            existing,
+            attendeeCalendarIds,
+            await LoadCalendarDefaultsAsync(existing.CalendarId),
+            includeRecurrence: true));
     }
 
     [HttpPost]
@@ -185,6 +198,11 @@ public class EventsController : ControllerBase
             return missingTzError;
         }
 
+        if (RejectedReminders(body.Reminders) is { } reminderError)
+        {
+            return reminderError;
+        }
+
         var newEvent = new SimulatedEvent
         {
             Id = "simulated_evt_" + Guid.NewGuid().ToString("N"),
@@ -204,9 +222,10 @@ public class EventsController : ControllerBase
             // RRULE line is stored so the subsequent reconcile list (singleEvents=true) expands it
             // into per-occurrence instances. A non-recurring insert leaves this null.
             RecurrenceRule = ExtractRrule(body.Recurrence),
-            // FHQ-189 (I3): stored so a round trip through the simulator is coherent (FHQ-192 owns
-            // faithful write semantics). Null when the create body carried no `reminders` key.
-            RemindersJson = SerializeReminders(body.Reminders)
+            // Stored as GOOGLE would store it, not as the request sent it: an accepted request may
+            // still have its offsets clamped, its duplicates collapsed and an unrecognised delivery
+            // method dropped. Null when the create body carried no `reminders` key.
+            RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders))
         };
 
         _db.Events.Add(newEvent);
@@ -214,7 +233,8 @@ public class EventsController : ControllerBase
         _logger.LogInformation("[SIM] Created event: {EventId} ({Summary})", newEvent.Id, newEvent.Summary);
 
         _writeCountStore.Increment(userId, newEvent.Id);
-        return Ok(MapEventResponse(newEvent, new List<string>()));
+        return Ok(MapEventResponse(
+            newEvent, new List<string>(), await LoadCalendarDefaultsAsync(newEvent.CalendarId)));
     }
 
     // FHQ-42: mirror real Google Calendar, which rejects events.insert/update for a RECURRING event
@@ -258,6 +278,13 @@ public class EventsController : ControllerBase
         if (body is not null && RecurringTimedStartMissingTimeZone(body) is { } missingTzError)
         {
             return missingTzError;
+        }
+
+        // Before the event is even looked up: a reminder Google refuses is refused whether the write
+        // would have replaced an event, or turned one occurrence of a series into an exception.
+        if (RejectedReminders(body?.Reminders) is { } reminderError)
+        {
+            return reminderError;
         }
 
         var existing = await _db.Events.FirstOrDefaultAsync(e => e.Id == eventId && e.UserId == userId);
@@ -308,9 +335,9 @@ public class EventsController : ControllerBase
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
         // FHQ-189 (I3): events.update (PUT) is a full-resource replace like Location/Description
-        // above — an omitted `reminders` key clears it, mirroring how a real PUT would. Faithful
-        // write semantics (what Google actually preserves/rejects) are FHQ-192's concern.
-        existing.RemindersJson = SerializeReminders(body.Reminders);
+        // above — an omitted `reminders` key clears it, mirroring how a real PUT would.
+        // What is stored is what Google would store, which is not always what was sent.
+        existing.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         // FHQ-18.11: events.update (PUT) carries a recurrence array only when the event is (or is
         // becoming) a series master — this is the toggle-ON path where a previously non-recurring
@@ -328,7 +355,8 @@ public class EventsController : ControllerBase
             .Select(a => a.AttendeeCalendarId)
             .ToListAsync();
 
-        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+        return Ok(MapEventResponse(
+            existing, attendeeCalendarIds, await LoadCalendarDefaultsAsync(existing.CalendarId)));
     }
 
     [HttpPost("{eventId}/move")]
@@ -368,7 +396,8 @@ public class EventsController : ControllerBase
             .Select(a => a.AttendeeCalendarId)
             .ToListAsync();
 
-        return Ok(MapEventResponse(existing, attendeeCalendarIds));
+        return Ok(MapEventResponse(
+            existing, attendeeCalendarIds, await LoadCalendarDefaultsAsync(existing.CalendarId)));
     }
 
     [HttpPatch("{eventId}")]
@@ -389,6 +418,10 @@ public class EventsController : ControllerBase
         // Before the no-op short-circuit: Google authenticates before it looks at the body.
         if (InjectedFailure(userId) is { } injected)
             return injected;
+
+        // A reminder Google refuses is refused before anything is written, on this path too.
+        if (RejectedReminders(body?.Reminders) is { } reminderError)
+            return reminderError;
 
         var hasRecurrence = body?.Recurrence is not null;
         var hasScalarFields = body is not null && (
@@ -464,8 +497,10 @@ public class EventsController : ControllerBase
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
         // FHQ-189 (I3): a PATCH is a merge — only overwrite when the body actually carries the key.
+        // When it does carry it, the whole object is replaced (not merged into) and stored as Google
+        // would store it.
         if (body.Reminders is not null)
-            existing.RemindersJson = SerializeReminders(body.Reminders);
+            existing.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         // recurrence: null → preserve the existing rule; ["RRULE:…"] → set; [] → clear.
         ApplyRecurrence(existing, body.Recurrence);
@@ -482,7 +517,11 @@ public class EventsController : ControllerBase
             .Select(a => a.AttendeeCalendarId)
             .ToListAsync();
 
-        return Ok(MapEventResponse(existing, attendeeCalendarIds, includeRecurrence: true));
+        return Ok(MapEventResponse(
+            existing,
+            attendeeCalendarIds,
+            await LoadCalendarDefaultsAsync(existing.CalendarId),
+            includeRecurrence: true));
     }
 
     [HttpDelete("{eventId}")]
@@ -566,6 +605,7 @@ public class EventsController : ControllerBase
     private static object MapEventResponse(
         SimulatedEvent e,
         IReadOnlyList<string> attendeeCalendarIds,
+        IReadOnlyList<GoogleEventReminderOverride>? calendarDefaults,
         bool includeRecurrence = false)
     {
         // FHQ-161: Google returns start.timeZone on a timed event, and events.get on a series master
@@ -601,10 +641,45 @@ public class EventsController : ControllerBase
             recurrence = includeRecurrence && !string.IsNullOrWhiteSpace(e.RecurrenceRule)
                 ? (object)new[] { e.RecurrenceRule }
                 : null,
-            // FHQ-189 (I3): round-trips whatever was last stored — see SerializeReminders/
-            // DeserializeReminders. Null when nothing was ever sent for this event.
-            reminders = DeserializeReminders(e.RemindersJson)
+            // Google ALWAYS reports a reminders object, so this is never null: an event with nothing
+            // stored reports either the calendar default it follows or, if it is all-day, that
+            // calendar's defaults copied onto it. See ReminderSemantics.ShapeForRead.
+            reminders = ReminderSemantics.ShapeForRead(
+                DeserializeReminders(e.RemindersJson), e.IsAllDay, calendarDefaults)
         };
+    }
+
+    /// <summary>
+    /// The 400 Google answers a reminder it will not accept with, or null when it would accept the
+    /// request — which it usually does, silently rewriting the value rather than complaining.
+    /// </summary>
+    /// <remarks>
+    /// Checked on the body <b>as sent</b>: Google counts the overrides it received, so six that
+    /// de-duplicate to five are still rejected. Only two shapes fail — a sixth override, and asking
+    /// for the calendar's defaults and specific overrides at the same time.
+    /// </remarks>
+    private IActionResult? RejectedReminders(GoogleEventReminders? reminders)
+    {
+        if (ReminderSemantics.Validate(reminders) is not { } reason)
+            return null;
+
+        var message = ReminderSemantics.RejectionMessage(reason);
+        _logger.LogWarning("[SIM] Rejecting reminders: {Reason} (mirrors Google 400).", reason);
+
+        return BadRequest(new
+        {
+            error = new
+            {
+                code = 400,
+                message,
+                errors = new[]
+                {
+                    // Google puts these in the calendar domain, not the global one it uses for a
+                    // missing time zone.
+                    new { domain = "calendar", reason, message }
+                }
+            }
+        });
     }
 
     // FHQ-189 (I3): one shared DTO (GoogleEventReminders) both directions bind against, so this is a
@@ -614,6 +689,43 @@ public class EventsController : ControllerBase
 
     private static GoogleEventReminders? DeserializeReminders(string? remindersJson) =>
         remindersJson is null ? null : JsonSerializer.Deserialize<GoogleEventReminders>(remindersJson);
+
+    /// <summary>The default reminders configured on one calendar, or null when it has none.</summary>
+    private async Task<IReadOnlyList<GoogleEventReminderOverride>?> LoadCalendarDefaultsAsync(string calendarId)
+    {
+        var defaultRemindersJson = await _db.Calendars
+            .Where(c => c.Id == calendarId)
+            .Select(c => c.DefaultRemindersJson)
+            .FirstOrDefaultAsync();
+
+        return DeserializeCalendarDefaults(defaultRemindersJson);
+    }
+
+    /// <summary>
+    /// The default reminders of every calendar named, keyed by calendar id, in one query. Calendars
+    /// with none configured are absent from the result.
+    /// </summary>
+    private async Task<Dictionary<string, IReadOnlyList<GoogleEventReminderOverride>>> LoadCalendarDefaultsAsync(
+        IEnumerable<string> calendarIds)
+    {
+        var ids = calendarIds.Distinct().ToList();
+
+        var configured = await _db.Calendars
+            .Where(c => ids.Contains(c.Id) && c.DefaultRemindersJson != null)
+            .Select(c => new { c.Id, c.DefaultRemindersJson })
+            .ToListAsync();
+
+        return configured.ToDictionary(
+            c => c.Id,
+            c => DeserializeCalendarDefaults(c.DefaultRemindersJson)!);
+    }
+
+    // The calendar resource carries a bare array here, not a `reminders` object — the same shape
+    // CalendarsController serves on the calendarList entry.
+    private static IReadOnlyList<GoogleEventReminderOverride>? DeserializeCalendarDefaults(string? defaultRemindersJson) =>
+        defaultRemindersJson is null
+            ? null
+            : JsonSerializer.Deserialize<List<GoogleEventReminderOverride>>(defaultRemindersJson);
 
     // FHQ-18.11: expands a series master into the per-occurrence INSTANCES that fall inside the
     // sync window [windowStart, windowEnd). Each instance mirrors what Google emits with
@@ -625,7 +737,8 @@ public class EventsController : ControllerBase
         IReadOnlyList<string> attendeeCalendarIds,
         DateTimeOffset windowStart,
         DateTimeOffset windowEnd,
-        IReadOnlyList<SimulatedEvent> exceptionOverrides)
+        IReadOnlyList<SimulatedEvent> exceptionOverrides,
+        IReadOnlyList<GoogleEventReminderOverride>? calendarDefaults)
     {
         var masterStart = new DateTimeOffset(DateTime.SpecifyKind(master.StartTime, DateTimeKind.Utc));
         var duration = master.EndTime - master.StartTime;
@@ -696,7 +809,14 @@ public class EventsController : ControllerBase
                     contentHash: ovr.ContentHash ?? master.ContentHash,
                     recurringEventId: master.Id,
                     originalStartTimeUtc: occurrenceUtc.UtcDateTime,
-                    timeZone: ovr.StartTimeZone ?? master.StartTimeZone);
+                    timeZone: ovr.StartTimeZone ?? master.StartTimeZone,
+                    // An exception has reminders of its own and reports those. It gets them from the
+                    // master when it becomes an exception, so a row that stored none falls back to the
+                    // master's rather than reporting a state Google would not.
+                    reminders: ReminderSemantics.ShapeForRead(
+                        DeserializeReminders(ovr.RemindersJson ?? master.RemindersJson),
+                        ovr.IsAllDay,
+                        calendarDefaults));
                 continue;
             }
 
@@ -725,7 +845,11 @@ public class EventsController : ControllerBase
                     ? (object)new { @private = new Dictionary<string, string> { ["content-hash"] = master.ContentHash } }
                     : null,
                 // Links the instance back to its series master so the sync can two-pass-fetch the RRULE.
-                recurringEventId = master.Id
+                recurringEventId = master.Id,
+                // An occurrence inherits the master's reminders: Google reports the master's value on
+                // every instance it expands, and an instance is never silent about them.
+                reminders = ReminderSemantics.ShapeForRead(
+                    DeserializeReminders(master.RemindersJson), master.IsAllDay, calendarDefaults)
             };
         }
     }
@@ -746,7 +870,8 @@ public class EventsController : ControllerBase
         string? contentHash,
         string recurringEventId,
         DateTime originalStartTimeUtc,
-        string? timeZone) => new
+        string? timeZone,
+        GoogleEventReminders reminders) => new
     {
         id,
         status      = "confirmed",
@@ -767,7 +892,8 @@ public class EventsController : ControllerBase
         // The slot this override replaces. Timed overrides carry dateTime; all-day carry date.
         originalStartTime = isAllDay
             ? (object)new { date = originalStartTimeUtc.ToString("yyyy-MM-dd") }
-            : new { dateTime = originalStartTimeUtc.ToString("O") }
+            : new { dateTime = originalStartTimeUtc.ToString("O") },
+        reminders
     };
 
     // FHQ-18.11 WRITE side: pulls the first "RRULE:" line out of a Google recurrence array.
@@ -854,6 +980,12 @@ public class EventsController : ControllerBase
         existingOverride.IsAllDay = isAllDay;
         if (contentHash != null)
             existingOverride.ContentHash = contentHash;
+        // An exception carries reminders of its own from the moment it is created — Google stores what
+        // the single-occurrence write sent, rewritten as on any other write. Only written when the body
+        // carried the key, so this path (shared by the PUT and PATCH forms of the "This event" edit)
+        // never clears reminders the caller did not mention.
+        if (body.Reminders is not null)
+            existingOverride.RemindersJson = SerializeReminders(ReminderSemantics.NormaliseForStorage(body.Reminders));
 
         await _db.SaveChangesAsync();
         _logger.LogInformation(
@@ -875,7 +1007,11 @@ public class EventsController : ControllerBase
             contentHash: existingOverride.ContentHash ?? master.ContentHash,
             recurringEventId: master.Id,
             originalStartTimeUtc: originalStartUtc,
-            timeZone: existingOverride.StartTimeZone ?? master.StartTimeZone));
+            timeZone: existingOverride.StartTimeZone ?? master.StartTimeZone,
+            reminders: ReminderSemantics.ShapeForRead(
+                DeserializeReminders(existingOverride.RemindersJson ?? master.RemindersJson),
+                existingOverride.IsAllDay,
+                await LoadCalendarDefaultsAsync(master.CalendarId))));
     }
 
     // FHQ-18.11 (Pass 4): cancels a single occurrence of a series ("This event" delete). Stores (or

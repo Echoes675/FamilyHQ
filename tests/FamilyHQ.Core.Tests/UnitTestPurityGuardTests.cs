@@ -104,7 +104,12 @@ public class UnitTestPurityGuardTests
         // the E2E scenario that makes RefreshCalendarDefaultsAsync write; these three tests only
         // pin the backdoor's own contract, so a bespoke harness would cost more than it is worth.
         [("FamilyHQ.Simulator.Tests/Controllers/BackdoorCalendarsControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162)."
+            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
+        // Same constraint as its neighbours above: these tests drive the event endpoints, which take
+        // the concrete SimContext. The reminder rules themselves are covered without any database by
+        // ReminderSemanticsTests; only the endpoint wiring needs this harness.
+        [("FamilyHQ.Simulator.Tests/Controllers/EventsControllerRemindersTests.cs", "UseInMemoryDatabase")] =
+            "No data seam on SimulatorControllers; substituting one is a production change."
     };
 
     [Fact]

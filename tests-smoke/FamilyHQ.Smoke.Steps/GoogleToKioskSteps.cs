@@ -1,12 +1,13 @@
+using FamilyHQ.Smoke.Data.Models;
 using FluentAssertions;
 using Reqnroll;
 
 namespace FamilyHQ.Smoke.Steps;
 
 /// <summary>
-/// GK2 and GK4 — the inbound path. An event is made or removed in Google exactly as a phone would do it,
-/// and the scenario then waits for the <b>live</b> push to arrive: Google → RelayRobin → preprod's webhook
-/// → the sync queue → the API.
+/// GK1, GK2, GK3 and GK4 — the inbound path. An event is made, changed or removed in Google exactly as a
+/// phone would do it, and the scenario then waits for the <b>live</b> push to arrive: Google → RelayRobin →
+/// preprod's webhook → the sync queue → the API.
 /// <para>
 /// Nothing here triggers a sync. That is the whole point: a scenario that called
 /// <c>POST /api/sync/trigger</c> when the push did not arrive would pass on an environment whose push path
@@ -37,12 +38,12 @@ public sealed class GoogleToKioskSteps(ScenarioContext scenarioContext)
             state.Correlation,
             "Shared outing",
             $"Swimming with {members[0]} and {members[1]}",
-            SmokeEventShape.Date);
+            state.EventDay);
 
         state.SeededGoogleEvent = await state.Environment.Google.InsertEventAsync(calendarId, draft);
         state.SeededCalendarName = shared;
         state.MemberNames = members;
-        state.EventDate = SmokeEventShape.Date;
+        state.EventDate = state.EventDay;
         state.ExpectedTitle = draft.Summary;
     }
 
@@ -58,12 +59,12 @@ public sealed class GoogleToKioskSteps(ScenarioContext scenarioContext)
             state.Correlation,
             "Phone-made appointment",
             "Created directly in Google by the preprod smoke suite",
-            SmokeEventShape.Date);
+            state.EventDay);
 
         state.SeededGoogleEvent = await state.Environment.Google.InsertEventAsync(calendarId, draft);
         state.SeededCalendarName = member;
         state.MemberNames = [member];
-        state.EventDate = SmokeEventShape.Date;
+        state.EventDate = state.EventDay;
         state.ExpectedTitle = draft.Summary;
     }
 
@@ -107,6 +108,89 @@ public sealed class GoogleToKioskSteps(ScenarioContext scenarioContext)
                 "member names are matched as whole words anywhere in the description, so the result must be "
                 + "exactly the two named — an extra member means the matcher is too greedy, a missing one "
                 + "means it is too strict");
+    }
+
+    /// <summary>
+    /// The other half of inbound membership: an event on a member's own calendar whose description names
+    /// nobody. The owning calendar is the only signal there is, so the event belongs to that member and to
+    /// nobody else — and a matcher that read the title, the location or the venue name would say otherwise.
+    /// </summary>
+    [Then(@"preprod serves that event for that member and no others")]
+    public async Task ThenPreprodServesThatEventForThatMemberAndNoOthers()
+    {
+        var state = State;
+        var member = state.MemberNames.Single();
+
+        var found = await SmokeLookup.WaitForPreprodAsync(
+            state,
+            state.EventDate,
+            candidates => candidates.Count == 1 && candidates[0].Members.Count == 1,
+            $"preprod never settled on one event belonging to exactly one member for this scenario. An "
+            + $"event on '{member}'s own calendar that names nobody in its description belongs to that "
+            + "member alone");
+
+        found.Should().ContainSingle().Which.Members
+            .Select(candidate => candidate.DisplayName)
+            .Should().BeEquivalentTo(
+                new[] { member },
+                "the calendar an event sits on is who it belongs to when its description names no one — an "
+                + "extra member here means something other than the description is being read as a name");
+    }
+
+    // ── GK3: the members an event names, changed on the phone ───────────────────
+
+    /// <summary>
+    /// Changes which members the description names, keeping the count at two.
+    /// <para>
+    /// Two to two on purpose. Going from two members to one, or from one to two, additionally asks FamilyHQ
+    /// to move the event between the shared container and a member calendar — a different behaviour, with
+    /// its own ticket, and bundling it in here would leave a failure that does not say which of the two
+    /// things broke.
+    /// </para>
+    /// </summary>
+    [When(@"the description is changed in Google to name a different pair of members")]
+    public async Task WhenTheDescriptionIsChangedInGoogleToNameADifferentPairOfMembers()
+    {
+        var state = State;
+        var members = state.Environment.Configuration.MemberCalendarNames;
+
+        members.Should().HaveCountGreaterThanOrEqualTo(
+            3, "Smoke__MemberCalendars must name at least three member calendars for one to be swapped");
+
+        var replacement = new[] { members[1], members[2] };
+        var calendarId = state.Environment.Calendars.RequireGoogleId(state.SeededCalendarName!);
+
+        await state.Environment.Google.PatchEventAsync(
+            calendarId,
+            state.RequireSeededGoogleEvent().Id,
+            new GoogleEventPatch(
+                Description: state.Correlation.Description(
+                    $"Swimming with {replacement[0]} and {replacement[1]}")));
+
+        state.MemberNames = replacement;
+    }
+
+    [Then(@"preprod serves that event for the newly named members and no others")]
+    public async Task ThenPreprodServesThatEventForTheNewlyNamedMembersAndNoOthers()
+    {
+        var state = State;
+        var expected = state.MemberNames;
+
+        var found = await SmokeLookup.WaitForPreprodAsync(
+            state,
+            state.EventDate,
+            candidates => candidates.Count == 1
+                          && candidates[0].Members
+                              .Select(member => member.DisplayName)
+                              .OrderBy(name => name, StringComparer.Ordinal)
+                              .SequenceEqual(expected.OrderBy(name => name, StringComparer.Ordinal)),
+            $"preprod never settled on the pair of members the description now names "
+            + $"({string.Join(" and ", expected)}). A membership change made on a phone has to reach the "
+            + "kiosk: the member who was dropped keeps seeing an event that is no longer theirs, and the "
+            + "one who was added never sees it at all");
+
+        found.Should().ContainSingle(
+            "renaming the members in a description must not produce a second copy of the event");
     }
 
     [When(@"that event is deleted in Google")]
