@@ -120,7 +120,7 @@ saying where the real values come from; **never commit a value into it.**
 | `Smoke__MemberCalendars` | The member calendars, comma-separated (`James,Kirk,Lars,Rob`). |
 | `Smoke__PushIncapableCalendars` | Calendars that legitimately have no Google push channel — a read-only subscription such as `Holidays in United Kingdom`. Excluded from the webhook check rather than silently tolerated. |
 | `Smoke__GoogleCalendarApiBaseUrl` | Google Calendar API root. Defaults to the real one; configurable so the oracle's address is explicit rather than assumed. |
-| `Smoke__PushWaitSeconds` | How long a scenario waits for a change made in Google to reach preprod through the live push path. Default 180. |
+| `Smoke__PushWaitSeconds` | How long a scenario waits for a change made in Google to reach preprod through the live push path. Default **300**. A statement about Google's own latency, not a convenience — a measured change once took very nearly four minutes to arrive against a typical seventeen seconds, with the relay proven idle throughout. See the intermittent-issues tracker before shortening it. |
 | `Smoke__GoogleWaitSeconds` | How long a scenario waits for a kiosk write to become visible in Google. Default 60. |
 | `Smoke__SyncHorizonDays` | How far ahead preprod's own sync reaches, in days (default 365). Not an environment expectation — a **product** bound. Only the yearly-series scenarios reach past it; without it their second occurrence would be reported as a disagreement with Google rather than as the designed edge of the sync window. If the product's horizon moves, move this with it. |
 | `Smoke__Headless` | Run the kiosk browser headless. Default true. |

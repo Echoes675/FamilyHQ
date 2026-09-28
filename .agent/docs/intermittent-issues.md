@@ -14,6 +14,50 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 15. Google's push notification can take ~4 minutes, against a typical ~17 seconds (2026-09-28)
+
+**Shape:** a preprod smoke scenario that changes a series in Google and waits for preprod to serve
+the change fails its bounded wait, while Google and preprod both turn out to hold the correct data
+afterwards. Seen on the release chain's preprod run, blocking a release; the same scenario had passed
+five times that day at ~17s.
+
+**What was measured.** A membership change patched onto a shared-calendar series at `17:32:50`
+(local). The relay's `Accepted delivery` receipts either side:
+
+```
+17:32:07  17:32:17  17:32:47   ← last before the change
+          ▼ 3m11s — nothing accepted at all ▼
+17:35:58  17:36:08  17:36:18  17:36:35  17:36:47 …
+```
+
+Preprod received the notification for that calendar at `17:36:48` — **3m58s after the change.**
+
+**The relay is not the cause, and that was checked rather than assumed:**
+
+- it accepted *nothing at all* during the silence, so it was not holding a delivery back;
+- its heartbeat through the window read `oldest pending age null, 0 dead letters` — no backlog;
+- once notifications did arrive it forwarded them in **~1 second** (accepted `17:36:47` → preprod
+  received `17:36:48`).
+
+So the latency is upstream of everything we run: **Google itself took ~4 minutes to send the push.**
+
+**Mitigation:** `PushWaitSeconds` raised from 180 to 300. This is a re-statement of how long the live
+path may take, not a retry — nothing is re-driven and no sync is triggered by hand. A change that
+never arrives still fails, which is the failure worth having.
+
+**Why this is not "mask the flake with a longer timeout":** that rule exists to stop a defect being
+hidden. Here the defect was found and it is not ours. 180s described the common case and called
+Google's own tail latency a product fault.
+
+**If the symptom returns:**
+1. Check the relay's `Accepted delivery` receipts on the production Seq first — the gap either sits
+   before the relay (Google) or after it (ours), and that single question settles ownership.
+2. If deliveries *were* accepted promptly and preprod still lagged, it is ours: look at the sync queue
+   (`CalendarSyncJobs`) and whether a job was enqueued and then starved.
+3. If the wait needs raising past 300s, stop and question whether push is working at all — the
+   periodic sync (10 minutes on preprod) would eventually deliver the change and mask a dead push
+   path entirely.
+
 ### 14. "Event updated in Google Calendar shows live on open Day View" timed out once on staging, unexplained (2026-09-25)
 
 **Shape:** the webhook-driven live-update scenario fails its 5-second budget on one staging run, and
