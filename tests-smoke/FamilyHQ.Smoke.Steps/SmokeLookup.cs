@@ -86,7 +86,8 @@ public static class SmokeLookup
                 return settled(found) ? found : null;
             },
             failureDescription,
-            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds));
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            BoundedWait.GooglePollIntervalMs);
     }
 
     /// <summary>

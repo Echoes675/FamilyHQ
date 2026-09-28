@@ -171,7 +171,8 @@ public sealed class KioskToGoogleSteps(ScenarioContext scenarioContext)
                 return candidate.Summary == state.ExpectedTitle ? candidate : null;
             },
             "Google never received the kiosk's title change for this event",
-            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds));
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            Common.Helpers.BoundedWait.GooglePollIntervalMs);
 
         // The free-text description, not the whole string: FamilyHQ appends its managed [members: …] tag on
         // every write, which is intended and visible to the user as a tag rather than as lost text. What must

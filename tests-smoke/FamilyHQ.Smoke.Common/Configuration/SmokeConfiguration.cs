@@ -82,8 +82,22 @@ public class SmokeConfiguration
     /// How long a scenario waits for a change made in Google to reach preprod through the live push
     /// path (Google → RelayRobin → preprod → sync → API). One bounded wait per assertion: when it
     /// expires the scenario fails. Nothing is retried and no sync is triggered by hand.
+    /// <para>
+    /// <b>Why five minutes and not three.</b> This number is a statement about how long Google may
+    /// take to send a push notification, so it has to match what Google actually does rather than
+    /// what would be convenient. A membership change made on a series was measured taking <b>very
+    /// nearly four minutes</b> to arrive, against a typical seventeen seconds. The delay was Google's
+    /// alone: the relay accepted nothing at all for the three minutes after the change, carried no
+    /// backlog while it waited, and forwarded in about one second once the notification finally came.
+    /// Three minutes described the common case and called Google's own tail latency a product fault.
+    /// </para>
+    /// <para>
+    /// Raising it is not the retry this suite forbids — nothing is re-driven and no sync is
+    /// triggered; the single bounded wait is simply given a deadline the real path can meet. If a
+    /// change stops arriving <i>at all</i>, this still fails, which is the failure worth having.
+    /// </para>
     /// </summary>
-    public int PushWaitSeconds { get; set; } = 180;
+    public int PushWaitSeconds { get; set; } = 300;
 
     /// <summary>
     /// How long a scenario waits for a write made on the kiosk to become visible in Google. Shorter

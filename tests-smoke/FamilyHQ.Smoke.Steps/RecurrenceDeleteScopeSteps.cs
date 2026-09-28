@@ -151,5 +151,6 @@ public sealed class RecurrenceDeleteScopeSteps(ScenarioContext scenarioContext)
                 return instances.Count == expectedCount ? instances : null;
             },
             $"Google never settled on {expectedCount} occurrence(s) for {what}",
-            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds));
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            BoundedWait.GooglePollIntervalMs);
 }
