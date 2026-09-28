@@ -215,11 +215,40 @@ Never add a `cat` of the env file, an `echo` of a matched line, or an interpolat
 
 | What | Where |
 |---|---|
-| Test results | Published with the `mstest` step from `smoke-preflight-results.trx` and `smoke-scenario-results.trx`, so failures are readable from the build's **Test Result** page instead of by scrolling the console. |
-| Failure screenshots | Archived as build artifacts from `**/TestResults/smoke-artifacts/*.png` by both stages (`allowEmptyArchive`, because preflight never drives a browser and so never produces one). One per failed kiosk scenario, named `<scenario>-<shortid>.png`. |
+| Test results | Published **once**, in the pipeline-level `post`, with a single `mstest` step over `**/smoke-*-results.trx` — so all 41 tests appear on the build's **Tests** page instead of by scrolling the console. See [why the results are published once](#why-the-results-are-published-once). |
+| Failure screenshots | Archived as build artifacts from `**/TestResults/smoke-artifacts/*.png` in the same `post` (`allowEmptyArchive`, because preflight never drives a browser and so never produces one). One per failed kiosk scenario, named `<scenario>-<shortid>.png`. |
 | Console output | `--logger "console;verbosity=detailed"`, so each scenario's correlation id and any `kiosk console:` lines are in the log to search Seq with. |
 
-FHQ-141's first real failure was diagnosed from one of those screenshots. Look at it before theorising.
+The suite's first real failure was diagnosed from one of those screenshots. Look at it before theorising.
+
+### Why the results are published once
+
+Each stage used to publish its own trx, which is the obvious arrangement and **silently lost most of
+the report**. A run that executed all 41 tests showed **7** on the Tests page — the preflight checks
+alone — with the 34 scenarios nowhere in the UI. Both stages logged `processing report file: …` for
+their own trx, so nothing in the console suggested anything was missing, and the previous run had
+published all 41 from identical plugin output. A gate whose evidence cannot be read is most of the
+way to a gate nobody trusts, so the results are now published **once**, in the pipeline-level `post`,
+over `**/smoke-*-results.trx`.
+
+That single pattern brings a hazard with it, which is why `Smoke: Preflight` deletes
+`tests-smoke/FamilyHQ.Smoke.Features/TestResults` and `temporary-junit-reports` before it runs
+anything: **the workspace is reused between builds.** A build whose scenarios never ran — preflight
+failed, or the deploy died first — would otherwise match the *previous* build's
+`smoke-scenario-results.trx` and publish 34 passing scenarios this build never executed. Clearing
+first means the pattern can only match what this build produced.
+
+`temporary-junit-reports` is the mstest plugin's own conversion directory. It fails to delete it on
+every run (`WARNING Unable to delete the file …`) and then reuses what it finds, so it is cleared for
+the same reason.
+
+**Two things not to trust when reading a smoke run:**
+
+- **The Tests page alone**, if you are checking *whether* tests ran. Drilling into
+  `FamilyHQ.Smoke.Features` shows the features that were published, not the ones that executed.
+- **`jk test report <job> <run>`.** Its summary counts read `Total: 0` for healthy runs, and its
+  `--json` case list has disagreed with the Jenkins UI for the same build. The console log's
+  `Total tests:` lines are dotnet's own output and are the thing to believe.
 
 ### Two things about the Jenkins agent
 
