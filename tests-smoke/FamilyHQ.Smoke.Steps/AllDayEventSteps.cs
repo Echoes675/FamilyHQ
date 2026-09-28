@@ -24,7 +24,7 @@ public sealed class AllDayEventSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = state.EventDay;
+        var date = state.ReserveFirstDay(SmokeScenarioDays.SingleDay);
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("All-day outing"),
@@ -95,16 +95,18 @@ public sealed class AllDayEventSteps(ScenarioContext scenarioContext)
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
 
+        var date = state.ReserveFirstDay(SmokeScenarioDays.SingleDay);
+
         var draft = SmokeEventShape.PhoneStyleAllDayDraft(
             state.Correlation,
             "Phone-made all-day event",
             "One-day all-day event created directly in Google",
-            state.EventDay);
+            date);
 
         state.SeededGoogleEvent = await state.Environment.Google.InsertEventAsync(calendarId, draft);
         state.SeededCalendarName = member;
         state.MemberNames = [member];
-        state.EventDate = state.EventDay;
+        state.EventDate = date;
         state.ExpectedTitle = draft.Summary;
     }
 

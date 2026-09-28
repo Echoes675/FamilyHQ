@@ -5,8 +5,8 @@ Feature: Recurrence, against Google's own expansion
   A weekly rule and a locally-derived weekly rule agree in the common case and diverge at a DST
   transition — that is not a difference of opinion, it is a latent bug with a date on it.
 
-  Every series here is bounded to three occurrences. The smoke events are kept after the run for
-  post-mortem, so an endless series would keep expanding on a live calendar for ever.
+  Every series here is bounded to three occurrences. A scenario that fails keeps its events for the
+  post-mortem, so an endless series could be left expanding on a live calendar for ever.
 
   Background:
     Given the preprod kiosk is open and signed in

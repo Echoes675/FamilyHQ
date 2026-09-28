@@ -252,11 +252,14 @@ These are the reason the suite is worth anything. Each is load-bearing.
    `familyhq_session_correlation_id`, and written into **every** event description as
    `smoke-correlation: <guid>`. Events are located and confirmed by it before any assertion.
 4. **A short id in every event title** (`Two-member outing · 7f3a9c`). Kiosk-side assertions see only
-   the title, and smoke events are kept, so a title match without the short id would happily find an
-   earlier run's event.
+   the title, and a failed scenario keeps its events, so a title match without the short id would
+   happily find an earlier run's.
 5. **Every series is bounded.** Three occurrences. `SmokeWeeklyRecurrence` has no "never ends" option,
-   so a scenario cannot create an endless series by omission. The events are left behind for
-   post-mortem; an unbounded series would keep expanding on a live calendar for ever.
+   so a scenario cannot create an endless series by omission. A scenario that **fails** leaves its
+   events behind for post-mortem, and an unbounded series left behind would keep expanding on a live
+   calendar for ever. A scenario that **passes** removes its own events — see
+   [why no scenario shares a day](#why-no-scenario-shares-a-day) for why removing them on success is not
+   the compensation principle 2 forbids.
 6. **Google is the oracle.** Recurrence is compared against `events.instances`, never against a
    calculation of ours. So is every other assertion about a write: asking FamilyHQ what it wrote only
    establishes that FamilyHQ agrees with itself.
@@ -305,33 +308,103 @@ Notable files:
 | `FamilyHQ.Smoke.Steps/SmokeLookup.cs` | "What does Google hold for this scenario, and what does preprod serve?" |
 | `FamilyHQ.Smoke.Steps/SmokeSeries.cs` | Google's answer about a series, and the one comparison every recurrence scenario ends in. |
 | `FamilyHQ.Smoke.Steps/SmokeIcal.cs` | The RRULE lines the suite writes *into* Google — stated in the standard's own syntax rather than borrowed from FamilyHQ's rule builder, so one shared misunderstanding cannot satisfy both sides. |
-| `FamilyHQ.Smoke.Steps/SmokeScenarioDays.cs` | A day of its own per scenario — see [why no scenario shares a day](#why-no-scenario-shares-a-day). |
+| `FamilyHQ.Smoke.Steps/SmokeScenarioDays.cs` | A run of days of its own per scenario, sized to the span its events cover — see [why no scenario shares a day](#why-no-scenario-shares-a-day). |
+| `FamilyHQ.Smoke.Steps/SmokeScenarioCleanup.cs` | How a scenario that passed takes its own events off the calendars again, via Google. |
 
 ### Why no scenario shares a day
 
-Every scenario puts its events on a day of its own, handed to it as `state.EventDay` by
-`SmokeScenarioDays` — a plain counter, allocated in the scenario hook, starting tomorrow.
+Every scenario reserves a **run of days** of its own — a block sized to the span its events actually cover —
+by calling `state.ReserveDays(...)` with one of the `SmokeScenarioDays` factories. The allocator is a plain
+counter starting tomorrow, and it hands out the next block nothing else has.
 
-It looks like over-engineering and it is not. The suite's events are **kept** (principle 5), so a day
-accumulates every event every run has ever put there. While the suite was small and ran once per preprod
-deploy, one shared day held three or four tiles and nothing went wrong. Past that, the kiosk's day view lays
-overlapping tiles over one another, Playwright finds the tile a scenario wants, another scenario's tile
-intercepts the click, and thirty seconds later the scenario fails with a locator timeout that reads exactly
-like a product fault. It surfaced while this coverage was being written, as two *core* scenarios failing after
-the suite had been run several times in one afternoon — nothing to do with the code under test.
+It looks like over-engineering and it is not. The kiosk's day view lays overlapping tiles over one another:
+Playwright finds the tile a scenario wants, another scenario's tile intercepts the click, and thirty seconds
+later the scenario fails with a locator timeout that reads exactly like a product fault. It surfaced twice.
+First while this coverage was being written, as two *core* scenarios failing after the suite had been run
+several times in one afternoon. Then again the first time the gate was asked to block a release, which it
+did — for a reason that had nothing to do with the release.
 
-A counter rather than a hash of the scenario's id, because a hash collides: with a dozen scenarios over even a
-couple of months of days, two landing on the same day is more likely than not. The cost of a counter is that a
-scenario run on its own sits on a different day than it would in a full run, which is harmless — nothing about
-a scenario depends on its date, and its events are always found by the correlation id and the short title id.
+#### A block, not a day
 
-Two rules follow:
+The original allocator handed out **one day** per scenario. A weekly series of three occupies three days a
+week apart, so scenario N's second and third occurrences landed exactly on the days scenarios N+7 and N+14
+had been given. The failure was a click on one scenario's tile being intercepted by a tile belonging to a
+scenario fourteen places away, and no request reaching the server at all.
 
-- **Never compute a date in a step.** Take `state.EventDay`, or a date derived from it (the first Wednesday on
-  or after it, the day before the next daylight-saving change). `SmokeEventShape` deliberately offers no day
-  at all.
-- **Never assume a day is empty.** It holds this run's events and nothing else, which is enough; it is not a
-  clean slate and the retained events from earlier runs are the point.
+So the span is now stated, per scenario, by the step that writes the rule — the only place that knows it:
+
+| Factory | Span | Used by |
+|---|---|---|
+| `SingleDay` | 1 day | every single-event scenario |
+| `Daily(n)` | `n` days | — (the daylight-saving scenarios reserve nothing; see below) |
+| `Weekly(n)` | `1 + 7(n−1)` — 15 days for three | most recurrence scenarios |
+| `EveryNWeeks(i, n)` | `1 + 7i(n−1)` — 29 days for a fortnightly three | the fortnightly shape |
+| `PlusWeekdayShift(span)` | `span + 6` | any scenario whose first occurrence moves forward to a named weekday |
+| `YearlySeries` | 1 day | the yearly shapes — see below |
+
+A **yearly** series reserves a single day even though its second occurrence is a year out, because a year out
+is past every day the allocator will ever hand out, so there is no scenario for it to collide with.
+`SmokeScenarioDays.BeyondEveryAllocatableDay` is that boundary.
+
+Getting a span wrong is caught **immediately**, not fourteen scenarios later:
+`SmokeSeries.InstancesAsync` asserts that every occurrence Google expanded falls inside the block the
+scenario reserved. The check runs against Google's own expansion, so it is the oracle answering, and the
+failure names the days that escaped.
+
+#### The budget
+
+Every block comes out of `Smoke__SyncHorizonDays` (365), less two weeks of headroom — so roughly **351 days**
+for the whole suite. The 41 scenarios currently reserve about **325** of them. There is room, not much of it,
+and `SmokeScenarioDays.Reserve` throws with an actionable message rather than overrunning quietly. If you add
+scenarios and it fires, reclaim room before widening the horizon: the cheapest room is a scenario reserving
+more days than its events cover.
+
+#### Events are removed on success and kept on failure
+
+They used to be kept unconditionally, and every run put a fresh set on the same days. By the time the gate
+first blocked a release, preprod held **971** smoke events across three months — **152** of them on one day,
+90 on another, 72 on a third — and every event on those calendars in that window was smoke debris. No amount
+of day allocation survives that: a day holding ninety tiles will intercept a click eventually.
+
+So `SmokeScenarioHooks.RemoveThisScenariosEventsOnSuccessAsync` now deletes a scenario's events **when it
+passes**, and a **failed scenario keeps every one of them**, because the events are the post-mortem. The
+details that matter:
+
+- **Through Google**, the system of record — never through preprod's API and never in its database. Preprod
+  learns about the deletions down the same push path everything else travels.
+- **Scoped to the scenario's own correlation marker.** Never a sweep of a day or a calendar: a day sweep
+  would take the events a *failed* scenario deliberately left behind, and a calendar sweep would take a real
+  event off a live account.
+- **It cannot fail a scenario that passed.** Every assertion has already been made and answered by the time
+  it runs, so a delete that errors is reported and the run carries on. It is reported loudly, though —
+  events left behind are what crowds the next run out.
+- **It is not "compensation"** (principle 2). Compensation is repairing the environment to make an assertion
+  pass. This runs after the last assertion has already been answered.
+
+Three rules follow:
+
+- **Never compute a date in a step.** Take a day from `state.ReserveDays(...)`, or a date derived from it (the
+  first Wednesday on or after it, the day before the next daylight-saving change). `SmokeEventShape`
+  deliberately offers no day at all.
+- **Reserve the span the whole scenario needs, in the first step that needs a day.** Asking twice for the
+  same span is fine; asking for a different one throws, because widening a block after the fact would not
+  move the events already created.
+- **Never assume a day is empty.** A failed scenario's events stay where they are until somebody clears
+  them, and that is deliberate.
+
+#### The daylight-saving scenarios reserve nothing
+
+They are the only scenarios whose dates the allocator does not hand out — a transition happens when it
+happens. The allocator leaves the three days around the next transition unallocated so nothing else lands
+there. The two scenarios share those days with each other, which is safe only because scenarios run one at a
+time and a passing scenario clears up after itself.
+
+#### Clearing a backlog by hand
+
+If a run has left a pile behind — a series of failures, or a suite that predates the cleanup above — the
+events have to be removed from **Google**, filtered on `smoke-correlation:` in the description, on the smoke
+account's calendars. Nothing removes them from preprod directly: let the sync carry the deletions in, the
+same way it carries everything else.
 
 ### `data-testid` attributes this suite relies on
 
@@ -644,14 +717,19 @@ cannot satisfy them.
    outcome rather than the clicks.
 3. Tag it `@kiosk` if it drives the browser. Feature-level tags count — the hooks read the scenario's
    tags **and** its feature's, because both tags in this suite are declared once at feature level.
-4. Reuse `SmokeEventShape` for the event's times, **`state.EventDay`** for its date, and
+4. Reuse `SmokeEventShape` for the event's times, **`state.ReserveDays(...)`** for its dates, and
    `SmokeCorrelation.Title` / `.Description` for its title and description. Never write a title or a
    description without them, and never compute a date of your own — see
    [why no scenario shares a day](#why-no-scenario-shares-a-day).
-5. If it creates a series, it is bounded. `SmokeWeeklyRecurrence` gives you no other option.
-6. Assert against Google or against preprod's API — never against FamilyHQ's opinion of its own write.
+5. **Reserve the span the scenario's events actually cover**, not the day the first one falls on:
+   `SmokeScenarioDays.Weekly(3)` for a weekly series of three, `PlusWeekdayShift(...)` on top if the
+   first occurrence moves forward to a named weekday. Getting this wrong fails the scenario that got it
+   wrong, which is the point of the check in `SmokeSeries.InstancesAsync`. Then confirm the suite still
+   fits its [budget](#the-budget).
+6. If it creates a series, it is bounded. `SmokeWeeklyRecurrence` gives you no other option.
+7. Assert against Google or against preprod's API — never against FamilyHQ's opinion of its own write.
    `SmokeLookup` is the way in.
-7. If you need a new expectation about the environment, add it to `SmokeConfiguration` and to
+8. If you need a new expectation about the environment, add it to `SmokeConfiguration` and to
    preflight, and add the key to the [configuration table](#configuration). Do not put a literal in a
    step definition.
 

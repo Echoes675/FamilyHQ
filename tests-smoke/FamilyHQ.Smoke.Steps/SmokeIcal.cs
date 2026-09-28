@@ -12,8 +12,8 @@ namespace FamilyHQ.Smoke.Steps;
 /// </para>
 /// <para>
 /// Every factory here takes a bound. There is no unbounded rule to be had, for the same reason the kiosk
-/// picker has no endless option: the events are kept after the run, and an endless series on a live
-/// calendar keeps expanding for ever.
+/// picker has no endless option: a scenario that fails keeps its events, and an endless series left on a
+/// live calendar keeps expanding for ever.
 /// </para>
 /// </summary>
 public static class SmokeIcal

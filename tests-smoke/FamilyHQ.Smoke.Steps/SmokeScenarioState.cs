@@ -52,12 +52,46 @@ public sealed class SmokeScenarioState
     /// <summary>The date, in the family's zone, the scenario's event sits on.</summary>
     public DateOnly EventDate { get; set; }
 
+    private SmokeDayBlock? _reservedDays;
+
     /// <summary>
-    /// A day of this scenario's own, allocated at the start of it. Events put here cannot end up under
-    /// another scenario's tile on the kiosk's day view, which is what happens when every scenario shares one
-    /// day and the click for the tile a scenario wants never lands.
+    /// The run of days this scenario has to itself, once it has asked for one. Null for a scenario that
+    /// creates no events, and for the daylight-saving scenarios, whose dates the clocks decide.
     /// </summary>
-    public required DateOnly EventDay { get; init; }
+    public SmokeDayBlock? ReservedDays => _reservedDays;
+
+    /// <summary>
+    /// Reserves a run of <paramref name="days"/> days for this scenario and returns it. Events put inside it
+    /// cannot end up under another scenario's tile on the kiosk's day view, which is what happens when two
+    /// scenarios share a day and the click for the tile one of them wants never lands.
+    /// <para>
+    /// The span is the scenario's to state, through one of the <see cref="SmokeScenarioDays"/> factories,
+    /// because only the scenario knows the rule it is about to write. Asking twice for the same span is how a
+    /// scenario with two steps on one day works; asking twice for different spans is a mistake, and says so.
+    /// </para>
+    /// </summary>
+    public SmokeDayBlock ReserveDays(int days)
+    {
+        if (_reservedDays is { } already)
+        {
+            if (already.Days != days)
+            {
+                throw new InvalidOperationException(
+                    $"This scenario has already reserved {already.Days} day(s) at {already} and is now asking "
+                    + $"for {days}. A scenario gets one block: widening it after the fact would not move the "
+                    + "events already created, and narrowing it would hand days it is still using to the next "
+                    + "scenario. Reserve the span the whole scenario needs, in its first step that needs one.");
+            }
+
+            return already;
+        }
+
+        _reservedDays = SmokeScenarioDays.Reserve(days, Environment.Configuration.SyncHorizonDays);
+        return _reservedDays;
+    }
+
+    /// <summary>The first day of a freshly reserved block — what a step that puts one event down wants.</summary>
+    public DateOnly ReserveFirstDay(int days) => ReserveDays(days).FirstDay;
 
     /// <summary>
     /// The recurrence rule this scenario wrote into Google, when it seeded a series there. Kept so a later

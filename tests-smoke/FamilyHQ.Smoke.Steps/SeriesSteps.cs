@@ -28,7 +28,7 @@ public sealed class SeriesSteps(ScenarioContext scenarioContext)
     {
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
-        var date = state.EventDay;
+        var date = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
 
         var draft = new SmokeEventDraft(
             Title: state.Correlation.Title("Series from the kiosk"),
@@ -63,7 +63,7 @@ public sealed class SeriesSteps(ScenarioContext scenarioContext)
         var state = State;
         var member = state.Environment.Configuration.MemberCalendarNames.First();
         var calendarId = state.Environment.Calendars.RequireGoogleId(member);
-        var firstDate = state.EventDay;
+        var firstDate = state.ReserveFirstDay(SmokeScenarioDays.Weekly(SmokeSeries.Occurrences));
         var rule = SmokeIcal.WeeklyOn([firstDate.DayOfWeek], SmokeSeries.Occurrences);
 
         var draft = SmokeEventShape.PhoneStyleDraft(
