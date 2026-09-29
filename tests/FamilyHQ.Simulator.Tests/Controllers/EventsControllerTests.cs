@@ -481,12 +481,14 @@ public class EventsControllerTests
     }
 
     [Fact]
-    public async Task PatchEvent_OnMasterId_WithScalarFields_UpdatesFieldsAndPreservesRecurrenceAndOverride()
+    public async Task PatchEvent_OnMasterId_WithScalarFields_PreservesRecurrence_AndRenamesThePriorException()
     {
         // FHQ-144: the "All events" edit routes through events.patch (NOT events.update), sending the
         // master's scalar fields with NO recurrence array. events.patch is a merge, so the master's
         // RRULE and any prior exception override survive while the edited fields are applied. This is
         // the PATCH sibling of UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields (which covers PUT).
+        // The exception survives as an exception on its own time, but its TITLE follows the master:
+        // that is what Google was observed to do (PropagateSummaryToSeriesExceptionsAsync).
         using var db = CreateDb();
         var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
         var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
@@ -547,9 +549,17 @@ public class EventsControllerTests
         // Occurrences 1 and 3 reflect the new master title.
         items[0].GetProperty("summary").GetString().Should().Be("Football training");
         items[2].GetProperty("summary").GetString().Should().Be("Football training");
-        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        // Occurrence 2 is still the exception — same id, same slot, still an hour later than its
+        // siblings — but it takes the series' new title.
         items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
-        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+        items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        items[1].GetProperty("originalStartTime").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T18:00:00");
+        items[1].GetProperty("start").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T19:00:00");
+        items[1].GetProperty("summary").GetString().Should().Be(
+            "Football training",
+            "Google overwrites an exception's own summary when the series master is renamed");
     }
 
     // ── MoveEvent ─────────────────────────────────────────────────────────────
@@ -1315,10 +1325,12 @@ public class EventsControllerTests
     }
 
     [Fact]
-    public async Task UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields_AndPreservesPriorExceptionOverride()
+    public async Task UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields_AndRenamesPriorExceptionOverride()
     {
         // Arrange — a series with an EXISTING exception override on its second occurrence (created by
         // a prior "This event" edit). An "All events" edit then PUTs the master's fields (title).
+        // A master rename reaches the exception's title on this verb too, so the two write paths do
+        // not disagree about the same user action.
         using var db = CreateDb();
         var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
         var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
@@ -1374,10 +1386,126 @@ public class EventsControllerTests
         // Occurrences 1 and 3 reflect the new master title.
         items[0].GetProperty("summary").GetString().Should().Be("Football training");
         items[2].GetProperty("summary").GetString().Should().Be("Football training");
-        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        // Occurrence 2 remains the exception on its own time, renamed with the series.
         items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
-        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
         items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        items[1].GetProperty("start").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T19:00:00");
+        items[1].GetProperty("summary").GetString().Should().Be(
+            "Football training",
+            "Google overwrites an exception's own summary when the series master is renamed");
+    }
+
+    [Fact]
+    public async Task PatchEvent_OnMasterId_RenamingTheSeries_LeavesTheExceptionsOtherFieldsAlone()
+    {
+        // The title is the ONLY field a master rename was observed to carry onto an exception. A
+        // master edit that also changes location and description must leave the exception's own
+        // location, description and times exactly as the "This event" edit left them — propagating
+        // those as well would be a guess, and one that quietly destroys what the user singled out.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            Location = "Pitch 1",
+            Description = "Bring boots",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            Location = "Sports hall",
+            Description = "Indoors this week",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Football training",
+            Location = "Pitch 2",
+            Description = "Bring shin pads",
+            Start = new GoogleDateTime { DateTime = seriesStart },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) }
+        };
+
+        // Act
+        await sut.PatchEvent("cal-alice", "evt-series", masterEdit);
+
+        // Assert — only the exception's summary moved.
+        var exception = await db.Events.FindAsync("evt-series_20260609T180000Z");
+        exception!.Summary.Should().Be("Football training");
+        exception.Location.Should().Be("Sports hall");
+        exception.Description.Should().Be("Indoors this week");
+        exception.StartTime.Should().Be(secondSlot.AddHours(1));
+        exception.EndTime.Should().Be(secondSlot.AddHours(2));
+        exception.OriginalStartTime.Should().Be(secondSlot);
+        exception.RecurringEventId.Should().Be("evt-series");
+        exception.RecurrenceRule.Should().BeNull("an exception is not itself a series master");
+    }
+
+    [Fact]
+    public async Task PatchEvent_RenamingANonRecurringEvent_DoesNotTouchAnotherSeriesExceptions()
+    {
+        // The propagation keys on the renamed row being a series master AND on the exception's own
+        // RecurringEventId, so an unrelated rename cannot reach someone else's exception.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc);
+        var secondSlot = seriesStart.AddDays(7);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-single",
+            CalendarId = "cal-alice",
+            Summary = "Dentist",
+            StartTime = seriesStart.AddDays(1),
+            EndTime = seriesStart.AddDays(1).AddHours(1),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act — rename the unrelated single event.
+        await sut.PatchEvent("cal-alice", "evt-single", new GoogleEventRequest { Summary = "Optician" });
+
+        // Assert
+        var exception = await db.Events.FindAsync("evt-series_20260609T180000Z");
+        exception!.Summary.Should().Be("Soccer practice (moved)");
     }
 
     // ── Instance cancellation / delete-scope (FHQ-18.11 Pass 4) ───────────────

@@ -97,6 +97,35 @@ Google, a reminder-only change **leaves `updated` untouched** and **moves the `e
 appear in a sync-token delta). Anything that decided whether an event had changed by comparing
 `updated` would therefore be wrong against real Google — and this double would not catch it.
 
+## Recurring Series Exceptions
+
+### A series rename overwrites its exceptions' titles
+
+Patching a series master's `summary` **overwrites the `summary` any exception of that series was
+carrying**. The exception survives as an exception — same id, same `recurringEventId`, same slot,
+its own times, location, description and reminders — but it shows the series' new title.
+
+This is not a reading of the spec. It was established against real Google with the oracle credential
+during a preprod smoke run: the patch was made and the exception read back seconds later, before
+FamilyHQ could have touched anything. `PropagateSummaryToSeriesExceptionsAsync` in
+`EventsController` is the Simulator matching it.
+
+It reads as wrong, which is why it is written down here. Google's own UI implies that an occurrence
+you have singled out is left alone when you edit the series, and that was the assumption in the
+ticket, in the E2E suite and in the smoke suite before anyone checked. The consequence is the
+opposite of the intuitive one: when the kiosk's "All events" edit overwrites an override's title,
+that is FamilyHQ being **compatible**, not FamilyHQ being wrong. A test demanding the override
+survive is demanding that FamilyHQ diverge from the system of record.
+
+**Only the title propagates.** Start, end, location, description and reminders are the exception's
+own and stay put. The title is the one field the behaviour was observed on; propagating the rest on
+that evidence would be a guess dressed as fidelity, and a guess that destroys what the user singled
+out. The same holds on `events.update` (PUT) as on `events.patch` for want of a reason the verb
+would change Google's mind — that one is consistency, not an observation.
+
+If real Google is ever seen to disagree with this, re-establish what it does now and move the
+Simulator and the tests to match. Do not "fix" it back on the strength of what the UI implies.
+
 ## Seeded Locations
 
 The simulator seeds the following locations on startup for manual testing. Enter any of these place names on the Settings page to save a location and see weather data.
