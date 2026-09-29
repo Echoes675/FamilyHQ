@@ -97,6 +97,31 @@ Google, a reminder-only change **leaves `updated` untouched** and **moves the `e
 appear in a sync-token delta). Anything that decided whether an event had changed by comparing
 `updated` would therefore be wrong against real Google — and this double would not catch it.
 
+## Zoned writes
+
+### A write's instant comes from its `timeZone`, never from the host
+
+Google's `start.dateTime` / `end.dateTime` is an RFC 3339 value **whose offset may be absent**, and when
+it is, the accompanying `timeZone` is what fixes the instant: `"2026-09-30T18:00:00"` with
+`timeZone: "Europe/London"` is `17:00Z`, not `18:00Z`. That pair is what FamilyHQ sends for every timed
+event anchored to a zone, because it is how a recurrence holds its **wall clock** across a DST
+transition (see the outbound mapping in `GoogleCalendarClient`). `EventsController.ResolveInstantUtc`
+is the one place that resolves it; a value carrying its own offset, or a `Z`, is taken as it stands and
+the zone is then metadata, exactly as Google treats it.
+
+**Why it is written down.** Reading such a value as the *host's* local time is correct on a machine
+that happens to sit at the same offset as the zone under test and wrong in a container at UTC. That is
+not a cosmetic error on a series master: every occurrence the expansion computes moves with the
+anchor, so the compound instance ids move too, and an exception override — keyed on the slot it
+replaces — is left pointing at a slot the expansion no longer produces. It stops being served, the
+app's local row for it is never refreshed again, and the family sees the old override sitting beside
+the new occurrence. Real Google resolves the pair and moves nothing.
+
+The failure mode is the reason both zones are exercised together in
+`PatchEvent_OnMasterId_WithAZonedWallClockStart_LeavesTheSeriesAnchorWhereItWas`: each arm expects a
+different instant for the same wall clock, so no single host offset can satisfy both. A one-zone test
+passes on a UK workstation during BST and fails in CI, which is exactly how this hid.
+
 ## Recurring Series Exceptions
 
 ### A series rename overwrites its exceptions' titles

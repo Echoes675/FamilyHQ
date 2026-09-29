@@ -210,8 +210,8 @@ public class EventsController : ControllerBase
             Summary = body.Summary ?? "New Event",
             Location = body.Location,
             Description = body.Description,
-            StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : DateTime.UtcNow),
-            EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : DateTime.UtcNow.AddHours(1)),
+            StartTime = body.Start.DateTime != null ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone) : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : DateTime.UtcNow),
+            EndTime = body.End.DateTime != null ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone) : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
             UserId = userId,
             ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash"),
@@ -332,8 +332,8 @@ public class EventsController : ControllerBase
         }
         existing.Location = body.Location;
         existing.Description = body.Description;
-        existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : existing.StartTime);
-        existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : existing.EndTime);
+        existing.StartTime = body.Start.DateTime != null ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone) : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : existing.StartTime);
+        existing.EndTime = body.End.DateTime != null ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone) : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
         // FHQ-43: keep the anchored IANA zone in sync when the update maps the start.
         existing.StartTimeZone = body.Start?.TimeZone;
@@ -495,15 +495,17 @@ public class EventsController : ControllerBase
             existing.Description = body.Description;
         if (body.Start.DateTime != null || body.Start.Date != null)
         {
-            existing.StartTime = body.Start.DateTime?.ToUniversalTime()
-                ?? ParseAllDayDateUtc(body.Start.Date!);
+            existing.StartTime = body.Start.DateTime != null
+                ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone)
+                : ParseAllDayDateUtc(body.Start.Date!);
             existing.IsAllDay = body.Start.Date != null;
             existing.StartTimeZone = body.Start.TimeZone;
         }
         if (body.End.DateTime != null || body.End.Date != null)
         {
-            existing.EndTime = body.End.DateTime?.ToUniversalTime()
-                ?? ParseAllDayDateUtc(body.End.Date!);
+            existing.EndTime = body.End.DateTime != null
+                ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone)
+                : ParseAllDayDateUtc(body.End.Date!);
         }
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
@@ -963,10 +965,12 @@ public class EventsController : ControllerBase
         var existingOverride = await _db.Events.FirstOrDefaultAsync(e => e.Id == instanceId && e.UserId == userId);
 
         var isAllDay = body.Start.Date != null;
-        var start = body.Start.DateTime?.ToUniversalTime()
-                    ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : originalStartUtc);
-        var end = body.End.DateTime?.ToUniversalTime()
-                  ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : start.AddHours(1));
+        var start = body.Start.DateTime != null
+                    ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone)
+                    : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : originalStartUtc);
+        var end = body.End.DateTime != null
+                  ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone)
+                  : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : start.AddHours(1));
 
         var contentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash");
 
@@ -1120,6 +1124,53 @@ public class EventsController : ControllerBase
     /// imitate. Anchoring at midnight UTC makes the converter a no-op and the round-trip exact.
     /// </remarks>
     private static DateTime ParseAllDayDateUtc(string value) => GoogleAllDayDate.Parse(value).UtcDateTime;
+
+    /// <summary>
+    /// The UTC instant a write's <c>start</c> / <c>end</c> names, honouring the <c>timeZone</c> that
+    /// came with it.
+    /// </summary>
+    /// <remarks>
+    /// Google's <c>dateTime</c> is an RFC 3339 value whose OFFSET MAY BE ABSENT, and when it is, the
+    /// accompanying <c>timeZone</c> is what fixes the instant: <c>"2026-09-30T18:00:00"</c> with
+    /// <c>timeZone: "Europe/London"</c> is 17:00Z, not 18:00Z. That pair is how the app writes every
+    /// timed event anchored to a zone, because it is how a recurrence holds its WALL CLOCK across a
+    /// DST transition — so reading the value as UTC re-anchors the resource by the zone's offset.
+    /// <para>
+    /// On a series master that is not a cosmetic error. Every occurrence the expansion computes moves
+    /// with the anchor, so the compound instance ids move too, and an exception override — keyed on
+    /// the slot it replaces — is left pointing at a slot the expansion no longer produces. It stops
+    /// being served, the app's local row for it is never refreshed again, and the family sees the old
+    /// override sitting beside the new occurrence. Real Google resolves the pair and moves nothing,
+    /// which is why that duplicate appeared only against this double.
+    /// </para>
+    /// <para>
+    /// A value that carries its own offset (or a <c>Z</c>) already fixes the instant and is taken as
+    /// it stands; the zone is then metadata, exactly as Google treats it. With no offset and no
+    /// usable zone there is nothing to resolve against, so the reading is taken as UTC — never as
+    /// the HOST's local time, which would make the stored instant depend on where the Simulator
+    /// happens to run.
+    /// </para>
+    /// </remarks>
+    private DateTime ResolveInstantUtc(DateTime reading, string? timeZoneId)
+    {
+        if (reading.Kind != DateTimeKind.Unspecified)
+            return reading.ToUniversalTime();
+
+        var zone = _recurrenceTimeZones.TryCreate(timeZoneId);
+        if (zone is null)
+        {
+            if (!string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                _logger.LogWarning(
+                    "[SIM] A write carried an unknown IANA time zone {TimeZone} with an offset-less dateTime; reading it as UTC.",
+                    timeZoneId);
+            }
+
+            return DateTime.SpecifyKind(reading, DateTimeKind.Utc);
+        }
+
+        return zone.ToInstant(reading).UtcDateTime;
+    }
 
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.
     // FHQ-174: AssumeUniversal is what makes this host-independent. AdjustToUniversal alone only

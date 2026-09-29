@@ -173,6 +173,23 @@ The guard is implemented in two halves:
 1. **Outbound** — every successful Google write records `(GoogleEventId, hash)` in a singleton `IOutboundWriteHashCache` with a 60-second TTL. Failed writes do not record.
 2. **Inbound** — `CalendarSyncService.SyncCoreAsync` reads the content-hash from each inbound `CalendarEvent.ContentHash` (carried through from `GoogleApiEvent.ExtendedProperties.Private.ContentHash` via the `events.list` `fields=` allowlist) and consults the cache via `IsSelfEcho`. On a hash match the event is **usually** skipped — no DB write, no further Google write, single "Self-echo skipped" Information-level log entry — but the hash covers `(title, start, end, isAllDay, description)` plus **the reminders a write actually sent** — never the ones an event merely holds, so an edit that did not touch reminders is stamped byte-identically to the way it was before reminders were modelled, and the events already in production keep matching. A phone's reminder-only change therefore still does not move the stamp, so a hash match is NOT automatically an echo: `IsSelfEcho` also compares reminders, and treats a locally-unlearned reminder set (`existing.Reminders is null`) paired with an inbound value as new information rather than an echo, so that event is processed (a DB write) even though its hash matched.
 
+#### The stamp proves authorship, not freshness
+
+A matching `(id, hash)` pair says FamilyHQ wrote that event in the last 60 seconds. It does **not** say the content is still the content FamilyHQ wrote, because the hash lives in `extendedProperties.private` and Google leaves that alone when the event changes underneath it. Two ways that happens, both real:
+
+- patching a series master rewrites the `summary` of every exception of that series, while their extended properties keep the stamp the single-occurrence write left there (see `simulator-external-dependencies.md`);
+- an edit made in the Google Calendar app changes whatever the user changed and touches no extended property at all.
+
+So `IsSelfEcho` treats the stamp as **nominating a candidate** and resolves it against the locally-stored row: an echo carries what we wrote, and what we wrote is what we stored, so an inbound event whose `(title, start, end, isAllDay, description, location)` differ from the row is a real change and is processed. Location is in that set although it is not hashed — the stamp says nothing about it, but the row does. Without this, the change is discarded silently and **permanently** — incremental sync never re-sends an unchanged event, so the row keeps the stale value until a full sync happens to rebuild it.
+
+Every write path that records a hash also persists the same content in the same operation — the kiosk create/update paths store the request they sent, and the recurring reconcile and the series migration store the very event they read the echoed hash off — so a true echo still compares equal and is still skipped.
+
+**This is not a recompute of the hash from the inbound event.** `EventContentHash.Compute` describes what a write *sends*, not what an event *holds*; comparing a recomputed digest against the stamp would stop recognising FamilyHQ's own writes and bring back the webhook loop the guard exists to prevent.
+
+**Read cost.** The stored row is fetched for every hash candidate, which is one indexed single-row read, paid only by an event whose id and stamp both match a write FamilyHQ itself made inside the TTL — never a whole sync page. An event that is not a candidate costs nothing extra: it reaches the update/create branch, which fetches the row anyway. The earlier optimisation that skipped the lookup on the echo path is gone, deliberately: it bought a read on a rare event at the price of dropping inbound changes.
+
+`ResolveSeriesRecurrenceRulesAsync` (recurrence pass 2) still decides on the hash alone, passing no stored row. That is the cheap, quota-preserving choice for a pass whose only job is to avoid a master fetch; when the persistence loop then finds a candidate is not an echo, the instance keeps whatever RRULE its row already holds and a row with none picks one up next sync.
+
 ### Production verification
 
 To verify the guard is active in any environment:

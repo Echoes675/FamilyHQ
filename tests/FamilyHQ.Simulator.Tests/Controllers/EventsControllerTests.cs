@@ -1798,6 +1798,179 @@ public class EventsControllerTests
         })).Should().ThrowAsync<FormatException>();
     }
 
+    // ── A zoned write's instant comes from its timeZone, not from the host ────────────────────────
+    //
+    // Google's `dateTime` may carry no offset, and then the accompanying `timeZone` is what fixes the
+    // instant. That is the pair the app sends for every timed event anchored to a zone, because it is
+    // how a recurrence holds its wall clock across a DST transition. Reading the value as UTC — or,
+    // worse, as the HOST's local time — re-anchors the resource by the zone's offset, which on a
+    // series master moves every occurrence the expansion computes, and with them the compound
+    // instance ids the app keys its rows on. Reading it as host-local is how that stayed hidden: it
+    // is correct on a machine that happens to sit at the same offset as the zone under test and
+    // wrong in a container at UTC, so it reproduced in CI and not on a UK workstation.
+    //
+    // Both zones below are therefore exercised together. Each arm expects a different instant for the
+    // same wall clock, so no single host offset can satisfy both and the pair pins the behaviour
+    // wherever it runs.
+
+    [Theory]
+    [InlineData("Europe/London", 17, "170000Z")]       // BST on these dates: 18:00 local is 17:00Z
+    [InlineData("America/New_York", 22, "220000Z")]    // EDT on these dates: 18:00 local is 22:00Z
+    public async Task PatchEvent_OnMasterId_WithAZonedWallClockStart_LeavesTheSeriesAnchorWhereItWas(
+        string zoneId, int expectedUtcHour, string expectedSlotStamp)
+    {
+        // Arrange — a series anchored to the given zone with an exception override on its second
+        // occurrence. The all-events edit renames the series and sends the master's unchanged start
+        // back the way the app sends it: a wall-clock reading plus the zone that fixes it.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 9, 30, expectedUtcHour, 0, 0, DateTimeKind.Utc); // Wednesday
+        var secondSlot = seriesStart.AddDays(7);
+        var overrideId = $"evt-series_20261007T{expectedSlotStamp}";
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            StartTimeZone = zoneId,
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = overrideId,
+            CalendarId = "cal-alice",
+            Summary = "Dentist",
+            StartTime = secondSlot,
+            EndTime = secondSlot.AddHours(1),
+            StartTimeZone = zoneId,
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Training camp",
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 19, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            }
+        };
+
+        // Act
+        await sut.PatchEvent("cal-alice", "evt-series", masterEdit);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-09-01T00:00:00Z",
+            timeMax: "2026-12-01T00:00:00Z");
+
+        // Assert — the anchor did not move, so neither did the slots.
+        var master = await db.Events.FindAsync("evt-series");
+        master!.StartTime.Should().Be(
+            seriesStart,
+            "the reading is 18:00 in {0}, and resolving it anywhere else moves the whole series",
+            zoneId);
+        master.EndTime.Should().Be(seriesStart.AddHours(1));
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3, "each slot is served once, by its override or by the computed occurrence");
+        items[0].GetProperty("id").GetString().Should().Be($"evt-series_20260930T{expectedSlotStamp}");
+        items[2].GetProperty("id").GetString().Should().Be($"evt-series_20261014T{expectedSlotStamp}");
+
+        // The override still sits on a slot the expansion produces, so it is served in that slot's
+        // place — carrying the series' new title — rather than being stranded while a second,
+        // shifted occurrence appears beside it.
+        items[1].GetProperty("id").GetString().Should().Be(overrideId);
+        items[1].GetProperty("summary").GetString().Should().Be("Training camp");
+    }
+
+    [Fact]
+    public async Task CreateEvent_WithOneWallClockInTwoZones_StoresTwoDifferentInstants()
+    {
+        // The reading alone names no instant. Two writes carrying the same wall clock and different
+        // zones are five hours apart, so anything that ignores the zone collapses them onto one
+        // instant — and that is wrong on every host, not only on a host at the wrong offset.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+
+        static GoogleEventRequest Write(string summary, string zoneId) => new()
+        {
+            Summary = summary,
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 19, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            }
+        };
+
+        await sut.CreateEvent("cal-alice", Write("London", "Europe/London"));
+        await sut.CreateEvent("cal-alice", Write("New York", "America/New_York"));
+
+        var london = await db.Events.FirstAsync(e => e.Summary == "London");
+        var newYork = await db.Events.FirstAsync(e => e.Summary == "New York");
+
+        london.StartTime.Should().Be(new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc));
+        newYork.StartTime.Should().Be(new DateTime(2026, 9, 30, 22, 0, 0, DateTimeKind.Utc));
+        (newYork.StartTime - london.StartTime).Should().Be(TimeSpan.FromHours(5));
+    }
+
+    [Fact]
+    public async Task UpdateEvent_WithAnOffsetBearingDateTime_TakesTheInstantAsItStands()
+    {
+        // A value that carries its own offset already fixes the instant, and the zone alongside it is
+        // metadata. Resolving it against the zone a second time would shift it.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1",
+            CalendarId = "cal-alice",
+            Summary = "Swimming",
+            StartTime = new DateTime(2026, 9, 30, 12, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2026, 9, 30, 13, 0, 0, DateTimeKind.Utc),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        await sut.UpdateEvent("cal-alice", "evt-1", new GoogleEventRequest
+        {
+            Summary = "Swimming",
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTimeOffset(2026, 9, 30, 18, 0, 0, TimeSpan.FromHours(1)).UtcDateTime,
+                TimeZone = "Europe/London"
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTimeOffset(2026, 9, 30, 19, 0, 0, TimeSpan.FromHours(1)).UtcDateTime,
+                TimeZone = "Europe/London"
+            }
+        });
+
+        var stored = await db.Events.FindAsync("evt-1");
+        stored!.StartTime.Should().Be(new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc));
+        stored.EndTime.Should().Be(new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Utc));
+    }
+
     private static SimContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<SimContext>()

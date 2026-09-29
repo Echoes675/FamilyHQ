@@ -269,16 +269,15 @@ public class CalendarSyncService(
                 CalendarEvent? touched = null;
                 try
                 {
-                    // FHQ-189: the self-echo guard below now also compares reminders, which needs
-                    // the locally-stored row — but only fetch it here when the guard could actually
-                    // need it (a hash match where Google also reported reminders this fetch). A
-                    // hash match with no reminders on the fetch resolves from the hash alone (see
-                    // IsSelfEcho), so a genuine echo still costs no DB lookup at all (FHQ-30's
-                    // original "skipped event triggers no DB lookup" behaviour). Not yet fetched
-                    // here, it is fetched once below, before the update/create branch.
+                    // The self-echo guard below resolves a hash match against the locally-stored row
+                    // (see IsSelfEcho), so the row is fetched for every hash candidate. The lookup
+                    // is one indexed single-row read, and only an event whose id AND stamp match a
+                    // write FamilyHQ itself made in the last 60 seconds pays it — never a whole sync
+                    // page. An event that is not a candidate still costs nothing here: it reaches the
+                    // update/create branch below, which fetches the row once anyway.
                     var isHashCandidate = !string.IsNullOrEmpty(evt.ContentHash)
                         && outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash);
-                    var localEvent = isHashCandidate && evt.Reminders is not null
+                    var localEvent = isHashCandidate
                         ? await calendarRepository.GetEventByGoogleEventIdAsync(evt.GoogleEventId, ct)
                         : null;
 
@@ -554,20 +553,38 @@ public class CalendarSyncService(
     /// own recent writes.
     /// </summary>
     /// <remarks>
-    /// The stamped content-hash covers Title, Start, End, IsAllDay and Description — NOT reminders.
-    /// So a reminder added on a phone within the cache's 60-second window arrives carrying the hash
-    /// the kiosk last stamped, and the hash test alone would discard it silently and permanently.
-    /// An event is therefore only an echo if its reminders match what we already hold as well.
     /// <para>
+    /// <b>The stamp proves authorship, not freshness.</b> A matching (id, content-hash) pair says
+    /// only that FamilyHQ wrote this event in the last 60 seconds. It does NOT say the content is
+    /// still the content we wrote, because the hash lives in <c>extendedProperties.private</c> and
+    /// Google leaves that alone when the event changes underneath it. Two ways that happens, both
+    /// real: patching a series master rewrites the <c>summary</c> of every exception of that series
+    /// while their extended properties keep the stamp the single-occurrence write left there; and an
+    /// edit made in the Google Calendar app on a phone changes whatever the user changed and touches
+    /// no extended property at all. In both cases the hash test alone discards a genuine inbound
+    /// change silently and PERMANENTLY — incremental sync never re-sends an unchanged event, so the
+    /// row keeps the stale value until a full sync happens to rebuild it.
+    /// </para>
+    /// <para>
+    /// So the stamp selects a candidate and the stored row decides: an echo carries what we wrote,
+    /// and what we wrote is what we stored. Every write path that records a hash persists the same
+    /// content in the same operation — the kiosk create/update paths store the request they sent, and
+    /// the recurring reconcile and the series migration store the very event they read the echoed
+    /// hash off — so a true echo compares equal and is still skipped. This is deliberately NOT a
+    /// recompute of the hash from the inbound event: <see cref="EventContentHash.Compute"/> describes
+    /// what a write SENDS rather than what an event HOLDS (see its remarks), and comparing a
+    /// recomputed digest with the stamp would stop recognising FamilyHQ's own writes.
+    /// </para>
+    /// <para>
+    /// <b>Reminders</b> are compared separately because they are not in the hash at all, so a
+    /// reminder added on a phone inside the window arrives carrying the hash the kiosk last stamped.
     /// I2 (FHQ-189): a kiosk-created event starts with <c>Reminders = null</c> —
     /// <see cref="CalendarEventService.CreateAsync"/> discards Google's create response except the
     /// id — and Google's own echo of that create is the FIRST place its reminders (typically
     /// <c>useDefault:true</c>) ever arrive. Treating <c>existing.Reminders is null</c> as "nothing to
-    /// compare, assume echo" (as the hash-only fallback below effectively did) would suppress that
-    /// echo forever: incremental sync never re-sends an unchanged event, so the row would keep a
-    /// null Reminders indefinitely and FHQ-191's timeline would never see it. When the inbound event
-    /// reports reminders and we hold none yet, there is something to learn, so this is NOT an echo —
-    /// the update is idempotent for every hashed field regardless.
+    /// compare, assume echo" would suppress that echo forever. When the inbound event reports
+    /// reminders and we hold none yet, there is something to learn, so this is NOT an echo — the
+    /// update is idempotent for every hashed field regardless.
     /// </para>
     /// </remarks>
     private bool IsSelfEcho(CalendarEvent evt, CalendarEvent? existing)
@@ -575,15 +592,54 @@ public class CalendarSyncService(
         if (string.IsNullOrEmpty(evt.ContentHash)) return false;
         if (!outboundWriteHashCache.WasRecentlyWritten(evt.GoogleEventId, evt.ContentHash)) return false;
 
-        // No locally-stored row (the FHQ-66 create race) or Google said nothing about reminders:
-        // fall back to the hash decision alone, exactly as before FHQ-189.
-        if (existing is null || evt.Reminders is null) return true;
+        // No locally-stored row: Google's echo of a create can arrive before our own insert has
+        // committed. There is nothing to compare against and nothing to lose — the create path is
+        // holding the content it just wrote — so fall back to the hash decision alone.
+        if (existing is null) return true;
+
+        // Google changed something the stamp still claims is ours: a real inbound change, not an echo.
+        if (!CarriesStoredContent(evt, existing)) return false;
+
+        // Google said nothing about reminders on this fetch, so there is nothing to compare.
+        if (evt.Reminders is null) return true;
 
         // I2: existing has never learned any reminders but Google now reports some — not an echo.
         if (existing.Reminders is null) return false;
 
         return evt.Reminders.SameAs(existing.Reminders);
     }
+
+    /// <summary>
+    /// Whether an inbound event still carries the content the stored row holds, over the fields a
+    /// FamilyHQ write sends.
+    /// </summary>
+    /// <remarks>
+    /// The set is <see cref="EventContentHash.Compute"/>'s plus Location. Location is not hashed —
+    /// so the stamp says nothing about it — but the stored row holds it, and a location changed
+    /// elsewhere inside the cache's window is exactly the kind of real change the stamp would
+    /// otherwise suppress. Reminders are compared by the caller, which has the null-vs-unlearned
+    /// cases to weigh.
+    /// <para>
+    /// <see cref="DateTimeOffset"/> equality compares instants, not offsets, which is what is wanted
+    /// here: Google may echo a start in a different offset from the one it was sent in without that
+    /// being a change. A null and an empty string are the same absence for both text fields —
+    /// matching how the hash renders a description, and how the outbound mapping sends a missing
+    /// location as <c>""</c> where the row keeps null.
+    /// </para>
+    /// </remarks>
+    private static bool CarriesStoredContent(CalendarEvent inbound, CalendarEvent stored) =>
+        string.Equals(inbound.Title, stored.Title, StringComparison.Ordinal)
+        && inbound.Start == stored.Start
+        && inbound.End == stored.End
+        && inbound.IsAllDay == stored.IsAllDay
+        && SameText(inbound.Description, stored.Description)
+        && SameText(inbound.Location, stored.Location);
+
+    private static bool SameText(string? inbound, string? stored) =>
+        string.Equals(
+            string.IsNullOrEmpty(inbound) ? string.Empty : inbound,
+            string.IsNullOrEmpty(stored) ? string.Empty : stored,
+            StringComparison.Ordinal);
 
     /// <summary>
     /// Pass 2 of recurring ingestion. Builds a per-run series-id → RRULE cache from the
@@ -602,11 +658,15 @@ public class CalendarSyncService(
         CalendarInfo calendar, IEnumerable<CalendarEvent> events, CancellationToken ct)
     {
         // Cancelled tombstones reuse the recurring id but are being deleted, so they need no RRULE.
-        // Self-echoes (FHQ-30) are short-circuited in the persistence loop and never stored, so
-        // they must not trigger a wasted master fetch either. No locally-stored row is in scope
-        // here (this pass runs before the per-event lookup), so null is passed for the existing
-        // event — IsSelfEcho then falls back to the hash-only decision, preserving this call
-        // site's behaviour exactly as it was before FHQ-189.
+        // Hash candidates are excluded too, and the null passed for the stored row makes that the
+        // hash-only decision on purpose: this pass runs before the per-event lookup, and its only
+        // job is to avoid spending a Google master fetch. Treating every one of our own recent
+        // writes as an echo here is the cheap, quota-preserving answer — the alternative puts an API
+        // call behind each instance we ourselves just wrote, which is what this pass exists to
+        // avoid. The persistence loop makes the real decision against the stored row, and when it
+        // finds a candidate is NOT an echo the missing rule costs nothing durable: the instance
+        // keeps whatever rule its row already holds, and a row that has none picks one up on the
+        // next sync.
         var seriesIds = events
             .Where(e => e.GoogleRecurringEventId is not null
                      && e.Title != "CANCELLED_TOMBSTONE"
