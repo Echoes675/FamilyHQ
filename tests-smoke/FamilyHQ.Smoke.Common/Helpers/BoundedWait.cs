@@ -20,6 +20,17 @@ public static class BoundedWait
     private const int DefaultPollIntervalMs = 2000;
 
     /// <summary>
+    /// The cadence for a wait that asks <b>Google</b> rather than preprod.
+    /// <para>
+    /// Slower than the default because each poll costs real Google API calls — a listing per calendar, for
+    /// some of them — and a two-second cadence spends those on an answer that has not changed. Google pauses
+    /// push delivery to this account when it has been worked hard, and those pauses are what make scenarios
+    /// time out, so the suite asking for less is worth a few seconds of extra latency on a passing assertion.
+    /// </para>
+    /// </summary>
+    public const int GooglePollIntervalMs = 5000;
+
+    /// <summary>
     /// Polls <paramref name="condition"/> until it is true or <paramref name="timeout"/> elapses,
     /// then throws a <see cref="TimeoutException"/> carrying <paramref name="failureDescription"/>.
     /// </summary>

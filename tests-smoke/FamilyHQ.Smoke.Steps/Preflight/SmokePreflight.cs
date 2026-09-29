@@ -74,6 +74,12 @@ public static class SmokePreflight
     }
 
     /// <summary>Releases the run-scoped Google client. Called once from an after-test-run hook.</summary>
+    /// <summary>
+    /// The environment this run established, if it got that far. Used by the run-level hook that reports the
+    /// run's Google spend and checks for leftovers before the client is disposed.
+    /// </summary>
+    internal static SmokeRunEnvironment? CurrentEnvironment => _environment;
+
     public static void Release()
     {
         _environment?.OracleOrNull?.Dispose();

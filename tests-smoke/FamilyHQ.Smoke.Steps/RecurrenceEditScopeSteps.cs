@@ -277,6 +277,7 @@ public sealed class RecurrenceEditScopeSteps(ScenarioContext scenarioContext)
             $"Google never settled on {expected} exception(s) for {what}. A change asked for at 'this "
             + "event' that produced none was applied to something wider than the one occurrence the user "
             + "chose",
-            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds));
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            BoundedWait.GooglePollIntervalMs);
     }
 }

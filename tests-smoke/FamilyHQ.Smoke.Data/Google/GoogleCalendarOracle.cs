@@ -33,6 +33,9 @@ public sealed class GoogleCalendarOracle : IDisposable
 {
     private readonly HttpClient _httpClient;
 
+    /// <summary>What this run has asked of Google, by operation. Counted, never enforced.</summary>
+    public GoogleCallLog Calls { get; } = new();
+
     public GoogleCalendarOracle(SmokeConfiguration configuration, string accessToken)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -54,6 +57,7 @@ public sealed class GoogleCalendarOracle : IDisposable
             var path = "users/me/calendarList?maxResults=250"
                        + (pageToken is null ? string.Empty : $"&pageToken={Uri.EscapeDataString(pageToken)}");
             var page = await GetAsync<GoogleCalendarList>(path, ct);
+            Calls.Record("calendarList");
             entries.AddRange(page.Items ?? []);
             pageToken = page.NextPageToken;
         }
@@ -96,6 +100,7 @@ public sealed class GoogleCalendarOracle : IDisposable
                        + (pageToken is null ? string.Empty : $"&pageToken={Uri.EscapeDataString(pageToken)}");
 
             var page = await GetAsync<GoogleEventList>(path, ct);
+            Calls.Record("list");
             events.AddRange((page.Items ?? [])
                 .Where(item => item.Description is not null
                                && item.Description.Contains(correlationMarker, StringComparison.Ordinal)));
@@ -107,9 +112,12 @@ public sealed class GoogleCalendarOracle : IDisposable
     }
 
     /// <summary>One event, exactly as Google holds it right now.</summary>
-    public Task<GoogleEvent> GetEventAsync(string calendarId, string eventId, CancellationToken ct = default) =>
-        GetAsync<GoogleEvent>(
+    public Task<GoogleEvent> GetEventAsync(string calendarId, string eventId, CancellationToken ct = default)
+    {
+        Calls.Record("get");
+        return GetAsync<GoogleEvent>(
             $"calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}", ct);
+    }
 
     /// <summary>
     /// Google's own expansion of a series — <c>events.instances</c>. This is the oracle for every
@@ -133,6 +141,7 @@ public sealed class GoogleCalendarOracle : IDisposable
                        + (pageToken is null ? string.Empty : $"&pageToken={Uri.EscapeDataString(pageToken)}");
 
             var page = await GetAsync<GoogleEventList>(path, ct);
+            Calls.Record("instances");
             instances.AddRange(page.Items ?? []);
             pageToken = page.NextPageToken;
         }
@@ -146,6 +155,7 @@ public sealed class GoogleCalendarOracle : IDisposable
         string calendarId, GoogleEventDraft draft, CancellationToken ct = default)
     {
         var path = $"calendars/{Uri.EscapeDataString(calendarId)}/events";
+        Calls.Record("insert");
         using var response = await _httpClient.PostAsJsonAsync(path, draft, SmokeJson.Options, ct);
         return await ReadRequiredAsync<GoogleEvent>(response, "POST", path, ct);
     }
@@ -163,6 +173,7 @@ public sealed class GoogleCalendarOracle : IDisposable
             Content = JsonContent.Create(patch, options: SmokeJson.Options)
         };
 
+        Calls.Record("patch");
         using var response = await _httpClient.SendAsync(request, ct);
         return await ReadRequiredAsync<GoogleEvent>(response, "PATCH", path, ct);
     }
@@ -171,6 +182,7 @@ public sealed class GoogleCalendarOracle : IDisposable
     public async Task DeleteEventAsync(string calendarId, string eventId, CancellationToken ct = default)
     {
         var path = $"calendars/{Uri.EscapeDataString(calendarId)}/events/{Uri.EscapeDataString(eventId)}";
+        Calls.Record("delete");
         using var response = await _httpClient.DeleteAsync(path, ct);
 
         if (response.IsSuccessStatusCode

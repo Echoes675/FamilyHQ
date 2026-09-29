@@ -57,7 +57,8 @@ public static class SmokeSeries
             $"Google never settled on {expectedMasters} series master(s) carrying this scenario's "
             + $"correlation marker for {what}. More than expected means a series was written twice, or a "
             + "split left one behind; fewer means a series that should exist does not",
-            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds));
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            BoundedWait.GooglePollIntervalMs);
     }
 
     /// <summary>

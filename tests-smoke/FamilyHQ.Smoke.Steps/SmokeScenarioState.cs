@@ -2,6 +2,7 @@ using FamilyHQ.Smoke.Common.Correlation;
 using FamilyHQ.Smoke.Common.Hooks;
 using FamilyHQ.Smoke.Common.Pages;
 using FamilyHQ.Smoke.Data.Api;
+using FamilyHQ.Smoke.Data.Google;
 using FamilyHQ.Smoke.Data.Models;
 using FamilyHQ.Smoke.Steps.Preflight;
 
@@ -23,6 +24,12 @@ public sealed class SmokeScenarioState
 
     /// <summary>This scenario's correlation identity: the id on every request, in every description, in every title.</summary>
     public required SmokeCorrelation Correlation { get; init; }
+
+    /// <summary>
+    /// The run's Google call counts as they stood when this scenario started, so the scenario can report
+    /// what it alone cost. Null when the run never obtained an oracle.
+    /// </summary>
+    public GoogleCallSnapshot? GoogleCallsAtStart { get; init; }
 
     /// <summary>
     /// preprod's API, read as this scenario's signed-in kiosk. Null when the run never obtained a session
