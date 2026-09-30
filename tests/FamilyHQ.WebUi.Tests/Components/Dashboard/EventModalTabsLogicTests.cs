@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Validators;
 using FamilyHQ.WebUi.Components.Dashboard;
 using FluentAssertions;
 
@@ -51,5 +53,68 @@ public class EventModalTabsLogicTests
     public void SaveBlockedHint_WhenRepeatIsComplete_IsNull()
     {
         EventModalTabsLogic.SaveBlockedHint(recurrenceComplete: true).Should().BeNull();
+    }
+
+    // --- The Reminders tab's badge ---------------------------------------------------------------
+
+    private static EventReminders TwoCalendarDefaults() => EventReminders.Explicit(
+    [
+        new EventReminder(EventRemindersValidator.PopupMethod, 30),
+        new EventReminder(EventRemindersValidator.EmailMethod, 1440)
+    ]);
+
+    [Fact]
+    public void RemindersBadge_WithNoPicker_IsNull()
+    {
+        // The badge is read on every render of the tab bar, including before a picker exists.
+        EventModalTabsLogic.RemindersBadge(null).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersBadge_WhenTheEventFollowsTheCalendar_SaysDefault()
+    {
+        var picker = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault, TwoCalendarDefaults(), isAllDay: false);
+
+        EventModalTabsLogic.RemindersBadge(picker).Should().Be(EventModalTabsLogic.RemindersDefaultBadge);
+    }
+
+    [Fact]
+    public void RemindersBadge_WhenTheEventCarriesItsOwn_CountsThem()
+    {
+        var picker = ReminderPickerModel.From(
+            EventReminders.Explicit(
+            [
+                new EventReminder(EventRemindersValidator.PopupMethod, 10),
+                new EventReminder(EventRemindersValidator.PopupMethod, 60),
+                new EventReminder(EventRemindersValidator.EmailMethod, 1440)
+            ]),
+            TwoCalendarDefaults(),
+            isAllDay: false);
+
+        EventModalTabsLogic.RemindersBadge(picker).Should().Be("3");
+    }
+
+    [Fact]
+    public void RemindersBadge_WhenATimedEventHasNoneOfItsOwn_SaysNone()
+    {
+        var picker = ReminderPickerModel.From(
+            EventReminders.ExplicitlyNone, TwoCalendarDefaults(), isAllDay: false);
+
+        EventModalTabsLogic.RemindersBadge(picker).Should().Be(EventModalTabsLogic.RemindersNoneBadge);
+    }
+
+    [Fact]
+    public void RemindersBadge_WhenAnAllDayEventHasNoneOfItsOwn_DoesNotSayTheEventHasNone()
+    {
+        // Google stores a reminder set for the day itself and never returns it, so an all-day event
+        // with nothing in the API's answer may still notify the family. The badge may say what this
+        // screen holds; it may not say the event has no reminders.
+        var picker = ReminderPickerModel.From(
+            EventReminders.ExplicitlyNone, TwoCalendarDefaults(), isAllDay: true);
+
+        EventModalTabsLogic.RemindersBadge(picker)
+            .Should().Be(EventModalTabsLogic.RemindersNoneHereBadge)
+            .And.NotBe(EventModalTabsLogic.RemindersNoneBadge);
     }
 }

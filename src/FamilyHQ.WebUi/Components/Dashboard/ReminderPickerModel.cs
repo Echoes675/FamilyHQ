@@ -245,10 +245,17 @@ public sealed class ReminderPickerModel
     }
 
     /// <summary>
-    /// Adds the reminder the form currently describes — days-before-at-a-time for an all-day event,
-    /// amount-and-unit for a timed one. Refused on the same grounds as <see cref="TryAdd"/>.
+    /// The reminder the form currently describes — days-before-at-a-time for an all-day event,
+    /// amount-and-unit for a timed one — so the tab can show what Add would create before the family
+    /// commits to it. <see cref="TryAddSelectedReminder"/> adds exactly this.
     /// </summary>
-    public bool TryAddSelectedReminder() => TryAdd(new EventReminder(Method, SelectedMinutes()));
+    public EventReminder SelectedReminder => new(Method, SelectedMinutes());
+
+    /// <summary>
+    /// Adds the reminder the form currently describes. Refused on the same grounds as
+    /// <see cref="TryAdd"/>.
+    /// </summary>
+    public bool TryAddSelectedReminder() => TryAdd(SelectedReminder);
 
     /// <summary>Removes a reminder, returning whether it was there.</summary>
     public bool Remove(EventReminder reminder) => _overrides.Remove(reminder);
