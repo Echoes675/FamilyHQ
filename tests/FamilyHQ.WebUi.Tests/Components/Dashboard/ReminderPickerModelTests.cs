@@ -103,6 +103,51 @@ public class ReminderPickerModelTests
         model.ToEventReminders().SameAs(fromAPhone).Should().BeTrue();
     }
 
+    [Fact]
+    public void TryAdd_AlongsideAValueTheKioskCouldNotHaveCreated_KeepsBoth()
+    {
+        // Showing a phone-set value is only half of it. The family then edits the reminders — adds one
+        // of their own — and the value the kiosk has no control for has to come back out the other
+        // side. Because a save sends the whole override list, dropping it here would delete a reminder
+        // from a phone as a side effect of adding one on the kiosk: a silent loss the family finds out
+        // about by not being told about something.
+        var fromAPhone = EventReminders.Explicit(
+        [
+            new EventReminder("sms", 47)
+        ]);
+
+        var model = Timed(fromAPhone);
+
+        model.TryAdd(new EventReminder("popup", 30)).Should().BeTrue();
+
+        model.Overrides.Should().BeEquivalentTo(
+            new[]
+            {
+                new EventReminder("sms", 47),
+                new EventReminder("popup", 30)
+            },
+            "adding a reminder is not a licence to normalise the ones already there");
+        model.HasChanged.Should().BeTrue("the family did ask for the new one");
+    }
+
+    [Fact]
+    public void Remove_OfADifferentReminder_LeavesAValueTheKioskCouldNotHaveCreatedAlone()
+    {
+        // The mirror: taking away a reminder the kiosk understands must not take the phone-set one
+        // with it.
+        var fromAPhone = EventReminders.Explicit(
+        [
+            new EventReminder("sms", 47),
+            new EventReminder("popup", 30)
+        ]);
+
+        var model = Timed(fromAPhone);
+
+        model.Remove(new EventReminder("popup", 30)).Should().BeTrue();
+
+        model.Overrides.Should().Equal(new EventReminder("sms", 47));
+    }
+
     // --- Moving between the states -------------------------------------------------------------
 
     [Fact]
