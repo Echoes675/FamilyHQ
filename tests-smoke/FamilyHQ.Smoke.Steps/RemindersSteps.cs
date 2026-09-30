@@ -356,10 +356,11 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
     /// that came back cleared could only mean the kiosk sent an event resource that did not carry it.
     /// </para>
     /// <para>
-    /// The start's <c>timeZone</c> is deliberately <b>not</b> asserted here. A write re-anchoring an
-    /// event's zone is a known open defect with a ticket and a scenario of its own; folding it into this
-    /// one would turn a reminders release red for a reason that has nothing to do with reminders, and
-    /// would say nothing new about the bug.
+    /// The start's <c>timeZone</c> is <b>recorded rather than asserted</b>, and the distinction is the
+    /// point. Nobody has observed what Google returns for a single timed event's zone after a FamilyHQ
+    /// reminder write, and this suite gates promotion — so an assertion written from no observation
+    /// either passes vacuously or blocks a release on a guess. The same reasoning RM4 sets out. The
+    /// value goes into the run's output; once a green run establishes it, the assertion belongs here.
     /// </para>
     /// </summary>
     [Then(@"Google still holds everything else about that event exactly as it was")]
@@ -414,6 +415,13 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
             "the start was not edited. A reminder change that moves the event is the worst outcome in "
             + "this scenario: the family would be alerted correctly, for the wrong time");
         updated.End!.DateTime.Should().Be(original.End!.DateTime, "the end was not edited");
+
+        // Recorded, not asserted — see the remarks. Printed whatever it says, so a run where the zone
+        // did change is still legible to whoever reads the output.
+        output.WriteLine(
+            "RECORDED — the start's timeZone across a reminder-only edit: Google held "
+            + $"'{original.Start.TimeZone ?? "none"}' before and '{updated.Start.TimeZone ?? "none"}' "
+            + "after. Nothing is asserted about this yet; see the preprod smoke maintenance guide.");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────

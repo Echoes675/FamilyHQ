@@ -602,13 +602,22 @@ no reminders"**, and none of them does.
 | **RM4** | What Google does with a revert-to-default reminder body on an **all-day** event | **A recording, not an expectation** — see below. It asserts only that Google **accepted** the write and holds the event as all-day, which is worth gating on because a rejection breaks the All-day toggle for the family. | The write was refused, or the event never became all-day. Either way the answer is the thing this scenario exists to find out; the failure message says to bring it back as a product decision rather than work around it. |
 | **RM5** | An all-day event created on the kiosk does not inherit its calendar's reminders | Records the live divergence as a fact: **an all-day event never inherits** — Google materialises the calendar's reminders onto it. That is why the kiosk must show what Google *returned* rather than what it sent. | A red run here is a report about **Google**, not about FamilyHQ: it has changed its mind about all-day inheritance. Re-establish what it does now and move the assertion; do not relax it. |
 
-#### RM6 deliberately says nothing about the anchor zone
+#### RM6 records the anchor zone rather than asserting it
 
-RM6 compares the title, description, location, colour, start and end — and not the start's `timeZone`.
-That is not an oversight. A write re-anchoring an event's zone is a known open defect with a ticket and a
-scenario of its own; asserting it inside RM6 would turn a reminders release red for a reason that has
-nothing to do with reminders, and would say nothing new about the bug. RK11 is where the anchor zone is
-guarded.
+RM6 **asserts** the title, description, location, colour, start and end. It **records** the start's
+`timeZone`, in a `RECORDED —` line, and asserts nothing about it.
+
+The reason is the absence of an observation, not the presence of a bug. Nobody has yet seen what Google
+returns for a single timed event's `start.timeZone` after a FamilyHQ reminder write. This suite gates
+promotion, so an assertion written from no observation either passes vacuously or blocks a release on a
+guess — which is [the same reasoning RM4 sets out](#rm4-records-an-answer-nobody-has-yet). Read the
+recorded line off a green run, agree what it should be, and then the assertion belongs here.
+
+Worth being precise about what is *not* the reason, because an earlier draft of this note got it wrong:
+the zone-precedence defect on series writes was **fixed and released in August**, and the open
+golden-rule defect in that family concerns a series master re-sending `start`/`end` on a title-only
+edit — a different code path from RM6, which edits a single timed event. Neither is a reason to omit
+the zone here. RK11 remains where a *series'* anchor zone is guarded.
 
 #### RM4 records an answer nobody has yet
 
