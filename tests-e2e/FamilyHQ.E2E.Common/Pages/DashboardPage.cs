@@ -234,6 +234,45 @@ public class DashboardPage : BasePage
         return DateTime.ParseExact(text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Drives the agenda's own month navigation until the rendered month contains <paramref name="date"/>.
+    /// <para>
+    /// The agenda renders exactly one calendar month — one row per day of it and nothing either side.
+    /// A cell keyed on a date outside that month therefore does not exist at all, so an assertion
+    /// reading it waits out its whole timeout for an element that can never appear. That is not a
+    /// timing problem and no amount of waiting fixes it: the seeded date and the rendered view have to
+    /// be made to agree. Any relative seed date can fall outside the month — "tomorrow" does on the
+    /// last day of every month — so every agenda assertion keyed on a date needs the view moved to it
+    /// first.
+    /// </para>
+    /// <para>
+    /// Each step re-reads the live month-year label rather than counting clicks from a month the caller
+    /// assumed, so this lands on the right month wherever the view happens to start, and it cannot be
+    /// fooled by a view that moved for some other reason.
+    /// </para>
+    /// </summary>
+    public async Task ShowAgendaMonthContainingAsync(DateOnly date)
+    {
+        var target = new DateTime(date.Year, date.Month, 1);
+
+        // Two years of steps either way. A seed further out than that is a broken scenario, not a
+        // view that needs more navigation — so say so rather than asserting against an empty month.
+        for (var step = 0; step < 24; step++)
+        {
+            var current = await GetAgendaCurrentMonthAsync();
+            if (current.Year == target.Year && current.Month == target.Month) return;
+
+            if (current < target)
+                await NavigateAgendaNextMonthAsync();
+            else
+                await NavigateAgendaPrevMonthAsync();
+        }
+
+        throw new InvalidOperationException(
+            $"The agenda did not reach {target:MMMM yyyy} within 24 month steps; " +
+            $"it is showing '{await GetAgendaMonthYearTextAsync()}'.");
+    }
+
     /// <summary>Agenda day rows. Exposed for web-first count assertions (FHQ-41).</summary>
     public ILocator AgendaDayRows => Page.Locator(".agenda-day-row");
 
