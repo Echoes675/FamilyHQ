@@ -393,6 +393,61 @@ public class GoogleCalendarClientMappingTests
     }
 
     [Fact]
+    public async Task PatchEventFieldsAsync_AllDayRevertToCalendarDefault_SendsTheSameRevertBodyAsATimedEvent()
+    {
+        // Switching an event to all-day discards its reminders, as Google does, and the kiosk says so
+        // by reverting it to the calendar's default — so this body really does get sent to an all-day
+        // event. What Google DOES with it has not been observed: every all-day event seen so far reads
+        // back with the default materialised into explicit overrides rather than inherited, and no
+        // observation covers sending useDefault:true to one. It may materialise the all-day default,
+        // or be refused.
+        //
+        // So this pins only what the kiosk sends, which is the part the kiosk controls: the same
+        // revert instruction a timed event gets, unaltered by the all-day date mapping alongside it.
+        // The preprod smoke suite records Google's real answer; asserting one here would pin a guess.
+        var (http, tokenStore, sut) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        SetupAuthResponse(http);
+
+        string? capturedBody = null;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("events/evt-allday-revert")),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+                capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { id = "evt-allday-revert" }))
+            });
+
+        var evt = new CalendarEvent
+        {
+            GoogleEventId = "evt-allday-revert",
+            Title = "Switched to all day on the kiosk",
+            Start = new DateTimeOffset(2026, 12, 9, 0, 0, 0, TimeSpan.Zero),
+            End = new DateTimeOffset(2026, 12, 10, 0, 0, 0, TimeSpan.Zero),
+            IsAllDay = true
+        };
+
+        await sut.PatchEventFieldsAsync(
+            "cal-1", evt, "hash-1", CancellationToken.None, EventReminders.InheritsCalendarDefault);
+
+        capturedBody.Should().NotBeNull();
+        using var allDayDoc = JsonDocument.Parse(capturedBody!);
+        var allDayReminders = allDayDoc.RootElement.GetProperty("reminders");
+        allDayReminders.GetProperty("useDefault").GetBoolean().Should().BeTrue();
+        allDayReminders.TryGetProperty("overrides", out var overrides).Should().BeTrue(
+            "Google rejects a revert-to-default body that omits the overrides array");
+        overrides.EnumerateArray().Should().BeEmpty();
+
+        // The all-day date mapping still applies: the reminders key is an addition to that body, not a
+        // replacement for part of it.
+        allDayDoc.RootElement.GetProperty("start").GetProperty("date").GetString().Should().Be("2026-12-09");
+    }
+
+    [Fact]
     public async Task CreateEventAsync_WithNoReminderIntent_SendsNoRemindersKey_SoGoogleAppliesItsOwnDefault()
     {
         var (http, tokenStore, sut) = CreateSut();

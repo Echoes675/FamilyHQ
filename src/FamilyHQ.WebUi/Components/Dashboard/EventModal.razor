@@ -240,6 +240,7 @@
 <RecurrenceScopePrompt IsVisible="_showScopePrompt"
                        IsDelete="_scopePromptIsDelete"
                        MemberChangePending="_memberChangePending"
+                       ReminderChangePending="_reminderChangePending"
                        OnConfirm="OnScopeConfirmed"
                        OnCancel="OnScopeCancelled" />
 
@@ -308,6 +309,10 @@
     private bool _showScopePrompt;
     private bool _scopePromptIsDelete;
     private bool _memberChangePending;
+    // Whether the pending save will write reminders, which is what the scope prompt warns about at
+    // the whole-series scope: Google replaces every occurrence's reminders when the master is
+    // patched, including an occurrence whose reminders were set on their own.
+    private bool _reminderChangePending;
     // The effective member ids resolved during Save, captured so the scope-confirm callback
     // (which fires after the prompt) can reuse them without re-deriving from the description.
     private List<Guid> _pendingMemberIds = new();
@@ -605,6 +610,7 @@
         _originalMemberIds = Array.Empty<Guid>();
         _pendingMemberIds = new();
         _memberChangePending = false;
+        _reminderChangePending = false;
         _timedStartTimeOfDay = null;
         _timedEndTimeOfDay = null;
         _openedReminders = null;
@@ -661,10 +667,16 @@
         if (action == EventSaveAction.PromptScope)
         {
             _memberChangePending = EventModalLogic.MembersChanged(_originalMemberIds, _pendingMemberIds);
+            _reminderChangePending = _reminderPicker.HasChanged;
             _scopePromptIsDelete = false;
             _showScopePrompt = true;
             return;
         }
+
+        // Read once, so every branch below sends the same answer, and read here rather than inside a
+        // request so the gate is impossible to miss: null means the save says NOTHING about reminders
+        // and Google's own copy — including a set made on a phone — survives untouched.
+        var remindersToWrite = EventModalLogic.RemindersToWrite(_reminderPicker);
 
         _isSaving = true;
         try
@@ -683,7 +695,8 @@
                         _eventModel.IsAllDay,
                         _eventModel.Location,
                         _eventModel.Description,
-                        _recurrenceRule));
+                        _recurrenceRule,
+                        Reminders: remindersToWrite));
                     break;
 
                 case EventSaveAction.Update:
@@ -696,13 +709,21 @@
                         _eventModel.IsAllDay,
                         _eventModel.Location,
                         _eventModel.Description,
-                        _recurrenceRule));
+                        _recurrenceRule,
+                        Reminders: remindersToWrite));
                     break;
 
                 default:
                     throw new InvalidOperationException($"Unhandled immediate save action: {action}.");
             }
 
+            // What the tab shows next comes from the server, never from what was just sent. Google
+            // answers 200 and then rewrites a reminder silently — it clamps an offset, collapses a
+            // duplicate, drops a method it does not know, and materialises the calendar's default onto
+            // an all-day event rather than letting it inherit — so the response is the only honest
+            // answer. Closing discards the tab's state and OnSaved re-reads the grid from the API,
+            // whose events carry the reminders as stored; re-opening the event therefore shows what
+            // Google returned. Nothing here may keep the optimistic set alive across that.
             Close();
             await OnSaved.InvokeAsync();
         }
@@ -723,8 +744,9 @@
 
         if (EventModalLogic.DecideDelete(_wasRecurring) == EventDeleteAction.PromptScope)
         {
-            // A delete never changes members, so the prompt is never member-gated.
+            // A delete never changes members, and it writes no reminders, so neither warning applies.
             _memberChangePending = false;
+            _reminderChangePending = false;
             _scopePromptIsDelete = true;
             _showScopePrompt = true;
             return;
@@ -774,7 +796,11 @@
                 _eventModel.Description,
                 // Carry the rule when editing the series; when clearing, leave it null and set the flag.
                 RecurrenceRule: isClearing ? null : _recurrenceRule,
-                ClearRecurrence: recurringAction == RecurringSaveAction.ClearRecurrence);
+                ClearRecurrence: recurringAction == RecurringSaveAction.ClearRecurrence,
+                // Same gate as the immediate save path: a series edit that did not touch the
+                // Reminders tab says nothing about reminders, so collapsing a series or renaming one
+                // leaves the family's own reminders — and any single occurrence's — alone.
+                Reminders: EventModalLogic.RemindersToWrite(_reminderPicker));
 
             if (recurringAction == RecurringSaveAction.ClearRecurrence)
             {
@@ -788,6 +814,10 @@
                     _eventModel.Id, updateReq, EventModalLogic.EffectiveScope(scope, isClearing));
             }
 
+            // Re-read rather than patch the grid in place. A whole-series reminder change reaches
+            // occurrences this modal never touched — Google replaces theirs when the master is
+            // patched, which is what the prompt warned about — so only a fresh read shows the series
+            // as it now is.
             Close();
             await OnSaved.InvokeAsync();
         }
@@ -807,6 +837,7 @@
     {
         _showScopePrompt = false;
         _memberChangePending = false;
+        _reminderChangePending = false;
     }
 
     private class EventFormModel

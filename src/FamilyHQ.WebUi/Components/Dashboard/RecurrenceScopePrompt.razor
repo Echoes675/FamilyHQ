@@ -27,6 +27,15 @@
                             @MemberScopeViolationException.UserFacingMessage
                         </div>
                     }
+
+                    @if (_showReminderWarning)
+                    {
+                        <div class="alert alert-warning recurrence-scope-warning"
+                             role="alert"
+                             data-testid="recurrence-scope-reminder-warning">
+                            @RecurrenceScopePromptLogic.ReminderScopeWarningMessage
+                        </div>
+                    }
                 </div>
                 <div class="modal-footer justify-end">
                     <button type="button"
@@ -69,6 +78,14 @@
     /// </summary>
     [Parameter] public bool MemberChangePending { get; set; }
 
+    /// <summary>
+    /// When true the family changed the Reminders tab, so the whole-series scope is warned about:
+    /// patching the series master replaces the reminders on every occurrence, including one whose
+    /// reminders were set on their own. It never blocks OK — Google behaves the same way, and the
+    /// change is one the family asked for.
+    /// </summary>
+    [Parameter] public bool ReminderChangePending { get; set; }
+
     /// <summary>Raised with the chosen scope when the user confirms with OK.</summary>
     [Parameter] public EventCallback<RecurrenceScope> OnConfirm { get; set; }
 
@@ -80,6 +97,7 @@
     private RecurrenceScope _selectedScope = RecurrenceScope.AllInSeries;
     private bool _isConfirmAllowed = true;
     private bool _showMemberWarning;
+    private bool _showReminderWarning;
 
     protected override void OnParametersSet()
     {
@@ -102,6 +120,8 @@
     {
         _isConfirmAllowed = RecurrenceScopePromptLogic.IsConfirmAllowed(_selectedScope, MemberChangePending);
         _showMemberWarning = RecurrenceScopePromptLogic.ShouldShowMemberChangeWarning(_selectedScope, MemberChangePending);
+        _showReminderWarning =
+            RecurrenceScopePromptLogic.ShouldShowReminderChangeWarning(_selectedScope, ReminderChangePending);
     }
 
     private async Task HandleConfirm()
