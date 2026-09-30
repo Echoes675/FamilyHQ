@@ -130,6 +130,30 @@ public sealed record EventWrite(string Method, string Url, string? Body)
         }
     }
 
+    /// <summary>
+    /// The write's value for <paramref name="name"/> as JSON text, or null when the write carried no
+    /// such property.
+    /// </summary>
+    /// <remarks>
+    /// Text rather than a typed value on purpose: the only use for it is comparing one write against
+    /// another, and two writes that serialised the same value wrote the same text. Parsing it into a
+    /// <c>DateTimeOffset</c> or a <c>bool</c> first would add a second place for a round-trip to be
+    /// lost, which is the very thing being asserted.
+    /// </remarks>
+    public string? Field(string name)
+    {
+        if (string.IsNullOrWhiteSpace(Body))
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(Body);
+        return TryGetProperty(document.RootElement, name, out var value)
+               && value.ValueKind is not JsonValueKind.Null
+            ? value.ToString()
+            : null;
+    }
+
     private static RecordedReminder ToOverride(JsonElement element) => new(
         TryGetProperty(element, "method", out var method) ? method.GetString() ?? "" : "",
         TryGetProperty(element, "minutes", out var minutes) ? minutes.GetInt32() : 0);

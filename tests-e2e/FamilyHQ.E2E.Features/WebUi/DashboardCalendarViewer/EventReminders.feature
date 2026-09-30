@@ -51,6 +51,15 @@ Feature: Event Reminders
     And I save the event
     Then the event was saved without mentioning reminders
 
+  # The twin of the preprod scenario that asks the same question of real Google. What is provable here
+  # is that the SAVE carries the other fields back unchanged; what is not is whether fields FamilyHQ
+  # never models survive, because the Simulator does not store them to begin with. That half stays in
+  # the preprod suite, where Google is the oracle.
+  Scenario: A reminder change on its own says nothing else about the event
+    Given the event "Village Fete" in "Appointments" has a reminder 2 hours before and the note "Bring the raffle tickets"
+    When I change the event "Village Fete" to the calendar's usual reminders
+    Then the event was saved carrying everything else exactly as it opened
+
   Scenario: Deleting an event says nothing about its reminders
     Given the event "Cancelled Outing" in "Appointments" has a reminder 2 hours before
     When I delete the event "Cancelled Outing"

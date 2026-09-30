@@ -1,3 +1,4 @@
+using System.Globalization;
 using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Steps.Hooks;
@@ -29,6 +30,25 @@ public class EventRemindersSteps
     private const int OwnReminderAmount = 2;
     private const string OwnReminderUnit = "hours";
 
+    /// <summary>
+    /// The fields an edit that touched only the reminders must send back with the same text. Each is
+    /// carried by both the create and the update contracts, and each is set by the create this
+    /// scenario makes — a field left null by the create could not be observed to survive.
+    /// </summary>
+    private static readonly string[] UnchangedTextFields = ["title", "isAllDay", "description"];
+
+    /// <summary>
+    /// The boundaries, compared as instants rather than as text.
+    /// <para>
+    /// They cannot be compared as text: the data layer converts every <c>DateTimeOffset</c> to UTC on
+    /// the way into PostgreSQL, so the value the modal reads back carries a zero offset where the
+    /// create carried the browser's. The two strings differ while describing the same moment, and the
+    /// moment is what the field means. A text comparison here would fail for a reason that has nothing
+    /// to do with the edit — and the obvious "fix" would be to drop the assertion.
+    /// </para>
+    /// </summary>
+    private static readonly string[] UnchangedInstantFields = ["start", "end"];
+
     private readonly ScenarioContext _scenarioContext;
     private readonly DashboardPage _dashboardPage;
 
@@ -51,6 +71,19 @@ public class EventRemindersSteps
         string title, string calendarName, int amount, string unit)
     {
         await _dashboardPage.BeginCreatingEventTitledAsync(title, calendarName);
+        await _dashboardPage.SetReminderInheritanceAsync(follow: false);
+        await _dashboardPage.AddTimedReminderAsync(amount, unit);
+        await _dashboardPage.SaveOpenEventAsync();
+    }
+
+    // The same, with a note typed in as well. The note exists so the round-trip assertion below has a
+    // nullable field with a real value in it: comparing two nulls proves nothing.
+    [Given(@"the event ""([^""]*)"" in ""([^""]*)"" has a reminder (\d+) (minutes|hours) before and the note ""([^""]*)""")]
+    public async Task GivenTheEventHasAReminderAndANote(
+        string title, string calendarName, int amount, string unit, string note)
+    {
+        await _dashboardPage.BeginCreatingEventTitledAsync(title, calendarName);
+        await _dashboardPage.FillOpenEventDescriptionAsync(note);
         await _dashboardPage.SetReminderInheritanceAsync(follow: false);
         await _dashboardPage.AddTimedReminderAsync(amount, unit);
         await _dashboardPage.SaveOpenEventAsync();
@@ -204,6 +237,87 @@ public class EventRemindersSteps
             "Google refuses a write that asks for the calendar's usual reminders and for specific "
             + "ones at the same time.");
     }
+
+    /// <summary>
+    /// The golden rule in the direction that gets missed: a change to the reminders alone must leave
+    /// every other field of the request as it was.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The comparison is the create's own body against the update's, field by field, rather than
+    /// against values written into the test. That is the round-trip principle applied to the
+    /// assertion itself: a literal expectation would only prove the update agrees with the test, while
+    /// this proves it agrees with what the event was actually created as.
+    /// </para>
+    /// <para>
+    /// Each field is required to be present in the create before being compared, so the step cannot
+    /// pass by finding nothing on either side. The unmapped fields Google holds and FamilyHQ does not
+    /// model — an event's colour, for one — are deliberately absent: the Simulator never stores them,
+    /// so their survival is not observable here and is asserted against real Google in the preprod
+    /// suite instead.
+    /// </para>
+    /// </remarks>
+    [Then(@"the event was saved carrying everything else exactly as it opened")]
+    public void ThenTheEventWasSavedCarryingEverythingElseExactlyAsItOpened()
+    {
+        var writes = Recorder.Writes;
+
+        var create = writes.FirstOrDefault(write => write.Method == "POST")
+                     ?? throw new InvalidOperationException(
+                         "This scenario compares the reminder edit against the create that preceded it, "
+                         + "and no create was recorded. Without it there is nothing to compare, so the "
+                         + "step stops here rather than passing vacuously.");
+
+        var update = Recorder.Last;
+        update.Method.Should().Be(
+            "PUT",
+            "the last write this scenario made should be the reminder edit, and an edit to an existing "
+            + "event is a PUT");
+
+        foreach (var name in UnchangedTextFields)
+        {
+            var before = Required(create, name);
+
+            update.Field(name).Should().Be(
+                before,
+                $"'{name}' was not edited, so the save must send back what the event already had. A "
+                + "reminder change that rewrites another field alongside it has broken the rule however "
+                + "correct the reminder change was — and the family sees the damage in the Google "
+                + "Calendar app rather than here");
+        }
+
+        foreach (var name in UnchangedInstantFields)
+        {
+            var before = InstantOf(Required(create, name), name);
+
+            InstantOf(Required(update, name), name).Should().Be(
+                before,
+                $"'{name}' was not edited, so the save must describe the same moment the event already "
+                + "had. A reminder change that moves the event is the worst outcome available here: the "
+                + "family would be alerted correctly, for the wrong time");
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="write"/>'s value for <paramref name="name"/>, or a failure. Required rather than
+    /// optional so the comparison above cannot pass by finding nothing on either side.
+    /// </summary>
+    private static string Required(EventWrite write, string name) =>
+        write.Field(name)
+        ?? throw new InvalidOperationException(
+            $"The {write.Method} this scenario recorded carried no '{name}', so its survival cannot be "
+            + "asserted. A null on both sides would let the comparison pass while proving nothing, so "
+            + "the step stops here instead.");
+
+    /// <summary>The moment <paramref name="value"/> describes, whatever offset it was written with.</summary>
+    private static DateTimeOffset InstantOf(string value, string name) =>
+        DateTimeOffset.TryParse(
+            value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+            ? parsed
+            : throw new InvalidOperationException(
+                $"'{name}' was sent as \"{value}\", which is not a timestamp this step can read. The "
+                + "boundaries are compared as instants, so an unparseable value is a change in the "
+                + "request's shape rather than something to compare as text.");
 
     [Then(@"the event was deleted without mentioning reminders")]
     public void ThenTheEventWasDeletedWithoutMentioningReminders()

@@ -2145,6 +2145,19 @@ public class DashboardPage : BasePage
         await EnsureCalendarChipActiveAsync(calendarName);
     }
 
+    /// <summary>
+    /// Types a note into the open event modal's description field.
+    /// <para>
+    /// Separate from the create helpers because the scenario that needs it is asserting that a later
+    /// edit left the note alone — so the note has to be put there by the same modal the edit will
+    /// reopen, not by a seeding shortcut that bypasses it.
+    /// </para>
+    /// </summary>
+    public async Task FillOpenEventDescriptionAsync(string description)
+    {
+        await EventModal.Locator("textarea").FillAsync(description);
+    }
+
     /// <summary>Creates an all-day event with the title assigned to exactly one named calendar.</summary>
     public async Task CreateAllDayEventInCalendarAsync(string title, string calendarName)
     {
