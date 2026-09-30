@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Models;
+
 namespace FamilyHQ.WebUi.ViewModels;
 
 public record CalendarEventViewModel(
@@ -17,4 +19,8 @@ public record CalendarEventViewModel(
     // FHQ-18 recurrence projection: drives the edit modal's picker pre-population and the
     // scope-prompt decision. Defaulted so existing constructions stay non-recurring.
     bool IsRecurring = false,
-    string? RecurrenceRule = null);
+    string? RecurrenceRule = null,
+    // Google's reminders for this event, exactly as the API sent them. The reminder tab is built from
+    // this when the modal opens, so the four states have to arrive intact: null is "never synced" and
+    // not "no reminders", and an explicit empty list is the family asking for none.
+    EventReminders? Reminders = null);

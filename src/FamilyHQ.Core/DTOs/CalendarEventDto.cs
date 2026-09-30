@@ -1,3 +1,5 @@
+using FamilyHQ.Core.Models;
+
 namespace FamilyHQ.Core.DTOs;
 
 public record CalendarEventDto(
@@ -14,4 +16,17 @@ public record CalendarEventDto(
     // whether to show the scope prompt. IsRecurring mirrors CalendarEvent.IsRecurring; the
     // RRULE seeds RecurrencePicker. Defaulted so existing non-recurrence callers are unaffected.
     bool IsRecurring = false,
-    string? RecurrenceRule = null);
+    string? RecurrenceRule = null,
+    // Google's reminders object for this event, in Google's own shape and exactly as stored — which
+    // is what Google returned, not what the kiosk sent. The reminder tab opens from this and has no
+    // other source.
+    //
+    // NULL means "never synced", NOT "no reminders": the four states (never synced, follows the
+    // calendar's defaults, an explicit list, explicitly none) are four different things to Google on
+    // a subsequent write, so none of them may be mapped onto another here. In particular an absent
+    // object must not become an empty list.
+    //
+    // Nothing is normalised on the way out. A delivery method the kiosk's form cannot offer, or an
+    // offset it would never choose, can still have been set from a phone; Google is the authority on
+    // its own data, and the kiosk's validation applies only to values the kiosk itself creates.
+    EventReminders? Reminders = null);
