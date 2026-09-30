@@ -389,6 +389,14 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
 
         output.WriteLine($"after the reminder-only edit Google holds {Describe(updated.Reminders)}.");
 
+        // Recorded, not asserted — see the remarks. Printed BEFORE the assertions, as RM4 and RM5 do,
+        // so the observation survives a red run. A run where something below fails is exactly the run
+        // where somebody wants to know what the zone did.
+        output.WriteLine(
+            "RECORDED — the start's timeZone across a reminder-only edit: Google held "
+            + $"'{original.Start?.TimeZone ?? "none"}' before and '{updated.Start?.TimeZone ?? "none"}' "
+            + "after. Nothing is asserted about this yet; see the preprod smoke maintenance guide.");
+
         updated.Summary.Should().Be(
             original.Summary,
             "the title was not edited. A reminder change that also renames the event is the same class of "
@@ -415,13 +423,6 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
             "the start was not edited. A reminder change that moves the event is the worst outcome in "
             + "this scenario: the family would be alerted correctly, for the wrong time");
         updated.End!.DateTime.Should().Be(original.End!.DateTime, "the end was not edited");
-
-        // Recorded, not asserted — see the remarks. Printed whatever it says, so a run where the zone
-        // did change is still legible to whoever reads the output.
-        output.WriteLine(
-            "RECORDED — the start's timeZone across a reminder-only edit: Google held "
-            + $"'{original.Start.TimeZone ?? "none"}' before and '{updated.Start.TimeZone ?? "none"}' "
-            + "after. Nothing is asserted about this yet; see the preprod smoke maintenance guide.");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────

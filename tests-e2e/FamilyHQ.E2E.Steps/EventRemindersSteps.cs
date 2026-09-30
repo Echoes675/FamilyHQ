@@ -251,7 +251,9 @@ public class EventRemindersSteps
     /// </para>
     /// <para>
     /// Each field is required to be present in the create before being compared, so the step cannot
-    /// pass by finding nothing on either side. The unmapped fields Google holds and FamilyHQ does not
+    /// pass by finding nothing on either side. It takes the scenario's <b>first</b> create as the
+    /// baseline, so a scenario that creates two events before editing one would compare against the
+    /// wrong one — give that case its own step rather than reusing this. The unmapped fields Google holds and FamilyHQ does not
     /// model — an event's colour, for one — are deliberately absent: the Simulator never stores them,
     /// so their survival is not observable here and is asserted against real Google in the preprod
     /// suite instead.
