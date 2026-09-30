@@ -37,4 +37,5 @@ Feature: Recurring Event Display
     When Google Calendar sends a webhook notification
     And I view the dashboard
     And I switch to the Agenda View tab
+    And I navigate the agenda to the recurring event's first occurrence
     Then the recurring event shows a recurrence indicator
