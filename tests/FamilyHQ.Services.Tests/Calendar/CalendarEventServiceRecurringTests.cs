@@ -1480,7 +1480,7 @@ public class CalendarEventServiceRecurringTests
     // ── AllInSeries edit ──────────────────────────────────────────────────────
 
     [Fact]
-    public async Task UpdateRecurringAsync_AllInSeries_PatchesMasterAndPreservesExceptionOverrides()
+    public async Task UpdateRecurringAsync_AllInSeries_PatchesMasterAndPersistsExceptionsAsGoogleReturnsThem()
     {
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
@@ -1501,7 +1501,11 @@ public class CalendarEventServiceRecurringTests
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
 
-        // The exception row keeps its overridden title + OriginalStartTime after reconcile.
+        // The exception row is persisted exactly as the reconcile read it back — its title and its
+        // OriginalStartTime, whatever Google decided the title should be. (Google in fact renames an
+        // exception along with its master, so this title is the double's choice, not a claim about
+        // Google; what is asserted is that the app neither drops the exception nor overwrites it
+        // with the master's fields of its own accord.)
         f.Repo.Verify(r => r.AddEventAsync(
             It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-2" && e.Title == "Overridden Title" && e.OriginalStartTime != null),
             It.IsAny<CancellationToken>()), Times.Once);
