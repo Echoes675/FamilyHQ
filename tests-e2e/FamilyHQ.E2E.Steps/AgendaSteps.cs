@@ -69,29 +69,25 @@ public class AgendaSteps
     {
         // Navigate prev/next until the label shows the target month
         var target = DateTime.ParseExact(targetMonthYear, "MMMM yyyy", CultureInfo.InvariantCulture);
-        await NavigateAgendaToMonthAsync(target);
+        await _dashboardPage.ShowAgendaMonthContainingAsync(DateOnly.FromDateTime(target));
     }
 
-    [When(@"I navigate the agenda to show a date in (\d+) days")]
-    public async Task WhenINavigateTheAgendaToShowADateInDays(int days)
+    /// <summary>
+    /// Moves the agenda onto the month holding a date expression, so a cell keyed on that date exists
+    /// to be asserted. Takes the same expressions as every other date-bearing step ("tomorrow",
+    /// "in 3 days", "today", an absolute date) rather than only an offset in days: the month a
+    /// relative date lands in is a property of the run date, not of the expression, so "tomorrow"
+    /// needs this exactly as much as "in 30 days" does — on the last day of a month it is the next
+    /// month, which the agenda does not render.
+    /// </summary>
+    [When(@"I navigate the agenda to show ""([^""]*)""")]
+    public async Task WhenINavigateTheAgendaToShow(string dateExpr)
     {
-        var target = BrowserClock.Today.AddDays(days);
-        await NavigateAgendaToMonthAsync(target);
+        await _dashboardPage.ShowAgendaMonthContainingAsync(ResolveDate(dateExpr));
     }
 
-    private async Task NavigateAgendaToMonthAsync(DateTime target)
-    {
-        for (var i = 0; i < 24; i++)
-        {
-            var current = DateTime.ParseExact(
-                await _dashboardPage.GetAgendaMonthYearTextAsync(), "MMMM yyyy", CultureInfo.InvariantCulture);
-            if (current.Year == target.Year && current.Month == target.Month) break;
-            if (current < target)
-                await _dashboardPage.NavigateAgendaNextMonthAsync();
-            else
-                await _dashboardPage.NavigateAgendaPrevMonthAsync();
-        }
-    }
+    private static DateOnly ResolveDate(string dateExpr)
+        => DateOnly.ParseExact(DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
 
     [Then(@"the agenda view shows the previous month")]
     public async Task ThenTheAgendaViewShowsThePreviousMonth()

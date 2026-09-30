@@ -47,6 +47,7 @@ Feature: Month Agenda View
     And I login as the user "OverflowUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     And I tap the overflow indicator for "tomorrow" in "Work Calendar"
     Then I see the Day View Container
 
@@ -93,6 +94,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     Then I see the event "14:30 Standup" in the "Work Calendar" column for "tomorrow"
 
   Scenario: All-day events display title only with no time prefix
@@ -102,6 +104,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     Then I see the event "Bank Holiday" in the "Work Calendar" column for "tomorrow"
     And the event "Bank Holiday" has no time prefix in the "Work Calendar" column for "tomorrow"
 
@@ -112,6 +115,7 @@ Feature: Month Agenda View
     And I login as the user "OverflowUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     Then I see 3 event lines in the "Work Calendar" column for "tomorrow"
     And I see a "+1 more" indicator in the "Work Calendar" column for "tomorrow"
 
@@ -123,6 +127,7 @@ Feature: Month Agenda View
     And I login as the user "MultiCalUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     Then I see the event "Team Meeting" in the "Work Calendar" column for "tomorrow"
     And I see the event "Team Meeting" in the "Personal Calendar" column for "tomorrow"
 
@@ -221,6 +226,7 @@ Feature: Month Agenda View
     And I login as the user "SixCalUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     Then I see the event "Work Event" in the "Work Calendar" column for "tomorrow"
     And I see the event "Personal Event" in the "Personal Calendar" column for "tomorrow"
     And I see the event "School Event" in the "School Calendar" column for "tomorrow"
@@ -237,6 +243,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
+    And I navigate the agenda to show "tomorrow"
     And I tap the agenda cell in the "Work Calendar" column for "tomorrow"
     Then I see the Day View Container
 
@@ -246,7 +253,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to show a date in 5 days
+    And I navigate the agenda to show "in 5 days"
     And I tap the empty cell in the "Work Calendar" column for "in 5 days"
     Then I see the event modal
     And the modal start date contains "in 5 days"
@@ -268,7 +275,7 @@ Feature: Month Agenda View
     And I login as the user "StandardUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to show a date in 3 days
+    And I navigate the agenda to show "in 3 days"
     And I tap the empty cell in the "Work Calendar" column for "in 3 days"
     And I fill in and save the event "New Meeting"
     Then I see the event "New Meeting" in the "Work Calendar" column for "in 3 days"
@@ -297,7 +304,7 @@ Feature: Month Agenda View
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to show a date in 2 days
+    And I navigate the agenda to show "in 2 days"
     And a new event "Synced Meeting" is added to Google Calendar on "in 2 days" in "Work Calendar"
     And Google Calendar sends a webhook notification
     Then I see the event "Synced Meeting" in the "Work Calendar" column for "in 2 days"
@@ -309,7 +316,7 @@ Feature: Month Agenda View
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to show a date in 2 days
+    And I navigate the agenda to show "in 2 days"
     And the event "Standup" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
     Then I do not see "Standup" in the "Work Calendar" column for "in 2 days"
@@ -321,7 +328,7 @@ Feature: Month Agenda View
     And I login as the user "SyncUser"
     When I view the dashboard
     And I click the "Agenda" tab
-    And I navigate the agenda to show a date in 2 days
+    And I navigate the agenda to show "in 2 days"
     And the event "Old Title" is updated to "New Title" in Google Calendar
     And Google Calendar sends a webhook notification
     Then I see the event "New Title" in the "Work Calendar" column for "in 2 days"

@@ -311,11 +311,19 @@ Supported expressions (resolved at runtime by `DateExpressionResolver`):
 - `"tomorrow"` — current date + 1
 - `"in N days"` — current date + N (e.g. `"in 3 days"`)
 
-When an agenda scenario uses `"in N days"`, add a navigation step to ensure the month containing that date is visible:
+A relative date says **when**, never **where**. The agenda renders exactly one calendar month, so a
+cell for a date outside it does not exist — the assertion then waits out its whole timeout for an
+element that can never appear, and a `I do not see …` step passes vacuously. Which month a relative
+date lands in depends on the **run date**, not on the expression: `"tomorrow"` is next month on the
+last day of every month. `"today"` is the only expression the agenda is guaranteed to span, because it
+opens on today's month; every other one must move the view to the date first:
+
 ```gherkin
-And I navigate the agenda to show a date in 5 days
-And I tap the empty cell in the "Work Calendar" column for "in 5 days"
+And I navigate the agenda to show "tomorrow"
+Then I see the event "Bank Holiday" in the "Work Calendar" column for "tomorrow"
 ```
+
+The same step takes any expression (`"in 5 days"`, `"today"`, an absolute date).
 
 ---
 

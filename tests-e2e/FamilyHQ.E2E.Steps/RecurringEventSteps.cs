@@ -57,6 +57,19 @@ public class RecurringEventSteps
             eventName, firstOccurrence, occurrences);
     }
 
+    /// <summary>
+    /// Moves the agenda onto the month holding the series' first occurrence. The seed picks that date
+    /// (tomorrow), so the scenario must not restate it — and it must not assume it: on the last day of
+    /// a month the first occurrence is in the NEXT month, which the agenda does not render, leaving no
+    /// cell for the indicator to be found in. Mirrors the day picker's first-occurrence step.
+    /// </summary>
+    [When(@"I navigate the agenda to the recurring event's first occurrence")]
+    public async Task WhenINavigateTheAgendaToTheRecurringEventsFirstOccurrence()
+    {
+        var firstOccurrence = _scenarioContext.Get<System.DateTime>("RecurringSeriesFirstOccurrenceDate");
+        await _dashboardPage.ShowAgendaMonthContainingAsync(DateOnly.FromDateTime(firstOccurrence));
+    }
+
     [Then(@"the recurring event shows a recurrence indicator")]
     public async Task ThenTheRecurringEventShowsARecurrenceIndicator()
     {
