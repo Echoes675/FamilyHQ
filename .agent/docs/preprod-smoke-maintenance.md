@@ -215,7 +215,7 @@ Never add a `cat` of the env file, an `echo` of a matched line, or an interpolat
 
 | What | Where |
 |---|---|
-| Test results | Published **once**, in the pipeline-level `post`, with a single `mstest` step over `**/smoke-*-results.trx` — so all 41 tests appear on the build's **Tests** page instead of by scrolling the console. See [why the results are published once](#why-the-results-are-published-once). |
+| Test results | Published **once**, in the pipeline-level `post`, with a single `mstest` step over `**/smoke-*-results.trx` — so all 46 tests appear on the build's **Tests** page instead of by scrolling the console. See [why the results are published once](#why-the-results-are-published-once). |
 | Failure screenshots | Archived as build artifacts from `**/TestResults/smoke-artifacts/*.png` in the same `post` (`allowEmptyArchive`, because preflight never drives a browser and so never produces one). One per failed kiosk scenario, named `<scenario>-<shortid>.png`. |
 | Console output | `--logger "console;verbosity=detailed"`, so each scenario's correlation id and any `kiosk console:` lines are in the log to search Seq with. |
 
@@ -383,7 +383,7 @@ failure names the days that escaped.
 #### The budget
 
 Every block comes out of `Smoke__SyncHorizonDays` (365), less two weeks of headroom — so roughly **351 days**
-for the whole suite. The 41 scenarios currently reserve about **325** of them. There is room, not much of it,
+for the whole suite. The 46 scenarios currently reserve about **330** of them. There is room, not much of it,
 and `SmokeScenarioDays.Reserve` throws with an actionable message rather than overrunning quietly. If you add
 scenarios and it fires, reclaim room before widening the horizon: the cheapest room is a scenario reserving
 more days than its events cover.
@@ -489,6 +489,19 @@ Everything else it uses (`add-event-btn`, `event-save-btn`, `day-tab`, `day-pick
 full-coverage pass added no new ones: the all-day toggle, the recurrence interval stepper, the frequency
 pills and the three scope pills were all already addressable.
 
+`Reminders.feature` added none either. It uses the Reminders tab's own attributes, which arrived with the
+tab: `reminders-section`, `reminder-use-default-toggle`, `reminder-item` (with its
+`data-reminder-method` / `data-reminder-minutes` pair), `reminder-remove`, `reminder-amount`,
+`reminder-unit-*`, `reminder-method-*` and `reminder-add-btn`.
+
+**A reminder row is addressed by value, never by index.** Google returns an event's overrides in an
+order of its own and the picker re-sorts them, so the row in position one is not the reminder a scenario
+is talking about. The `data-reminder-method` / `data-reminder-minutes` pair is what each row is selected
+by, and also what `ReadDisplayedRemindersAsync` reads back off the screen.
+
+The one control the suite addresses without a test id is the modal's **Close** button, by its accessible
+name. It renders no text at all, so its accessible name is identity rather than user-facing copy.
+
 ---
 
 ## Preflight: what each check proves and what each failure means
@@ -562,6 +575,47 @@ carries no time zone at all.
 |---|---|---|---|
 | **AD1** | A one-day all-day event created on the kiosk is dated the way Google dates one | The kiosk writes `start.date` = the day, `end.date` = the following day, and **no** `dateTime` and no `timeZone` on either boundary. | An end date equal to the start describes an event that is over before it begins and Google rejects it. An end date a day later gives the family a two-day event. A `timeZone` on an all-day event is FamilyHQ asserting something about the event the family never stated. |
 | **AD2** | A one-day all-day event created in Google covers that day alone on the kiosk | The exclusive end date survives as an exclusive end: preprod serves `IsAllDay`, starts on the day Google named and ends at the *next* day's boundary — and the kiosk draws it on that day and **not** on the next. | A tile on the following day is the exclusive end read as inclusive: every all-day event runs a day longer than the phone says, and the write-back then tells Google the same thing. |
+
+### Reminders — `Reminders.feature`
+
+Reminders are the field most likely to be damaged unnoticed: they are set almost entirely in the Google
+Calendar app, they are invisible on the kiosk's grid, and the symptom of losing one is silence at the
+moment the family expected to be told about something.
+
+Google also does more to a reminder write than accept it. It answers `200` and then rewrites — clamping
+an offset, collapsing a duplicate, dropping a delivery method it does not recognise, handing an event's
+reminders back over when the event becomes all-day, and materialising a calendar's own reminders onto an
+all-day event rather than letting it inherit. So every assertion here is made against what Google
+**returned**, and every override set is compared **as a set**, because Google reorders them.
+
+**The blind spot.** A reminder that fires *after* the event has started is absent from the API's answer.
+An all-day event starts at midnight, so a reminder Google shows in its own apps as "on the day at 09:00"
+is invisible here. **No scenario may read an empty override list on an all-day event as "this event has
+no reminders"**, and none of them does.
+
+| ID | Scenario | What it proves | What a failure means |
+|---|---|---|---|
+| **RM1** | Reminders set in Google survive an edit that changed only the title | **The golden rule, applied to reminders.** Two overrides with two different delivery methods are put on the event *in Google*, the way a phone does; the kiosk displays them (which is also the inbound half — a reminder set on a phone reaching the screen at all), and then changes the title and nothing else. The baseline is Google's own answer to the insert, not the draft, so a rewrite Google made on the way in is what must survive. | Reminders changed by a rename: the family is alerted at a different time than they set, and they find out by *not* being told about something. `useDefault` flipped: the event was handed back to its calendar's reminders by an edit that never mentioned them. Missing from the tab: the family cannot see or change what they already chose. |
+| **RM2** | Reminders chosen on the kiosk reach Google as the set that was chosen | The outbound half: what arrives in Google is what the Google Calendar app on the family's phones will act on. Stated as an amount and a unit, because that is how the picker is driven. | A different offset means the alert comes at the wrong time; a missing member means it never comes. `useDefault: true` alongside overrides is a third state that Google resolves in favour of the overrides — harmless today, and a kiosk showing a state Google does not hold. |
+| **RM3** | Handing an event's reminders back to its calendar restores inheritance in Google | That the revert-to-default body (`useDefault` true, no overrides) actually lands as inheritance on a **timed** event. Following the calendar and carrying an explicit list are two different states in Google. | An event stuck on its own list keeps alerting the family at times they have already removed. Overrides left alongside `useDefault` means the list is still what Google applies. |
+| **RM4** | What Google does with a revert-to-default reminder body on an **all-day** event | **A recording, not an expectation** — see below. It asserts only that Google **accepted** the write and holds the event as all-day, which is worth gating on because a rejection breaks the All-day toggle for the family. | The write was refused, or the event never became all-day. Either way the answer is the thing this scenario exists to find out; the failure message says to bring it back as a product decision rather than work around it. |
+| **RM5** | An all-day event created on the kiosk does not inherit its calendar's reminders | Records the live divergence as a fact: **an all-day event never inherits** — Google materialises the calendar's reminders onto it. That is why the kiosk must show what Google *returned* rather than what it sent. | A red run here is a report about **Google**, not about FamilyHQ: it has changed its mind about all-day inheritance. Re-establish what it does now and move the assertion; do not relax it. |
+
+#### RM4 records an answer nobody has yet
+
+Switching an event to all day discards its reminders, because an all-day reminder is a day and a time
+while a timed one is an offset from a start — and Google itself discards rather than converts them. The
+kiosk mirrors that, which means the save sends **"use the calendar's own"** on an **all-day** event.
+
+**No observation of what Google does with that body exists.** Every all-day event the spike looked at came
+back with a calendar's reminders materialised onto it, never inheriting, and none of them had been sent
+this body. An expectation written into RM4 would therefore be an invention: either loose enough to pass
+vacuously, or a guess that blocks every release.
+
+So RM4 asserts the write was accepted and prints what Google holds, as a `RECORDED —` line in the run's
+output. RM5 prints one too. **Read those lines.** When the answer has been read off a green run and agreed
+as the intended behaviour, the assertion belongs in RM4. If Google *rejects* the body, that is a product
+decision — what should the kiosk send instead? — and not something to work around in the suite.
 
 ### Recurrence — `Recurrence.feature`
 
@@ -809,8 +863,9 @@ cannot satisfy them.
 
 - **A new kind of third-party interaction.** A new Google API call, a new outbound field, a new
   provider. That is what this suite is for.
-- **A change to the Google write path.** Ask whether KG3's and RK11's field lists still cover the fields that
-  could be lost. RK11 is the series-shaped version of KG3 and the one that guards the anchor zone.
+- **A change to the Google write path.** Ask whether KG3's, RK11's and RM1's field lists still cover the
+  fields that could be lost. RK11 is the series-shaped version of KG3 and the one that guards the anchor
+  zone; RM1 is the reminder-shaped version and the one that guards a set the family set on a phone.
 - **A change in what Google itself does.** The suite encodes observed third-party behaviour in a few places —
   see [what Google actually does to an occurrence override](#what-google-actually-does-to-an-occurrence-override).
   A red run there is a report about Google, not about FamilyHQ.
