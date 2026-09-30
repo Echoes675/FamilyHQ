@@ -19,6 +19,11 @@ public class CalendarDefaultRemindersSteps
         _simulatorApi = simulatorApi;
     }
 
+    // The Given form is the same backdoor call made as a precondition: a calendar whose usual
+    // reminders Google already reports. It has to run BEFORE the login that triggers the first sync
+    // (which is what adopts them) and AFTER any step that seeds events, because seeding re-posts the
+    // user template and the Simulator rebuilds the calendar rows from it.
+    [Given(@"the active calendar's usual reminders in Google are (\d+) minutes")]
     [When(@"the active calendar's default reminders change to (\d+) minutes in Google")]
     public async Task WhenTheActiveCalendarsDefaultRemindersChangeTo(int minutes)
     {

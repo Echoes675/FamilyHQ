@@ -1,0 +1,93 @@
+@EventReminders
+Feature: Event Reminders
+  As a family member using the kiosk
+  I want to set an event's reminders here as I would in the Google Calendar app
+  So that we are told about what matters, and nothing anyone set on a phone is quietly rewritten
+
+  Google is the system of record, and three reminder states have to stay distinguishable: following
+  the calendar's usual reminders, carrying reminders of its own, and carrying none. Collapsing any
+  two of them writes the wrong thing back. The scenarios that assert what a save SENT are the ones
+  that matter most: an edit that touches nothing else must say nothing about reminders at all, or an
+  ordinary title change made here would rewrite a set made on somebody's phone.
+
+  Background:
+    Given I have a user like "TimedEventsUser"
+    And the "Appointments" calendar is the active calendar
+    And the active calendar's usual reminders in Google are 45 minutes
+    And I login as the user "TimedEventsUser"
+    And I view the dashboard
+
+  Scenario: A reminder added on the kiosk is still there after a reload
+    When I create the event "Dentist Visit" in "Appointments" with a reminder 2 hours before
+    And I view the dashboard
+    And I open the event "Dentist Visit" for editing
+    Then the event has reminders 45 minutes and 2 hours before
+
+  Scenario Outline: An event's reminders move between all three states in either direction
+    When I create the event "<title>" in "Appointments" with <from>
+    And I change the event "<title>" to <to>
+    And I open the event "<title>" for editing
+    Then the Reminders tab is labelled "<badge>"
+
+    Examples:
+      | title          | from                          | to                            | badge   |
+      | Book Club      | the calendar's usual reminders | reminders of its own          | 1       |
+      | Choir Practice | the calendar's usual reminders | no reminders                  | none    |
+      | Dog Groomer    | reminders of its own           | the calendar's usual reminders | default |
+      | Eye Test       | reminders of its own           | no reminders                  | none    |
+      | Flu Jab        | no reminders                   | the calendar's usual reminders | default |
+      | Guitar Lesson  | no reminders                   | reminders of its own          | 1       |
+
+  Scenario: Renaming an event says nothing about its reminders
+    Given the event "Sports Day" in "Appointments" has a reminder 2 hours before
+    When I rename the event "Sports Day" to "Sports Afternoon"
+    Then the event was saved without mentioning reminders
+    And the event "Sports Afternoon" still has a reminder 2 hours before
+
+  Scenario: A reminder added and taken away again says nothing about the event's reminders
+    Given the event "Book Fair" in "Appointments" has a reminder 2 hours before
+    When I open the event "Book Fair" for editing
+    And I give the event a reminder 30 minutes before and take it away again
+    And I save the event
+    Then the event was saved without mentioning reminders
+
+  Scenario: Deleting an event says nothing about its reminders
+    Given the event "Cancelled Outing" in "Appointments" has a reminder 2 hours before
+    When I delete the event "Cancelled Outing"
+    Then the event was deleted without mentioning reminders
+    And I do not see the event "Cancelled Outing" displayed on the calendar
+
+  Scenario: Switching an event to all day starts its reminders again, and says so
+    Given the event "School Fair" in "Appointments" has a reminder 2 hours before
+    When I open the event "School Fair" for editing
+    And I switch the event to all day
+    Then the Reminders tab says the reminders were started again
+    And the Reminders tab is labelled "default"
+
+  Scenario: Saving an event switched to all day asks for the calendar's usual reminders
+    Given the event "Summer Fete" in "Appointments" has a reminder 2 hours before
+    When I open the event "Summer Fete" for editing
+    And I switch the event to all day
+    And I save the event
+    Then the event was saved asking for the calendar's usual reminders
+
+  Scenario: Saving an inheriting event switched to all day says nothing about reminders
+    Given the event "Fun Run" in "Appointments" follows the calendar's usual reminders
+    When I open the event "Fun Run" for editing
+    And I switch the event to all day
+    And I save the event
+    Then the event was saved without mentioning reminders
+
+  Scenario: An all-day event's reminder cannot be set on the day of the event itself
+    Given the all-day event "Bank Holiday" exists in "Appointments"
+    When I open the event "Bank Holiday" for editing
+    And I give the event reminders of its own
+    And I ask for a reminder 0 days before
+    Then the reminder holds at 1 day before and will not go lower
+
+  Scenario: A reminder change on a repeating event warns that every occurrence's is replaced
+    When I create a weekly recurring event "Swim Club" in "Appointments"
+    And I open the event "Swim Club" for editing
+    And I give the event a reminder 2 hours before
+    And I attempt to save the event
+    Then I am warned that the change replaces the reminders on every occurrence
