@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 namespace FamilyHQ.Smoke.Steps;
 
 /// <summary>
-/// RM1 to RM5 — an event's reminders, against the real Google Calendar API.
+/// RM1 to RM6 — an event's reminders, against the real Google Calendar API.
 /// <para>
 /// Every expectation in here is derived from what <b>Google returned</b>, never from what the suite or the
 /// kiosk sent. Google answers 200 and then rewrites a reminder set silently — clamping an offset,
@@ -35,6 +35,14 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
     /// method the kiosk can create but never picks by default.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The description text on the seeded phone-style event. Named rather than inlined because two
+    /// scenarios depend on the same string: one writes it, and one asserts it is still there after a
+    /// reminder-only edit. Two copies of it would drift, and the assertion would quietly stop checking
+    /// anything.
+    /// </summary>
+    private const string PhoneDescriptionText = "Reminders chosen on a phone, never on the kiosk";
+
     private static readonly IReadOnlyList<GoogleEventReminderOverride> PhoneReminders =
     [
         new(SmokeReminder.PopupMethod, 45),
@@ -71,7 +79,7 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
         var draft = SmokeEventShape.PhoneStyleDraft(
             state.Correlation,
             "Phone-set reminders",
-            "Reminders chosen on a phone, never on the kiosk",
+            PhoneDescriptionText,
             date,
             reminderOverrides: PhoneReminders);
 
@@ -330,6 +338,82 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
             + "observation about Google, not a FamilyHQ rule: if it has changed its mind, re-establish "
             + "what it does now and move this assertion. Do not relax it, and do not read an empty "
             + "override list as 'this event has no reminders'");
+    }
+
+    // ── RM6: the golden rule in the other direction ─────────────────────────
+
+    /// <summary>
+    /// The mirror of RM1, and the direction that gets missed. RM1 proves an unrelated edit leaves the
+    /// reminders alone; this proves a reminder edit leaves everything else alone.
+    /// <para>
+    /// Editing reminders is an operation the kiosk did not have at all before this feature, and it goes
+    /// out as a whole event resource. Anything that resource omits, Google clears — so the blast radius
+    /// of a reminder change is every other field on an event the family created on a phone, and the
+    /// damage shows up in the Google Calendar app rather than here.
+    /// </para>
+    /// <para>
+    /// <c>colorId</c> is the sharpest probe available: FamilyHQ neither reads nor writes it, so a colour
+    /// that came back cleared could only mean the kiosk sent an event resource that did not carry it.
+    /// </para>
+    /// <para>
+    /// The start's <c>timeZone</c> is deliberately <b>not</b> asserted here. A write re-anchoring an
+    /// event's zone is a known open defect with a ticket and a scenario of its own; folding it into this
+    /// one would turn a reminders release red for a reason that has nothing to do with reminders, and
+    /// would say nothing new about the bug.
+    /// </para>
+    /// </summary>
+    [Then(@"Google still holds everything else about that event exactly as it was")]
+    public async Task ThenGoogleStillHoldsEverythingElseAboutThatEventExactlyAsItWas()
+    {
+        var state = State;
+        var original = state.RequireSeededGoogleEvent();
+        var calendarId = state.Environment.Calendars.RequireGoogleId(state.SeededCalendarName!);
+
+        // The wait keys on the change that WAS asked for, and everything below comes off that single
+        // read. Two consequences, both load-bearing: no two fields are compared against different
+        // moments in time, and the scenario cannot pass vacuously by reading the event back before the
+        // kiosk's write ever reached Google.
+        var updated = await BoundedWait.ForAsync(
+            async () =>
+            {
+                var candidate = await state.Environment.Google.GetEventAsync(calendarId, original.Id);
+                return candidate.Reminders?.UseDefault == true ? candidate : null;
+            },
+            "Google never showed this event as following its calendar's own reminders after the kiosk "
+            + "handed them back, so there is nothing to say about what that edit did to the rest of the "
+            + "event. The change the family asked for has to have happened before the changes they did "
+            + "not ask for can be ruled out",
+            TimeSpan.FromSeconds(state.Environment.Configuration.GoogleWaitSeconds),
+            BoundedWait.GooglePollIntervalMs);
+
+        output.WriteLine($"after the reminder-only edit Google holds {Describe(updated.Reminders)}.");
+
+        updated.Summary.Should().Be(
+            original.Summary,
+            "the title was not edited. A reminder change that also renames the event is the same class of "
+            + "damage as a rename that clears the reminders — just the one nobody thinks to look for");
+
+        // The free-text description, not the whole string: FamilyHQ appends its managed [members: …] tag
+        // on every write, which is intended and reads as a tag. What must never happen is the family's
+        // own words being replaced.
+        updated.Description.Should().Contain(
+            PhoneDescriptionText,
+            "the family's own description text must survive an edit that never touched the description");
+        updated.Description.Should().Contain(
+            state.Correlation.DescriptionMarker,
+            "the rest of the description must survive too, not just its first line");
+
+        updated.Location.Should().Be(
+            original.Location, "the location was not edited, so it must come back exactly as it was");
+
+        updated.ColorId.Should().Be(
+            original.ColorId, "FamilyHQ has no opinion about an event's colour and must not clear it");
+
+        updated.Start!.DateTime.Should().Be(
+            original.Start!.DateTime,
+            "the start was not edited. A reminder change that moves the event is the worst outcome in "
+            + "this scenario: the family would be alerted correctly, for the wrong time");
+        updated.End!.DateTime.Should().Be(original.End!.DateTime, "the end was not edited");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────

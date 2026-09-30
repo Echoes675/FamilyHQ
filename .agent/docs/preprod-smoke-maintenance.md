@@ -596,10 +596,19 @@ no reminders"**, and none of them does.
 | ID | Scenario | What it proves | What a failure means |
 |---|---|---|---|
 | **RM1** | Reminders set in Google survive an edit that changed only the title | **The golden rule, applied to reminders.** Two overrides with two different delivery methods are put on the event *in Google*, the way a phone does; the kiosk displays them (which is also the inbound half — a reminder set on a phone reaching the screen at all), and then changes the title and nothing else. The baseline is Google's own answer to the insert, not the draft, so a rewrite Google made on the way in is what must survive. | Reminders changed by a rename: the family is alerted at a different time than they set, and they find out by *not* being told about something. `useDefault` flipped: the event was handed back to its calendar's reminders by an edit that never mentioned them. Missing from the tab: the family cannot see or change what they already chose. |
+| **RM6** | A reminder-only edit leaves everything else about the event alone | **The golden rule in the other direction**, and the half that gets missed. RM1 asks whether an ordinary edit damages the reminders; RM6 asks whether a reminder edit damages everything else. Editing reminders is an operation the kiosk did not have before the Reminders tab, and it goes out as a whole event resource — so its blast radius is every other field on an event somebody created on a phone. The event is seeded *in Google*, the kiosk hands its reminders back to the calendar, and the wait keys on that change having landed so the scenario cannot pass by reading the event back too early. | Title, description, location, `colorId`, start or end changed by an edit that touched only the reminders. `colorId` is the sharpest probe: FamilyHQ neither reads nor writes it, so a cleared colour can only mean the kiosk sent an event resource that omitted it. A start that moved is the worst outcome here — the family is alerted correctly, for the wrong time. |
 | **RM2** | Reminders chosen on the kiosk reach Google as the set that was chosen | The outbound half: what arrives in Google is what the Google Calendar app on the family's phones will act on. Stated as an amount and a unit, because that is how the picker is driven. | A different offset means the alert comes at the wrong time; a missing member means it never comes. `useDefault: true` alongside overrides is a third state that Google resolves in favour of the overrides — harmless today, and a kiosk showing a state Google does not hold. |
 | **RM3** | Handing an event's reminders back to its calendar restores inheritance in Google | That the revert-to-default body (`useDefault` true, no overrides) actually lands as inheritance on a **timed** event. Following the calendar and carrying an explicit list are two different states in Google. | An event stuck on its own list keeps alerting the family at times they have already removed. Overrides left alongside `useDefault` means the list is still what Google applies. |
 | **RM4** | What Google does with a revert-to-default reminder body on an **all-day** event | **A recording, not an expectation** — see below. It asserts only that Google **accepted** the write and holds the event as all-day, which is worth gating on because a rejection breaks the All-day toggle for the family. | The write was refused, or the event never became all-day. Either way the answer is the thing this scenario exists to find out; the failure message says to bring it back as a product decision rather than work around it. |
 | **RM5** | An all-day event created on the kiosk does not inherit its calendar's reminders | Records the live divergence as a fact: **an all-day event never inherits** — Google materialises the calendar's reminders onto it. That is why the kiosk must show what Google *returned* rather than what it sent. | A red run here is a report about **Google**, not about FamilyHQ: it has changed its mind about all-day inheritance. Re-establish what it does now and move the assertion; do not relax it. |
+
+#### RM6 deliberately says nothing about the anchor zone
+
+RM6 compares the title, description, location, colour, start and end — and not the start's `timeZone`.
+That is not an oversight. A write re-anchoring an event's zone is a known open defect with a ticket and a
+scenario of its own; asserting it inside RM6 would turn a reminders release red for a reason that has
+nothing to do with reminders, and would say nothing new about the bug. RK11 is where the anchor zone is
+guarded.
 
 #### RM4 records an answer nobody has yet
 
@@ -865,7 +874,9 @@ cannot satisfy them.
   provider. That is what this suite is for.
 - **A change to the Google write path.** Ask whether KG3's, RK11's and RM1's field lists still cover the
   fields that could be lost. RK11 is the series-shaped version of KG3 and the one that guards the anchor
-  zone; RM1 is the reminder-shaped version and the one that guards a set the family set on a phone.
+  zone; RM1 and RM6 are the reminder-shaped pair — RM1 guards a phone-set reminder set against an
+  unrelated edit, RM6 guards every other field against a reminder edit. Both directions need checking,
+  and the second is the one that gets forgotten.
 - **A change in what Google itself does.** The suite encodes observed third-party behaviour in a few places —
   see [what Google actually does to an occurrence override](#what-google-actually-does-to-an-occurrence-override).
   A red run there is a report about Google, not about FamilyHQ.

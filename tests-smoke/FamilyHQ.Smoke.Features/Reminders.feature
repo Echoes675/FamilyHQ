@@ -28,6 +28,17 @@ Feature: Reminders, against the real Google API
     When I change only that event's title on the kiosk
     Then Google still holds that event's reminders, as a set
 
+  # The mirror of RM1, and the half that gets missed. RM1 asks whether an ordinary edit damages the
+  # reminders; this asks whether a reminder edit damages everything else. Editing reminders is new with
+  # this feature and goes out as a whole event resource, so its blast radius is every other field on an
+  # event somebody created on a phone.
+  @RM6
+  Scenario: A reminder-only edit leaves everything else about the event alone
+    Given an event with two reminders exists in Google the way a phone creates one
+    And the kiosk has received that event
+    When I hand that event's reminders back to its calendar on the kiosk
+    Then Google still holds everything else about that event exactly as it was
+
   @RM2
   Scenario: Reminders chosen on the kiosk reach Google as the set that was chosen
     When I create an event on the kiosk with two reminders of its own
