@@ -360,6 +360,62 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 - **Any new `SimulatedEvent` column needs a Simulator EF migration** (the Simulator `Migrate()`s on startup).
 - **Scope every between-scenario backdoor reset to the scenario's isolated user** — a global reset races concurrent scenarios (see Intermittent Issues #3 and #5).
 
+### Event reminders — `EventReminders.feature` (11 scenarios, 16 tests)
+
+An event's reminders through the modal's Reminders tab: add, edit and remove; every transition between
+the three states Google distinguishes — follows-the-calendar-default, explicit, explicitly-none — in
+both directions; the tab badge; the All-day reset; the day-of-event floor; and the series scope
+warning. One six-row `Scenario Outline` carries the transitions, which is why 11 scenarios are 16
+tests.
+
+**A new assertion idiom lives here: assert what the save SENT, not what the screen shows.**
+`EventWriteRecorder` (`FamilyHQ.E2E.Common/Helpers`) attaches to the scenario's own page and records
+the `POST`/`PUT`/`DELETE` requests the browser makes to `/api/events`, body included. It exists
+because no UI assertion can do this job: **a save that sends back the reminders it opened with and a
+save that says nothing about them leave exactly the same screen behind** — and only the second leaves
+a set made in the Google Calendar app on a phone alone. The request body is the one place the
+difference is observable from outside the app. Scenario names of the form *"… says nothing about its
+reminders"* are all of this kind.
+
+Reach for the recorder whenever the property under test is the **absence** of a field in a write.
+The recorder is attached per scenario by `EventWriteHooks`, so nothing leaks between scenarios under
+the parallel runner.
+
+**Comparing one write against another:** `EventWrite.Field(name)` reads any property as JSON text.
+Compare the create's own body against the update's rather than against values written into the test —
+that proves the update agrees with what the event was actually created as, not merely with the test's
+expectation. Two rules when you do:
+
+- **Require the field on the source side.** A null on both sides passes while proving nothing. The
+  reminder-only-edit scenario types a note into the description for exactly this reason: it gives the
+  one nullable field in its list a real value.
+- **Compare timestamps as instants, never as text.** The data layer converts every `DateTimeOffset`
+  to UTC on the way into PostgreSQL, so a value read back carries a zero offset where the create
+  carried the browser's. The strings differ while describing the same moment. A text comparison goes
+  red for a reason unrelated to the edit, and the tempting "fix" is to delete the assertion.
+
+**What this feature file cannot prove, and where that lives.** The Simulator does not model Google's
+`PUT` clearing unmapped fields, so "a field FamilyHQ never models survives a write" is not provable
+here — a field the Simulator never stored cannot be observed to survive. An event's colour is the
+clearest case. That half is asserted against real Google in the preprod smoke suite; see
+`testing-strategy.md` for why a twin that asserted it here would be worse than no twin.
+
+**Gotchas specific to the Reminders tab:**
+- **Address a reminder row by its `data-reminder-method` and `data-reminder-minutes`, never by
+  position.** Google returns an event's overrides in an order of its own, and the picker sorts for
+  display, so position identifies a different reminder than you meant.
+- **Choose the calendar chips BEFORE touching the tab.** Which calendar an event lands on decides
+  whose default reminders the tab shows and copies in, and the modal re-reads them into an untouched
+  tab — so a later chip change replaces what was just set.
+- **Switch inheritance off before adding.** The Add form is not offered while the event follows the
+  calendar, because Google rejects a write asking for the defaults and for specific reminders at once.
+- **Switching inheritance off copies the calendar's defaults in as editable rows**, as the Google app
+  pre-fills them. An event created that way carries those AND anything added afterwards — remove them
+  first if a scenario needs an exact set.
+- **The numeric amount commits on the DOM `change` event**, which a `Fill` alone does not raise. Blur
+  it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
+  needs.
+
 ### Test Categories
 
 1. **Display** - Events render correctly on the calendar grid
@@ -370,6 +426,8 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 6. **Auth** - Sign-in / sign-out flows
 7. **Webhook Sync** - Events added/updated/deleted externally appear after a webhook sync
 8. **Live Update** - SignalR pushes cause the open dashboard to refresh without navigation
+9. **Reminders** - The three reminder states, the all-day form, and what a save does and does not say
+10. **Request-shape** - Assertions on the body the kiosk SENT, for properties no screen can show
 
 ---
 
