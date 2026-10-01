@@ -729,6 +729,22 @@ public class CalendarEventServiceRecurringTests
     }
 
     // ── FHQ-170 on the series-level write paths ───────────────────────────────────────────────
+    //
+    // The zone the master write anchors the series to is only expressible THROUGH start and end:
+    // Google carries it as `start.timeZone`, and there is no other field for it. So these tests are
+    // driven by a genuine timing change, which is the master write that sends them. An edit that
+    // changes no timing sends neither key and therefore no zone either — a stronger outcome for this
+    // invariant than getting the zone right, and pinned separately below by
+    // TimingUnchangedEdit_DoesNotAskGoogleForTheAnchorItIsNotSending and by the composed
+    // SeriesRenameAnchorPreservationTests.
+    //
+    // The shift is applied to the OCCURRENCE, which the master patch then applies to the master's own
+    // origin; the assertions here are about the zone, so the amount is immaterial as long as it is
+    // not zero.
+
+    /// <summary>A request that moves the occurrence an hour earlier, keeping its duration.</summary>
+    private static UpdateEventRequest MovedAnHourEarlier(string title, DateTimeOffset occurrenceStart) =>
+        new(title, occurrenceStart.AddHours(-1), occurrenceStart, false, "Loc", "Body");
 
     [Fact]
     public async Task UpdateRecurringAsync_AllInSeries_PatchesTheMasterWithTheSeriesOwnZone()
@@ -743,7 +759,7 @@ public class CalendarEventServiceRecurringTests
             .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart, NewYorkZoneId));
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
 
-        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+        await f.Sut.UpdateRecurringAsync(EventId, MovedAnHourEarlier("Weekly", InstanceStart), RecurrenceScope.AllInSeries);
 
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == NewYorkZoneId),
@@ -762,7 +778,7 @@ public class CalendarEventServiceRecurringTests
             .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart));
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
 
-        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+        await f.Sut.UpdateRecurringAsync(EventId, MovedAnHourEarlier("Weekly", InstanceStart), RecurrenceScope.AllInSeries);
 
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == LondonZoneId),
@@ -789,7 +805,7 @@ public class CalendarEventServiceRecurringTests
             .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", InstanceStart, masterZone));
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
 
-        await f.Sut.UpdateRecurringAsync(EventId, Req("Weekly", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+        await f.Sut.UpdateRecurringAsync(EventId, MovedAnHourEarlier("Weekly", InstanceStart), RecurrenceScope.AllInSeries);
 
         f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
             It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.IanaTimeZone == expectedZone),
@@ -894,29 +910,32 @@ public class CalendarEventServiceRecurringTests
     //     `shift` is zero for a pure title edit, so RENAMING a series was enough to trigger it.
     //   * the COUNT split derived `remaining = COUNT − occurrences before the split` from it and
     //     wrote that count back, leaving the forward series too long.
-    // Neither is permitted now: the split refuses, and the master patch omits start/end unless the
-    // user actually asked for a timing change, in which case it refuses too.
+    // Neither is permitted now: the split refuses, and the master patch refuses a timing change it
+    // cannot anchor. An edit that retimes NOTHING never consults the anchor in the first place — it
+    // sends no start, so it has nothing to derive — which is why the rename case below no longer
+    // depends on the master resolving either way.
     //
     // ONE WARNING PER INCIDENT (FHQ-161). These tests assert the COUNT of Warning records, not
     // merely that one is present: a `Contain(...)` cannot tell one Warning from three, and that gap
     // is exactly how a duplicate Warning regressed once already. The anchor site itself logs at
-    // Debug — it decides nothing, and the omit-times rename below handles the missing origin
-    // completely successfully, which the logging standard says is not a Warning at all. So the
-    // budget is: zero from a successful degraded write, exactly one from each refusal.
-    // (DomainExceptionHandler logs its own Warning when it maps the exception; that is outside this
-    // logger and carries only status/method/path, so it is extra information, not a duplicate.)
+    // Debug — it decides nothing — so the budget is: nothing at all from a rename, exactly one from
+    // each refusal. (DomainExceptionHandler logs its own Warning when it maps the exception; that is
+    // outside this logger and carries only status/method/path, so it is extra information, not a
+    // duplicate.)
     //
-    // REACHABILITY, HONESTLY. After Change 1 (a master's start survives an absent RRULE) no
-    // production shape is known in which the omit-times write both fires and succeeds — a master
-    // that 404s on events.get would 404 on events.patch too. These tests drive the branch through
-    // the mocked client because it is a deliberate guard against irreversible loss of series
-    // history, not because it is the mechanism that fixed the reported defect.
+    // REACHABILITY, HONESTLY. After Change 1 (a master's start survives an absent RRULE) the only
+    // remaining route to an unresolved anchor is a master events.get that 404s or yields no parsable
+    // start — and the refusals below are what that now produces, for the two operations that
+    // genuinely need the origin. There is no longer a "degraded write" to reach: the write that
+    // sends no start is the ORDINARY path for every timing-unchanged edit, not a fallback.
 
     [Fact]
     public async Task UpdateRecurringAsync_AllInSeries_MasterUnresolvableAndNothingRetimed_PatchesWithoutStartOrEnd()
     {
-        // The renaming case. The edit must still land — the family asked for it and it is perfectly
-        // expressible — but through the patch that sends no start/end, so events.patch's merge
+        // The renaming case: an unreadable master must not stand between the family and an edit that
+        // does not depend on it. The arrangement's null master is deliberately INERT now — the rename
+        // path never fetches it — and that is the point being pinned: a rename lands in full whatever
+        // state the master is in, through the patch that sends no start/end, so events.patch's merge
         // leaves Google's own DTSTART exactly where it is.
         var f = new Fixture();
         ArrangeUnresolvedMasterSeries(f, out _);
@@ -972,9 +991,9 @@ public class CalendarEventServiceRecurringTests
     {
         // The content-hash is stamped into extendedProperties and recorded so Google's echo of this
         // write is recognised (FHQ-30) — so it must describe what was SENT. Start and end were not
-        // sent, and the only start in scope is the proxy this whole ticket exists to distrust.
-        // Two byte-identical edits differing only in which local row happens to be the earliest
-        // synced one must therefore produce the SAME token.
+        // sent, and the only starts in scope are the local rows' own, which are not the series'
+        // origin. Two byte-identical edits differing only in which local row happens to be the
+        // earliest synced one must therefore produce the SAME token.
         var early = new Fixture();
         ArrangeUnresolvedMasterSeries(early, out var earlyHash, earliestRowStart: InstanceStart.AddDays(-70));
 
@@ -1480,13 +1499,11 @@ public class CalendarEventServiceRecurringTests
     // ── AllInSeries edit ──────────────────────────────────────────────────────
 
     [Fact]
-    public async Task UpdateRecurringAsync_AllInSeries_PatchesMasterAndPreservesExceptionOverrides()
+    public async Task UpdateRecurringAsync_AllInSeries_PatchesMasterAndPersistsExceptionsAsGoogleReturnsThem()
     {
         var f = new Fixture();
         var instance = f.RecurringInstance(EventId, "inst-2", InstanceStart);
         f.ArrangeEvent(instance);
-        // FHQ-172: the master patch shape asserted below presupposes a RESOLVABLE master, which is
-        // the Fixture's default — the degraded omit-start/end branch is opted into, never defaulted.
 
         // Reconcile window returns a normal instance and an exception (with overridden title + OriginalStartTime).
         var normal = f.GoogleInstance("inst-1", WindowStart.AddDays(7));
@@ -1497,11 +1514,19 @@ public class CalendarEventServiceRecurringTests
         await f.Sut.UpdateRecurringAsync(EventId, Req("Series Title", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
 
         // Writes the series master via events.patch (PATCH, merge semantics) — a full-resource replace
-        // would omit the recurrence array and Google would collapse the series to a one-off event (FHQ-144).
-        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
-            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        // would omit the recurrence array and Google would collapse the series to a one-off event
+        // (FHQ-144). Both master-patch entry points are events.patch and both preserve the recurrence
+        // array; this edit changes no timing, so it is the one that also omits start and end. Which of
+        // the two is chosen is not this test's subject — the exception handling below is — but it has
+        // to be named to be verified.
+        f.Google.Verify(g => g.PatchEventFieldsPreservingTimesAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()), Times.Once);
 
-        // The exception row keeps its overridden title + OriginalStartTime after reconcile.
+        // The exception row is persisted exactly as the reconcile read it back — its title and its
+        // OriginalStartTime, whatever Google decided the title should be. (Google in fact renames an
+        // exception along with its master, so this title is the double's choice, not a claim about
+        // Google; what is asserted is that the app neither drops the exception nor overwrites it
+        // with the master's fields of its own accord.)
         f.Repo.Verify(r => r.AddEventAsync(
             It.Is<CalendarEvent>(e => e.GoogleEventId == "inst-2" && e.Title == "Overridden Title" && e.OriginalStartTime != null),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -1572,10 +1597,17 @@ public class CalendarEventServiceRecurringTests
     }
 
     [Fact]
-    public async Task UpdateRecurringAsync_AllInSeries_UnchangedSave_DoesNotMoveTheSeries()
+    public async Task UpdateRecurringAsync_AllInSeries_TimingUnchangedEdit_SendsNoStartOrEndAtAll()
     {
-        // Saving AllInSeries without changing the time on a later occurrence must be a no-op shift:
-        // the master keeps its origin start exactly (delta = 0).
+        // Saving AllInSeries without changing the timing used to re-send the master's own origin —
+        // arithmetically a no-op shift, and the wrong answer anyway. A start that leaves this process
+        // is an offset-less wall clock plus a zone, which Google RE-RESOLVES; for an origin in a DST
+        // gap or in the repeated hour that resolution can return a different instant, moving DTSTART
+        // and every occurrence with it on an edit that asked for none of that. The fix is to say
+        // nothing about timing: events.patch merges, so the omitted keys leave Google's anchor exactly
+        // as it holds it, whatever it is. The instant-level proof lives in
+        // SeriesRenameAnchorPreservationTests, which drives the real JSON body; this pins the
+        // service's choice of write.
         var f = new Fixture();
         var masterStart = new DateTimeOffset(2026, 3, 1, 9, 0, 0, TimeSpan.Zero);
         var editedOccurrenceStart = new DateTimeOffset(2026, 3, 15, 9, 0, 0, TimeSpan.Zero);
@@ -1586,14 +1618,34 @@ public class CalendarEventServiceRecurringTests
             .ReturnsAsync(new SeriesMaster("RRULE:FREQ=WEEKLY;BYDAY=SU", masterStart));
         f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", masterStart)]);
 
-        // Request echoes the edited occurrence's own times unchanged (delta = 0).
-        var request = new UpdateEventRequest("Weekly", editedOccurrenceStart, editedOccurrenceStart.AddHours(1), false, "Loc", "Body");
+        // Request echoes the edited occurrence's own times unchanged, and renames the series.
+        var request = new UpdateEventRequest("Renamed", editedOccurrenceStart, editedOccurrenceStart.AddHours(1), false, "Loc", "Body");
 
         await f.Sut.UpdateRecurringAsync(EventId, request, RecurrenceScope.AllInSeries);
 
-        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId,
-            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.Start == masterStart),
-            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        f.Google.Verify(g => g.PatchEventFieldsPreservingTimesAsync(GoogleCalId,
+            It.Is<CalendarEvent>(e => e.GoogleEventId == SeriesId && e.Title == "Renamed"),
+            It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()), Times.Once);
+        f.Google.Verify(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the ordinary patch sends start and end, which is the whole thing this edit must not do");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_TimingUnchangedEdit_DoesNotAskGoogleForTheAnchorItIsNotSending()
+    {
+        // The master's origin is an input to exactly one thing: a start derived from it. An edit that
+        // sends no start has no use for it, and fetching it anyway would put a Google call — and its
+        // transient failures — in front of every rename for a value that is then discarded. It would
+        // also be the shape of the defect: reading Google's anchor in order to hand it back.
+        var f = new Fixture();
+        var instance = f.RecurringInstance(EventId, "inst-3", InstanceStart);
+        f.ArrangeEvent(instance);
+        f.ArrangeReconcileWindow([f.GoogleInstance("inst-1", InstanceStart)]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Renamed", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.GetSeriesMasterAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

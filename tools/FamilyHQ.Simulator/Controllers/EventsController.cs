@@ -210,8 +210,8 @@ public class EventsController : ControllerBase
             Summary = body.Summary ?? "New Event",
             Location = body.Location,
             Description = body.Description,
-            StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : DateTime.UtcNow),
-            EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : DateTime.UtcNow.AddHours(1)),
+            StartTime = body.Start.DateTime != null ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone) : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : DateTime.UtcNow),
+            EndTime = body.End.DateTime != null ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone) : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : DateTime.UtcNow.AddHours(1)),
             IsAllDay = body.Start.Date != null,
             UserId = userId,
             ContentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash"),
@@ -324,11 +324,16 @@ public class EventsController : ControllerBase
             return BadRequest();
         }
 
-        existing.Summary = body.Summary ?? existing.Summary;
+        if (body.Summary is not null)
+        {
+            existing.Summary = body.Summary;
+            // A series rename reaches the series' exceptions too — see the method's remarks.
+            await PropagateSummaryToSeriesExceptionsAsync(existing, body.Summary);
+        }
         existing.Location = body.Location;
         existing.Description = body.Description;
-        existing.StartTime = body.Start.DateTime?.ToUniversalTime() ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : existing.StartTime);
-        existing.EndTime = body.End.DateTime?.ToUniversalTime() ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : existing.EndTime);
+        existing.StartTime = body.Start.DateTime != null ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone) : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : existing.StartTime);
+        existing.EndTime = body.End.DateTime != null ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone) : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : existing.EndTime);
         existing.IsAllDay = body.Start.Date != null;
         // FHQ-43: keep the anchored IANA zone in sync when the update maps the start.
         existing.StartTimeZone = body.Start?.TimeZone;
@@ -409,9 +414,11 @@ public class EventsController : ControllerBase
         //     a recurrence array — ["RRULE:…"] sets/replaces the rule, [] clears it (collapse).
         //   • The "All events" series-master edit (PatchEventFieldsAsync, FHQ-144) sends scalar
         //     fields (summary/start/end/location/description/content-hash) and NO recurrence key, so
-        //     the master is retimed/renamed while its RRULE and exception instances are preserved.
-        //     This is why the master edit MUST NOT be a PUT: events.update is a full-resource replace
-        //     that drops the omitted recurrence array and collapses the series.
+        //     the master is retimed/renamed while its RRULE and its exceptions are preserved — the
+        //     exceptions as exceptions, but a rename does reach their titles (see
+        //     PropagateSummaryToSeriesExceptionsAsync). This is why the master edit MUST NOT be a
+        //     PUT: events.update is a full-resource replace that drops the omitted recurrence array
+        //     and collapses the series.
         _logger.LogInformation("[SIM] PATCH event: {EventId} for calendar: {CalendarId}", eventId, calendarId);
         var userId = ExtractUserId(Request);
 
@@ -477,22 +484,28 @@ public class EventsController : ControllerBase
         // PUT, which overwrites location/description even when absent). body is non-null here — a null
         // body has neither scalar fields nor recurrence and returned above.
         if (body!.Summary is not null)
+        {
             existing.Summary = body.Summary;
+            // A series rename reaches the series' exceptions too — see the method's remarks.
+            await PropagateSummaryToSeriesExceptionsAsync(existing, body.Summary);
+        }
         if (body.Location is not null)
             existing.Location = body.Location;
         if (body.Description is not null)
             existing.Description = body.Description;
         if (body.Start.DateTime != null || body.Start.Date != null)
         {
-            existing.StartTime = body.Start.DateTime?.ToUniversalTime()
-                ?? ParseAllDayDateUtc(body.Start.Date!);
+            existing.StartTime = body.Start.DateTime != null
+                ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone)
+                : ParseAllDayDateUtc(body.Start.Date!);
             existing.IsAllDay = body.Start.Date != null;
             existing.StartTimeZone = body.Start.TimeZone;
         }
         if (body.End.DateTime != null || body.End.Date != null)
         {
-            existing.EndTime = body.End.DateTime?.ToUniversalTime()
-                ?? ParseAllDayDateUtc(body.End.Date!);
+            existing.EndTime = body.End.DateTime != null
+                ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone)
+                : ParseAllDayDateUtc(body.End.Date!);
         }
         if (body.ExtendedProperties?.Private?.TryGetValue("content-hash", out var hash) == true)
             existing.ContentHash = hash;
@@ -952,10 +965,12 @@ public class EventsController : ControllerBase
         var existingOverride = await _db.Events.FirstOrDefaultAsync(e => e.Id == instanceId && e.UserId == userId);
 
         var isAllDay = body.Start.Date != null;
-        var start = body.Start.DateTime?.ToUniversalTime()
-                    ?? (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : originalStartUtc);
-        var end = body.End.DateTime?.ToUniversalTime()
-                  ?? (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : start.AddHours(1));
+        var start = body.Start.DateTime != null
+                    ? ResolveInstantUtc(body.Start.DateTime.Value, body.Start.TimeZone)
+                    : (body.Start.Date != null ? ParseAllDayDateUtc(body.Start.Date) : originalStartUtc);
+        var end = body.End.DateTime != null
+                  ? ResolveInstantUtc(body.End.DateTime.Value, body.End.TimeZone)
+                  : (body.End.Date != null ? ParseAllDayDateUtc(body.End.Date) : start.AddHours(1));
 
         var contentHash = body.ExtendedProperties?.Private?.GetValueOrDefault("content-hash");
 
@@ -1014,6 +1029,49 @@ public class EventsController : ControllerBase
                 await LoadCalendarDefaultsAsync(master.CalendarId))));
     }
 
+    /// <summary>
+    /// Carries a series master's new title onto that series' exception rows, as Google does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This reads as wrong and is not. Google's own UI implies that an occurrence you have singled
+    /// out is left alone when the series is edited; renaming the master through the API
+    /// <b>overwrites</b> the <c>summary</c> the exception was carrying. Established against real
+    /// Google by making exactly that patch and reading the exception back seconds later — it is not
+    /// an inference from the spec. Do not "correct" it back.
+    /// </para>
+    /// <para>
+    /// The exception stays an exception: same id, same <c>recurringEventId</c>, same slot, and its
+    /// own times, location, description and reminders. Only the title follows the master, because
+    /// the title is the only field the behaviour was observed on and the other fields would be a
+    /// guess dressed as fidelity. A cancelled slot is included for want of a reason to exclude it:
+    /// its summary is never surfaced, so a stale one would only be a second state to reason about.
+    /// </para>
+    /// </remarks>
+    private async Task PropagateSummaryToSeriesExceptionsAsync(SimulatedEvent master, string summary)
+    {
+        // Only a series master has exceptions; a plain event or an exception row has none.
+        if (master.RecurrenceRule is null)
+            return;
+
+        var exceptions = await _db.Events
+            .Where(e => e.UserId == master.UserId
+                        && e.RecurringEventId == master.Id
+                        && e.OriginalStartTime != null)
+            .ToListAsync();
+
+        if (exceptions.Count == 0)
+            return;
+
+        foreach (var exception in exceptions)
+            exception.Summary = summary;
+
+        // Saved by the caller, alongside the master's own change.
+        _logger.LogInformation(
+            "[SIM] Renaming series {MasterId} to {Summary} carried the new title onto {Count} exception(s).",
+            master.Id, summary, exceptions.Count);
+    }
+
     // FHQ-18.11 (Pass 4): cancels a single occurrence of a series ("This event" delete). Stores (or
     // flags) a tombstone override row linked to the master via RecurringEventId and carrying the
     // cancelled slot in OriginalStartTime with IsCancelled=true. A prior CONTENT override on the same
@@ -1066,6 +1124,53 @@ public class EventsController : ControllerBase
     /// imitate. Anchoring at midnight UTC makes the converter a no-op and the round-trip exact.
     /// </remarks>
     private static DateTime ParseAllDayDateUtc(string value) => GoogleAllDayDate.Parse(value).UtcDateTime;
+
+    /// <summary>
+    /// The UTC instant a write's <c>start</c> / <c>end</c> names, honouring the <c>timeZone</c> that
+    /// came with it.
+    /// </summary>
+    /// <remarks>
+    /// Google's <c>dateTime</c> is an RFC 3339 value whose OFFSET MAY BE ABSENT, and when it is, the
+    /// accompanying <c>timeZone</c> is what fixes the instant: <c>"2026-09-30T18:00:00"</c> with
+    /// <c>timeZone: "Europe/London"</c> is 17:00Z, not 18:00Z. That pair is how the app writes every
+    /// timed event anchored to a zone, because it is how a recurrence holds its WALL CLOCK across a
+    /// DST transition — so reading the value as UTC re-anchors the resource by the zone's offset.
+    /// <para>
+    /// On a series master that is not a cosmetic error. Every occurrence the expansion computes moves
+    /// with the anchor, so the compound instance ids move too, and an exception override — keyed on
+    /// the slot it replaces — is left pointing at a slot the expansion no longer produces. It stops
+    /// being served, the app's local row for it is never refreshed again, and the family sees the old
+    /// override sitting beside the new occurrence. Real Google resolves the pair and moves nothing,
+    /// which is why that duplicate appeared only against this double.
+    /// </para>
+    /// <para>
+    /// A value that carries its own offset (or a <c>Z</c>) already fixes the instant and is taken as
+    /// it stands; the zone is then metadata, exactly as Google treats it. With no offset and no
+    /// usable zone there is nothing to resolve against, so the reading is taken as UTC — never as
+    /// the HOST's local time, which would make the stored instant depend on where the Simulator
+    /// happens to run.
+    /// </para>
+    /// </remarks>
+    private DateTime ResolveInstantUtc(DateTime reading, string? timeZoneId)
+    {
+        if (reading.Kind != DateTimeKind.Unspecified)
+            return reading.ToUniversalTime();
+
+        var zone = _recurrenceTimeZones.TryCreate(timeZoneId);
+        if (zone is null)
+        {
+            if (!string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                _logger.LogWarning(
+                    "[SIM] A write carried an unknown IANA time zone {TimeZone} with an offset-less dateTime; reading it as UTC.",
+                    timeZoneId);
+            }
+
+            return DateTime.SpecifyKind(reading, DateTimeKind.Utc);
+        }
+
+        return zone.ToInstant(reading).UtcDateTime;
+    }
 
     // Parses a Google time bound ("yyyy-MM-ddTHH:mm:ssZ" / ISO 8601) to UTC, or null when absent/unparseable.
     // FHQ-174: AssumeUniversal is what makes this host-independent. AdjustToUniversal alone only

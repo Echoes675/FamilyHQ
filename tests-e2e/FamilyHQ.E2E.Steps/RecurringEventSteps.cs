@@ -162,8 +162,9 @@ public class RecurringEventSteps
     }
 
     // Establishes a pre-existing per-instance exception override before an all-events edit, so the
-    // all-events scenario can prove the override is preserved. This is a "This event" edit applied to
-    // the Nth occurrence.
+    // all-events scenario can prove what a series rename does to it: the occurrence stays an
+    // exception on its own slot but takes the series' new title, which is what Google does. This is
+    // a "This event" edit applied to the Nth occurrence.
     [Given(@"occurrence (\d+) of ""([^""]*)"" has already been changed to ""([^""]*)""")]
     public async Task GivenOccurrenceHasAlreadyBeenChangedTo(int occurrence, string seriesName, string newTitle)
     {

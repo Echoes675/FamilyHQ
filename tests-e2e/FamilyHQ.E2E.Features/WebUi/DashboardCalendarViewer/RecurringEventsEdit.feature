@@ -21,11 +21,12 @@ Feature: Recurring Event Edit Scope
     Then the event "Football training" appears on occurrence 2
     And the event "Soccer practice" still appears on occurrence 1
 
-  Scenario: Editing all events keeps a previously edited occurrence's override
+  Scenario: Editing all events renames a previously edited occurrence too
     Given occurrence 2 of "Soccer practice" has already been changed to "Dentist"
     When I change occurrence 1 of "Soccer practice" to "Training camp" applying to "all" scope
     Then the event "Training camp" appears on occurrence 3
-    And the event "Dentist" still appears on occurrence 2
+    And the event "Training camp" appears on occurrence 2
+    And the event "Dentist" no longer appears on occurrence 2
 
   Scenario: Editing all events from a later occurrence keeps the series on its original dates
     When I change occurrence 2 of "Soccer practice" to "Football training" applying to "all" scope
