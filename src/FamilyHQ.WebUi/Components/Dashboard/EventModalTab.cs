@@ -10,5 +10,8 @@ public enum EventModalTab
     Details,
 
     /// <summary>The recurrence picker.</summary>
-    Repeat
+    Repeat,
+
+    /// <summary>The reminder picker: which reminders Google Calendar applies to this event.</summary>
+    Reminders
 }

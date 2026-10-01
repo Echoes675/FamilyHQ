@@ -1,4 +1,6 @@
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Models;
+using FamilyHQ.Core.Validators;
 using FamilyHQ.WebUi.Components.Dashboard;
 using FluentAssertions;
 
@@ -198,5 +200,125 @@ public class EventModalLogicTests
         var b = Guid.NewGuid();
 
         EventModalLogic.MembersChanged([a, b], [a]).Should().BeTrue();
+    }
+
+    // --- What a save says about reminders -------------------------------------------------------
+    //
+    // The gate that keeps the Google Calendar app's reminders intact. One outbound body is shared by
+    // create, create-recurring and patch, and Google replaces the whole reminders object whenever the
+    // key is present — so a save that carries reminders nobody asked to change rewrites what somebody
+    // set on a phone. Null is the safe answer and has to be the answer for every untouched tab.
+
+    private static readonly EventReminder PopupTenMinutes = new(EventRemindersValidator.PopupMethod, 10);
+    private static readonly EventReminder EmailADayBefore = new(EventRemindersValidator.EmailMethod, 1440);
+
+    private static EventReminders CalendarDefault() => EventReminders.Explicit([PopupTenMinutes]);
+
+    private static ReminderPickerModel Picker(EventReminders? opened, bool isAllDay = false) =>
+        ReminderPickerModel.From(opened, CalendarDefault(), isAllDay);
+
+    [Fact]
+    public void RemindersToWrite_WhenTheEventFollowsTheCalendarAndNothingWasTouched_IsNull()
+    {
+        EventModalLogic.RemindersToWrite(Picker(EventReminders.InheritsCalendarDefault)).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenTheEventHasItsOwnRemindersAndNothingWasTouched_IsNull()
+    {
+        // The ordinary edit: a title changes, the Reminders tab is never opened. This is the case the
+        // whole feature is built around — the reminders belong to Google and must not be re-sent.
+        var picker = Picker(EventReminders.Explicit([PopupTenMinutes, EmailADayBefore]));
+
+        EventModalLogic.RemindersToWrite(picker).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenTheEventHasNoRemindersAndNothingWasTouched_IsNull()
+    {
+        EventModalLogic.RemindersToWrite(Picker(EventReminders.ExplicitlyNone)).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenTheEventsRemindersWereNeverSynced_IsNull()
+    {
+        // Nothing is known about this event's reminders yet, which is not the same as knowing it has
+        // none. Writing the tab's guess would replace whatever Google is actually holding.
+        EventModalLogic.RemindersToWrite(Picker(null)).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenAReminderWasAdded_CarriesTheCompleteSet()
+    {
+        var picker = Picker(EventReminders.Explicit([PopupTenMinutes]));
+        picker.TryAdd(EmailADayBefore).Should().BeTrue();
+
+        var written = EventModalLogic.RemindersToWrite(picker);
+
+        written.Should().NotBeNull();
+        // Complete, not a delta: Google replaces the overrides array, so the reminder that was
+        // already there has to be re-sent or it is deleted.
+        written!.SameAs(EventReminders.Explicit([PopupTenMinutes, EmailADayBefore])).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenTheLastReminderWasRemoved_CarriesTheExplicitlyNoneInstruction()
+    {
+        var picker = Picker(EventReminders.Explicit([PopupTenMinutes]));
+        picker.Remove(PopupTenMinutes).Should().BeTrue();
+
+        var written = EventModalLogic.RemindersToWrite(picker);
+
+        written.Should().NotBeNull();
+        written!.UseDefault.Should().BeFalse("asking for no reminders is not asking to follow the calendar");
+        written.Overrides.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenInheritanceWasSwitchedOff_CarriesTheDefaultsAsTheEventsOwn()
+    {
+        var picker = Picker(EventReminders.InheritsCalendarDefault);
+        picker.StopUsingCalendarDefault();
+
+        var written = EventModalLogic.RemindersToWrite(picker);
+
+        // The family chose to stop following the calendar. The values are the same, the instruction is
+        // not: the event now keeps these reminders when the calendar's own defaults are changed.
+        written.Should().NotBeNull();
+        written!.UseDefault.Should().BeFalse();
+        written.SameAs(EventReminders.Explicit([PopupTenMinutes])).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RemindersToWrite_WhenAnEditWasUndone_IsNull()
+    {
+        var picker = Picker(EventReminders.Explicit([PopupTenMinutes]));
+        picker.TryAdd(EmailADayBefore).Should().BeTrue();
+        picker.Remove(EmailADayBefore).Should().BeTrue();
+
+        // A visit that ends where it started is not a change, so the save stays silent about
+        // reminders rather than re-sending a set that is already Google's.
+        EventModalLogic.RemindersToWrite(picker).Should().BeNull();
+    }
+
+    [Fact]
+    public void RemindersToWrite_AfterTheAllDayToggleResetAnEventsOwnReminders_CarriesRevertToDefault()
+    {
+        // Switching All day discards the event's reminders and substitutes the all-day shape, as
+        // Google does, so the save has to say so — leaving the old timed offsets in place would keep
+        // reminders the event can no longer express.
+        var picker = Picker(EventReminders.Explicit([PopupTenMinutes]), isAllDay: true);
+        picker.UseCalendarDefault();
+
+        var written = EventModalLogic.RemindersToWrite(picker);
+
+        // Only what the kiosk SENDS is pinned here. What Google does with a revert-to-default
+        // instruction on an all-day event has not been observed: every all-day event seen so far reads
+        // back with the default materialised into explicit overrides rather than inherited, so it may
+        // materialise, or be refused. The preprod smoke suite records the real answer against the live
+        // API; asserting one here would only pin an assumption.
+        written.Should().NotBeNull();
+        written!.UseDefault.Should().BeTrue();
+        written.Overrides.Should().BeEmpty();
     }
 }

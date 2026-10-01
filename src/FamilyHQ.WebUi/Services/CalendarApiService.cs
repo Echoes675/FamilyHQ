@@ -17,7 +17,9 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var dtos = await response.Content.ReadFromJsonAsync<List<EventCalendarDto>>(cancellationToken: ct)
                    ?? new List<EventCalendarDto>();
 
-        return dtos.Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible)).ToList();
+        return dtos
+            .Select(c => new CalendarSummaryViewModel(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible, c.DefaultReminders))
+            .ToList();
     }
 
     public async Task UpdateCalendarSettingsAsync(Guid calendarId, bool isVisible, bool isShared, CancellationToken ct = default)
@@ -70,7 +72,8 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                         cal.Color,
                         allCalendars,
                         evtDto.IsRecurring,
-                        evtDto.RecurrenceRule));
+                        evtDto.RecurrenceRule,
+                        evtDto.Reminders));
                 }
             }
 
@@ -174,7 +177,8 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             primary?.Color,
             allCalendars,
             dto.IsRecurring,
-            dto.RecurrenceRule);
+            dto.RecurrenceRule,
+            dto.Reminders);
     }
 
     public async Task TriggerSyncAsync(CancellationToken ct = default)

@@ -59,7 +59,10 @@ public class CalendarsController : ControllerBase
         var calendars = await _calendarRepository.GetCalendarsAsync(ct);
         var dtos = calendars
             .OrderBy(c => c.DisplayOrder)
-            .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible));
+            // This is the one response that carries a calendar's default reminders: the event modal
+            // reads them from here to show what inheriting does and to pre-fill them when the family
+            // stops inheriting.
+            .Select(c => new EventCalendarDto(c.Id, c.DisplayName, c.Color, c.IsShared, c.IsVisible, c.DefaultReminders));
         return Ok(dtos);
     }
 
@@ -120,7 +123,11 @@ public class CalendarsController : ControllerBase
                 // FHQ-18: carry recurrence so the grid can mark the event and the edit modal can
                 // pre-populate the picker and route Save/Delete through the scope prompt.
                 evt.IsRecurring,
-                evt.RecurrenceRule);
+                evt.RecurrenceRule,
+                // The modal opens from the grid's own event, so its reminders have to travel with it.
+                // Null included: an event whose reminders have never synced is not an event without
+                // reminders.
+                evt.Reminders);
 
             var current = evt.Start.Date;
             var last    = evt.End.AddTicks(-1).Date;

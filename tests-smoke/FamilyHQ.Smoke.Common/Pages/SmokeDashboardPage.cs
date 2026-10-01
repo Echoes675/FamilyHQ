@@ -184,6 +184,14 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
             await ActivateCalendarChipAsync(calendarName);
         }
 
+        // After the calendars, never before: an event's reminders belong to the calendar it lands on, and
+        // the modal re-reads that calendar's own reminders into the tab while the tab is still untouched.
+        // Choosing reminders first would have them replaced by the ones the chosen calendar carries.
+        if (draft.Reminders is not null)
+        {
+            await SetOwnRemindersAsync(draft.Reminders);
+        }
+
         if (draft.Recurrence is not null)
         {
             await SetBoundedRepeatAsync(draft.Recurrence);
@@ -257,7 +265,196 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
             "PUT", $"switch the repeat off on '{titleFragment}'", SmokeRecurrenceScope.AllEvents);
     }
 
+    // ── The Reminders tab ───────────────────────────────────────────────────────
+    // Rows are addressed BY VALUE — by the method and the offset they carry as attributes — and never by
+    // index. Google returns an event's overrides in an order of its own choosing, so the row in position
+    // one is not the reminder a scenario is talking about.
+
+    /// <summary>
+    /// Reads back the reminders the Reminders tab is showing for an event, without changing anything.
+    /// <para>
+    /// Opening the tab is deliberately part of the golden-rule flow as well: merely looking at it must
+    /// leave the save saying nothing about reminders, and a scenario that read them and then renamed the
+    /// event proves that as a side effect.
+    /// </para>
+    /// </summary>
+    /// <param name="expectedCount">
+    /// How many rows the scenario expects, used only to wait for the tab to finish rendering. A count that
+    /// never arrives is <b>not</b> raised here: the rows are read and returned anyway, so the caller's own
+    /// comparison names which reminder is missing instead of leaving a bare locator timeout behind.
+    /// </param>
+    public async Task<IReadOnlyList<SmokeReminder>> ReadDisplayedRemindersAsync(
+        string titleFragment, DateOnly date, int expectedCount)
+    {
+        await OpenEventAsync(titleFragment, date);
+        await ShowTabAsync("reminders");
+
+        try
+        {
+            await Assertions.Expect(ReminderRows).ToHaveCountAsync(expectedCount);
+        }
+        catch (PlaywrightException)
+        {
+            // Swallowed on purpose — see expectedCount.
+        }
+
+        var displayed = new List<SmokeReminder>();
+        foreach (var row in await ReminderRows.AllAsync())
+        {
+            var method = await row.GetAttributeAsync("data-reminder-method");
+            var minutes = await row.GetAttributeAsync("data-reminder-minutes");
+
+            if (method is null
+                || !int.TryParse(minutes, CultureInfo.InvariantCulture, out var offsetMinutes))
+            {
+                throw new InvalidOperationException(
+                    "A reminder row on the kiosk carried no method or no offset, so the tab cannot be "
+                    + $"read by value (method='{method}', minutes='{minutes}'). The attributes are how "
+                    + "both test suites address a row; addressing one by position would silently compare "
+                    + "the wrong reminder.");
+            }
+
+            displayed.Add(SmokeReminder.FromMinutes(method, offsetMinutes));
+        }
+
+        await CloseModalWithoutSavingAsync();
+        return displayed;
+    }
+
+    /// <summary>
+    /// Hands an event's reminders back to its calendar's own — the state Google records as
+    /// <c>useDefault</c> — and saves.
+    /// </summary>
+    public async Task UseCalendarDefaultRemindersAsync(string titleFragment, DateOnly date)
+    {
+        await OpenEventAsync(titleFragment, date);
+        await SetReminderInheritanceAsync(true);
+        await SaveAndAwaitWriteAsync(
+            "PUT", $"hand the reminders on '{titleFragment}' back to its calendar");
+    }
+
+    /// <summary>
+    /// Switches an existing event to all day and saves, touching nothing else.
+    /// <para>
+    /// This is the one path that writes reminders without the Reminders tab ever being opened: Google
+    /// discards an event's reminders when it becomes all-day rather than converting them, the kiosk
+    /// mirrors that, and the save therefore also asks for the calendar's own reminders.
+    /// </para>
+    /// </summary>
+    public async Task SwitchToAllDayAsync(string titleFragment, DateOnly date)
+    {
+        await OpenEventAsync(titleFragment, date);
+        await ShowTabAsync("details");
+        await SetAllDayAsync(true);
+        await SaveAndAwaitWriteAsync("PUT", $"switch '{titleFragment}' to all day");
+    }
+
     // ── Internals ───────────────────────────────────────────────────────────────
+
+    private ILocator RemindersSection => EventModal.GetByTestId("reminders-section");
+
+    private ILocator ReminderUseDefaultToggle => RemindersSection.GetByTestId("reminder-use-default-toggle");
+
+    private ILocator ReminderRows => RemindersSection.GetByTestId("reminder-item");
+
+    private ILocator ReminderAmountInput => RemindersSection.GetByTestId("reminder-amount");
+
+    private ILocator ReminderAddButton => RemindersSection.GetByTestId("reminder-add-btn");
+
+    private ILocator ReminderUnitPill(SmokeReminderUnit unit) =>
+        RemindersSection.GetByTestId($"reminder-unit-{SmokeReminder.UnitTestIdSuffix(unit)}");
+
+    private ILocator ReminderMethodPill(string method) =>
+        RemindersSection.GetByTestId($"reminder-method-{method}");
+
+    private ILocator ReminderRow(string method, int minutes) => RemindersSection.Locator(
+        $"[data-testid='reminder-item'][data-reminder-method='{method}'][data-reminder-minutes='{minutes}']");
+
+    /// <summary>
+    /// Leaves the open modal's Reminders tab holding exactly <paramref name="reminders"/>.
+    /// <para>
+    /// Switching the inheritance toggle off copies the calendar's own reminders in as editable rows, as
+    /// the Google Calendar app pre-fills them, so they are removed before the scenario's own are added.
+    /// Otherwise the event would end up carrying the calendar's reminders as well, and a set comparison
+    /// against Google would be asserting whatever that calendar happens to be configured with today.
+    /// </para>
+    /// </summary>
+    private async Task SetOwnRemindersAsync(IReadOnlyList<SmokeReminder> reminders)
+    {
+        await SetReminderInheritanceAsync(false);
+
+        // Always the first remaining row, then wait for the count to drop, so the next click cannot land
+        // on an element the re-render has already replaced.
+        for (var remaining = await ReminderRows.CountAsync(); remaining > 0; remaining--)
+        {
+            await ReminderRows.First.GetByTestId("reminder-remove").ClickAsync();
+            await Assertions.Expect(ReminderRows).ToHaveCountAsync(remaining - 1);
+        }
+
+        foreach (var reminder in reminders)
+        {
+            await AddReminderAsync(reminder);
+        }
+    }
+
+    private async Task SetReminderInheritanceAsync(bool follow)
+    {
+        await ShowTabAsync("reminders");
+
+        var wanted = follow ? "true" : "false";
+        if (await ReminderUseDefaultToggle.GetAttributeAsync("aria-pressed") != wanted)
+        {
+            await ReminderUseDefaultToggle.ClickAsync();
+        }
+
+        await Assertions.Expect(ReminderUseDefaultToggle).ToHaveAttributeAsync("aria-pressed", wanted);
+    }
+
+    /// <summary>
+    /// Adds one reminder through the picker's own controls, in the order the picker requires: the unit
+    /// first, because changing it re-clamps the amount and would otherwise undo a value already typed.
+    /// </summary>
+    private async Task AddReminderAsync(SmokeReminder reminder)
+    {
+        await PressPillAsync(ReminderUnitPill(reminder.Unit));
+        await PressPillAsync(ReminderMethodPill(reminder.Method));
+
+        var wanted = reminder.Amount.ToString(CultureInfo.InvariantCulture);
+        await CommitFieldAsync(ReminderAmountInput, wanted);
+
+        // The picker rebuilds this field from its own model whenever it corrects a typed number, so
+        // reading it back is the model's answer rather than the keystrokes'. Same distinction as the time
+        // picker, and the same reason: a value that sat in the DOM without committing would fail later,
+        // somewhere else, as a reminder Google never received.
+        var accepted = await ReminderAmountInput.InputValueAsync();
+        if (!string.Equals(accepted, wanted, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"The reminder picker did not accept {wanted} {reminder.Unit} as an offset; the field "
+                + $"reads '{accepted}'. Either the value is outside what Google allows, or it never "
+                + "committed to the component's model. Nothing downstream of this can be trusted.");
+        }
+
+        await ReminderAddButton.ClickAsync();
+        await Assertions.Expect(ReminderRow(reminder.Method, reminder.Minutes)).ToBeVisibleAsync();
+    }
+
+    /// <summary>
+    /// Closes the modal, discarding whatever it is showing.
+    /// <para>
+    /// Addressed by its accessible name rather than by a <c>data-testid</c>, which it has not got. That is
+    /// still identity and not user-facing copy — the control renders no text at all — so it does not move
+    /// when the wording elsewhere in the modal does.
+    /// </para>
+    /// </summary>
+    private async Task CloseModalWithoutSavingAsync()
+    {
+        await EventModal
+            .GetByRole(AriaRole.Button, new LocatorGetByRoleOptions { Name = "Close", Exact = true })
+            .ClickAsync();
+        await EventModal.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden });
+        await WaitForCalendarVisibleAsync();
+    }
 
     private async Task DeleteThroughModalAsync(
         string titleFragment, DateOnly date, SmokeRecurrenceScope? scope)
