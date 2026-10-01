@@ -62,11 +62,12 @@ public class OutboundZoneGuardTests
     /// write to the event's own zone when it has one. Matched on a RECEIVER call (<c>x.Method(</c>) so
     /// the interface and client declarations of the same names are not mistaken for call sites.
     /// <para>
-    /// <c>PatchEventFieldsPreservingTimesAsync</c> (FHQ-172) sends no start/end at all, so the zone
-    /// it would anchor them to is moot for THAT write — but it is listed anyway. The construction it
-    /// receives is the same one the ordinary patch receives on the resolvable path, and a guard that
-    /// exempted it would stop requiring the zone at that construction site the moment the two calls
-    /// were ever separated.
+    /// <c>PatchEventFieldsPreservingTimesAsync</c> (FHQ-172) sends no start/end at all, so no
+    /// <c>timeZone</c> leaves the process on that write and the zone is moot for it — but it is
+    /// listed anyway, and it now receives a construction of its own rather than sharing the ordinary
+    /// patch's. Exempting it would stop requiring a zone at that site, and the day anyone gives that
+    /// write a start to send, the omission would be invisible and the series would be re-anchored to
+    /// the family's configured zone. The requirement costs nothing and survives the change.
     /// </para>
     /// </summary>
     private static readonly Regex WriteCalls =
