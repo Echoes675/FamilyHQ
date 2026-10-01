@@ -14,6 +14,67 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 17. "Disabling weather hides the weather strip" — the Saved-badge net fires because the location save returns silently on an unflushed bind (2026-10-01)
+
+**Open.** Root cause identified; the fix is its own ticket, because it is a product defect rather than a
+test problem.
+**Component:** `src/FamilyHQ.WebUi/Components/Settings/SettingsLocationTab.razor` →
+`SaveLocationAsync`; surfaced by `tests-e2e/FamilyHQ.E2E.Steps/WeatherSteps.cs` →
+`GivenTheUserHasASavedLocation`.
+**First seen:** Deploy-Dev #804 (2026-10-01), on a reminders feature branch.
+**Occurrences:** #804 only. #793–#803 all passed, including four runs on byte-identical application
+code (#800, #801, #802 on one image and #803 on another), so it is rare rather than new.
+
+**Symptom:**
+```
+Microsoft.Playwright.PlaywrightException : Locator expected to have text 'Saved'
+  -> error: Locator expected to have text 'Saved'
+Failed  Disabling weather hides the weather strip [29 s]
+```
+
+**Not to be confused with [issue 1](#1-weather-refresh-returns-200-but-current-returns-204)**, which is
+the same scenario with a different failure (`Weather API returned 204 after refresh`) and was resolved
+in April 2026. This one fails earlier, in the `Given`, and never reaches the refresh.
+
+**What is actually happening.** The assertion that failed is the *diagnostic net* the step's own comment
+describes — it was added deliberately to catch a known race in which Blazor's `@bind:event="oninput"`
+has not flushed `_placeNameInput` before the click handler runs. The net did its job: it failed loudly
+in the `Given` instead of letting the scenario fail downstream with an obscure refresh error.
+
+What it caught is this, in the product:
+
+```csharp
+private async Task SaveLocationAsync()
+{
+    if (string.IsNullOrWhiteSpace(_placeNameInput)) return;   // <- silent
+```
+
+An unflushed bind means an empty `_placeNameInput`, and the handler then returns having done
+**nothing**: no POST, no error, no state change, and the "Saved" badge is never rendered because
+`_locationSetting` stays as it was. The button is not disabled for empty input either, so a *user* who
+taps Save before the input has registered gets the same silence.
+
+So there are two defects stacked, and only the outer one has a mitigation:
+
+| | |
+|---|---|
+| **Product** | `SaveLocationAsync` fails silently on empty input, against the repo's fail-fast standard |
+| **Test** | `BlurAsync()` before the click is a test-side patch for a product-side silence; it narrows the window without closing it |
+
+**Why it is almost certainly not the branch it surfaced on.** The reminders branch's only CSS change is
+scoped `.modal-tabs .view-tab`, a descendant selector that cannot match outside the event modal, and
+its other changes are the event modal, the event/calendar DTOs and view models. Nothing it touches is
+reachable from the Settings location tab.
+
+**Root-cause fix (not done here):** make the empty-input path fail visibly rather than silently — either
+disable the button until the field has content, or set `_saveError` and keep the handler loud. Both make
+the race observable instead of a no-op, which is what the fail-fast standard asks for. The test's
+`BlurAsync()` can then stay as belt-and-braces or go.
+
+**If the symptom returns before the fix lands:** it is this, not a new problem. Re-run the pipeline; the
+failure is rare. Do **not** extend the 15s assertion timeout — the assertion is not slow, the save never
+happened.
+
 ### 16. Nine agenda scenarios fail on the last day of every month — a relative seed date outside the rendered month (2026-09-30)
 
 **Status:** root cause **confirmed by a red→green revert on a month-end day** (see below); fix landed
