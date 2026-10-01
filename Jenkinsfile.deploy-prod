@@ -14,6 +14,14 @@ pipeline {
         REGISTRY = 'registry.alphaepsilon.co.uk'
         REGISTRY_URL = "https://${REGISTRY}"
         DEPLOY_HOST = 'alphaepsilon.co.uk'
+        // The host's SSH port, supplied by the Jenkins global PROD_SSH_PORT and defaulting to 22.
+        //
+        // It lives in Jenkins rather than here for two reasons. The port is the only thing standing
+        // between the host and the scanning traffic that exhausts sshd's MaxStartups and makes deploys
+        // fail at the banner exchange, so committing it would give most of that back. And because the
+        // default is 22, this pipeline behaves exactly as before until the global is set — the cutover
+        // is a Jenkins configuration change, not a release, and nothing has to land in lockstep.
+        SSH_PORT = "${env.PROD_SSH_PORT ?: '22'}"
         DEPLOY_PATH = '/home/docker_user/apps/familyhq'
         WEBUI_BASE_URL = 'https://familyhq.alphaepsilon.co.uk'
         WEBAPI_BASE_URL = 'https://familyhq.api.alphaepsilon.co.uk'
@@ -165,11 +173,11 @@ pipeline {
                 ]) {
                     sshagent(credentials: ['jenkins_docker_prod']) {
                         sh """
-                            ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
-                            scp docker-compose.yml docker-compose.prod.yml docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/
-                            scp \$ENV_FILE docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/.env
-                            scp \$DP_CERT docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
-                            ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'chmod 640 ${DEPLOY_PATH}/.env && chmod 640 ${DEPLOY_PATH}/dataprotection.pfx'
+                            ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'mkdir -p ${DEPLOY_PATH}'
+                            scp -P ${SSH_PORT} docker-compose.yml docker-compose.prod.yml docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/
+                            scp -P ${SSH_PORT} \$ENV_FILE docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/.env
+                            scp -P ${SSH_PORT} \$DP_CERT docker_user@${DEPLOY_HOST}:${DEPLOY_PATH}/dataprotection.pfx
+                            ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} 'chmod 640 ${DEPLOY_PATH}/.env && chmod 640 ${DEPLOY_PATH}/dataprotection.pfx'
                         """
                     }
                 }
@@ -181,7 +189,7 @@ pipeline {
                 echo '======= Deploy ======='
                 sshagent(credentials: ['jenkins_docker_prod']) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
+                        ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no docker_user@${DEPLOY_HOST} '
                             cd ${DEPLOY_PATH} &&
                             export IMAGE_TAG=${env.RESOLVED_IMAGE_TAG} &&
                             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull &&
