@@ -2,6 +2,7 @@
 @using FamilyHQ.Core.Calendar.Recurrence
 @using FamilyHQ.Core.DTOs
 @using FamilyHQ.Core.Exceptions
+@using FamilyHQ.Core.Models
 @using FamilyHQ.WebUi.Services
 @inject ICalendarApiService CalendarApi
 @inject Microsoft.Extensions.Logging.ILogger<EventModal> Logger
@@ -26,6 +27,7 @@
                             // being re-evaluated (2x and 3x respectively) by the markup below for the
                             // same pure inputs.
                             var repeatBadge = EventModalTabsLogic.RepeatBadge(_recurrenceRule);
+                            var remindersBadge = EventModalTabsLogic.RemindersBadge(_reminderPicker);
                             var saveHint = EventModalTabsLogic.SaveBlockedHint(_recurrenceComplete);
                         }
                         @if (recurrenceSummary is not null)
@@ -74,6 +76,20 @@
                                   aria-label="Repeat settings are incomplete">!</span>
                         }
                     </button>
+                    <button type="button"
+                            role="tab"
+                            id="event-modal-tab-reminders"
+                            data-testid="event-modal-tab-reminders"
+                            class="@TabClass(_activeTab == EventModalTab.Reminders)"
+                            aria-selected="@AriaBool(_activeTab == EventModalTab.Reminders)"
+                            aria-controls="event-modal-panel-reminders"
+                            @onclick="() => _activeTab = EventModalTab.Reminders">
+                        Reminders
+                        @if (remindersBadge is not null)
+                        {
+                            <span class="tab-badge" data-testid="event-modal-tab-reminders-badge">@remindersBadge</span>
+                        }
+                    </button>
                 </div>
                 <div class="modal-body modal-tabpanels">
                     <div id="event-modal-panel-details"
@@ -87,7 +103,7 @@
                             <CalendarChipSelector
                                 AllCalendars="SelectableCalendars"
                                 SelectedCalendarIds="_selectedCalendarIds"
-                                SelectedCalendarIdsChanged="ids => { _selectedCalendarIds = ids; }"
+                                SelectedCalendarIdsChanged="OnSelectedCalendarsChanged"
                                 EventId="@(_isEditingEvent ? (Guid?)_eventModel.Id : null)"
                                 CalendarApi="CalendarApi" />
                             @if (_selectedCalendarIds.Count == 0)
@@ -161,6 +177,20 @@
                                               SelectionCompleteChanged="v => _recurrenceComplete = v" />
                         </div>
                     </div>
+                    <div id="event-modal-panel-reminders"
+                         role="tabpanel"
+                         class="modal-tabpanel"
+                         data-testid="event-modal-panel-reminders"
+                         aria-labelledby="event-modal-tab-reminders"
+                         hidden="@(_activeTab != EventModalTab.Reminders)">
+                        <div class="mb-3" data-testid="reminders-section">
+                            <label class="form-label">Reminders</label>
+                            <ReminderPicker Model="_reminderPicker"
+                                            IsNewEvent="@(!_isEditingEvent)"
+                                            ShowAllDayResetNotice="_remindersResetByAllDay"
+                                            Changed="StateHasChanged" />
+                        </div>
+                    </div>
                 </div>
                 @if (!string.IsNullOrEmpty(_modalError) || saveHint is not null)
                 {
@@ -210,6 +240,7 @@
 <RecurrenceScopePrompt IsVisible="_showScopePrompt"
                        IsDelete="_scopePromptIsDelete"
                        MemberChangePending="_memberChangePending"
+                       ReminderChangePending="_reminderChangePending"
                        OnConfirm="OnScopeConfirmed"
                        OnCancel="OnScopeCancelled" />
 
@@ -248,6 +279,21 @@
     // a tab switch would silently discard what the user had chosen.
     private EventModalTab _activeTab = EventModalTab.Details;
 
+    // The Reminders tab's state, built ONCE for the opened event — never per render. The model
+    // measures whether the tab differs from how it opened, and that is what decides whether a save
+    // sends reminders at all; rebuilding it on a render would reset the comparison to whatever the
+    // last render happened to see. It is rebuilt deliberately in three places, all of which change
+    // what the tab is describing: the modal opening, the calendar selection changing while nothing
+    // has been touched, and All day being switched.
+    private ReminderPickerModel _reminderPicker = ReminderPickerModel.From(null, null, isAllDay: false);
+
+    // The reminders the modal opened with, so every rebuild measures against the same starting point
+    // rather than against the previous rebuild.
+    private EventReminders? _openedReminders;
+
+    // Whether to tell the family that switching All day started their reminders again.
+    private bool _remindersResetByAllDay;
+
     private static string TabClass(bool isActive) => isActive ? "view-tab active" : "view-tab";
 
     private static string AriaBool(bool value) => value ? "true" : "false";
@@ -263,6 +309,10 @@
     private bool _showScopePrompt;
     private bool _scopePromptIsDelete;
     private bool _memberChangePending;
+    // Whether the pending save will write reminders, which is what the scope prompt warns about at
+    // the whole-series scope: Google replaces every occurrence's reminders when the master is
+    // patched, including an occurrence whose reminders were set on their own.
+    private bool _reminderChangePending;
     // The effective member ids resolved during Save, captured so the scope-confirm callback
     // (which fires after the prompt) can reuse them without re-deriving from the description.
     private List<Guid> _pendingMemberIds = new();
@@ -384,6 +434,68 @@
             _eventModel.Start = ToModelInstant(start);
             _eventModel.End = ToModelInstant(end);
         }
+
+        // Google does not convert an event's reminders when All day changes — it discards them and
+        // substitutes the shape the new kind of event uses, because an all-day reminder is a day and
+        // a time while a timed one is an offset from the start. The kiosk mirrors that, and the tab
+        // says so: the alternative is silently rewriting what the family chose. The all-day setting
+        // Google would apply instead is one its API does not expose, so the choice goes back to
+        // Google rather than the kiosk inventing a value.
+        var hadItsOwnReminders = !_reminderPicker.FollowsCalendarDefault;
+        RebuildReminderPicker(discardOwnReminders: true);
+        _remindersResetByAllDay = _remindersResetByAllDay || hadItsOwnReminders;
+    }
+
+    /// <summary>
+    /// The default reminders of the calendar this event will actually live on. Reminders belong to
+    /// one Google calendar, and an event lands on the single chosen member's calendar or, when
+    /// several members are chosen, on the shared one — the same routing the server applies. Null when
+    /// no calendar-list sync has reported them, which the tab states rather than showing an empty
+    /// list as though it were the calendar's answer.
+    /// </summary>
+    private EventReminders? OwningCalendarDefaults()
+    {
+        CalendarSummaryViewModel? owner = _selectedCalendarIds.Count switch
+        {
+            1 => Calendars.FirstOrDefault(c => c.Id == _selectedCalendarIds.First()),
+            > 1 => Calendars.FirstOrDefault(c => c.IsShared),
+            _ => null
+        };
+
+        return owner?.DefaultReminders;
+    }
+
+    /// <summary>
+    /// Rebuilds the Reminders tab for what the event now is. <paramref name="discardOwnReminders"/>
+    /// hands the choice back to Google while still measuring against what the event opened with, so
+    /// the discard counts as a change rather than disappearing.
+    /// </summary>
+    private void RebuildReminderPicker(bool discardOwnReminders = false)
+    {
+        _reminderPicker = ReminderPickerModel.From(
+            _openedReminders, OwningCalendarDefaults(), _eventModel.IsAllDay);
+
+        if (discardOwnReminders)
+        {
+            _reminderPicker.UseCalendarDefault();
+        }
+    }
+
+    /// <summary>
+    /// Which calendar an event lands on decides which default reminders apply to it, so a change of
+    /// members can change them. They are only re-read while the tab is untouched and still
+    /// inheriting: there is nothing to lose then, and it re-opens on the state it already had.
+    /// Re-reading after an edit would throw away the family's reminders and reset the comparison that
+    /// decides whether they are sent.
+    /// </summary>
+    private void OnSelectedCalendarsChanged(HashSet<Guid> ids)
+    {
+        _selectedCalendarIds = ids;
+
+        if (_reminderPicker.FollowsCalendarDefault && !_reminderPicker.HasChanged)
+        {
+            RebuildReminderPicker();
+        }
     }
 
     private IEnumerable<Guid> DetectMemberIdsInDescription(string? description)
@@ -438,6 +550,11 @@
         _recurrenceComplete = true;
         _wasRecurring = false;
         _originalMemberIds = Array.Empty<Guid>();
+        // A new event carries no reminders of its own: Google applies the calendar's defaults itself,
+        // and the tab shows what those are rather than the kiosk choosing a value of its own.
+        _openedReminders = null;
+        _remindersResetByAllDay = false;
+        RebuildReminderPicker();
         _activeTab = EventModalTab.Details;
         _modalError = null;
         _showEventModal = true;
@@ -469,6 +586,11 @@
         _recurrenceComplete = true;
         _wasRecurring = evt.IsRecurring;
         _originalMemberIds = evt.AllCalendars.Select(c => c.Id).ToList();
+        // Exactly what Google returned, in all four of its states — including "never synced", which
+        // is not "no reminders". The tab has no other source for them.
+        _openedReminders = evt.Reminders;
+        _remindersResetByAllDay = false;
+        RebuildReminderPicker();
         _activeTab = EventModalTab.Details;
         _modalError = null;
         _showEventModal = true;
@@ -488,8 +610,12 @@
         _originalMemberIds = Array.Empty<Guid>();
         _pendingMemberIds = new();
         _memberChangePending = false;
+        _reminderChangePending = false;
         _timedStartTimeOfDay = null;
         _timedEndTimeOfDay = null;
+        _openedReminders = null;
+        _remindersResetByAllDay = false;
+        RebuildReminderPicker();
     }
 
     private async Task SaveEvent()
@@ -541,10 +667,16 @@
         if (action == EventSaveAction.PromptScope)
         {
             _memberChangePending = EventModalLogic.MembersChanged(_originalMemberIds, _pendingMemberIds);
+            _reminderChangePending = _reminderPicker.HasChanged;
             _scopePromptIsDelete = false;
             _showScopePrompt = true;
             return;
         }
+
+        // Read once, so every branch below sends the same answer, and read here rather than inside a
+        // request so the gate is impossible to miss: null means the save says NOTHING about reminders
+        // and Google's own copy — including a set made on a phone — survives untouched.
+        var remindersToWrite = EventModalLogic.RemindersToWrite(_reminderPicker);
 
         _isSaving = true;
         try
@@ -563,7 +695,8 @@
                         _eventModel.IsAllDay,
                         _eventModel.Location,
                         _eventModel.Description,
-                        _recurrenceRule));
+                        _recurrenceRule,
+                        Reminders: remindersToWrite));
                     break;
 
                 case EventSaveAction.Update:
@@ -576,13 +709,21 @@
                         _eventModel.IsAllDay,
                         _eventModel.Location,
                         _eventModel.Description,
-                        _recurrenceRule));
+                        _recurrenceRule,
+                        Reminders: remindersToWrite));
                     break;
 
                 default:
                     throw new InvalidOperationException($"Unhandled immediate save action: {action}.");
             }
 
+            // What the tab shows next comes from the server, never from what was just sent. Google
+            // answers 200 and then rewrites a reminder silently — it clamps an offset, collapses a
+            // duplicate, drops a method it does not know, and materialises the calendar's default onto
+            // an all-day event rather than letting it inherit — so the response is the only honest
+            // answer. Closing discards the tab's state and OnSaved re-reads the grid from the API,
+            // whose events carry the reminders as stored; re-opening the event therefore shows what
+            // Google returned. Nothing here may keep the optimistic set alive across that.
             Close();
             await OnSaved.InvokeAsync();
         }
@@ -603,8 +744,9 @@
 
         if (EventModalLogic.DecideDelete(_wasRecurring) == EventDeleteAction.PromptScope)
         {
-            // A delete never changes members, so the prompt is never member-gated.
+            // A delete never changes members, and it writes no reminders, so neither warning applies.
             _memberChangePending = false;
+            _reminderChangePending = false;
             _scopePromptIsDelete = true;
             _showScopePrompt = true;
             return;
@@ -654,7 +796,11 @@
                 _eventModel.Description,
                 // Carry the rule when editing the series; when clearing, leave it null and set the flag.
                 RecurrenceRule: isClearing ? null : _recurrenceRule,
-                ClearRecurrence: recurringAction == RecurringSaveAction.ClearRecurrence);
+                ClearRecurrence: recurringAction == RecurringSaveAction.ClearRecurrence,
+                // Same gate as the immediate save path: a series edit that did not touch the
+                // Reminders tab says nothing about reminders, so collapsing a series or renaming one
+                // leaves the family's own reminders — and any single occurrence's — alone.
+                Reminders: EventModalLogic.RemindersToWrite(_reminderPicker));
 
             if (recurringAction == RecurringSaveAction.ClearRecurrence)
             {
@@ -668,6 +814,10 @@
                     _eventModel.Id, updateReq, EventModalLogic.EffectiveScope(scope, isClearing));
             }
 
+            // Re-read rather than patch the grid in place. A whole-series reminder change reaches
+            // occurrences this modal never touched — Google replaces theirs when the master is
+            // patched, which is what the prompt warned about — so only a fresh read shows the series
+            // as it now is.
             Close();
             await OnSaved.InvokeAsync();
         }
@@ -687,6 +837,7 @@
     {
         _showScopePrompt = false;
         _memberChangePending = false;
+        _reminderChangePending = false;
     }
 
     private class EventFormModel

@@ -19,6 +19,14 @@ namespace FamilyHQ.Smoke.Common.Pages;
 /// <c>date</c> pair rather than a <c>dateTime</c> pair — a different set of semantics, including an
 /// exclusive end date, which is why it is a flag on the draft rather than a pair of sentinel times.
 /// </param>
+/// <param name="Reminders">
+/// Reminders of the event's own, or null to leave the Reminders tab alone.
+/// <para>
+/// Null is not "no reminders": it means the tab is never opened, so the create says nothing about
+/// reminders and Google applies whatever the owning calendar's own settings say. That distinction is the
+/// whole point of the tab's opt-in write, so it is a nullable list rather than one that defaults to empty.
+/// </para>
+/// </param>
 public sealed record SmokeEventDraft(
     string Title,
     string Description,
@@ -28,4 +36,5 @@ public sealed record SmokeEventDraft(
     TimeOnly EndTime,
     string? Location = null,
     SmokeRecurrence? Recurrence = null,
-    bool IsAllDay = false);
+    bool IsAllDay = false,
+    IReadOnlyList<SmokeReminder>? Reminders = null);

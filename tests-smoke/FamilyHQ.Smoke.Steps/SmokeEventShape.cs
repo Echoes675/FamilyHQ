@@ -87,6 +87,11 @@ public static class SmokeEventShape
     /// colour and an explicit reminder. Every one of those is a field the golden-rule scenario expects to
     /// find untouched after the kiosk edits something else.
     /// </summary>
+    /// <param name="reminderOverrides">
+    /// The exact reminder set to put on the event, for a scenario whose subject is the reminders
+    /// themselves. When null the single <paramref name="reminderMinutes"/> notification is used, which is
+    /// all the golden-rule probe needs.
+    /// </param>
     public static GoogleEventDraft PhoneStyleDraft(
         SmokeCorrelation correlation,
         string baseTitle,
@@ -94,7 +99,8 @@ public static class SmokeEventShape
         DateOnly date,
         string? colorId = "5",
         int reminderMinutes = 45,
-        IReadOnlyList<string>? recurrence = null) =>
+        IReadOnlyList<string>? recurrence = null,
+        IReadOnlyList<GoogleEventReminderOverride>? reminderOverrides = null) =>
         new(
             Summary: correlation.Title(baseTitle),
             Start: GoogleBoundary(date, StartTime),
@@ -107,7 +113,8 @@ public static class SmokeEventShape
             Recurrence: recurrence,
             Reminders: new GoogleEventReminders(
                 UseDefault: false,
-                Overrides: [new GoogleEventReminderOverride("popup", reminderMinutes)]));
+                Overrides: reminderOverrides
+                           ?? [new GoogleEventReminderOverride("popup", reminderMinutes)]));
 
     /// <summary>
     /// The same, for a single-day all-day event: a bare start date and Google's exclusive end date, with

@@ -69,7 +69,8 @@ Feature: Weather Integration
     When I wait for weather data to load
     And I switch to the Agenda View tab
     Then the agenda row for "today" shows weather temperatures
-    And the agenda row for "tomorrow" shows weather temperatures
+    When I navigate the agenda to show "tomorrow"
+    Then the agenda row for "tomorrow" shows weather temperatures
 
   Scenario: Day view shows hourly temperatures
     Given hourly weather data is seeded for "today":

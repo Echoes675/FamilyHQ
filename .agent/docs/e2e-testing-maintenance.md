@@ -349,9 +349,9 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 
 ### Recurring events (FHQ-18.11) — 6 feature files under `WebUi/DashboardCalendarViewer/`
 
-`RecurringEventsDisplay`, `RecurringEventsCreate`, `RecurringEventsEdit`, `RecurringEventsDelete`, `RecurringEventsMembers`, `RecurringEventsEchoGuard` — cover ingest + ↻ indicator/subtitle, native create + custom weekday + toggle-off, the three edit scopes (incl. exception preservation), the three delete scopes, multi-member series + 1↔N migration + non-All member refusal, and the self-echo guard (one outbound write per recurring write).
+`RecurringEventsDisplay`, `RecurringEventsCreate`, `RecurringEventsEdit`, `RecurringEventsDelete`, `RecurringEventsMembers`, `RecurringEventsEchoGuard` — cover ingest + ↻ indicator/subtitle, native create + custom weekday + toggle-off, the three edit scopes (incl. what an all-events rename does to an existing exception), the three delete scopes, multi-member series + 1↔N migration + non-All member refusal, and the self-echo guard (one outbound write per recurring write).
 
-**Simulator recurrence emulation** (`tools/FamilyHQ.Simulator`): the Simulator emulates Google's recurring model — a seeded master with an RRULE expands into instances for `events.list?singleEvents=true` (compound ids `{master}_{stamp}`, `recurringEventId`, content-hash), `events.get(master)` returns the `recurrence` array, and `events.insert/patch/delete` honour recurrence (toggle on/off, instance exception overrides, instance cancellations). Expansion is bounded to a `now-2mo..now+12mo` horizon when the caller omits `timeMin/timeMax` (the app's incremental sync does) — an unbounded series would otherwise expand to the engine cap and hang the sync.
+**Simulator recurrence emulation** (`tools/FamilyHQ.Simulator`): the Simulator emulates Google's recurring model — a seeded master with an RRULE expands into instances for `events.list?singleEvents=true` (compound ids `{master}_{stamp}`, `recurringEventId`, content-hash), `events.get(master)` returns the `recurrence` array, and `events.insert/patch/delete` honour recurrence (toggle on/off, instance exception overrides, instance cancellations). Renaming a master carries the new title onto that series' exceptions, because that is what real Google does — see "A series rename overwrites its exceptions' titles" in `simulator-external-dependencies.md` before expecting an override to keep its own title. Expansion is bounded to a `now-2mo..now+12mo` horizon when the caller omits `timeMin/timeMax` (the app's incremental sync does) — an unbounded series would otherwise expand to the engine cap and hang the sync.
 
 **Gotchas learned the hard way (heed for any recurring/E2E work):**
 - **Reqnroll keyword matching is type-sensitive** — a `[When]` binding does NOT match a `Given` step; use the binding's keyword or `[StepDefinition]`.
@@ -359,6 +359,62 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 - **`RecurrenceRuleBuilder.Describe` appends end clauses** (", N times" / ", until …") — assert the subtitle CONTAINS the pattern.
 - **Any new `SimulatedEvent` column needs a Simulator EF migration** (the Simulator `Migrate()`s on startup).
 - **Scope every between-scenario backdoor reset to the scenario's isolated user** — a global reset races concurrent scenarios (see Intermittent Issues #3 and #5).
+
+### Event reminders — `EventReminders.feature` (11 scenarios, 16 tests)
+
+An event's reminders through the modal's Reminders tab: add, edit and remove; every transition between
+the three states Google distinguishes — follows-the-calendar-default, explicit, explicitly-none — in
+both directions; the tab badge; the All-day reset; the day-of-event floor; and the series scope
+warning. One six-row `Scenario Outline` carries the transitions, which is why 11 scenarios are 16
+tests.
+
+**A new assertion idiom lives here: assert what the save SENT, not what the screen shows.**
+`EventWriteRecorder` (`FamilyHQ.E2E.Common/Helpers`) attaches to the scenario's own page and records
+the `POST`/`PUT`/`DELETE` requests the browser makes to `/api/events`, body included. It exists
+because no UI assertion can do this job: **a save that sends back the reminders it opened with and a
+save that says nothing about them leave exactly the same screen behind** — and only the second leaves
+a set made in the Google Calendar app on a phone alone. The request body is the one place the
+difference is observable from outside the app. Scenario names of the form *"… says nothing about its
+reminders"* are all of this kind.
+
+Reach for the recorder whenever the property under test is the **absence** of a field in a write.
+The recorder is attached per scenario by `EventWriteHooks`, so nothing leaks between scenarios under
+the parallel runner.
+
+**Comparing one write against another:** `EventWrite.Field(name)` reads any property as JSON text.
+Compare the create's own body against the update's rather than against values written into the test —
+that proves the update agrees with what the event was actually created as, not merely with the test's
+expectation. Two rules when you do:
+
+- **Require the field on the source side.** A null on both sides passes while proving nothing. The
+  reminder-only-edit scenario types a note into the description for exactly this reason: it gives the
+  one nullable field in its list a real value.
+- **Compare timestamps as instants, never as text.** The data layer converts every `DateTimeOffset`
+  to UTC on the way into PostgreSQL, so a value read back carries a zero offset where the create
+  carried the browser's. The strings differ while describing the same moment. A text comparison goes
+  red for a reason unrelated to the edit, and the tempting "fix" is to delete the assertion.
+
+**What this feature file cannot prove, and where that lives.** The Simulator does not model Google's
+`PUT` clearing unmapped fields, so "a field FamilyHQ never models survives a write" is not provable
+here — a field the Simulator never stored cannot be observed to survive. An event's colour is the
+clearest case. That half is asserted against real Google in the preprod smoke suite; see
+`testing-strategy.md` for why a twin that asserted it here would be worse than no twin.
+
+**Gotchas specific to the Reminders tab:**
+- **Address a reminder row by its `data-reminder-method` and `data-reminder-minutes`, never by
+  position.** Google returns an event's overrides in an order of its own, and the picker sorts for
+  display, so position identifies a different reminder than you meant.
+- **Choose the calendar chips BEFORE touching the tab.** Which calendar an event lands on decides
+  whose default reminders the tab shows and copies in, and the modal re-reads them into an untouched
+  tab — so a later chip change replaces what was just set.
+- **Switch inheritance off before adding.** The Add form is not offered while the event follows the
+  calendar, because Google rejects a write asking for the defaults and for specific reminders at once.
+- **Switching inheritance off copies the calendar's defaults in as editable rows**, as the Google app
+  pre-fills them. An event created that way carries those AND anything added afterwards — remove them
+  first if a scenario needs an exact set.
+- **The numeric amount commits on the DOM `change` event**, which a `Fill` alone does not raise. Blur
+  it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
+  needs.
 
 ### Test Categories
 
@@ -370,6 +426,8 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 6. **Auth** - Sign-in / sign-out flows
 7. **Webhook Sync** - Events added/updated/deleted externally appear after a webhook sync
 8. **Live Update** - SignalR pushes cause the open dashboard to refresh without navigation
+9. **Reminders** - The three reminder states, the all-day form, and what a save does and does not say
+10. **Request-shape** - Assertions on the body the kiosk SENT, for properties no screen can show
 
 ---
 
@@ -439,6 +497,7 @@ Update E2E tests in these scenarios:
 - **Keep scenarios focused** - One scenario per behavior being tested
 - **Update templates carefully** - User templates affect multiple scenarios
 - **Never use hardcoded dates** - Use relative expressions (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month. The `DateExpressionResolver` class in `FamilyHQ.E2E.Steps` converts these expressions to `yyyy-MM-dd` at runtime. All step definitions that accept date parameters already support both formats.
+- **A relative seed date must be inside the view the assertion reads** - a date expression says *when*, never *where*, so resolving one does not put it on screen. The **agenda renders exactly one calendar month** and nothing either side, so a cell keyed on a date outside it (`agenda-cell-<date>-<calendarId>`) does not exist: the assertion waits out its full 30s for an element that can never appear, and a *negative* assertion (`I do not see …`) passes vacuously against the missing cell. Which month a relative date lands in is a property of the **run date**, not of the expression — `"tomorrow"` is next month on the last day of every month — so precede an agenda assertion keyed on a date with `And I navigate the agenda to show "<date expression>"`. `"today"` is the one expression that needs no step, because the agenda opens on today's month; every other one does, including `"tomorrow"`. The step resolves the expression and drives the agenda's own prev/next until the live month-year label spans it (`DashboardPage.ShowAgendaMonthContainingAsync`), and throws rather than asserting against the wrong month if it cannot get there. Contrast the **month grid**, which renders six weeks including the adjacent months' edge days and so tolerates a date a day or two outside the current month — that tolerance is why this only ever bites the agenda. Nine agenda scenarios failed on a 30 September run for exactly this reason; the ones that already carried a navigation step passed alongside them.
 - **Never call `DateTime.Today` / `DateTime.Now` in E2E code** - use `BrowserClock` (`FamilyHQ.E2E.Common/Helpers/BrowserClock.cs`). It owns the single timezone the whole suite agrees on (`Europe/London`, pinned onto the Playwright context by `PlaywrightDriver`) and is what `DateExpressionResolver` resolves against. A bare `DateTime.Today` is the **test host's** date, which is not the browser's during the 23:00–00:00 UTC window in BST — seeding or asserting through it puts the test on a different calendar day from the app for one hour a night (intermittent-issues #11). `DateTime.UtcNow` for a polling deadline is fine; it is not a date.
 - **Seed timed events as instants, dates as dates** - a timed seed must go on the wire through `BrowserClock.ToUtcInstant(...)` so it means the same wall-clock time regardless of the server's zone (a naive `DateTime` is silently stamped with the Simulator container's zone). All-day seeds stay naive midnight — the Simulator serialises them as `date`-only, and converting them would shift the date.
 - **Create modal has no default calendar (FHQ-32)** - The "Add new event" modal no longer pre-selects a calendar; the user must pick one and Save is blocked until they do. `DashboardPage.FillAndSaveEventAsync` therefore selects the first available calendar chip when none is active, and `CreateEventInCalendarAsync` selects a named chip. Day/agenda slot taps that pass an explicit `calendarId` keep their chip pre-selected, so those flows are unaffected.

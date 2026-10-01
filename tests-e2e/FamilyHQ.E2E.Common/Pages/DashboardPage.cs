@@ -234,6 +234,45 @@ public class DashboardPage : BasePage
         return DateTime.ParseExact(text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Drives the agenda's own month navigation until the rendered month contains <paramref name="date"/>.
+    /// <para>
+    /// The agenda renders exactly one calendar month — one row per day of it and nothing either side.
+    /// A cell keyed on a date outside that month therefore does not exist at all, so an assertion
+    /// reading it waits out its whole timeout for an element that can never appear. That is not a
+    /// timing problem and no amount of waiting fixes it: the seeded date and the rendered view have to
+    /// be made to agree. Any relative seed date can fall outside the month — "tomorrow" does on the
+    /// last day of every month — so every agenda assertion keyed on a date needs the view moved to it
+    /// first.
+    /// </para>
+    /// <para>
+    /// Each step re-reads the live month-year label rather than counting clicks from a month the caller
+    /// assumed, so this lands on the right month wherever the view happens to start, and it cannot be
+    /// fooled by a view that moved for some other reason.
+    /// </para>
+    /// </summary>
+    public async Task ShowAgendaMonthContainingAsync(DateOnly date)
+    {
+        var target = new DateTime(date.Year, date.Month, 1);
+
+        // Two years of steps either way. A seed further out than that is a broken scenario, not a
+        // view that needs more navigation — so say so rather than asserting against an empty month.
+        for (var step = 0; step < 24; step++)
+        {
+            var current = await GetAgendaCurrentMonthAsync();
+            if (current.Year == target.Year && current.Month == target.Month) return;
+
+            if (current < target)
+                await NavigateAgendaNextMonthAsync();
+            else
+                await NavigateAgendaPrevMonthAsync();
+        }
+
+        throw new InvalidOperationException(
+            $"The agenda did not reach {target:MMMM yyyy} within 24 month steps; " +
+            $"it is showing '{await GetAgendaMonthYearTextAsync()}'.");
+    }
+
     /// <summary>Agenda day rows. Exposed for web-first count assertions (FHQ-41).</summary>
     public ILocator AgendaDayRows => Page.Locator(".agenda-day-row");
 
@@ -1868,4 +1907,284 @@ public class DashboardPage : BasePage
         }
         catch (PlaywrightException) { return false; }
     }
+
+    // ── The Reminders tab ────────────────────────────────────────────────────
+    // Every reminder row carries its own method and offset as attributes, so each helper below
+    // addresses a row BY VALUE. Addressing one by index would be wrong rather than merely brittle:
+    // Google returns the overrides in an order of its own and the picker re-sorts them, so the row
+    // at position 1 is not the reminder the scenario is talking about.
+
+    /// <summary>Google's delivery method for an on-screen notification.</summary>
+    private const string PopupMethod = "popup";
+
+    private ILocator RemindersSection => EventModal.GetByTestId("reminders-section");
+    private ILocator RemindersBadge => EventModal.GetByTestId("event-modal-tab-reminders-badge");
+    private ILocator ReminderUseDefaultToggle => RemindersSection.GetByTestId("reminder-use-default-toggle");
+    private ILocator ReminderRows => RemindersSection.GetByTestId("reminder-item");
+    private ILocator ReminderEmptyState => RemindersSection.GetByTestId("reminder-empty-state");
+    private ILocator ReminderAllDayResetNotice => RemindersSection.GetByTestId("reminder-all-day-reset-notice");
+    private ILocator ReminderAmountInput => RemindersSection.GetByTestId("reminder-amount");
+    private ILocator ReminderDaysBeforeInput => RemindersSection.GetByTestId("reminder-days-before");
+    private ILocator ReminderDaysDecrement => RemindersSection.GetByTestId("reminder-days-decrement");
+    private ILocator ReminderAddBtn => RemindersSection.GetByTestId("reminder-add-btn");
+    private ILocator ReminderUnitPill(string unit) => RemindersSection.GetByTestId($"reminder-unit-{unit}");
+    private ILocator ReminderMethodPill(string method) => RemindersSection.GetByTestId($"reminder-method-{method}");
+    private ILocator AllDayToggle => EventModal.GetByTestId("all-day-toggle");
+
+    // The inline warning the scope prompt shows when a reminder change is about to be applied to a
+    // whole series, which replaces every occurrence's reminders — including an occurrence whose own
+    // were set separately. Google does the same; the prompt says so first.
+    private ILocator ScopePromptReminderWarning => Page.GetByTestId("recurrence-scope-reminder-warning");
+
+    private ILocator ReminderRow(string method, int minutes) => RemindersSection.Locator(
+        $"[data-testid='reminder-item'][data-reminder-method='{method}'][data-reminder-minutes='{minutes}']");
+
+    private ILocator CalendarDefaultRow(string method, int minutes) => RemindersSection.Locator(
+        $"[data-testid='reminder-default-item'][data-reminder-method='{method}'][data-reminder-minutes='{minutes}']");
+
+    /// <summary>Shows the Reminders tab of the open event modal.</summary>
+    public Task ShowRemindersTabAsync() => ShowModalTabAsync("reminders");
+
+    /// <summary>
+    /// Switches the "use this calendar's usual reminders" toggle to <paramref name="follow"/>.
+    /// Idempotent: does nothing when it is already there.
+    /// </summary>
+    /// <remarks>
+    /// Switching it OFF copies the calendar's usual reminders in as editable entries, as the Google
+    /// Calendar app pre-fills them — so an event that stops inheriting does not silently land on "no
+    /// reminders", which Google treats as a different thing.
+    /// </remarks>
+    public async Task SetReminderInheritanceAsync(bool follow)
+    {
+        await ShowRemindersTabAsync();
+
+        var expected = follow ? "true" : "false";
+        if (await ReminderUseDefaultToggle.GetAttributeAsync("aria-pressed") == expected)
+        {
+            return;
+        }
+
+        await ReminderUseDefaultToggle.ClickAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", expected, new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Adds a reminder of the event's own, <paramref name="amount"/> <paramref name="unit"/> before it
+    /// starts, delivered by <paramref name="method"/>. The event must already have stopped following
+    /// the calendar's usual reminders — the Add form is not offered while it inherits, because Google
+    /// refuses a write that asks for the defaults and for specific reminders at once.
+    /// </summary>
+    public async Task AddTimedReminderAsync(int amount, string unit, string method = PopupMethod)
+    {
+        await ShowRemindersTabAsync();
+
+        await SelectPillAsync(ReminderUnitPill(unit));
+        await SelectPillAsync(ReminderMethodPill(method));
+
+        // The number field commits on the DOM's change event, which a fill alone does not raise — the
+        // blur does. Same as the recurrence interval.
+        var typed = amount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        await ReminderAmountInput.FillAsync(typed);
+        await ReminderAmountInput.PressAsync("Tab");
+        await Assertions.Expect(ReminderAmountInput).ToHaveValueAsync(typed, new() { Timeout = 5000 });
+
+        await ReminderAddBtn.ClickAsync();
+        await Assertions.Expect(ReminderRow(method, amount * UnitMinutes(unit)))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>Removes the event's reminder with the given method and offset.</summary>
+    public async Task RemoveReminderAsync(int minutes, string method = PopupMethod)
+    {
+        await ShowRemindersTabAsync();
+
+        var row = ReminderRow(method, minutes);
+        await row.GetByTestId("reminder-remove").ClickAsync();
+        await Assertions.Expect(row).ToHaveCountAsync(0, new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Removes every reminder the event carries of its own, leaving the state Google records as
+    /// "replace the calendar's usual reminders with nothing".
+    /// </summary>
+    public async Task RemoveEveryReminderAsync()
+    {
+        await ShowRemindersTabAsync();
+
+        // Always remove the first remaining row and then wait for the count to drop, so the next
+        // click cannot land on an element the re-render has already replaced.
+        for (var remaining = await ReminderRows.CountAsync(); remaining > 0; remaining--)
+        {
+            await ReminderRows.First.GetByTestId("reminder-remove").ClickAsync();
+            await Assertions.Expect(ReminderRows).ToHaveCountAsync(remaining - 1, new() { Timeout = 5000 });
+        }
+    }
+
+    /// <summary>Asserts the event carries a reminder with the given method and offset.</summary>
+    public Task AssertReminderPresentAsync(int minutes, string method = PopupMethod) =>
+        Assertions.Expect(ReminderRow(method, minutes)).ToBeVisibleAsync(new() { Timeout = 5000 });
+
+    /// <summary>Asserts how many reminders of its own the event carries.</summary>
+    public Task AssertReminderCountAsync(int expected) =>
+        Assertions.Expect(ReminderRows).ToHaveCountAsync(expected, new() { Timeout = 5000 });
+
+    /// <summary>Asserts the Reminders tab's badge (a count, "default", "none" or "none here").</summary>
+    public Task AssertRemindersBadgeAsync(string expected) =>
+        Assertions.Expect(RemindersBadge).ToHaveTextAsync(expected, new() { Timeout = 5000 });
+
+    /// <summary>
+    /// Asserts the event follows its calendar's usual reminders, and that the tab shows what those
+    /// actually are rather than an empty list.
+    /// </summary>
+    public async Task AssertFollowsCalendarDefaultAsync(int minutes, string method = PopupMethod)
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(CalendarDefaultRow(method, minutes)).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the tab states that a TIMED event has no reminders at all. Deliberately timed-only:
+    /// Google stores a reminder set for the day itself of an all-day event and never returns it, so no
+    /// assertion may claim an all-day event has none.
+    /// </summary>
+    public async Task AssertNoRemindersStatedAsync()
+    {
+        await ShowRemindersTabAsync();
+        await AssertReminderCountAsync(0);
+        await Assertions.Expect(ReminderEmptyState).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the tab says the reminders were started again, which switching All day does — Google
+    /// discards them rather than converting them, and the screen has to say so.
+    /// </summary>
+    public async Task AssertRemindersResetNoticeVisibleAsync()
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderAllDayResetNotice).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Types <paramref name="days"/> into the all-day reminder form's days-before field, blurring so
+    /// the field commits — a fill alone does not raise the DOM change event the field listens for.
+    /// </summary>
+    public async Task AskForReminderDaysBeforeAsync(int days)
+    {
+        await ShowRemindersTabAsync();
+
+        await ReminderDaysBeforeInput.FillAsync(days.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await ReminderDaysBeforeInput.PressAsync("Tab");
+    }
+
+    /// <summary>
+    /// Asserts the all-day reminder form holds at <paramref name="days"/> days before with no way
+    /// down, so a reminder on the day of the event itself is unreachable.
+    /// </summary>
+    /// <remarks>
+    /// The floor is arithmetic, not validation. "0 days before at 09:00" is a negative offset, and
+    /// Google does not reject one — it clamps it to zero and notifies the family at midnight.
+    /// </remarks>
+    public async Task AssertReminderDaysBeforeHoldsAtAsync(int days)
+    {
+        await ShowRemindersTabAsync();
+
+        await Assertions.Expect(ReminderDaysBeforeInput).ToHaveValueAsync(
+            days.ToString(System.Globalization.CultureInfo.InvariantCulture), new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDaysDecrement).ToBeDisabledAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the scope prompt warns that applying a reminder change to the whole series replaces
+    /// every occurrence's reminders.
+    /// </summary>
+    public async Task AssertScopePromptWarnsAboutRemindersAsync()
+    {
+        await ScopePrompt.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Assertions.Expect(ScopePromptReminderWarning).ToBeVisibleAsync(new() { Timeout = 10000 });
+    }
+
+    /// <summary>Switches the open event between all-day and timed, and waits for the change to land.</summary>
+    public async Task ToggleAllDayAsync()
+    {
+        await ShowModalTabAsync("details");
+
+        var wasOn = await AllDayToggle.GetAttributeAsync("aria-pressed") == "true";
+        await AllDayToggle.ClickAsync();
+        await Assertions.Expect(AllDayToggle)
+            .ToHaveAttributeAsync("aria-pressed", wasOn ? "false" : "true", new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Saves the event modal that is already open and waits for the calendar to reconcile and repaint.
+    /// </summary>
+    public async Task SaveOpenEventAsync()
+    {
+        var eventsResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/calendars/events"),
+            new() { Timeout = 30000 });
+
+        await SaveEventBtn.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Hidden });
+        await eventsResponseTask;
+        await WaitForCalendarVisibleAsync();
+        await WaitForSyncSettledAsync();
+    }
+
+    /// <summary>
+    /// Opens the create-event modal on the named calendar with the title filled in, ready for the
+    /// Reminders tab. The calendar is chosen FIRST because which calendar an event lands on decides
+    /// whose usual reminders the tab shows and copies in.
+    /// </summary>
+    public async Task BeginCreatingEventTitledAsync(string title, string calendarName)
+    {
+        await OpenCreateEventModalAsync();
+        await EventTitleInput.FillAsync(title);
+        await EnsureCalendarChipActiveAsync(calendarName);
+    }
+
+    /// <summary>
+    /// Types a note into the open event modal's description field.
+    /// <para>
+    /// Separate from the create helpers because the scenario that needs it is asserting that a later
+    /// edit left the note alone — so the note has to be put there by the same modal the edit will
+    /// reopen, not by a seeding shortcut that bypasses it.
+    /// </para>
+    /// </summary>
+    public async Task FillOpenEventDescriptionAsync(string description)
+    {
+        await EventModal.Locator("textarea").FillAsync(description);
+    }
+
+    /// <summary>Creates an all-day event with the title assigned to exactly one named calendar.</summary>
+    public async Task CreateAllDayEventInCalendarAsync(string title, string calendarName)
+    {
+        await BeginCreatingEventTitledAsync(title, calendarName);
+        await ToggleAllDayAsync();
+        await SaveOpenEventAsync();
+    }
+
+    private static async Task SelectPillAsync(ILocator pill)
+    {
+        // Clicking an already-selected pill is a no-op in the component, so the pressed state is
+        // asserted either way rather than conditioned on the current one.
+        if (await pill.GetAttributeAsync("aria-pressed") != "true")
+        {
+            await pill.ClickAsync();
+        }
+
+        await Assertions.Expect(pill).ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+    }
+
+    private static int UnitMinutes(string unit) => unit switch
+    {
+        "minutes" => 1,
+        "hours" => 60,
+        "days" => 24 * 60,
+        "weeks" => 7 * 24 * 60,
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(unit), unit, "Not a unit the reminder form offers (minutes, hours, days, weeks).")
+    };
 }

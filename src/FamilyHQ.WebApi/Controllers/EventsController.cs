@@ -100,5 +100,9 @@ public class EventsController : ControllerBase
         e.Description,
         e.Members.Select(m => new EventCalendarDto(m.Id, m.DisplayName, m.Color, m.IsShared)).ToList(),
         e.IsRecurring,
-        e.RecurrenceRule);
+        e.RecurrenceRule,
+        // Passed straight through, including null. The modal reads this back after a save so it shows
+        // what Google actually stored rather than what the kiosk optimistically sent — Google rewrites
+        // a reminder silently and still answers 200.
+        e.Reminders);
 }

@@ -1,0 +1,576 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+@using FamilyHQ.Core.Models
+@using FamilyHQ.Core.Validators
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@* The Reminders tab. Every decision lives in ReminderPickerModel; this file only renders it and
+   forwards taps, so the three states, the limits and the all-day arithmetic are covered by unit
+   tests rather than by a rendered component (the project has no bUnit). *@
+
+<div class="reminder-picker" data-testid="reminder-picker">
+    @if (ShowAllDayResetNotice)
+    {
+        @* Google discards an event's reminders when All day is switched, and substitutes the all-day
+           shape rather than converting them. The kiosk mirrors that, so it has to say so instead of
+           quietly rewriting what the family had chosen. *@
+        <div class="alert alert-warning" role="status" data-testid="reminder-all-day-reset-notice">
+            Switching All Day started the reminders again, the same as Google Calendar does — an
+            all-day reminder is a day and a time, not minutes before a start time. Check them before
+            you save.
+        </div>
+    }
+
+    <div class="pill-toggle-row">
+        <span class="pill-toggle-label" id="reminder-use-default-label">Use this calendar's usual reminders</span>
+        <button type="button"
+                class="@($"pill-toggle {(Model.FollowsCalendarDefault ? "pill-toggle--on" : "pill-toggle--off")}")"
+                data-testid="reminder-use-default-toggle"
+                aria-labelledby="reminder-use-default-label"
+                aria-pressed="@(Model.FollowsCalendarDefault ? "true" : "false")"
+                @onclick="ToggleUseDefaultAsync">
+            @(Model.FollowsCalendarDefault ? "On" : "Off")
+        </button>
+    </div>
+
+    @if (Model.FollowsCalendarDefault)
+    {
+        <div class="reminder-panel" data-testid="reminder-default-panel">
+            @if (Model.CalendarDefault.Count == 0)
+            {
+                @* The calendar list degrades to empty on any non-success status, so the defaults can
+                   simply be unknown. Saying nothing would let the family read the empty panel as "no
+                   reminders", and switching the toggle off would then turn inheriting into the
+                   different state "none" without anyone choosing it. *@
+                <p class="reminder-note" data-testid="reminder-default-unavailable">
+                    This calendar's usual reminders can't be read right now, so they can't be shown
+                    here. Google Calendar still applies them. Switching this off would start from an
+                    empty list instead of from them, leaving this event with no reminders at all.
+                </p>
+            }
+            else
+            {
+                <p class="reminder-note" data-testid="reminder-default-heading">
+                    @(IsNewEvent ? "When you save, Google Calendar will apply:" : "Google Calendar applies:")
+                </p>
+                <ul class="reminder-list" data-testid="reminder-default-list">
+                    @foreach (var reminder in Model.CalendarDefault)
+                    {
+                        <li class="reminder-row"
+                            data-testid="reminder-default-item"
+                            data-reminder-method="@reminder.Method"
+                            data-reminder-minutes="@reminder.Minutes">
+                            <span class="reminder-row-label">@ReminderDescription.For(reminder, Model.IsAllDay)</span>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @if (Model.IsAllDay)
+            {
+                @* Google picks an all-day event's reminders itself, from a separate all-day setting
+                   its API does not expose, so this is as close as the kiosk can honestly get. Saying
+                   it plainly is the point: the alternative was inventing a FamilyHQ default and
+                   presenting a guess as Google's own. *@
+                <p class="reminder-note" data-testid="reminder-all-day-default-note">
+                    Google Calendar chooses an all-day event's reminders itself, from a separate
+                    all-day setting it doesn't share, so the kiosk can only show this calendar's usual
+                    timed reminders — what Google applies may differ. Switch the toggle off to choose
+                    them yourself.
+                </p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="reminder-panel" data-testid="reminder-own-panel">
+            @if (Model.Overrides.Count > 0)
+            {
+                <ul class="reminder-list" data-testid="reminder-list">
+                    @foreach (var reminder in Model.Overrides)
+                    {
+                        var label = ReminderDescription.For(reminder, Model.IsAllDay);
+                        <li class="reminder-row"
+                            data-testid="reminder-item"
+                            data-reminder-method="@reminder.Method"
+                            data-reminder-minutes="@reminder.Minutes">
+                            <span class="reminder-row-label" data-testid="reminder-item-label">@label</span>
+                            <button type="button"
+                                    class="reminder-remove"
+                                    data-testid="reminder-remove"
+                                    aria-label="@($"Remove {label}")"
+                                    @onclick="() => RemoveAsync(reminder)">
+                                Remove
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+            else if (!Model.IsAllDay)
+            {
+                <p class="reminder-note" data-testid="reminder-empty-state">
+                    No reminders — Google Calendar won't notify anyone about this event.
+                </p>
+            }
+
+            @if (Model.IsAllDay)
+            {
+                @* Required wording, and the reason the empty state above is timed-only: Google stores
+                   a reminder set for the day itself, shows it in its own apps, and never returns it
+                   through its API. So "no overrides" cannot be reported as "no reminders". No kiosk
+                   write can destroy one either, which is what the second half of this says. *@
+                <p class="reminder-note" data-testid="reminder-all-day-hidden-note">
+                    Reminders set for the day itself in Google Calendar can't be shown or changed
+                    here, and aren't affected by anything you do on this screen.
+                </p>
+            }
+
+            <div class="reminder-add" data-testid="reminder-add-form">
+                @if (Model.IsAllDay)
+                {
+                    <div class="reminder-field">
+                        <label class="form-label" for="reminder-days-before">How many days before</label>
+                        <div class="reminder-stepper-row">
+                            <button type="button" class="reminder-step"
+                                    data-testid="reminder-days-decrement"
+                                    aria-label="Fewer days before"
+                                    disabled="@(Model.DaysBefore <= ReminderPickerModel.MinimumDaysBefore)"
+                                    @onclick="DecrementDays">&minus;</button>
+                            <input id="reminder-days-before"
+                                   @key="_numberFieldVersion"
+                                   type="number"
+                                   min="@ReminderPickerModel.MinimumDaysBefore"
+                                   max="@ReminderPickerModel.MaximumDaysBefore"
+                                   class="form-input reminder-number"
+                                   data-testid="reminder-days-before"
+                                   value="@Model.DaysBefore"
+                                   @onchange="OnDaysChanged"
+                                   @onfocus="ScrollFocusedIntoViewAsync" />
+                            <button type="button" class="reminder-step"
+                                    data-testid="reminder-days-increment"
+                                    aria-label="More days before"
+                                    disabled="@(Model.DaysBefore >= ReminderPickerModel.MaximumDaysBefore)"
+                                    @onclick="IncrementDays">+</button>
+                            <span class="reminder-unit">@(Model.DaysBefore == 1 ? "day" : "days") before</span>
+                        </div>
+                        @* The floor is one whole day and it is arithmetic, not validation: Google does
+                           not reject an offset on the day itself, it clamps it to midnight and wakes
+                           the family at 00:00. *@
+                        <p class="reminder-note" data-testid="reminder-days-floor-note">
+                            The day before is as close as this screen can set. Google Calendar can put
+                            a reminder on the day itself, but its API neither shows nor accepts one.
+                        </p>
+                    </div>
+                    <div class="reminder-field" data-testid="reminder-time-picker">
+                        <label class="form-label">At</label>
+                        <TimePicker Value="Model.TimeOfDay" ValueChanged="OnTimeChanged" AriaLabel="Reminder time" />
+                    </div>
+                }
+                else
+                {
+                    <div class="reminder-field">
+                        <label class="form-label" for="reminder-amount">How long before</label>
+                        <div class="reminder-stepper-row">
+                            <button type="button" class="reminder-step"
+                                    data-testid="reminder-amount-decrement"
+                                    aria-label="Less time before"
+                                    disabled="@(Model.Amount <= EventRemindersValidator.MinMinutes)"
+                                    @onclick="DecrementAmount">&minus;</button>
+                            <input id="reminder-amount"
+                                   @key="_numberFieldVersion"
+                                   type="number"
+                                   min="@EventRemindersValidator.MinMinutes"
+                                   max="@ReminderPickerModel.MaximumAmount(Model.Unit)"
+                                   class="form-input reminder-number"
+                                   data-testid="reminder-amount"
+                                   value="@Model.Amount"
+                                   @onchange="OnAmountChanged"
+                                   @onfocus="ScrollFocusedIntoViewAsync" />
+                            <button type="button" class="reminder-step"
+                                    data-testid="reminder-amount-increment"
+                                    aria-label="More time before"
+                                    disabled="@(Model.Amount >= ReminderPickerModel.MaximumAmount(Model.Unit))"
+                                    @onclick="IncrementAmount">+</button>
+                            <span class="reminder-unit">@ReminderDescription.UnitLabel(Model.Amount, Model.Unit) before</span>
+                        </div>
+                    </div>
+                    <div class="reminder-field">
+                        <label class="form-label">Counted in</label>
+                        <PillSegmentGroup TValue="ReminderUnit"
+                                          Options="UnitOptions"
+                                          Value="Model.Unit"
+                                          ValueChanged="OnUnitChanged"
+                                          AriaLabel="Reminder unit" />
+                    </div>
+                }
+
+                <div class="reminder-field">
+                    <label class="form-label">Delivered by</label>
+                    <PillSegmentGroup TValue="string"
+                                      Options="MethodOptions"
+                                      Value="Model.Method"
+                                      ValueChanged="OnMethodChanged"
+                                      AriaLabel="Reminder delivery" />
+                </div>
+
+                <div class="reminder-add-row">
+                    <span class="reminder-note" data-testid="reminder-add-preview">
+                        @ReminderDescription.For(Model.SelectedReminder, Model.IsAllDay)
+                    </span>
+                    <button type="button"
+                            class="btn btn-secondary reminder-add-btn"
+                            data-testid="reminder-add-btn"
+                            disabled="@Model.IsFull"
+                            @onclick="AddAsync">
+                        Add
+                    </button>
+                </div>
+
+                @if (Model.IsFull)
+                {
+                    <p class="reminder-note" data-testid="reminder-full-note">
+                        Google Calendar allows at most @EventRemindersValidator.MaxOverrides reminders
+                        on an event. Remove one to add another.
+                    </p>
+                }
+                else if (_addRefusedMessage is not null)
+                {
+                    <p class="reminder-note" data-testid="reminder-add-refused" role="status">@_addRefusedMessage</p>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>
+    /// The tab's state. Owned by the modal and built once when it opens, because the model measures
+    /// whether anything changed against the reminders it was built from.
+    /// </summary>
+    [Parameter, EditorRequired] public ReminderPickerModel Model { get; set; } = default!;
+
+    /// <summary>
+    /// Raised whenever the committed reminders change, so the modal can re-render the tab's badge.
+    /// The form's own fields do not raise it — nothing is committed until Add.
+    /// </summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    /// <summary>Whether the modal is creating an event, which decides the tense of the default copy.</summary>
+    [Parameter] public bool IsNewEvent { get; set; }
+
+    /// <summary>
+    /// Whether to say that switching All day started the reminders again. Set by the modal, which
+    /// owns that toggle.
+    /// </summary>
+    [Parameter] public bool ShowAllDayResetNotice { get; set; }
+
+    /// <summary>Shown when Add is refused. Cleared by the next successful change.</summary>
+    private string? _addRefusedMessage;
+
+    private ReminderPickerModel? _syncedModel;
+    private IJSObjectReference? _ui;
+
+    // Bumped whenever the model corrected a typed number, to force the field to be rebuilt.
+    private int _numberFieldVersion;
+
+    // Per-option data-testids so E2E and the preprod smoke suite can drive the form without
+    // depending on the labels, which are user-facing copy and may be reworded.
+    private static readonly IReadOnlyList<PillSegmentOption<ReminderUnit>> UnitOptions =
+    [
+        new(ReminderUnit.Minutes, "Minutes", "reminder-unit-minutes"),
+        new(ReminderUnit.Hours, "Hours", "reminder-unit-hours"),
+        new(ReminderUnit.Days, "Days", "reminder-unit-days"),
+        new(ReminderUnit.Weeks, "Weeks", "reminder-unit-weeks")
+    ];
+
+    // Only the two methods Google accepts on a write. A method a phone set that is neither of these
+    // is still displayed on its own row — see ReminderDescription — but the kiosk cannot create one.
+    private static readonly IReadOnlyList<PillSegmentOption<string>> MethodOptions =
+    [
+        new(EventRemindersValidator.PopupMethod, ReminderDescription.PopupLabel, "reminder-method-popup"),
+        new(EventRemindersValidator.EmailMethod, ReminderDescription.EmailLabel, "reminder-method-email")
+    ];
+
+    protected override void OnParametersSet()
+    {
+        // The modal replaces the model when the event opens, and when All day is switched. A refusal
+        // message belongs to the model it was raised against, so it goes with it.
+        if (!ReferenceEquals(_syncedModel, Model))
+        {
+            _syncedModel = Model;
+            _addRefusedMessage = null;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _ui = await JS.InvokeAsync<IJSObjectReference>("import", "./js/ui-helpers.js");
+        }
+    }
+
+    // On focus, scroll the active numeric field to the viewport centre so the on-screen keyboard
+    // (which shrinks the viewport on focus) does not cover it.
+    private async Task ScrollFocusedIntoViewAsync()
+    {
+        if (_ui is not null)
+        {
+            await _ui.InvokeVoidAsync("scrollActiveElementIntoView");
+        }
+    }
+
+    private async Task ToggleUseDefaultAsync()
+    {
+        if (Model.FollowsCalendarDefault)
+        {
+            // Copies the calendar's defaults in as editable entries, as the Google Calendar app
+            // pre-fills them — landing on an empty list would silently turn inheriting into "none".
+            Model.StopUsingCalendarDefault();
+        }
+        else
+        {
+            Model.UseCalendarDefault();
+        }
+
+        await CommitAsync();
+    }
+
+    private async Task AddAsync()
+    {
+        if (Model.TryAddSelectedReminder())
+        {
+            await CommitAsync();
+            return;
+        }
+
+        // The form cannot produce an out-of-range value and Add is disabled once the list is full, so
+        // a refusal here means the event already carries this reminder. Google would collapse the
+        // duplicate silently, which would look like a broken button.
+        _addRefusedMessage = "This event already has that reminder.";
+    }
+
+    private async Task RemoveAsync(EventReminder reminder)
+    {
+        Model.Remove(reminder);
+        await CommitAsync();
+    }
+
+    private void IncrementDays() => SetDays(Model.DaysBefore + 1);
+
+    private void DecrementDays() => SetDays(Model.DaysBefore - 1);
+
+    private void OnDaysChanged(ChangeEventArgs e) =>
+        SetDays(int.TryParse(e.Value?.ToString(), out var days) ? days : Model.DaysBefore);
+
+    // The model clamps to at least one whole day, so no typed or stepped value can reach the day
+    // itself — the case Google would store as a notification at midnight.
+    private void SetDays(int days)
+    {
+        Model.DaysBefore = days;
+        RefreshNumberFieldIfCorrected(days, Model.DaysBefore);
+    }
+
+    private void OnTimeChanged(TimeOnly time)
+    {
+        Model.TimeOfDay = time;
+        _addRefusedMessage = null;
+    }
+
+    private void IncrementAmount() => SetAmount(Model.Amount + 1);
+
+    private void DecrementAmount() => SetAmount(Model.Amount - 1);
+
+    private void OnAmountChanged(ChangeEventArgs e) =>
+        SetAmount(int.TryParse(e.Value?.ToString(), out var amount) ? amount : Model.Amount);
+
+    private void SetAmount(int amount)
+    {
+        Model.Amount = amount;
+        RefreshNumberFieldIfCorrected(amount, Model.Amount);
+    }
+
+    private void OnUnitChanged(ReminderUnit unit)
+    {
+        // Setting the unit re-clamps the amount, so the pair can never describe an offset Google
+        // would rewrite.
+        var requested = Model.Amount;
+        Model.Unit = unit;
+        RefreshNumberFieldIfCorrected(requested, Model.Amount);
+    }
+
+    private void OnMethodChanged(string method)
+    {
+        Model.Method = method;
+        _addRefusedMessage = null;
+    }
+
+    // Blazor diffs a rendered attribute against the last value IT rendered, so a number the model
+    // clamped — typing 0 into a field whose floor is a whole day — would leave the browser showing
+    // what was typed while the model held something else. Re-keying rebuilds the element with the
+    // value the model actually has, so the floor is visible and not merely enforced.
+    private void RefreshNumberFieldIfCorrected(int requested, int accepted)
+    {
+        _addRefusedMessage = null;
+
+        if (requested != accepted)
+        {
+            _numberFieldVersion++;
+        }
+    }
+
+    private async Task CommitAsync()
+    {
+        _addRefusedMessage = null;
+        await Changed.InvokeAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_ui is not null)
+        {
+            try
+            {
+                await _ui.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
+    }
+}
+
+<style>
+    .reminder-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .reminder-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+        border-radius: 8px;
+    }
+
+    .reminder-note {
+        margin: 0;
+        color: var(--theme-text-muted);
+        font-size: 0.85rem;
+        line-height: 1.4;
+    }
+
+    .reminder-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .reminder-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 56px;
+        padding: 8px 12px;
+        border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+        border-radius: 8px;
+    }
+
+    .reminder-row-label {
+        color: var(--theme-text);
+        font-size: 0.95rem;
+    }
+
+    .reminder-remove {
+        flex: 0 0 auto;
+        min-width: 96px;
+        min-height: 48px;
+        border-radius: 6px;
+        border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+        background: transparent;
+        color: var(--theme-text-muted);
+        font-family: inherit;
+        font-size: 0.85rem;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .reminder-add {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding-top: 4px;
+        border-top: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+    }
+
+    .reminder-field {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .reminder-stepper-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .reminder-step {
+        min-width: 48px;
+        min-height: 48px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+        background: transparent;
+        color: var(--theme-text);
+        font-family: inherit;
+        font-size: 1.25rem;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    .reminder-step:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
+
+    .reminder-number {
+        width: 88px;
+        min-height: 48px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .reminder-unit {
+        color: var(--theme-text-muted);
+        font-size: 0.95rem;
+    }
+
+    /* Four unit pills plus the panel's own padding overflow the modal at the shared pill width, and
+       a single pill wrapping onto its own row reads as a mistake. They stay full height, so the tap
+       target is unchanged. */
+    .reminder-picker .pill-segment-group .pill-toggle {
+        min-width: 0;
+        padding: 10px 8px;
+    }
+
+    .reminder-add-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .reminder-add-btn {
+        flex: 0 0 auto;
+        min-width: 96px;
+        min-height: 48px;
+    }
+</style>

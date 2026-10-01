@@ -1,3 +1,4 @@
+using System.Globalization;
 using FamilyHQ.Core.Calendar.Recurrence;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
@@ -13,6 +14,24 @@ public static class EventModalTabsLogic
 
     /// <summary>Badge for a rule that exists but cannot be parsed: the event still repeats.</summary>
     public const string UnreadableRuleBadge = "Repeats";
+
+    /// <summary>The Reminders badge while the event follows its calendar's default reminders.</summary>
+    public const string RemindersDefaultBadge = "default";
+
+    /// <summary>The Reminders badge for a timed event that replaces the calendar's defaults with nothing.</summary>
+    public const string RemindersNoneBadge = "none";
+
+    /// <summary>
+    /// The Reminders badge for an <b>all-day</b> event that replaces the calendar's defaults with
+    /// nothing.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not <see cref="RemindersNoneBadge"/>. Google stores a reminder set for the day
+    /// itself and never returns it through its API, so an all-day event the API reports as carrying
+    /// nothing may still notify the family. The badge can say what this screen holds; it cannot say
+    /// the event has no reminders.
+    /// </remarks>
+    public const string RemindersNoneHereBadge = "none here";
 
     /// <summary>
     /// The Repeat tab's badge: null when the event does not repeat, otherwise the rule's frequency
@@ -36,6 +55,21 @@ public static class EventModalTabsLogic
             return UnreadableRuleBadge;
         }
     }
+
+    /// <summary>
+    /// The Reminders tab's badge: how many reminders the event carries of its own, or that it follows
+    /// the calendar's defaults, or that it carries none. Null only when there is no picker to read,
+    /// which is the case until the modal has been opened.
+    /// </summary>
+    /// <param name="reminders">The picker backing the Reminders tab, or null before one is built.</param>
+    public static string? RemindersBadge(ReminderPickerModel? reminders) => reminders switch
+    {
+        null => null,
+        { FollowsCalendarDefault: true } => RemindersDefaultBadge,
+        { Overrides.Count: 0, IsAllDay: true } => RemindersNoneHereBadge,
+        { Overrides.Count: 0 } => RemindersNoneBadge,
+        _ => reminders.Overrides.Count.ToString(CultureInfo.InvariantCulture)
+    };
 
     /// <summary>
     /// Save is disabled while Repeat is on with no frequency chosen. With tabs, that reason can sit

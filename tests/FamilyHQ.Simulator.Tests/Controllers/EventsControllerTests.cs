@@ -481,12 +481,14 @@ public class EventsControllerTests
     }
 
     [Fact]
-    public async Task PatchEvent_OnMasterId_WithScalarFields_UpdatesFieldsAndPreservesRecurrenceAndOverride()
+    public async Task PatchEvent_OnMasterId_WithScalarFields_PreservesRecurrence_AndRenamesThePriorException()
     {
         // FHQ-144: the "All events" edit routes through events.patch (NOT events.update), sending the
         // master's scalar fields with NO recurrence array. events.patch is a merge, so the master's
         // RRULE and any prior exception override survive while the edited fields are applied. This is
         // the PATCH sibling of UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields (which covers PUT).
+        // The exception survives as an exception on its own time, but its TITLE follows the master:
+        // that is what Google was observed to do (PropagateSummaryToSeriesExceptionsAsync).
         using var db = CreateDb();
         var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
         var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
@@ -547,9 +549,17 @@ public class EventsControllerTests
         // Occurrences 1 and 3 reflect the new master title.
         items[0].GetProperty("summary").GetString().Should().Be("Football training");
         items[2].GetProperty("summary").GetString().Should().Be("Football training");
-        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        // Occurrence 2 is still the exception — same id, same slot, still an hour later than its
+        // siblings — but it takes the series' new title.
         items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
-        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
+        items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        items[1].GetProperty("originalStartTime").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T18:00:00");
+        items[1].GetProperty("start").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T19:00:00");
+        items[1].GetProperty("summary").GetString().Should().Be(
+            "Football training",
+            "Google overwrites an exception's own summary when the series master is renamed");
     }
 
     // ── MoveEvent ─────────────────────────────────────────────────────────────
@@ -1315,10 +1325,12 @@ public class EventsControllerTests
     }
 
     [Fact]
-    public async Task UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields_AndPreservesPriorExceptionOverride()
+    public async Task UpdateEvent_OnMasterId_AllEvents_ReflectsNewFields_AndRenamesPriorExceptionOverride()
     {
         // Arrange — a series with an EXISTING exception override on its second occurrence (created by
         // a prior "This event" edit). An "All events" edit then PUTs the master's fields (title).
+        // A master rename reaches the exception's title on this verb too, so the two write paths do
+        // not disagree about the same user action.
         using var db = CreateDb();
         var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
         var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
@@ -1374,10 +1386,126 @@ public class EventsControllerTests
         // Occurrences 1 and 3 reflect the new master title.
         items[0].GetProperty("summary").GetString().Should().Be("Football training");
         items[2].GetProperty("summary").GetString().Should().Be("Football training");
-        // The pre-existing override on occurrence 2 is PRESERVED (not clobbered by the master patch).
+        // Occurrence 2 remains the exception on its own time, renamed with the series.
         items[1].GetProperty("id").GetString().Should().Be("evt-series_20260609T180000Z");
-        items[1].GetProperty("summary").GetString().Should().Be("Soccer practice (moved)");
         items[1].GetProperty("recurringEventId").GetString().Should().Be("evt-series");
+        items[1].GetProperty("start").GetProperty("dateTime").GetString()
+            .Should().Contain("2026-06-09T19:00:00");
+        items[1].GetProperty("summary").GetString().Should().Be(
+            "Football training",
+            "Google overwrites an exception's own summary when the series master is renamed");
+    }
+
+    [Fact]
+    public async Task PatchEvent_OnMasterId_RenamingTheSeries_LeavesTheExceptionsOtherFieldsAlone()
+    {
+        // The title is the ONLY field a master rename was observed to carry onto an exception. A
+        // master edit that also changes location and description must leave the exception's own
+        // location, description and times exactly as the "This event" edit left them — propagating
+        // those as well would be a guess, and one that quietly destroys what the user singled out.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc); // Tuesday
+        var secondSlot = seriesStart.AddDays(7); // 2026-06-09T18:00:00Z
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            Location = "Pitch 1",
+            Description = "Bring boots",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            Location = "Sports hall",
+            Description = "Indoors this week",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Football training",
+            Location = "Pitch 2",
+            Description = "Bring shin pads",
+            Start = new GoogleDateTime { DateTime = seriesStart },
+            End = new GoogleDateTime { DateTime = seriesStart.AddHours(1) }
+        };
+
+        // Act
+        await sut.PatchEvent("cal-alice", "evt-series", masterEdit);
+
+        // Assert — only the exception's summary moved.
+        var exception = await db.Events.FindAsync("evt-series_20260609T180000Z");
+        exception!.Summary.Should().Be("Football training");
+        exception.Location.Should().Be("Sports hall");
+        exception.Description.Should().Be("Indoors this week");
+        exception.StartTime.Should().Be(secondSlot.AddHours(1));
+        exception.EndTime.Should().Be(secondSlot.AddHours(2));
+        exception.OriginalStartTime.Should().Be(secondSlot);
+        exception.RecurringEventId.Should().Be("evt-series");
+        exception.RecurrenceRule.Should().BeNull("an exception is not itself a series master");
+    }
+
+    [Fact]
+    public async Task PatchEvent_RenamingANonRecurringEvent_DoesNotTouchAnotherSeriesExceptions()
+    {
+        // The propagation keys on the renamed row being a series master AND on the exception's own
+        // RecurringEventId, so an unrelated rename cannot reach someone else's exception.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 6, 2, 18, 0, 0, DateTimeKind.Utc);
+        var secondSlot = seriesStart.AddDays(7);
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series_20260609T180000Z",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice (moved)",
+            StartTime = secondSlot.AddHours(1),
+            EndTime = secondSlot.AddHours(2),
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-single",
+            CalendarId = "cal-alice",
+            Summary = "Dentist",
+            StartTime = seriesStart.AddDays(1),
+            EndTime = seriesStart.AddDays(1).AddHours(1),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        // Act — rename the unrelated single event.
+        await sut.PatchEvent("cal-alice", "evt-single", new GoogleEventRequest { Summary = "Optician" });
+
+        // Assert
+        var exception = await db.Events.FindAsync("evt-series_20260609T180000Z");
+        exception!.Summary.Should().Be("Soccer practice (moved)");
     }
 
     // ── Instance cancellation / delete-scope (FHQ-18.11 Pass 4) ───────────────
@@ -1668,6 +1796,179 @@ public class EventsControllerTests
             Start = new GoogleDateTime { Date = "15/06/2026" },
             End = new GoogleDateTime { Date = "2026-06-16" }
         })).Should().ThrowAsync<FormatException>();
+    }
+
+    // ── A zoned write's instant comes from its timeZone, not from the host ────────────────────────
+    //
+    // Google's `dateTime` may carry no offset, and then the accompanying `timeZone` is what fixes the
+    // instant. That is the pair the app sends for every timed event anchored to a zone, because it is
+    // how a recurrence holds its wall clock across a DST transition. Reading the value as UTC — or,
+    // worse, as the HOST's local time — re-anchors the resource by the zone's offset, which on a
+    // series master moves every occurrence the expansion computes, and with them the compound
+    // instance ids the app keys its rows on. Reading it as host-local is how that stayed hidden: it
+    // is correct on a machine that happens to sit at the same offset as the zone under test and
+    // wrong in a container at UTC, so it reproduced in CI and not on a UK workstation.
+    //
+    // Both zones below are therefore exercised together. Each arm expects a different instant for the
+    // same wall clock, so no single host offset can satisfy both and the pair pins the behaviour
+    // wherever it runs.
+
+    [Theory]
+    [InlineData("Europe/London", 17, "170000Z")]       // BST on these dates: 18:00 local is 17:00Z
+    [InlineData("America/New_York", 22, "220000Z")]    // EDT on these dates: 18:00 local is 22:00Z
+    public async Task PatchEvent_OnMasterId_WithAZonedWallClockStart_LeavesTheSeriesAnchorWhereItWas(
+        string zoneId, int expectedUtcHour, string expectedSlotStamp)
+    {
+        // Arrange — a series anchored to the given zone with an exception override on its second
+        // occurrence. The all-events edit renames the series and sends the master's unchanged start
+        // back the way the app sends it: a wall-clock reading plus the zone that fixes it.
+        using var db = CreateDb();
+        var seriesStart = new DateTime(2026, 9, 30, expectedUtcHour, 0, 0, DateTimeKind.Utc); // Wednesday
+        var secondSlot = seriesStart.AddDays(7);
+        var overrideId = $"evt-series_20261007T{expectedSlotStamp}";
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-series",
+            CalendarId = "cal-alice",
+            Summary = "Soccer practice",
+            StartTime = seriesStart,
+            EndTime = seriesStart.AddHours(1),
+            StartTimeZone = zoneId,
+            UserId = "alice",
+            RecurrenceRule = "RRULE:FREQ=WEEKLY;BYDAY=WE;COUNT=3"
+        });
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = overrideId,
+            CalendarId = "cal-alice",
+            Summary = "Dentist",
+            StartTime = secondSlot,
+            EndTime = secondSlot.AddHours(1),
+            StartTimeZone = zoneId,
+            UserId = "alice",
+            RecurringEventId = "evt-series",
+            OriginalStartTime = secondSlot
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+        var masterEdit = new GoogleEventRequest
+        {
+            Summary = "Training camp",
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 19, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            }
+        };
+
+        // Act
+        await sut.PatchEvent("cal-alice", "evt-series", masterEdit);
+        var listResult = await sut.ListEvents("cal-alice",
+            singleEvents: true,
+            timeMin: "2026-09-01T00:00:00Z",
+            timeMax: "2026-12-01T00:00:00Z");
+
+        // Assert — the anchor did not move, so neither did the slots.
+        var master = await db.Events.FindAsync("evt-series");
+        master!.StartTime.Should().Be(
+            seriesStart,
+            "the reading is 18:00 in {0}, and resolving it anywhere else moves the whole series",
+            zoneId);
+        master.EndTime.Should().Be(seriesStart.AddHours(1));
+
+        var ok = listResult.Should().BeOfType<OkObjectResult>().Subject;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ok.Value));
+        var items = doc.RootElement.GetProperty("items");
+
+        items.GetArrayLength().Should().Be(3, "each slot is served once, by its override or by the computed occurrence");
+        items[0].GetProperty("id").GetString().Should().Be($"evt-series_20260930T{expectedSlotStamp}");
+        items[2].GetProperty("id").GetString().Should().Be($"evt-series_20261014T{expectedSlotStamp}");
+
+        // The override still sits on a slot the expansion produces, so it is served in that slot's
+        // place — carrying the series' new title — rather than being stranded while a second,
+        // shifted occurrence appears beside it.
+        items[1].GetProperty("id").GetString().Should().Be(overrideId);
+        items[1].GetProperty("summary").GetString().Should().Be("Training camp");
+    }
+
+    [Fact]
+    public async Task CreateEvent_WithOneWallClockInTwoZones_StoresTwoDifferentInstants()
+    {
+        // The reading alone names no instant. Two writes carrying the same wall clock and different
+        // zones are five hours apart, so anything that ignores the zone collapses them onto one
+        // instant — and that is wrong on every host, not only on a host at the wrong offset.
+        using var db = CreateDb();
+        var sut = CreateSut(db, userId: "alice");
+
+        static GoogleEventRequest Write(string summary, string zoneId) => new()
+        {
+            Summary = summary,
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTime(2026, 9, 30, 19, 0, 0, DateTimeKind.Unspecified),
+                TimeZone = zoneId
+            }
+        };
+
+        await sut.CreateEvent("cal-alice", Write("London", "Europe/London"));
+        await sut.CreateEvent("cal-alice", Write("New York", "America/New_York"));
+
+        var london = await db.Events.FirstAsync(e => e.Summary == "London");
+        var newYork = await db.Events.FirstAsync(e => e.Summary == "New York");
+
+        london.StartTime.Should().Be(new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc));
+        newYork.StartTime.Should().Be(new DateTime(2026, 9, 30, 22, 0, 0, DateTimeKind.Utc));
+        (newYork.StartTime - london.StartTime).Should().Be(TimeSpan.FromHours(5));
+    }
+
+    [Fact]
+    public async Task UpdateEvent_WithAnOffsetBearingDateTime_TakesTheInstantAsItStands()
+    {
+        // A value that carries its own offset already fixes the instant, and the zone alongside it is
+        // metadata. Resolving it against the zone a second time would shift it.
+        using var db = CreateDb();
+        db.Events.Add(new SimulatedEvent
+        {
+            Id = "evt-1",
+            CalendarId = "cal-alice",
+            Summary = "Swimming",
+            StartTime = new DateTime(2026, 9, 30, 12, 0, 0, DateTimeKind.Utc),
+            EndTime = new DateTime(2026, 9, 30, 13, 0, 0, DateTimeKind.Utc),
+            UserId = "alice"
+        });
+        await db.SaveChangesAsync();
+
+        var sut = CreateSut(db, userId: "alice");
+
+        await sut.UpdateEvent("cal-alice", "evt-1", new GoogleEventRequest
+        {
+            Summary = "Swimming",
+            Start = new GoogleDateTime
+            {
+                DateTime = new DateTimeOffset(2026, 9, 30, 18, 0, 0, TimeSpan.FromHours(1)).UtcDateTime,
+                TimeZone = "Europe/London"
+            },
+            End = new GoogleDateTime
+            {
+                DateTime = new DateTimeOffset(2026, 9, 30, 19, 0, 0, TimeSpan.FromHours(1)).UtcDateTime,
+                TimeZone = "Europe/London"
+            }
+        });
+
+        var stored = await db.Events.FindAsync("evt-1");
+        stored!.StartTime.Should().Be(new DateTime(2026, 9, 30, 17, 0, 0, DateTimeKind.Utc));
+        stored.EndTime.Should().Be(new DateTime(2026, 9, 30, 18, 0, 0, DateTimeKind.Utc));
     }
 
     private static SimContext CreateDb()

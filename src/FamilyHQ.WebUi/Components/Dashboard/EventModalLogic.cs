@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Models;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -91,6 +92,34 @@ public static class EventModalLogic
     /// </summary>
     public static bool MembersChanged(IEnumerable<Guid> originalMemberIds, IEnumerable<Guid> editedMemberIds) =>
         !originalMemberIds.ToHashSet().SetEquals(editedMemberIds);
+
+    /// <summary>
+    /// What a save should say about the event's reminders: the complete set the family asked for, or
+    /// <c>null</c> to say nothing about them at all.
+    /// </summary>
+    /// <param name="reminders">The Reminders tab's state, built when the modal opened.</param>
+    /// <remarks>
+    /// <para>
+    /// The null is the important half. One outbound body is shared by create, create-recurring and
+    /// patch, and Google replaces the whole reminders object when it is present — so a request that
+    /// carries reminders the family did not choose rewrites whatever was set in the Google Calendar
+    /// app on somebody's phone. Saying nothing leaves Google's own copy exactly as it is, which is how
+    /// every edit behaved before the kiosk could write reminders at all.
+    /// </para>
+    /// <para>
+    /// This deliberately reads the tab's own before-and-after comparison rather than diffing against
+    /// FamilyHQ's stored copy: the stored copy can lag Google, and a stale local value would turn a
+    /// title edit into a reminder write. The only question asked here is whether the family changed
+    /// the tab.
+    /// </para>
+    /// <para>
+    /// A present value is never partial. Google replaces the overrides array wholesale, so anything
+    /// missing from the set is a deletion — which is also why "no reminders" has to be sent as an
+    /// explicit empty set rather than by omitting the key.
+    /// </para>
+    /// </remarks>
+    public static EventReminders? RemindersToWrite(ReminderPickerModel reminders) =>
+        reminders.HasChanged ? reminders.ToEventReminders() : null;
 
     /// <summary>
     /// Turns a wall-clock value the pickers produced into the instant the model stores.

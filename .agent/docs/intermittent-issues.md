@@ -14,6 +14,165 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 17. "Disabling weather hides the weather strip" — the Saved-badge net fires because the location save returns silently on an unflushed bind (2026-10-01)
+
+**Open.** Root cause identified; the fix is its own ticket, because it is a product defect rather than a
+test problem.
+**Component:** `src/FamilyHQ.WebUi/Components/Settings/SettingsLocationTab.razor` →
+`SaveLocationAsync`; surfaced by `tests-e2e/FamilyHQ.E2E.Steps/WeatherSteps.cs` →
+`GivenTheUserHasASavedLocation`.
+**First seen:** Deploy-Dev #804 (2026-10-01), on a reminders feature branch.
+**Occurrences:** #804 only. #793–#803 all passed, including four runs on byte-identical application
+code (#800, #801, #802 on one image and #803 on another), so it is rare rather than new.
+
+**Symptom:**
+```
+Microsoft.Playwright.PlaywrightException : Locator expected to have text 'Saved'
+  -> error: Locator expected to have text 'Saved'
+Failed  Disabling weather hides the weather strip [29 s]
+```
+
+**Not to be confused with [issue 1](#1-weather-refresh-returns-200-but-current-returns-204)**, which is
+the same scenario with a different failure (`Weather API returned 204 after refresh`) and was resolved
+in April 2026. This one fails earlier, in the `Given`, and never reaches the refresh.
+
+**What is actually happening.** The assertion that failed is the *diagnostic net* the step's own comment
+describes — it was added deliberately to catch a known race in which Blazor's `@bind:event="oninput"`
+has not flushed `_placeNameInput` before the click handler runs. The net did its job: it failed loudly
+in the `Given` instead of letting the scenario fail downstream with an obscure refresh error.
+
+What it caught is this, in the product:
+
+```csharp
+private async Task SaveLocationAsync()
+{
+    if (string.IsNullOrWhiteSpace(_placeNameInput)) return;   // <- silent
+```
+
+An unflushed bind means an empty `_placeNameInput`, and the handler then returns having done
+**nothing**: no POST, no error, no state change, and the "Saved" badge is never rendered because
+`_locationSetting` stays as it was. The button is not disabled for empty input either, so a *user* who
+taps Save before the input has registered gets the same silence.
+
+So there are two defects stacked, and only the outer one has a mitigation:
+
+| | |
+|---|---|
+| **Product** | `SaveLocationAsync` fails silently on empty input, against the repo's fail-fast standard |
+| **Test** | `BlurAsync()` before the click is a test-side patch for a product-side silence; it narrows the window without closing it |
+
+**Why it is almost certainly not the branch it surfaced on.** The reminders branch's only CSS change is
+scoped `.modal-tabs .view-tab`, a descendant selector that cannot match outside the event modal, and
+its other changes are the event modal, the event/calendar DTOs and view models. Nothing it touches is
+reachable from the Settings location tab.
+
+**Root-cause fix (not done here):** make the empty-input path fail visibly rather than silently — either
+disable the button until the field has content, or set `_saveError` and keep the handler loud. Both make
+the race observable instead of a no-op, which is what the fail-fast standard asks for. The test's
+`BlurAsync()` can then stay as belt-and-braces or go.
+
+**If the symptom returns before the fix lands:** it is this, not a new problem. Re-run the pipeline; the
+failure is rare. Do **not** extend the 15s assertion timeout — the assertion is not slow, the save never
+happened.
+
+### 16. Nine agenda scenarios fail on the last day of every month — a relative seed date outside the rendered month (2026-09-30)
+
+**Status:** root cause **confirmed by a red→green revert on a month-end day** (see below); fix landed
+on the agenda month-boundary branch. **Not yet resolved** — per this file's convention the bar is
+evidence, and the direct evidence is a green Deploy-Dev gate whose E2E phase runs on a month end
+(31 October is the next one). The local red→green below is stronger than the usual interim argument,
+because the failing condition could be *reproduced on demand* rather than waited for.
+
+**Shape:** nine agenda scenarios fail together, each on a 30s timeout waiting for an
+`agenda-cell-<date>-<calendarId>` element, on a `dev` nobody has touched. It reads as a flake or as
+whatever merged most recently, and it is neither.
+
+**Why it is in this file even though it is deterministic.** It arrives without a code change, it
+blocks every branch's gate for a day, and the next person to meet it will be holding a diff that did
+not cause it. That is the cost this file exists to prevent. It is a *calendar*-triggered certainty,
+not a race: on the last day of a month it fails every time, and on every other day it passes every
+time.
+
+**The evidence that settled it, and the shape of that argument.** Deploy-Dev **#786** ran unmodified
+`dev` and produced exactly these nine. **#785** (a feature branch, one commit) produced the same nine
+plus one unrelated failure; **#784** (the same branch, two commits) produced the nine alone. Three
+runs, three different diffs, one identical failure set — intersecting the failure sets rather than
+reading any one of them is what named the date as the variable.
+
+**Root cause.** The agenda renders **exactly one calendar month** — one row per day of it, nothing
+either side. Nine scenarios seeded `"tomorrow"` and asserted against
+`agenda-cell-<tomorrow>-<calendarId>`. On the last day of a month "tomorrow" is the **next** month, so
+that cell is not merely empty, it does not exist, and the assertion waits out its full timeout for an
+element that cannot appear. The month **grid** renders six weeks including the adjacent months' edge
+days, which is why the equivalent month-view scenarios never showed this, and why the mechanism is
+easy to disbelieve.
+
+Note the second, quieter failure mode: a **negative** assertion (`I do not see … in the … column
+for …`) passes *vacuously* against a missing cell. Two such steps sit in this feature; both happen to
+be in scenarios that already navigated, so they were never wrong — but a negative assertion on an
+absent cell proves nothing, and that is worth knowing before writing another one.
+
+**This is issue 11's class, one boundary over.** Issue 11 was the seed date and the view date
+diverging because the suite had several answers to "what day is it?"; that was closed by giving it one
+(`BrowserClock`). This is the same divergence with a single, correct clock: the date is right and the
+**view does not span it**. A resolved date says *when*, never *where*.
+
+**Fix:** the seeded date and the rendered view are made to agree explicitly.
+`DashboardPage.ShowAgendaMonthContainingAsync(DateOnly)` drives the agenda's own prev/next until the
+**live** month-year label spans the date — re-reading the label each step rather than counting clicks
+from an assumed starting month — and throws if it cannot get there, so a broken scenario says so
+instead of asserting against the wrong month. The step `I navigate the agenda to show "<date
+expression>"` takes the same expressions as every other date-bearing step; it **replaces** the old
+`I navigate the agenda to show a date in N days`, which existed and worked and was simply absent from
+the nine. The scenarios that already carried it passed on #786 alongside the nine that did not, which
+is the whole diagnosis in one line.
+
+Every assertion is unchanged — same cell key, same overflow indicator, same 24-hour format, same
+multi-calendar columns. **`"tomorrow"` was deliberately kept** rather than moved to `"today"`: the
+overflow and ordering scenarios want a day the current time cannot interfere with, and a seed on
+today can be overtaken by the day rolling over mid-scenario.
+
+**Verified by revert, on a month end.** On 2026-09-30 the affected scenarios were run locally against
+the pre-change tree and the fixed tree in turn — red then green, same machine, same day. A
+non-month-end day was then simulated rather than waited for (see "If the symptom returns").
+
+**Residual, named because it is what will look like this next.** A relative expression is resolved
+independently by each step, so if midnight (`Europe/London`) falls between a scenario's seed step and
+its assertion, the two resolve to **different dates** and the assertion reads an empty (or absent)
+cell. Navigation does not help: it is the date that moved, not the view. The exposure is one scenario
+per run whose E2E phase crosses midnight, and it applies to every relative date in the suite, not just
+the agenda's.
+
+It was **not** closed here, and the reason is worth recording: freezing "today" per scenario would fix
+the seed/assert pairs and **break** the scenarios that compare against the app's *live* today (the
+today-row highlight, the prev/next month labels, the create modal's default date) — the app rolls over
+whether the test does or not. Closing it properly means freezing only the expressions the feature file
+supplies, at every one of ~35 call sites, which is a suite-wide change and not a hotfix.
+
+**A different cause that presents identically, and cost time here — all-day seeds cannot pass on a
+non-UTC host.** Three of the nine also seed an **all-day** event, and those three keep failing locally
+after this fix, on the same 30s wait for a cell that now exists. It is not the month boundary: with the
+test clock moved to mid-month, so the date is unambiguously inside the rendered view and the navigation
+is a no-op, they still fail — while every timed scenario passes. The Simulator converts each `DateTime`
+with `v => v.ToUniversalTime()`, which reads an `Unspecified` value as *its own process's* local time.
+All-day seeds go on the wire as naive midnight, so on a UK host in BST `…-16T00:00` becomes
+`…-15T23:00Z` and the Simulator emits `date` for the **15th** — one day early, and the assertion reads
+the 16th. In CI the Simulator is a UTC container, so the conversion is a no-op and these pass. Marking
+the seed `DateTimeKind.Utc` makes the conversion a no-op on any host and flips all three green in
+~12s each; that is a separate change and is not made here. **Read this before concluding an agenda
+fix did not work: a naive all-day seed and a non-UTC host is a local-only inability, in the same class
+as the `DayRollover` scenarios that cannot run locally at all.**
+
+**If the symptom returns:**
+1. **Check the run date first**, before reading the diff. Last day of the month → this entry. Any
+   other day → it is not this, and a diff that looks innocent probably is.
+2. Simulate the boundary instead of waiting for it: set the **host** clock to a month end (the browser
+   is pinned to `Europe/London` and `BrowserClock` derives from the host, so the whole suite moves with
+   it) and run the agenda feature. Equally, to satisfy yourself an ordinary day still passes, set it to
+   a mid-month date. This is the cheap experiment that the original investigation did not have.
+3. If the failing scenario *does* carry a navigation step, check whether a new seed step introduced a
+   **second** date expression — the navigation covers the date it was given and nothing else.
+
 ### 15. Google's push notification can take ~4 minutes, against a typical ~17 seconds (2026-09-28)
 
 **Shape:** a preprod smoke scenario that changes a series in Google and waits for preprod to serve
@@ -31,6 +190,23 @@ five times that day at ~17s.
 ```
 
 Preprod received the notification for that calendar at `17:36:48` — **3m58s after the change.**
+
+**Recurrence, 2026-10-01 — now failing at the raised 300s budget.** PreProd #105 failed **three**
+scenarios, all on the same shared step (`the kiosk has received that event`), and the whole run took
+**43 minutes** against the usual 8:
+
+- A series deleted in Google disappears from the kiosk (5m 4s)
+- One occurrence deleted in Google disappears from the kiosk and the others stay (6m 3s)
+- Reminders set in Google survive an edit that changed only the title (5m 3s)
+
+Ownership was settled the way step 1 below says to: the webhook path was **alive** throughout — Seq
+shows a delivery accepted and processed by preprod in 3ms — and other scenarios using the *same*
+inbound step passed in the same run. **#106, an immediate re-run on the same image, went green in
+7m49s** with all three passing. So this is latency, not a broken path.
+
+What is new and worth watching: 300s was raised *because* ~4 minutes had been observed, and three
+scenarios have now blown it in one run. That is the condition step 3 names — if it needs raising
+again, question whether push is working at all rather than widening the window a third time.
 
 **The relay is not the cause, and that was checked rather than assumed:**
 

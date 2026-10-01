@@ -57,6 +57,19 @@ public class RecurringEventSteps
             eventName, firstOccurrence, occurrences);
     }
 
+    /// <summary>
+    /// Moves the agenda onto the month holding the series' first occurrence. The seed picks that date
+    /// (tomorrow), so the scenario must not restate it — and it must not assume it: on the last day of
+    /// a month the first occurrence is in the NEXT month, which the agenda does not render, leaving no
+    /// cell for the indicator to be found in. Mirrors the day picker's first-occurrence step.
+    /// </summary>
+    [When(@"I navigate the agenda to the recurring event's first occurrence")]
+    public async Task WhenINavigateTheAgendaToTheRecurringEventsFirstOccurrence()
+    {
+        var firstOccurrence = _scenarioContext.Get<System.DateTime>("RecurringSeriesFirstOccurrenceDate");
+        await _dashboardPage.ShowAgendaMonthContainingAsync(DateOnly.FromDateTime(firstOccurrence));
+    }
+
     [Then(@"the recurring event shows a recurrence indicator")]
     public async Task ThenTheRecurringEventShowsARecurrenceIndicator()
     {
@@ -149,8 +162,9 @@ public class RecurringEventSteps
     }
 
     // Establishes a pre-existing per-instance exception override before an all-events edit, so the
-    // all-events scenario can prove the override is preserved. This is a "This event" edit applied to
-    // the Nth occurrence.
+    // all-events scenario can prove what a series rename does to it: the occurrence stays an
+    // exception on its own slot but takes the series' new title, which is what Google does. This is
+    // a "This event" edit applied to the Nth occurrence.
     [Given(@"occurrence (\d+) of ""([^""]*)"" has already been changed to ""([^""]*)""")]
     public async Task GivenOccurrenceHasAlreadyBeenChangedTo(int occurrence, string seriesName, string newTitle)
     {
