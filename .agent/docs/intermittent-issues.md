@@ -191,6 +191,23 @@ five times that day at ~17s.
 
 Preprod received the notification for that calendar at `17:36:48` — **3m58s after the change.**
 
+**Recurrence, 2026-10-01 — now failing at the raised 300s budget.** PreProd #105 failed **three**
+scenarios, all on the same shared step (`the kiosk has received that event`), and the whole run took
+**43 minutes** against the usual 8:
+
+- A series deleted in Google disappears from the kiosk (5m 4s)
+- One occurrence deleted in Google disappears from the kiosk and the others stay (6m 3s)
+- Reminders set in Google survive an edit that changed only the title (5m 3s)
+
+Ownership was settled the way step 1 below says to: the webhook path was **alive** throughout — Seq
+shows a delivery accepted and processed by preprod in 3ms — and other scenarios using the *same*
+inbound step passed in the same run. **#106, an immediate re-run on the same image, went green in
+7m49s** with all three passing. So this is latency, not a broken path.
+
+What is new and worth watching: 300s was raised *because* ~4 minutes had been observed, and three
+scenarios have now blown it in one run. That is the condition step 3 names — if it needs raising
+again, question whether push is working at all rather than widening the window a third time.
+
 **The relay is not the cause, and that was checked rather than assumed:**
 
 - it accepted *nothing at all* during the silence, so it was not holding a delivery back;
