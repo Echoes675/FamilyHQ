@@ -85,6 +85,29 @@ public class CalendarApiServiceUpcomingTests
     }
 
     [Fact]
+    public async Task GetUpcomingRemindersAsync_WithEveryReminderAlreadySent_CarriesTheNullsThrough()
+    {
+        // The row of an event whose reminders have all fired, which is the ordinary state on the day
+        // of the event. The wire format is where this could go wrong — a null that deserialised to
+        // default(DateTimeOffset) would read as 01/01/0001 and the row would claim a next reminder
+        // that does not exist, rather than saying "all sent".
+        var dto = new UpcomingReminderEventDto(
+            EventId, "Dentist", FixedStart, EventIsAllDay: false,
+            ReminderCount: 3, NextReminderAt: null, NextReminderMinutes: null, NextReminderMethod: null,
+            IsDefault: true, []);
+        var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
+
+        var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
+
+        var row = rows.Should().ContainSingle().Subject;
+        row.NextReminderAt.Should().BeNull();
+        row.NextReminderMinutes.Should().BeNull();
+        row.NextReminderMethod.Should().BeNull();
+        row.ReminderCount.Should().Be(3, "the count is what the event carries, not what is left to come");
+        row.IsDefault.Should().BeTrue("where the reminders came from does not stop being true once they fire");
+    }
+
+    [Fact]
     public async Task GetUpcomingRemindersAsync_WithNoRows_ReturnsEmptyNotNull()
     {
         var sut = CreateSut(Json(new List<UpcomingReminderEventDto>()));
