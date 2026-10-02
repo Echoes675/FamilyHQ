@@ -279,8 +279,10 @@ public class EventsControllerTests
 
     private static (Mock<ICalendarEventService>, EventsController) CreateSut()
     {
-        var service = new Mock<ICalendarEventService>();
-        var logger  = new Mock<ILogger<EventsController>>();
-        return (service, new EventsController(service.Object, logger.Object));
+        var service            = new Mock<ICalendarEventService>();
+        var calendarRepository = new Mock<ICalendarRepository>();
+        var currentUser        = new Mock<ICurrentUserService>();
+        var logger             = new Mock<ILogger<EventsController>>();
+        return (service, new EventsController(service.Object, calendarRepository.Object, currentUser.Object, logger.Object));
     }
 }

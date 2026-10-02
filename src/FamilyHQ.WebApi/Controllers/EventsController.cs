@@ -13,12 +13,44 @@ namespace FamilyHQ.WebApi.Controllers;
 public class EventsController : ControllerBase
 {
     private readonly ICalendarEventService _service;
+    private readonly ICalendarRepository _calendarRepository;
+    private readonly ICurrentUserService _currentUser;
     private readonly ILogger<EventsController> _logger;
 
-    public EventsController(ICalendarEventService service, ILogger<EventsController> logger)
+    public EventsController(
+        ICalendarEventService service,
+        ICalendarRepository calendarRepository,
+        ICurrentUserService currentUser,
+        ILogger<EventsController> logger)
     {
         _service = service;
+        _calendarRepository = calendarRepository;
+        _currentUser = currentUser;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// One event by id. The reminders timeline needs this: a row's event may sit in a month the
+    /// dashboard has never loaded, so there is nothing in memory to open.
+    /// </summary>
+    [HttpGet("{eventId:guid}")]
+    public async Task<IActionResult> GetEvent(Guid eventId, CancellationToken ct)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized();
+
+        // The userId overload scopes the lookup to calendars this user owns, so an event that belongs
+        // to someone else comes back null exactly like an id that does not exist at all — and both are
+        // reported as a plain 404. A 403 for "exists but isn't yours" would itself leak the event's
+        // existence to a caller who otherwise has no way to tell the two cases apart.
+        var evt = await _calendarRepository.GetEventAsync(eventId, userId, ct);
+        if (evt is null) return NotFound();
+
+        // CalendarEvent has no navigation property to its owner, only the FK — one more lookup, but a
+        // single row rather than the whole calendar list this endpoint has no other use for.
+        var owner = await _calendarRepository.GetCalendarByIdAsync(evt.OwnerCalendarInfoId, ct);
+        return Ok(MapToDto(evt, owner));
     }
 
     [HttpPost]
@@ -89,7 +121,10 @@ public class EventsController : ControllerBase
         return Ok(MapToDto(updated));
     }
 
-    private static CalendarEventDto MapToDto(CalendarEvent e) => new(
+    // owner is only supplied by GetEvent today: Create/Update/Delete/SetMembers don't have the
+    // calendar already loaded, and nothing yet consumes the two owning-calendar fields on their
+    // responses. Defaulting to null keeps every one of those call sites compiling unchanged.
+    private static CalendarEventDto MapToDto(CalendarEvent e, CalendarInfo? owner = null) => new(
         e.Id,
         e.GoogleEventId,
         e.Title,
@@ -104,5 +139,7 @@ public class EventsController : ControllerBase
         // Passed straight through, including null. The modal reads this back after a save so it shows
         // what Google actually stored rather than what the kiosk optimistically sent — Google rewrites
         // a reminder silently and still answers 200.
-        e.Reminders);
+        e.Reminders,
+        owner?.Id,
+        owner?.DefaultReminders);
 }

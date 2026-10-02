@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Models;
+using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -234,5 +235,39 @@ public static class EventModalLogic
         var start = startDay.Date + startTimeOfDay;
         var end = inclusiveEndDay.Date + endTimeOfDay;
         return (start, end > start ? end : start + FallbackTimedDuration);
+    }
+
+    /// <summary>
+    /// The default reminders of the calendar this event will live on.
+    /// <para>
+    /// An existing event already has an owner and the server says which it is, so that is read
+    /// rather than predicted. Only a <b>new</b> event — whose member chips are still being chosen —
+    /// has no owner yet, and there the member-routing rule is the only answer available.
+    /// </para>
+    /// </summary>
+    public static EventReminders? OwningCalendarDefaults(
+        EventReminders? storedOwningCalendarDefaults,
+        IReadOnlyCollection<Guid> selectedCalendarIds,
+        IReadOnlyList<CalendarSummaryViewModel> calendars) =>
+        storedOwningCalendarDefaults ?? PredictForNewEvent(selectedCalendarIds, calendars);
+
+    /// <summary>
+    /// Reminders belong to one Google calendar, and a new event lands on the single chosen member's
+    /// calendar or, when several members are chosen, on the shared one — the same routing the server
+    /// applies when it creates the event. Null when no calendar-list sync has reported the chosen
+    /// calendar's defaults, which the tab states rather than showing an empty list as though it were
+    /// the calendar's answer.
+    /// </summary>
+    private static EventReminders? PredictForNewEvent(
+        IReadOnlyCollection<Guid> selectedCalendarIds, IReadOnlyList<CalendarSummaryViewModel> calendars)
+    {
+        CalendarSummaryViewModel? owner = selectedCalendarIds.Count switch
+        {
+            1 => calendars.FirstOrDefault(c => c.Id == selectedCalendarIds.First()),
+            > 1 => calendars.FirstOrDefault(c => c.IsShared),
+            _ => null
+        };
+
+        return owner?.DefaultReminders;
     }
 }

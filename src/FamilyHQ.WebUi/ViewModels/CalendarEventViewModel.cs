@@ -23,4 +23,10 @@ public record CalendarEventViewModel(
     // Google's reminders for this event, exactly as the API sent them. The reminder tab is built from
     // this when the modal opens, so the four states have to arrive intact: null is "never synced" and
     // not "no reminders", and an explicit empty list is the family asking for none.
-    EventReminders? Reminders = null);
+    EventReminders? Reminders = null,
+    // The calendar this event actually lives on, as the server stored it — mirrors
+    // CalendarEventDto.OwningCalendarId. Null for a brand-new event, which has no owner yet.
+    Guid? OwningCalendarId = null,
+    // That calendar's own default reminders. The modal reads this back for an existing event instead
+    // of re-deriving it from the selected member chips (EventModalLogic.OwningCalendarDefaults).
+    EventReminders? OwningCalendarDefaultReminders = null);

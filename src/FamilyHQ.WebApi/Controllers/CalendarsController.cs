@@ -90,6 +90,12 @@ public class CalendarsController : ControllerBase
 
         foreach (var evt in events)
         {
+            // The calendar this event is actually stored on. Looked up once per event and reused
+            // below both for the owner-fallback lane and for the DTO's owning-calendar fields, so
+            // there is one place that keys off OwnerCalendarInfoId rather than two that could drift
+            // apart on a future edit.
+            var owningCalendar = allCalendars.FirstOrDefault(c => c.Id == evt.OwnerCalendarInfoId);
+
             // Determine which members to include in the DTO.
             // Multi-member events: use the full member list (client expands into one lane per member).
             // Simple events with no member tags: fall back to the owner calendar as the sole lane.
@@ -105,9 +111,8 @@ public class CalendarsController : ControllerBase
             else
             {
                 // No member tags — show the event in its owner calendar if visible
-                var owner = allCalendars.FirstOrDefault(c => c.Id == evt.OwnerCalendarInfoId);
-                if (owner == null || !visibleCalendarIds.Contains(owner.Id)) continue;
-                memberDtos = [new EventCalendarDto(owner.Id, owner.DisplayName, owner.Color, owner.IsShared)];
+                if (owningCalendar == null || !visibleCalendarIds.Contains(owningCalendar.Id)) continue;
+                memberDtos = [new EventCalendarDto(owningCalendar.Id, owningCalendar.DisplayName, owningCalendar.Color, owningCalendar.IsShared)];
             }
 
             var dto = new CalendarEventDto(
@@ -127,7 +132,13 @@ public class CalendarsController : ControllerBase
                 // The modal opens from the grid's own event, so its reminders have to travel with it.
                 // Null included: an event whose reminders have never synced is not an event without
                 // reminders.
-                evt.Reminders);
+                evt.Reminders,
+                // The server already knows which calendar this event lives on and what that calendar's
+                // own defaults are — from allCalendars, already loaded above for the owner-fallback
+                // lane, so this costs no extra query. The modal reads these back instead of
+                // re-implementing the member-routing rule client-side (EventModalLogic.OwningCalendarDefaults).
+                owningCalendar?.Id,
+                owningCalendar?.DefaultReminders);
 
             var current = evt.Start.Date;
             var last    = evt.End.AddTicks(-1).Date;
