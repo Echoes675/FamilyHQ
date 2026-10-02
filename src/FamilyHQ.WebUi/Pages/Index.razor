@@ -138,8 +138,8 @@
 
 <EventModal @ref="_eventModal"
             Calendars="_calendars"
-            OnSaved="() => LoadMonthDataAsync()"
-            OnDeleted="() => LoadMonthDataAsync()" />
+            OnSaved="OnEventModalSaved"
+            OnDeleted="OnEventModalDeleted" />
 
 @code {
     private DashboardView _currentView = DashboardView.Month;
@@ -555,6 +555,38 @@
     private async Task RefreshUpcomingRemindersAsync()
     {
         _upcomingReminders = await CalendarApi.GetUpcomingRemindersAsync();
+    }
+
+    // EventModal.OnSaved/OnDeleted fire for every tab the modal can be opened from, not only
+    // Reminders — LoadMonthDataAsync always runs because Month/Day/Agenda all read the same month
+    // grid regardless of which one is currently showing. The reminders timeline is different: it is
+    // its own fetch, scoped to whichever tab happens to be open, so it only refreshes itself when
+    // that tab IS the Reminders view — the same "originating view refreshes itself" convention
+    // SwitchToView/EnterRemindersViewAsync already follow. Without this, editing or deleting a
+    // reminder's event from the Reminders tab leaves its row showing the pre-edit lead time (or
+    // present at all, for a delete) until the next SignalR EventsUpdated happens to land.
+    private async Task OnEventModalSaved()
+    {
+        await LoadMonthDataAsync();
+
+        if (_currentView == DashboardView.Reminders)
+        {
+            await RefreshUpcomingRemindersAsync();
+            StateHasChanged();
+        }
+    }
+
+    // Same reasoning and refresh as OnEventModalSaved — a delete from the Reminders tab needs its
+    // row gone just as promptly as an edit needs its row's lead time updated.
+    private async Task OnEventModalDeleted()
+    {
+        await LoadMonthDataAsync();
+
+        if (_currentView == DashboardView.Reminders)
+        {
+            await RefreshUpcomingRemindersAsync();
+            StateHasChanged();
+        }
     }
 
     // The one place that enters the Reminders tab — called from SwitchToView and, defensively, from

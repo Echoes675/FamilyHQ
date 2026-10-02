@@ -82,14 +82,29 @@ public static class ReminderRowDisplay
     /// that happens.
     /// </summary>
     /// <remarks>
-    /// Formats <paramref name="start"/>'s own embedded offset directly rather than converting it to
-    /// any zone — the value is expected to arrive already wall-clock-correct for the household, the
-    /// same way the rest of the dashboard's event tiles receive their start times. Reinterpreting it
-    /// against a second zone here would risk showing a different time than the row's own ping-time
-    /// column, which is read from the same kind of value.
+    /// <paramref name="start"/> arrives from Postgres via Npgsql as a <c>timestamptz</c> read back
+    /// with a <c>+00:00</c> offset — not wall-clock-correct for the household, whatever offset it
+    /// carries. Every other dashboard view converts before formatting
+    /// (<see cref="FamilyHQ.WebUi.ViewModels.CalendarEventViewModelExtensions.StartLocal"/>), and this
+    /// is why <paramref name="zone"/> is required rather than optional: formatting the raw value, as
+    /// this used to, reads an hour early for every timed event for roughly half the year in a zone
+    /// that observes DST.
     /// </remarks>
-    public static string StartsAt(DateTimeOffset start, bool isAllDay) =>
-        isAllDay ? "all day" : $"starts {start.ToString("HH:mm", CultureInfo.InvariantCulture)}";
+    public static string StartsAt(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone) =>
+        isAllDay ? "all day" : $"starts {TimeZoneInfo.ConvertTime(start, zone).ToString("HH:mm", CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// The ping's own trigger time, in the row's compact form: "14:00" — the leading column every row
+    /// has, timed or all-day, since a ping (unlike the event it belongs to) always fires at a specific
+    /// instant.
+    /// </summary>
+    /// <remarks>
+    /// Same reason <see cref="StartsAt"/> takes a zone: <paramref name="triggerAt"/> arrives from
+    /// Postgres with a +00:00 offset, not the household's, so formatting it without converting first
+    /// reads an hour early for roughly half the year in a zone that observes DST.
+    /// </remarks>
+    public static string PingTime(DateTimeOffset triggerAt, TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(triggerAt, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// A one-glyph hint at how the ping is delivered. Falls back to a plain bullet for a method

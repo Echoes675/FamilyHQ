@@ -307,6 +307,14 @@
     // falls back to predicting from the selected members only in that case.
     private EventReminders? _openedOwningCalendarDefaults;
 
+    // The calendar the server says this event lives on, as of when the modal opened — mirrors
+    // CalendarEventViewModel.OwningCalendarId. Null for a create modal, same as above, but the two
+    // fields are NOT redundant: this is what EventModalLogic.OwningCalendarDefaults actually branches
+    // on. An existing event on a calendar whose defaults backfill has not reached it yet has THIS set
+    // and _openedOwningCalendarDefaults null — and must still read that null rather than predict,
+    // which is exactly the distinction a single "defaults, or predict if absent" field cannot make.
+    private Guid? _openedOwningCalendarId;
+
     // Whether to tell the family that switching All day started their reminders again.
     private bool _remindersResetByAllDay;
 
@@ -467,12 +475,21 @@
     /// hands the choice back to Google while still measuring against what the event opened with, so
     /// the discard counts as a change rather than disappearing.
     /// </summary>
-    private void RebuildReminderPicker(bool discardOwnReminders = false)
+    /// <param name="discardOwnReminders">See above.</param>
+    /// <param name="predictFromCurrentSelection">
+    /// Bypasses the stored owner and predicts from <see cref="_selectedCalendarIds"/> as they stand
+    /// right now, even for an existing event. Only <see cref="OnSelectedCalendarsChanged"/> passes
+    /// true — see its remarks for why a live member-change preview cannot trust the owner the modal
+    /// opened with.
+    /// </param>
+    private void RebuildReminderPicker(bool discardOwnReminders = false, bool predictFromCurrentSelection = false)
     {
-        _reminderPicker = ReminderPickerModel.From(
-            _openedReminders,
-            EventModalLogic.OwningCalendarDefaults(_openedOwningCalendarDefaults, _selectedCalendarIds, Calendars),
-            _eventModel.IsAllDay);
+        var owningCalendarDefaults = predictFromCurrentSelection
+            ? EventModalLogic.PredictForSelection(_selectedCalendarIds, Calendars)
+            : EventModalLogic.OwningCalendarDefaults(
+                _openedOwningCalendarId, _openedOwningCalendarDefaults, _selectedCalendarIds, Calendars);
+
+        _reminderPicker = ReminderPickerModel.From(_openedReminders, owningCalendarDefaults, _eventModel.IsAllDay);
 
         if (discardOwnReminders)
         {
@@ -486,6 +503,16 @@
     /// inheriting: there is nothing to lose then, and it re-opens on the state it already had.
     /// Re-reading after an edit would throw away the family's reminders and reset the comparison that
     /// decides whether they are sent.
+    /// <para>
+    /// Always predicted from the selection as it now stands
+    /// (<see cref="EventModalLogic.PredictForSelection"/>), never read from the owner an existing
+    /// event opened with: the member change this handler fires for can itself move the event onto a
+    /// different calendar than the one it opened on (e.g. adding a second member moves it onto the
+    /// shared calendar), and the stored owner describes the selection before that change, not after
+    /// it. The write itself is unaffected either way — it still sends <c>useDefault:true</c> and lets
+    /// Google apply whichever calendar's defaults the new owner actually has; this only changes what
+    /// the tab previews before Save is pressed.
+    /// </para>
     /// </summary>
     private void OnSelectedCalendarsChanged(HashSet<Guid> ids)
     {
@@ -493,7 +520,7 @@
 
         if (_reminderPicker.FollowsCalendarDefault && !_reminderPicker.HasChanged)
         {
-            RebuildReminderPicker();
+            RebuildReminderPicker(predictFromCurrentSelection: true);
         }
     }
 
@@ -555,6 +582,7 @@
         // No owner yet either — a create modal is the one case EventModalLogic.OwningCalendarDefaults
         // still predicts from the selected members, because there is nothing stored to read.
         _openedOwningCalendarDefaults = null;
+        _openedOwningCalendarId = null;
         _remindersResetByAllDay = false;
         RebuildReminderPicker();
         _activeTab = EventModalTab.Details;
@@ -593,6 +621,11 @@
         _openedReminders = evt.Reminders;
         // The server already knows which calendar this event lives on — read it rather than
         // re-predicting from the member chips, which can only agree with the server by coincidence.
+        // _openedOwningCalendarId is what OwningCalendarDefaults actually branches on; capturing it
+        // alongside the defaults (rather than relying on the defaults being non-null) is what lets a
+        // calendar whose own defaults are still null read as "no defaults" instead of silently
+        // falling through to a prediction.
+        _openedOwningCalendarId = evt.OwningCalendarId;
         _openedOwningCalendarDefaults = evt.OwningCalendarDefaultReminders;
         _remindersResetByAllDay = false;
         RebuildReminderPicker();

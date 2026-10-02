@@ -9,12 +9,12 @@
      data-event-id="@Ping.EventId"
      data-is-default="@(Ping.IsDefault ? "true" : "false")"
      @onclick="() => OnOpenEvent.InvokeAsync(Ping.EventId)">
-    <span class="reminder-ping-row__time">@Ping.TriggerAt.ToString("HH:mm")</span>
+    <span class="reminder-ping-row__time">@ReminderRowDisplay.PingTime(Ping.TriggerAt, Zone)</span>
     <span class="reminder-ping-row__icon" aria-hidden="true">@ReminderRowDisplay.MethodIcon(Ping.Method)</span>
     <div class="reminder-ping-row__body">
         <span class="reminder-ping-row__title">@Ping.EventTitle</span>
         <span class="reminder-ping-row__detail">
-            @ReminderRowDisplay.Lead(Ping.Minutes, Ping.EventIsAllDay) · @ReminderRowDisplay.StartsAt(Ping.EventStart, Ping.EventIsAllDay)
+            @ReminderRowDisplay.Lead(Ping.Minutes, Ping.EventIsAllDay) · @ReminderRowDisplay.StartsAt(Ping.EventStart, Ping.EventIsAllDay, Zone)
         </span>
     </div>
     @if (Ping.IsDefault)
@@ -40,6 +40,14 @@
 @code {
     /// <summary>The ping this row renders. Required — there is no meaningful empty row.</summary>
     [Parameter, EditorRequired] public UpcomingReminderViewModel Ping { get; set; } = default!;
+
+    /// <summary>
+    /// The household's zone, for converting <see cref="Ping"/>'s UTC-stamped instants before display.
+    /// Threaded straight down from <see cref="RemindersView.Zone"/> — required, because there is no
+    /// safe default: formatting the raw UTC value, as this row used to, is the bug this parameter
+    /// exists to close.
+    /// </summary>
+    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = default!;
 
     /// <summary>Raised with the event's id when the row is tapped. The whole row is the tap target.</summary>
     [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }

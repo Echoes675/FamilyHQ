@@ -9,6 +9,14 @@ namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
 // the wrong lead time or the wrong start is a production bug that nothing here would catch by itself.
 public class ReminderRowDisplayTests
 {
+    // Dublin, not a fixed offset built in this file: it is the zone the rest of the suite already
+    // uses for the same DST transition (ReminderBucketingTests, ReminderPingCalculatorTests), and it
+    // resolves in this suite without a tz-database dependency concern — see those files. BST (UTC+1)
+    // on 15 June means every StartsAt/PingTime value below genuinely exercises the conversion: a
+    // StartsAt/PingTime that went back to formatting the raw +00:00 value would read exactly one hour
+    // early, and these fixtures would catch that rather than passing either way.
+    private static readonly TimeZoneInfo Dublin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+
     [Fact]
     public void Lead_UnderAnHour_ReadsInMinutes() =>
         ReminderRowDisplay.Lead(30, isAllDay: false).Should().Be("30 min before");
@@ -74,18 +82,31 @@ public class ReminderRowDisplayTests
         ReminderRowDisplay.Lead(0, isAllDay: true).Should().Be("At midnight as the day begins");
 
     [Fact]
-    public void StartsAt_ForATimedEvent_ShowsA24HourTime() =>
-        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 3, 10, 9, 5, 0, TimeSpan.Zero), isAllDay: false)
-            .Should().Be("starts 09:05");
+    public void StartsAt_ForATimedEvent_ConvertsToTheGivenZoneBeforeShowingA24HourTime() =>
+        // 09:05+00:00 is what Npgsql hands back for a timestamptz regardless of where the event
+        // actually is — 10:05 in Dublin on 15 June (BST, UTC+1). Pinning "10:05" rather than "09:05"
+        // is what makes this fail against the raw-offset reading this fixes.
+        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 6, 15, 9, 5, 0, TimeSpan.Zero), isAllDay: false, Dublin)
+            .Should().Be("starts 10:05");
 
     [Fact]
     public void StartsAt_ForAnAllDayEvent_SaysAllDayRatherThanMidnight()
     {
         // An all-day event's stored start is a date boundary. Rendering it as a time would tell the
-        // family the event "starts 00:00", which is not a thing that happens.
-        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero), isAllDay: true)
+        // family the event "starts 00:00", which is not a thing that happens. The zone is irrelevant
+        // to this branch — passed anyway because the parameter is required — so Dublin here is just
+        // "some zone", not a fixture that matters to the assertion.
+        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero), isAllDay: true, Dublin)
             .Should().Be("all day");
     }
+
+    [Fact]
+    public void PingTime_ConvertsToTheGivenZoneBeforeFormatting() =>
+        // 23:30+00:00 on 15 June is 00:30 on the 16th in Dublin (BST, UTC+1) — a different HOUR, not
+        // just a different offset notation, so a reading that skipped the conversion cannot
+        // accidentally land on the same string the way a whole-hour-only test might.
+        ReminderRowDisplay.PingTime(new DateTimeOffset(2026, 6, 15, 23, 30, 0, TimeSpan.Zero), Dublin)
+            .Should().Be("00:30");
 
     [Theory]
     [InlineData(EventRemindersValidator.PopupMethod, "🔔")]
