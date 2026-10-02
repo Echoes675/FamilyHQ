@@ -1,6 +1,5 @@
 using System.Globalization;
 using FamilyHQ.Core.Validators;
-using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -93,14 +92,6 @@ public static class ReminderRowDisplay
         EventRemindersValidator.EmailMethod => "✉",
         _ => "•"
     };
-
-    /// <summary>
-    /// Who the ping is for: every member's name, joined — never "Family" or "Shared", because the
-    /// row exists to answer whose phone is about to go off. Falls back to
-    /// <paramref name="ownerCalendarName"/> only when no member is known at all.
-    /// </summary>
-    public static string People(IReadOnlyList<ReminderMemberViewModel> members, string ownerCalendarName) =>
-        members.Count == 0 ? ownerCalendarName : string.Join(" · ", members.Select(m => m.DisplayName));
 
     private static string Count(int amount, string singular, string plural) =>
         $"{amount.ToString(CultureInfo.InvariantCulture)} {(amount == 1 ? singular : plural)}";

@@ -1,6 +1,5 @@
 using FamilyHQ.Core.Validators;
 using FamilyHQ.WebUi.Components.Dashboard;
-using FamilyHQ.WebUi.ViewModels;
 using FluentAssertions;
 
 namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
@@ -72,22 +71,4 @@ public class ReminderRowDisplayTests
     [Fact]
     public void MethodIcon_ForAMethodTheKioskCannotCreate_FallsBackWithoutThrowing() =>
         ReminderRowDisplay.MethodIcon("sms").Should().Be("•");
-
-    [Fact]
-    public void People_ForASharedEvent_NamesEveryPerson()
-    {
-        // Never "Family" or "Shared" — the point of the row is whose phone goes off.
-        var members = new[]
-        {
-            new ReminderMemberViewModel("Eoin", "#4285f4"),
-            new ReminderMemberViewModel("Sarah", "#db4437")
-        };
-
-        ReminderRowDisplay.People(members, ownerCalendarName: "Household").Should().Be("Eoin · Sarah");
-    }
-
-    [Fact]
-    public void People_WhenNoMembersAreAssigned_FallsBackToTheOwnerCalendarName() =>
-        ReminderRowDisplay.People(Array.Empty<ReminderMemberViewModel>(), ownerCalendarName: "Household")
-            .Should().Be("Household");
 }
