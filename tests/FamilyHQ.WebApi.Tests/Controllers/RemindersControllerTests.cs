@@ -19,7 +19,15 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 /// </summary>
 public class RemindersControllerTests
 {
+    // Static, predictable GUIDs throughout this file (per .agent/skills/testing-standards/SKILL.md)
+    // rather than Guid.NewGuid() — matches CalendarsControllerTests.cs's CalAId/CalBId/EventId style.
+    // No test in this file asserts on an event's own Id, so every CalendarEvent built by EventWith
+    // shares Guid.Empty; the named people/calendar ids below exist only because their DisplayName
+    // needs to be distinguishable, not because their Id is ever compared.
     private static readonly Guid OwnerCalendarId = Guid.Parse("00000000-0000-0000-0000-00000000c411");
+    private static readonly Guid EoinCalendarId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid SarahCalendarId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid SharedFamilyCalendarId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
     private static EventReminders Explicit(params (string Method, int Minutes)[] overrides) =>
         EventReminders.Explicit(overrides.Select(o => new EventReminder(o.Method, o.Minutes)));
@@ -39,26 +47,30 @@ public class RemindersControllerTests
             IsShared = false
         };
 
+    // Factory METHODS, not shared static fields — CalendarInfo is a mutable class, and a shared
+    // instance could pick up a mutation from one test and leak it into another. A fresh instance
+    // with the same deterministic Id every call keeps both properties.
+    private static CalendarInfo Eoin() => new() { Id = EoinCalendarId, DisplayName = "Eoin", Color = "#111111", IsShared = false };
+    private static CalendarInfo Sarah() => new() { Id = SarahCalendarId, DisplayName = "Sarah", Color = "#222222", IsShared = false };
+    private static CalendarInfo SharedFamilyCalendar() => new() { Id = SharedFamilyCalendarId, DisplayName = "Family", IsShared = true };
+
     private static CalendarEvent EventWith(
         DateTimeOffset start,
         EventReminders? reminders,
         bool isAllDay = false,
         string title = "Event",
-        Guid? ownerCalendarId = null,
-        IEnumerable<string>? members = null) =>
+        Guid? ownerCalendarId = null) =>
         new()
         {
-            Id = Guid.NewGuid(),
-            GoogleEventId = "google-" + Guid.NewGuid(),
+            Id = Guid.Empty,
+            GoogleEventId = "google-event-id",
             Title = title,
             Start = start,
             End = start.AddHours(1),
             IsAllDay = isAllDay,
             Reminders = reminders,
             OwnerCalendarInfoId = ownerCalendarId ?? OwnerCalendarId,
-            Members = (members ?? [])
-                .Select(name => new CalendarInfo { Id = Guid.NewGuid(), DisplayName = name, IsShared = false })
-                .ToList()
+            Members = new List<CalendarInfo>()
         };
 
     private static (
@@ -116,6 +128,32 @@ public class RemindersControllerTests
     }
 
     [Fact]
+    public async Task UpcomingReminders_BreaksATieOnTriggerAtByEventTitle()
+    {
+        // Two different events whose pings land on the EXACT same instant — nothing but EventTitle
+        // can order them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than
+        // just happening to pass because TriggerAt alone already decided the order.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var sameInstant = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        var zebra = EventWith(sameInstant, Explicit(("popup", 0)), title: "Zebra Event");
+        var apple = EventWith(sameInstant, Explicit(("popup", 0)), title: "Apple Event");
+        // Returned "Zebra" first — if the sort didn't apply the tie-break, this input order would
+        // survive unchanged and the test would catch it.
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { zebra, apple });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().HaveCount(2);
+        rows.Select(r => r.TriggerAt).Distinct().Should().ContainSingle("both pings land on the same instant");
+        rows[0].EventTitle.Should().Be("Apple Event");
+        rows[1].EventTitle.Should().Be("Zebra Event");
+    }
+
+    [Fact]
     public async Task UpcomingReminders_IncludesAnEventStartingAfterTheWindowWhenItsPingFallsInside()
     {
         // Google's maximum lead is 40320 minutes (28 days), so an event starting after the end of
@@ -126,6 +164,12 @@ public class RemindersControllerTests
         clock.SetUtcNow(now);
 
         var justPastNextMonth = new DateTimeOffset(2026, 5, 10, 9, 0, 0, TimeSpan.Zero);
+        // The Setup matches ANY window on purpose, so the behaviour assertions below exercise only
+        // the ping-admission filter, in isolation from whatever window the controller actually asks
+        // for. That isolation is exactly why this test, on its own, cannot catch the query window
+        // itself shrinking or losing its 28-day tail — a regression there would still get handed this
+        // event by the stub below and would still pass. The Verify afterwards closes that gap by
+        // pinning the exact window requested.
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { EventWith(justPastNextMonth, Explicit(("popup", 40320))) });
@@ -134,6 +178,17 @@ public class RemindersControllerTests
 
         rows.Should().ContainSingle("the ping is inside the window even though the event is not");
         rows[0].TriggerAt.Should().Be(justPastNextMonth.AddMinutes(-40320));
+
+        // now = 10 March 00:00Z is the queried start; 1 May 00:00Z is the exclusive "end of next
+        // month" display boundary; +28 days is the reminder-lead tail under test. If that tail were
+        // shrunk or dropped, this Verify — not the behaviour assertions above — is what fails.
+        var expectedStart = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);
+        var expectedDisplayEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
+        var expectedQueryEnd = expectedDisplayEnd.AddDays(28);
+        repository.Verify(r => r.GetEventsAsync(
+            It.Is<DateTimeOffset>(d => d == expectedStart),
+            It.Is<DateTimeOffset>(d => d == expectedQueryEnd),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -249,12 +304,8 @@ public class RemindersControllerTests
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
-        var sharedCalendar = new CalendarInfo { Id = Guid.NewGuid(), DisplayName = "Family", IsShared = true };
-        var eoin = new CalendarInfo { Id = Guid.NewGuid(), DisplayName = "Eoin", Color = "#111111", IsShared = false };
-        var sarah = new CalendarInfo { Id = Guid.NewGuid(), DisplayName = "Sarah", Color = "#222222", IsShared = false };
-
         var evt = EventWith(new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
-        evt.Members = new List<CalendarInfo> { sharedCalendar, eoin, sarah };
+        evt.Members = new List<CalendarInfo> { SharedFamilyCalendar(), Eoin(), Sarah() };
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { evt });
@@ -297,10 +348,8 @@ public class RemindersControllerTests
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
-        var shared = EventWith(
-            new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero),
-            Explicit(("popup", 30)),
-            members: ["Eoin", "Sarah"]);
+        var shared = EventWith(new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        shared.Members = new List<CalendarInfo> { Eoin(), Sarah() };
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { shared });
@@ -314,8 +363,11 @@ public class RemindersControllerTests
     [Fact]
     public async Task UpcomingReminders_AsksTheRepositoryOnce()
     {
-        // Three events, each with their own reminder — if the controller resolved an owner per event
-        // via a repository call, this test would see that call three times instead of one.
+        // Three events, each with their own reminder. Times.Once on GetEventsAsync/GetCalendarsAsync
+        // alone would NOT catch an owner resolved per event through some OTHER repository method
+        // (e.g. GetCalendarByIdAsync(evt.OwnerCalendarInfoId, ct)) — that regression leaves both of
+        // those counts at exactly one. VerifyNoOtherCalls is what actually rules out an N+1: it fails
+        // on any invocation this test has not explicitly verified, whatever method it went through.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -332,6 +384,7 @@ public class RemindersControllerTests
         repository.Verify(r => r.GetEventsAsync(
             It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
         repository.Verify(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        repository.VerifyNoOtherCalls();
     }
 
     [Fact]
