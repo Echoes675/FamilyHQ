@@ -14,11 +14,12 @@ namespace FamilyHQ.WebApi.Controllers;
 public class RemindersController : ControllerBase
 {
     // Google documents 40320 minutes (28 days) as the maximum lead time on a reminders.overrides
-    // entry. An event that starts AFTER the end of the window this endpoint reports on can still
-    // have a ping that lands INSIDE it — so the events query has to reach 28 days further than the
-    // window itself, or those pings are silently lost. It looks like slack added "to be safe"; it is
-    // the shortest range that is actually correct, derived straight from Google's own limit rather
-    // than picked.
+    // entry. An event that starts AFTER the end of the display window (see displayEnd in
+    // GetUpcoming) can still have a ping that lands INSIDE it — so the EVENT query has to reach 28
+    // days further than the window it reports on, or those pings are silently lost. It looks like
+    // slack added "to be safe"; it is the shortest range that is actually correct, derived straight
+    // from Google's own limit rather than picked. The returned PINGS are filtered back down to the
+    // narrower display window — see the ping filter in GetUpcoming.
     private const int GoogleMaxReminderLeadDays = 28;
 
     private readonly ICalendarRepository _calendarRepository;
@@ -39,9 +40,9 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// Every notification a phone will make between the start of today and the end of next month
-    /// (plus the reminder-lead tail described above), across every calendar — filed by the instant
-    /// each one actually fires.
+    /// Every notification a phone will make from now through the end of next month, across every
+    /// calendar — filed by the instant each one actually fires. The event query reaches further than
+    /// that (see <see cref="GoogleMaxReminderLeadDays"/>), but the rows returned do not.
     /// </summary>
     [HttpGet("upcoming")]
     public async Task<IActionResult> GetUpcoming(CancellationToken ct)
@@ -57,17 +58,24 @@ public class RemindersController : ControllerBase
         var localToday = TimeZoneInfo.ConvertTime(now, familyZone).Date;
         var start = LocalMidnight(localToday, familyZone);
 
-        // "End of next month" expressed as the exclusive start of the month after that, then pushed
-        // out by the reminder-lead tail. AddDays — not a calendar-month add — because the tail is a
-        // fixed duration (40320 minutes), the same arithmetic ReminderPingCalculator itself uses.
+        // "End of next month" expressed as the exclusive start of the month after that. This is the
+        // DISPLAY boundary — the last instant a ping is allowed to fall on to appear in the result —
+        // not the event-query boundary; see displayEnd's use in the ping filter below.
         var startOfMonthAfterNext = new DateTime(localToday.Year, localToday.Month, 1).AddMonths(2);
-        var end = LocalMidnight(startOfMonthAfterNext, familyZone).AddDays(GoogleMaxReminderLeadDays);
+        var displayEnd = LocalMidnight(startOfMonthAfterNext, familyZone);
 
-        // Exactly two repository calls: every event in the window, and every calendar. The second
-        // supplies each event's owner — its zone, its default reminders and its display name — by a
-        // dictionary lookup keyed on CalendarEvent.OwnerCalendarInfoId, so no event does a lookup of
-        // its own.
-        var events = await _calendarRepository.GetEventsAsync(start, end, ct);
+        // The EVENT query reaches further than displayEnd: an event that itself starts after
+        // displayEnd can still carry a reminder whose lead time pulls its TriggerAt back before
+        // displayEnd, and that row has to be reachable. AddDays — not a calendar-month add — because
+        // the tail is a fixed duration (40320 minutes), the same arithmetic ReminderPingCalculator
+        // itself uses.
+        var queryEnd = displayEnd.AddDays(GoogleMaxReminderLeadDays);
+
+        // Exactly two repository calls: every event in the (wider) query window, and every calendar.
+        // The second supplies each event's owner — its zone, its default reminders and its display
+        // name — by a dictionary lookup keyed on CalendarEvent.OwnerCalendarInfoId, so no event does
+        // a lookup of its own.
+        var events = await _calendarRepository.GetEventsAsync(start, queryEnd, ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);
         var calendarsById = allCalendars.ToDictionary(c => c.Id);
 
@@ -77,6 +85,16 @@ public class RemindersController : ControllerBase
         // incomplete, which is the one failure this endpoint exists to prevent.
         var rows = events
             .SelectMany(evt => RowsFor(evt, calendarsById, familyZone))
+            // The PING window is narrower than the event-query window above, and deliberately so —
+            // the asymmetry is not an inconsistency, it is the whole reason the query reaches past
+            // displayEnd in the first place:
+            //  - TriggerAt >= now drops a ping that has already fired. This view's subject is what
+            //    the phone WILL do, not a log of what it already did — a reminder from earlier today
+            //    is not something anyone opens this screen to read.
+            //  - TriggerAt < displayEnd drops a ping past "end of next month". The client buckets
+            //    rows into five sections ending there and discards anything beyond, so a row past it
+            //    is pure payload against the kiosk's stated ~20 KB budget for this endpoint.
+            .Where(r => r.TriggerAt >= now && r.TriggerAt < displayEnd)
             .OrderBy(r => r.TriggerAt)
             // Stable order when two pings land on the same instant.
             .ThenBy(r => r.EventTitle, StringComparer.Ordinal)

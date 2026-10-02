@@ -137,6 +137,53 @@ public class RemindersControllerTests
     }
 
     [Fact]
+    public async Task UpcomingReminders_ExcludesAPingThatLandsAfterTheEndOfNextMonth()
+    {
+        // The EVENT query reaches 28 days past the end of next month (the test above), but the
+        // returned PINGS do not: the client's bucketing ends at "next month" and discards anything
+        // past it, so a ping out there is pure payload. now = 10 March; "end of next month" is the
+        // exclusive start of May, i.e. 2026-05-01T00:00:00Z.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        // A 0-minute ("at start time") reminder one minute past the display boundary — close enough
+        // that only the ping filter, not the event-query window, could be excluding it.
+        var start = new DateTimeOffset(2026, 5, 1, 0, 1, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 0)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty("the ping falls after the end of next month, which the event query reaches but the display does not");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAPingThatAlreadyFired_ButKeepsALaterPingOnTheSameEvent()
+    {
+        // One event, two reminders either side of "now" — proves the past-ping exclusion is a filter
+        // on each PING, not a reason to drop the whole event.
+        var (repository, _, clock, sut) = CreateSut();
+        var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        clock.SetUtcNow(now);
+
+        // Start is an hour after "now". The 90-minute-before reminder already fired at 08:30 (30
+        // minutes before "now"); the 30-minute-before reminder is still ahead, at 09:30.
+        var start = new DateTimeOffset(2026, 3, 10, 10, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 90), ("popup", 30)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle("the already-fired 90-minute ping is dropped but the still-upcoming 30-minute ping is not");
+        rows[0].Minutes.Should().Be(30);
+        rows[0].TriggerAt.Should().Be(start.AddMinutes(-30));
+    }
+
+    [Fact]
     public async Task UpcomingReminders_ExcludesAnEventWhoseRemindersWereNeverSynced()
     {
         // Reminders == null means "not yet synced", not "no reminders" — ReminderPingCalculator
