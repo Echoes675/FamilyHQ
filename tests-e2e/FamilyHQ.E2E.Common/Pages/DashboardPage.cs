@@ -6,6 +6,22 @@ using Microsoft.Playwright;
 
 namespace FamilyHQ.E2E.Common.Pages;
 
+/// <summary>
+/// The five buckets the Reminders view files pings into. A local mirror of the app's own
+/// <c>ReminderSectionKey</c> — the E2E projects never reference <c>FamilyHQ.WebUi</c>, so this
+/// exists purely to give <see cref="DashboardPage.ReadReminderRowsAsync"/> a type-safe parameter
+/// instead of a bare slug string.
+/// </summary>
+public enum ReminderSectionKey { Today, Tomorrow, ThisWeek, ThisMonth, NextMonth }
+
+/// <summary>
+/// One <c>reminder-ping-row</c> read off the DOM by its value attributes, never by position — see
+/// the remarks on the Reminders VIEW region below for why. <paramref name="Text"/> is the row's full
+/// rendered text (title, lead, start, member chips), for scenarios that need to read more than the
+/// three attributes carry.
+/// </summary>
+public sealed record ReminderRowSnapshot(Guid EventId, DateTimeOffset PingAt, bool IsDefault, string Text);
+
 public class DashboardPage : BasePage
 {
     private readonly TestConfiguration _config;
@@ -23,6 +39,8 @@ public class DashboardPage : BasePage
     public ILocator MonthTab => Page.GetByTestId("month-tab");
     public ILocator DayTab => Page.GetByTestId("day-tab");
     public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
+    public ILocator RemindersTab => Page.GetByTestId("reminders-tab");
+    public ILocator RemindersViewContainer => Page.GetByTestId("reminders-view");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
 
@@ -2187,4 +2205,123 @@ public class DashboardPage : BasePage
         _ => throw new ArgumentOutOfRangeException(
             nameof(unit), unit, "Not a unit the reminder form offers (minutes, hours, days, weeks).")
     };
+
+    // ── The Reminders VIEW (the fourth dashboard tab's timeline) ─────────────────────────────────
+    // Distinct from "the Reminders tab" region above, which edits ONE event's own reminders inside
+    // the event modal. This is the standalone timeline of every upcoming ping across every event.
+    //
+    // Every row carries data-event-id/data-ping-at/data-is-default so it can be addressed BY VALUE,
+    // never by position — Google returns a family's reminders in an order of its own and the view
+    // sorts by ping time, so a row's position on screen is not a stable identifier. Same rule, same
+    // reason, as the modal's Reminders tab rows above.
+
+    private ILocator RemindersEmptyState => Page.GetByTestId("reminders-empty");
+    private ILocator RemindersAllDayFootnote => Page.GetByTestId("reminders-allday-footnote");
+    private ILocator AllReminderPingRows => Page.GetByTestId("reminder-ping-row");
+
+    private static string ReminderSectionSlug(ReminderSectionKey key) => key switch
+    {
+        ReminderSectionKey.Today => "today",
+        ReminderSectionKey.Tomorrow => "tomorrow",
+        ReminderSectionKey.ThisWeek => "this-week",
+        ReminderSectionKey.ThisMonth => "this-month",
+        ReminderSectionKey.NextMonth => "next-month",
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Not a reminders-section key.")
+    };
+
+    private ILocator ReminderSection(ReminderSectionKey key) =>
+        Page.GetByTestId($"reminder-section-{ReminderSectionSlug(key)}");
+
+    /// <summary>
+    /// Switches to the Reminders tab — the fourth dashboard tab — and waits for its own fetch to
+    /// land before returning.
+    /// </summary>
+    /// <remarks>
+    /// The listener is set up BEFORE the click, mirroring <see cref="NavigateAndWaitAsync"/>, so a
+    /// fast response cannot be missed. Waiting for the response alone is not quite enough: a
+    /// NEGATIVE assertion (no row for an event that must never ping) has no element for Playwright's
+    /// own auto-retry to anchor on, so a short settle follows — the same idiom
+    /// <see cref="NavigateAgendaNextMonthAsync"/> uses after its own web-first assertion.
+    /// </remarks>
+    public async Task ShowRemindersViewAsync()
+    {
+        var remindersResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/reminders/upcoming"),
+            new() { Timeout = 30000 });
+
+        await RemindersTab.ClickAsync();
+        await remindersResponseTask;
+        await RemindersViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Page.WaitForTimeoutAsync(1000);
+    }
+
+    /// <summary>
+    /// Reads every row <paramref name="key"/>'s section is currently showing, addressed by value —
+    /// event id, ping instant and default flag — rather than position.
+    /// </summary>
+    public async Task<IReadOnlyList<ReminderRowSnapshot>> ReadReminderRowsAsync(ReminderSectionKey key)
+    {
+        var rows = ReminderSection(key).GetByTestId("reminder-ping-row");
+        var count = await rows.CountAsync();
+        var snapshots = new List<ReminderRowSnapshot>(count);
+        for (var i = 0; i < count; i++)
+        {
+            snapshots.Add(await SnapshotAsync(rows.Nth(i)));
+        }
+        return snapshots;
+    }
+
+    private static async Task<ReminderRowSnapshot> SnapshotAsync(ILocator row)
+    {
+        var eventId = await row.GetAttributeAsync("data-event-id")
+            ?? throw new InvalidOperationException("A reminder-ping-row rendered with no data-event-id.");
+        var pingAt = await row.GetAttributeAsync("data-ping-at")
+            ?? throw new InvalidOperationException("A reminder-ping-row rendered with no data-ping-at.");
+        var isDefault = await row.GetAttributeAsync("data-is-default") == "true";
+        var text = (await row.InnerTextAsync()).Trim();
+
+        return new ReminderRowSnapshot(
+            Guid.Parse(eventId),
+            DateTimeOffset.Parse(
+                pingAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
+            isDefault,
+            text);
+    }
+
+    /// <summary>True when <paramref name="key"/>'s section is rendering its collapsed "Nothing" line.</summary>
+    public async Task<bool> ReminderSectionIsEmptyAsync(ReminderSectionKey key) =>
+        await ReminderSection(key).GetByTestId("reminder-section-empty").CountAsync() > 0;
+
+    /// <summary>True when the whole view is rendering its "No reminders coming up" state.</summary>
+    public async Task<bool> RemindersViewIsEntirelyEmptyAsync() =>
+        await RemindersEmptyState.CountAsync() > 0;
+
+    /// <summary>The permanent same-day-all-day-reminders footnote's text.</summary>
+    public async Task<string> ReadAllDayFootnoteAsync() => (await RemindersAllDayFootnote.InnerTextAsync()).Trim();
+
+    /// <summary>
+    /// Finds the one row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.
+    /// A row carries no title ATTRIBUTE to match on — only its id/ping/default triple — so the title
+    /// is used only to LOCATE it; callers address the row afterwards (e.g. via
+    /// <see cref="TapReminderRowAsync"/>) using the value attributes the returned snapshot carries.
+    /// </summary>
+    public async Task<ReminderRowSnapshot> FindReminderRowByTitleAsync(string eventTitle)
+    {
+        var row = AllReminderPingRows.Filter(new() { HasText = eventTitle });
+        await Assertions.Expect(row.First).ToBeVisibleAsync(new() { Timeout = 10000 });
+        return await SnapshotAsync(row.First);
+    }
+
+    /// <summary>Every row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.</summary>
+    public Task<int> CountReminderRowsForTitleAsync(string eventTitle) =>
+        AllReminderPingRows.Filter(new() { HasText = eventTitle }).CountAsync();
+
+    /// <summary>Taps the row for <paramref name="eventId"/>/<paramref name="pingAt"/> and waits for the event modal to open.</summary>
+    public async Task TapReminderRowAsync(Guid eventId, DateTimeOffset pingAt)
+    {
+        var row = Page.Locator(
+            $"[data-testid='reminder-ping-row'][data-event-id='{eventId}'][data-ping-at='{pingAt:O}']");
+        await row.ClickAsync();
+        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
 }

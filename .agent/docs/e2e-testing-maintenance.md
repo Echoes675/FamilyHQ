@@ -295,7 +295,7 @@ the Deploy-Dev E2E execution wall-clock:
 
 ## Current Test Coverage
 
-The suite currently contains **22 feature files (~167 scenarios / 169 executed tests)**
+The suite currently contains **23 feature files (~180 scenarios / 182 executed tests)**
 under `tests-e2e/FamilyHQ.E2E.Features/WebUi/`. The per-file tables below are a
 historical snapshot of the earliest features and are **not exhaustive** — treat the
 `WebUi/` directory as the source of truth for current coverage.
@@ -415,6 +415,52 @@ clearest case. That half is asserted against real Google in the preprod smoke su
 - **The numeric amount commits on the DOM `change` event**, which a `Fill` alone does not raise. Blur
   it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
   needs.
+
+### Reminders view — `RemindersView.feature` (13 scenarios)
+
+The fourth dashboard tab's standalone timeline of every upcoming ping, as distinct from the event
+modal's own Reminders tab above (which edits one event's reminders). Covers: the tab existing
+alongside Month without becoming the default; a reminder of its own showing its lead and start; an
+inherited reminder carrying the default tag; an explicitly-removed reminder and an event inheriting
+from a calendar with no defaults both never appearing; two reminders on one event filing as two rows;
+a shared event's row naming the people it is shared with rather than the shared calendar; a
+tomorrow-ping staying under Tomorrow rather than This week; an empty section collapsing to one line;
+the fully-empty view stating it plainly; the permanent all-day footnote; tapping a row opening that
+event on its Reminders tab (fetched by id, since the row's event may sit in a month the dashboard has
+never loaded); and leaving the tab for another view, which exercises the enter/leave path a closed
+tick-loop race guards but which no other scenario (and no bUnit, which this repo does not have)
+touches.
+
+**Address a row by its `data-event-id` and `data-ping-at`, never by position.** Google returns a
+family's reminders in an order of its own and the view sorts by ping time, so a row's position is not
+a stable identifier — the same rule, and the same reason, as the modal's Reminders tab rows.
+`DashboardPage.ReadReminderRowsAsync` reads a section's rows as `ReminderRowSnapshot`s carrying
+exactly those attributes (plus the default flag and the row's text) for assertions to key off.
+
+**The default view must stay Month.** `RemindersView.feature` never asserts this itself — the
+~180 scenarios elsewhere that assume Month loads on login are the ones that would catch a regression
+— but every scenario here still switches to the Reminders tab explicitly rather than relying on it
+ever being the landing view, and one scenario asserts Month is what is showing before the tab is
+touched at all. If adding this tab ever changes what an existing scenario sees, that is a sign the
+tab was wired up wrongly, not a reason to amend the older scenario.
+
+**Seeding order matters, and this feature file has no `Background` because of it.** A backdoor-seeded
+event (`the user has a timed event "…" at "…" on "…" in "…"`) has to exist *before* the login that
+triggers the first sync, exactly as the recurring-events and multi-calendar features already do it.
+A calendar's default reminders (`the active calendar's usual reminders in Google are N minutes`) have
+to be set *after* any backdoor seed but still *before* that same login, because seeding re-posts the
+whole user template and the Simulator rebuilds the calendar rows from it — see
+`CalendarDefaultRemindersSteps`. A shared `Background` would have forced one ordering on every
+scenario; several of these need backdoor seeds and several do not, so each scenario spells out its
+own setup instead.
+
+**The last-day-of-week boundary is proven at the unit level, not here.** "Tomorrow's ping stays under
+Tomorrow on the last day of a week" cannot force the server's real clock onto that boundary day — unlike
+the client-only kiosk day-rollover hook, nothing in this stack can move the WebApi's `TimeProvider`.
+The scenario instead proves the general rule (Tomorrow is matched before This week, on every day),
+which also covers the boundary on the roughly one run in seven that happens to land on it. The
+deterministic edge itself is pinned with a controlled `DateOnly` in
+`ReminderBucketingTests.File_OnTheLastDayOfAWeek_TomorrowIsStillTomorrowAndNotNextMonth`.
 
 ### Test Categories
 
