@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Models;
 using FamilyHQ.WebUi.Services;
 using FamilyHQ.WebUi.ViewModels;
 using Moq;
@@ -292,6 +293,34 @@ public class CalendarApiServiceTests
     }
 
     [Fact]
+    public async Task GetEventsForMonthAsync_CarriesTheOwningCalendarAndItsDefaultsThroughToTheViewModel()
+    {
+        // Regression guard: this construction site used to drop both owning-calendar fields
+        // entirely, which would leave every event opened from the grid (the majority path) silently
+        // falling back to client-side prediction regardless of what the server actually reported.
+        var calA = new EventCalendarDto(CalAId, "Cal A", "#ff0000");
+        var ownerDefaults = EventReminders.Explicit([new EventReminder("popup", 20)]);
+        var dto = new CalendarEventDto(
+            EventId, "gid-1", "Team Meeting",
+            FixedStart, FixedEnd,
+            false, null, null,
+            [calA],
+            OwningCalendarId: CalBId,
+            OwningCalendarDefaultReminders: ownerDefaults);
+
+        var monthViewDto = new MonthViewDto { Year = 2026, Month = 3, Days = new() { [FixedDateKey] = [dto] } };
+        var sut = CreateSut(monthViewDto);
+
+        var result = await sut.GetEventsForMonthAsync(2026, 3, CancellationToken.None);
+
+        var vm = result.Days[FixedDateKey].Single();
+        vm.OwningCalendarId.Should().Be(CalBId);
+        vm.OwningCalendarDefaultReminders.Should().NotBeNull();
+        vm.OwningCalendarDefaultReminders!.UseDefault.Should().Be(ownerDefaults.UseDefault);
+        vm.OwningCalendarDefaultReminders.Overrides.Should().BeEquivalentTo(ownerDefaults.Overrides);
+    }
+
+    [Fact]
     public async Task UpdateRecurringEventAsync_PutsToScopedRecurringEndpoint()
     {
         var (sut, requests) = CreateCapturingSut(SerializeEventDto());
@@ -494,6 +523,29 @@ public class CalendarApiServiceTests
         var act = () => sut.CreateEventAsync(NewCreateRequest());
 
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task UpdateEventAsync_CarriesTheOwningCalendarAndItsDefaultsThroughToTheViewModel()
+    {
+        // Regression guard: MapToViewModel is the shared landing point for create / update /
+        // recurring-update / set-members responses. Dropping the two owning-calendar fields here
+        // would mean a save that moved the event to a different owner (e.g. a member-count change)
+        // left the modal re-predicting the stale answer right after the server corrected it.
+        var ownerDefaults = EventReminders.ExplicitlyNone;
+        var dto = new CalendarEventDto(
+            EventId, "gid-1", "Dentist", FixedStart, FixedEnd, false, null, null,
+            [new EventCalendarDto(CalAId, "Cal A", "#ff0000")],
+            OwningCalendarId: CalBId,
+            OwningCalendarDefaultReminders: ownerDefaults);
+        var (sut, _) = CreateCapturingSut(JsonSerializer.Serialize(dto));
+
+        var vm = await sut.UpdateEventAsync(EventId, NewUpdateRequest(), CancellationToken.None);
+
+        vm.OwningCalendarId.Should().Be(CalBId);
+        vm.OwningCalendarDefaultReminders.Should().NotBeNull();
+        vm.OwningCalendarDefaultReminders!.UseDefault.Should().BeFalse();
+        vm.OwningCalendarDefaultReminders.Overrides.Should().BeEmpty();
     }
 
     private static CreateEventRequest NewCreateRequest() =>

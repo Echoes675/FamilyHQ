@@ -73,7 +73,14 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                         allCalendars,
                         evtDto.IsRecurring,
                         evtDto.RecurrenceRule,
-                        evtDto.Reminders));
+                        evtDto.Reminders,
+                        // Carried straight through so the modal can read the server-decided owner
+                        // instead of re-predicting it (EventModalLogic.OwningCalendarDefaults) — the
+                        // grid tap is the majority way an existing event is opened, so dropping these
+                        // here would leave that path guessing forever regardless of what the
+                        // reminders-timeline fetch-by-id path does.
+                        evtDto.OwningCalendarId,
+                        evtDto.OwningCalendarDefaultReminders));
                 }
             }
 
@@ -178,7 +185,13 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             allCalendars,
             dto.IsRecurring,
             dto.RecurrenceRule,
-            dto.Reminders);
+            dto.Reminders,
+            // Shared by create/update/recurring-update/set-members — every one of those responses
+            // carries the server's current owning-calendar answer, and dropping it here would make
+            // the modal re-predict it right after a save that may have just changed it (e.g. a
+            // member-count edit that moved the event onto the shared calendar).
+            dto.OwningCalendarId,
+            dto.OwningCalendarDefaultReminders);
     }
 
     public async Task TriggerSyncAsync(CancellationToken ct = default)
