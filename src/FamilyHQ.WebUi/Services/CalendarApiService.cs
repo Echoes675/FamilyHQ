@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.WebUi.ViewModels;
@@ -192,6 +193,45 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             // member-count edit that moved the event onto the shared calendar).
             dto.OwningCalendarId,
             dto.OwningCalendarDefaultReminders);
+    }
+
+    public async Task<IReadOnlyList<UpcomingReminderViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
+    {
+        var response = await httpClient.GetAsync("api/reminders/upcoming", ct);
+        await EnsureSuccessAsync(response, ct);
+
+        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderDto>>(cancellationToken: ct)
+                   ?? new List<UpcomingReminderDto>();
+
+        return dtos
+            .Select(d => new UpcomingReminderViewModel(
+                d.TriggerAt,
+                d.Method,
+                d.Minutes,
+                d.IsDefault,
+                d.EventId,
+                d.EventTitle,
+                d.EventStart,
+                d.EventIsAllDay,
+                d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
+            .ToList();
+    }
+
+    public async Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default)
+    {
+        var response = await httpClient.GetAsync($"api/events/{eventId}", ct);
+
+        // A row's event can be deleted on a phone between the reminders-list fetch and the tap that
+        // opens it — ordinary, not a hard failure, so this is the one GET that does not run through
+        // EnsureSuccessAsync's throw-and-show-dialog treatment for a 404. Every other status still
+        // throws, exactly like every other method here.
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, ct);
+
+        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for GetEventAsync.");
+
+        return MapToViewModel(dto);
     }
 
     public async Task TriggerSyncAsync(CancellationToken ct = default)

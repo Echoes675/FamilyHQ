@@ -266,6 +266,17 @@
     /// <summary>FHQ-63: lets the dashboard defer the idle day-rollover while an event is being edited.</summary>
     public bool IsOpen => _showEventModal;
 
+    /// <summary>
+    /// Switches to the Reminders tab without touching anything else the modal is showing. The
+    /// reminders timeline calls this right after opening an event by id, so a tap on a ping lands on
+    /// the tab that ping is actually about instead of the Details tab every other open starts on.
+    /// </summary>
+    public void ShowRemindersTab()
+    {
+        _activeTab = EventModalTab.Reminders;
+        StateHasChanged();
+    }
+
     private bool _isEditingEvent;
     private EventFormModel _eventModel = new();
     private HashSet<Guid> _selectedCalendarIds = new();

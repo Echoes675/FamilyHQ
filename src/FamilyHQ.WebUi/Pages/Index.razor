@@ -167,9 +167,10 @@
     private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
     private ConnectionStatusDto? _connectionStatus;
 
-    // Reminders tab. Empty for now — the task that loads real pings fills this; mounting the tab
-    // against an empty list now is deliberate, so no commit ever leaves "Reminders" showing a blank
-    // region (RemindersView renders its "No reminders coming up" state instead).
+    // Reminders tab state. Starts empty before the first fetch — RemindersView renders its
+    // "No reminders coming up" state for that, rather than a blank region — and is then kept live by
+    // RefreshUpcomingRemindersAsync (on opening the tab and on EventsUpdated) and re-filed locally by
+    // the per-minute tick below (no fetch).
     private IReadOnlyList<UpcomingReminderViewModel> _upcomingReminders = Array.Empty<UpcomingReminderViewModel>();
     private DateOnly _remindersToday;
     private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
@@ -181,6 +182,15 @@
     // DayOfWeek.Sunday == 0): a grid's row-zero is a layout convention, but a section labelled
     // "This week" is a claim about the family's actual week, and that claim has to be true.
     private readonly DayOfWeek _householdWeekStart = DayOfWeek.Monday;
+
+    // The tick that keeps the Reminders timeline honest between fetches. It makes NO server call —
+    // it only re-reads "today" off the clock and drops pings whose TriggerAt has passed — which is
+    // also what keeps the view correct across midnight without a reload or a timer aimed at midnight
+    // itself. Started when the Reminders tab is switched to and stopped when it is switched away
+    // from, mirroring DayView's now-line loop but scoped to this tab rather than the whole page.
+    private static readonly TimeSpan ReminderTickPeriod = TimeSpan.FromMinutes(1);
+    private CancellationTokenSource? _reminderTickCts;
+    private Task? _reminderTickLoop;
 
     // FHQ-63: kiosk day-rollover.
     private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);
@@ -219,6 +229,15 @@
         await SignalR.StartAsync();
 
         await LoadMonthDataAsync();
+
+        // Defensive, not reachable today: _currentView is always Month at this point. Kept so a
+        // future change that lets the dashboard remember its last-viewed tab does not silently skip
+        // the fetch-on-open rule the Reminders tab otherwise gets only from SwitchToView.
+        if (_currentView == DashboardView.Reminders)
+        {
+            await RefreshUpcomingRemindersAsync();
+            StartReminderTickLoop();
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -263,6 +282,10 @@
                 _calendars = await CalendarApi.GetCalendarsAsync();
                 _displayCalendars = _calendars.Where(c => !c.IsShared && c.IsVisible).ToList();
                 await LoadMonthDataAsync(showSpinner: _monthView is null);
+                // Extends the same handler rather than a second SignalR subscription: a sync-driven
+                // change can add, move or delete a reminder just as easily as it can an event, so the
+                // timeline needs the same "events changed somewhere" signal the grid already reacts to.
+                await RefreshUpcomingRemindersAsync();
                 StateHasChanged();
             }
             catch (Exception ex)
@@ -398,6 +421,7 @@
 
     private async Task SwitchToView(DashboardView view, DateTime? date = null)
     {
+        var wasReminders = _currentView == DashboardView.Reminders;
         _currentView = view;
         if (date.HasValue)
         {
@@ -419,6 +443,19 @@
                 await LoadMonthDataAsync();
             }
         }
+
+        if (view == DashboardView.Reminders && !wasReminders)
+        {
+            // Fetch on opening the view — the tab may not have been looked at since the dashboard
+            // loaded, or since whatever last changed a reminder.
+            await RefreshUpcomingRemindersAsync();
+            StartReminderTickLoop();
+        }
+        else if (wasReminders && view != DashboardView.Reminders)
+        {
+            await StopReminderTickLoopAsync();
+        }
+
         StateHasChanged();
     }
 
@@ -494,11 +531,68 @@
     private void OpenEditEventModal(CalendarEventViewModel evt) =>
         _eventModal.OpenForEdit(evt);
 
-    // Stub: _upcomingReminders is empty for now, so this is never actually invoked. Declared here
-    // rather than left for the task that loads real pings, so this commit's tab is a working dead
-    // end rather than a wired-up callback with nothing on the other end of it.
-    private void OpenEventFromReminders(Guid eventId)
+    private async Task OpenEventFromReminders(Guid eventId)
     {
+        // The event may sit in a month the dashboard has never loaded, so there is nothing in memory
+        // to open — it is fetched by id. A null answer means it was deleted elsewhere between the
+        // list fetch and the tap, which is ordinary and not an error worth a dialog: just refresh the
+        // timeline so the row that no longer has an event stops being offered.
+        var evt = await CalendarApi.GetEventAsync(eventId);
+        if (evt is null)
+        {
+            await RefreshUpcomingRemindersAsync();
+            StateHasChanged();
+            return;
+        }
+
+        OpenEditEventModal(evt);
+        _eventModal.ShowRemindersTab();
+    }
+
+    private async Task RefreshUpcomingRemindersAsync()
+    {
+        _upcomingReminders = await CalendarApi.GetUpcomingRemindersAsync();
+    }
+
+    private void StartReminderTickLoop()
+    {
+        _reminderTickCts = new CancellationTokenSource();
+        _reminderTickLoop = PeriodicUiRefreshLoop.RunAsync(
+            Clock, ReminderTickPeriod, () => InvokeAsync(RefileRemindersForTick), Logger, _reminderTickCts.Token);
+    }
+
+    private async Task StopReminderTickLoopAsync()
+    {
+        if (_reminderTickCts is null) return;
+
+        _reminderTickCts.Cancel();
+        if (_reminderTickLoop is not null)
+        {
+            try
+            {
+                await _reminderTickLoop;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Reminders tick loop faulted while stopping");
+            }
+        }
+
+        _reminderTickCts.Dispose();
+        _reminderTickCts = null;
+        _reminderTickLoop = null;
+    }
+
+    // The tick callback itself: no server call. Re-reads "today" from the clock (kiosk-adjusted, so
+    // never DateTime.Today) and drops any ping whose TriggerAt has passed, so a fired reminder stops
+    // being shown without waiting for the next fetch — and the day rolls over correctly at midnight
+    // with no separate midnight timer.
+    private void RefileRemindersForTick()
+    {
+        _remindersToday = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
+        var now = Clock.GetUtcNow();
+        _upcomingReminders = _upcomingReminders.Where(p => p.TriggerAt >= now).ToList();
+        StateHasChanged();
     }
 
     private async Task CheckIdleSnapAsync()
@@ -567,6 +661,8 @@
     {
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
         SignalR.OnConnectionStatusUpdated -= RefreshConnectionStatusFromSignalR;
+
+        await StopReminderTickLoopAsync();
 
         if (_idleTimer is not null)
             await _idleTimer.DisposeAsync();

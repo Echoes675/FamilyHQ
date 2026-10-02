@@ -21,4 +21,14 @@ public interface ICalendarApiService
     Task TriggerSyncAsync(CancellationToken ct = default);
     Task RegisterWebhooksAsync(CancellationToken ct = default);
     Task<ConnectionStatusDto?> GetConnectionStatusAsync(CancellationToken ct = default);
+
+    /// <summary>Every phone notification due between now and the end of next month, across every calendar.</summary>
+    Task<IReadOnlyList<UpcomingReminderViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// One event by id, for the reminders timeline's tap-to-open path. Null on a 404 — a row can
+    /// outlive its event if it is deleted on a phone between the list fetch and the tap, and that
+    /// is ordinary, not an error worth throwing over.
+    /// </summary>
+    Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default);
 }
