@@ -11,21 +11,21 @@
     else
     {
         <div class="reminders-view__columns">
-            @foreach (var section in sections)
+            @foreach (var bucket in sections)
             {
-                var slug = RemindersViewLogic.SectionSlug(section.Key);
-                <div @key="section.Key" class="reminders-section glass-surface reminders-section--@slug"
+                var slug = RemindersViewLogic.SectionSlug(bucket.Key);
+                <div @key="bucket.Key" class="reminders-section glass-surface reminders-section--@slug"
                      data-testid="reminder-section-@slug">
-                    <h3 class="reminders-section__heading">@section.Heading</h3>
-                    @if (section.Rows.Count == 0)
+                    <h3 class="reminders-section__heading">@bucket.Heading</h3>
+                    @if (bucket.Rows.Count == 0)
                     {
                         <p class="reminders-section__empty" data-testid="reminder-section-empty">Nothing</p>
                     }
                     else
                     {
-                        var expanded = _expanded.Contains(section.Key);
+                        var expanded = _expanded.Contains(bucket.Key);
                         <div class="reminders-section__rows">
-                            @foreach (var row in RemindersViewLogic.Preview(section, expanded))
+                            @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
                             {
                                 <ReminderPingRow @key="(row.EventId, row.TriggerAt, row.Method, row.Minutes)"
                                                  Ping="row"
@@ -33,13 +33,13 @@
                                                  OnOpenEvent="OnOpenEvent" />
                             }
                         </div>
-                        @if (!expanded && section.Rows.Count > RemindersViewLogic.PreviewRows)
+                        @if (!expanded && bucket.Rows.Count > RemindersViewLogic.PreviewRows)
                         {
                             <button type="button"
                                     class="btn btn-secondary reminders-section__show-all"
                                     data-testid="reminder-section-show-all"
-                                    @onclick="() => Expand(section.Key)">
-                                Show all @section.Rows.Count
+                                    @onclick="() => Expand(bucket.Key)">
+                                Show all @bucket.Rows.Count
                             </button>
                         }
                     }
