@@ -77,14 +77,14 @@ public static class ReminderPingCalculator
             return [];
         }
 
-        if (eventReminders.UseDefault == true)
+        if (eventReminders.UseDefault)
         {
             isDefault = true;
             return calendarDefaults?.Overrides ?? [];
         }
 
         // Explicit, including the explicitly-empty set the family asked for.
-        return eventReminders.Overrides ?? [];
+        return eventReminders.Overrides;
     }
 
     /// <summary>
@@ -92,10 +92,25 @@ public static class ReminderPingCalculator
     /// <paramref name="zone"/>. Uses the offset in effect on that day, so a date either side of a
     /// daylight-saving transition anchors correctly.
     /// </summary>
+    /// <remarks>
+    /// The calendar date is read straight off <paramref name="start"/>'s UTC date component — it is
+    /// NEVER re-derived by converting the instant into <paramref name="zone"/> first and reading the
+    /// date back off that. An all-day boundary is stored as midnight UTC specifically so the UTC date
+    /// component already IS Google's calendar date, independent of any zone (see the remarks on
+    /// <c>GoogleAllDayDate</c> for why midnight UTC, not the calendar's own zone, is the stored
+    /// anchor). Converting into the zone before taking the date looks equivalent, and for every zone
+    /// at a non-negative offset it IS equivalent, because adding a non-negative offset to a 00:00Z
+    /// instant can only move the local clock later in the same day, never earlier across midnight.
+    /// For a negative offset it is not: <c>2026-07-15T00:00:00Z</c> converted to UTC-05:00 is
+    /// <c>2026-07-14T19:00:00-05:00</c>, whose date is 14 July — a full calendar day before the date
+    /// Google actually sent, and every reminder on that event would fire a day early.
+    /// <paramref name="zone"/> is consulted ONLY for the offset in effect on the date already taken
+    /// from <paramref name="start"/>, never to decide what that date is.
+    /// </remarks>
     private static DateTimeOffset LocalMidnightOf(DateTimeOffset start, TimeZoneInfo zone)
     {
-        var localDate = TimeZoneInfo.ConvertTime(start, zone).Date;
-        var offset = zone.GetUtcOffset(new DateTimeOffset(localDate, TimeSpan.Zero));
-        return new DateTimeOffset(localDate, offset);
+        var calendarDate = start.UtcDateTime.Date;
+        var offset = zone.GetUtcOffset(new DateTimeOffset(calendarDate, TimeSpan.Zero));
+        return new DateTimeOffset(DateTime.SpecifyKind(calendarDate, DateTimeKind.Unspecified), offset);
     }
 }
