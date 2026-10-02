@@ -190,9 +190,14 @@
     // moves the server's window rather than just ageing rows out of it. Started when the Reminders
     // tab is switched to and stopped when it is switched away from, mirroring DayView's now-line loop
     // but scoped to this tab rather than the whole page.
+    //
+    // Owned through ReminderTickLoop rather than a bare CancellationTokenSource/Task pair: a tab
+    // switch away and back before a slow fetch resolves is an ordinary interleaving, not a rare one,
+    // and a naive start/stop pair can orphan a loop under it (a stop that races a start which has not
+    // recorded its handles yet no-ops, and the start then resumes and records a loop for a tab the
+    // user already left). ReminderTickLoop makes that structurally impossible — see its own remarks.
     private static readonly TimeSpan ReminderTickPeriod = TimeSpan.FromMinutes(1);
-    private CancellationTokenSource? _reminderTickCts;
-    private Task? _reminderTickLoop;
+    private readonly ReminderTickLoop _reminderTickLoop = new();
 
     // FHQ-63: kiosk day-rollover.
     private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);
@@ -237,8 +242,7 @@
         // the fetch-on-open rule the Reminders tab otherwise gets only from SwitchToView.
         if (_currentView == DashboardView.Reminders)
         {
-            await RefreshUpcomingRemindersAsync();
-            StartReminderTickLoop();
+            await EnterRemindersViewAsync();
         }
     }
 
@@ -448,10 +452,7 @@
 
         if (view == DashboardView.Reminders && !wasReminders)
         {
-            // Fetch on opening the view — the tab may not have been looked at since the dashboard
-            // loaded, or since whatever last changed a reminder.
-            await RefreshUpcomingRemindersAsync();
-            StartReminderTickLoop();
+            await EnterRemindersViewAsync();
         }
         else if (wasReminders && view != DashboardView.Reminders)
         {
@@ -556,34 +557,34 @@
         _upcomingReminders = await CalendarApi.GetUpcomingRemindersAsync();
     }
 
-    private void StartReminderTickLoop()
+    // The one place that enters the Reminders tab — called from SwitchToView and, defensively, from
+    // OnInitializedAsync — so the recompute-fetch-start sequence exists exactly once rather than as
+    // two copies that could quietly drift apart.
+    private async Task EnterRemindersViewAsync()
     {
-        _reminderTickCts = new CancellationTokenSource();
-        _reminderTickLoop = PeriodicUiRefreshLoop.RunAsync(
-            Clock, ReminderTickPeriod, () => InvokeAsync(RefileRemindersForTick), Logger, _reminderTickCts.Token);
-    }
+        // Re-anchor "today" on every entry, not just once at page load: re-opening the tab after a
+        // day has rolled over elsewhere must not file freshly-fetched pings against a stale date —
+        // that would misplace rows under the wrong heading for up to a minute (until the next tick
+        // corrects it) and could trigger a spurious month-change refetch inside that tick besides.
+        _remindersToday = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
+        await RefreshUpcomingRemindersAsync();
 
-    private async Task StopReminderTickLoopAsync()
-    {
-        if (_reminderTickCts is null) return;
-
-        _reminderTickCts.Cancel();
-        if (_reminderTickLoop is not null)
+        // Re-check rather than assume: Blazor dispatches the next UI event while this method is
+        // suspended on the fetch above, so the user may have already switched to another tab by the
+        // time it resumes. Starting the loop unconditionally here would start it for a view that is
+        // no longer showing, and nothing would ever stop it — the matching "leaving Reminders" call
+        // already ran and found nothing to stop. See ReminderTickLoop's own remarks for why starting
+        // it is also safe to call more than once regardless.
+        if (_currentView == DashboardView.Reminders)
         {
-            try
-            {
-                await _reminderTickLoop;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogDebug(ex, "Reminders tick loop faulted while stopping");
-            }
+            await StartReminderTickLoopAsync();
         }
-
-        _reminderTickCts.Dispose();
-        _reminderTickCts = null;
-        _reminderTickLoop = null;
     }
+
+    private Task StartReminderTickLoopAsync() => _reminderTickLoop.EnsureRunningAsync(
+        Clock, ReminderTickPeriod, () => InvokeAsync(RefileRemindersForTick), Logger);
+
+    private Task StopReminderTickLoopAsync() => _reminderTickLoop.StopAsync();
 
     // The tick callback itself. Re-reads "today" from the clock (kiosk-adjusted, so never
     // DateTime.Today) and drops any ping whose TriggerAt has passed — via ReminderTickFilter, so the
