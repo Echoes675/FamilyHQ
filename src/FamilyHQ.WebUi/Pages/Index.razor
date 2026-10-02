@@ -627,13 +627,12 @@
     //  - Crossing a MONTH: RemindersController's window is [now, end of next month], so going from
     //    31 March to 1 April moves that far edge from end-of-April to end-of-May, and the newly-in-
     //    window events for May are not in memory — nothing local can conjure them.
-    //  - A row's NextReminderAt has passed: unlike the old per-ping rows (where ReminderTickFilter's
-    //    DropFired could just remove the one row whose own trigger had fired, leaving any OTHER ping
-    //    on the same event showing as its own separate row), a row now summarises potentially several
-    //    reminders. Dropping it locally the same way could hide an event that still has a LATER
-    //    reminder outstanding — exactly the seven-reminders-before-the-event case the family's own
-    //    example relies on this view getting right — so the only correct source for "is there still a
-    //    next one" is a fresh fetch (ReminderPingCalculator, server side).
+    //  - A row's NextReminderAt has passed: a row summarises potentially SEVERAL reminders, so
+    //    dropping it from the list locally when the one next ping it knows about fires would hide an
+    //    event that still has a LATER reminder outstanding — the seven-reminders-before-one-event
+    //    case this view exists to get right. Only the server can answer "is there still a next one"
+    //    (ReminderPingCalculator holds the schedule), so refetch rather than filter in memory. With
+    //    one row per PING a local drop-fired filter was correct; with one row per EVENT it is not.
     //
     // Crossing MIDNIGHT without either of those is the case that needs no refetch: the window's far
     // edge is unchanged and nothing about which reminders remain outstanding has changed either, only
