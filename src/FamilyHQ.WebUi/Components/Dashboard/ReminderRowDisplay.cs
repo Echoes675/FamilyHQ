@@ -114,9 +114,11 @@ public static class ReminderRowDisplay
     }
 
     /// <summary>
-    /// A one-glyph hint at how the ping is delivered. Falls back to a plain bullet for a method
-    /// Google did not name and the kiosk's own form cannot create — the row still has to render
-    /// something; a method this cannot picture is not a reason to leave it blank or throw.
+    /// A one-glyph hint at how the next reminder is delivered. Falls back to a plain bullet for a
+    /// method Google did name but that the kiosk's own form cannot create — a method this cannot
+    /// picture is not a reason to throw. That is distinct from an event with no reminder still to
+    /// come, which has no method at all: the row omits the glyph entirely rather than calling this,
+    /// because a bullet there would stand in for a delivery that is not going to happen.
     /// </summary>
     public static string MethodIcon(string method) => method switch
     {
