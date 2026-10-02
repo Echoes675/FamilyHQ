@@ -1,39 +1,45 @@
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
 /// <summary>
-/// Files a flat list of phone-notification pings — "this reminder fires at this instant" — into the
-/// five sections the reminders timeline lays out in two columns.
+/// Files a flat list of rows into the five sections the reminders timeline lays out in two columns,
+/// by one instant read off each row.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Why Tomorrow is its own section.</b> Calendar buckets alone misfile it: on the last day of a
 /// week, tomorrow belongs to next week, and on the last day of a month it belongs to next month — so
-/// a ping the family needs to see first would render in the far-right column. Matching Tomorrow
+/// a row the family needs to see first would render in the far-right column. Matching Tomorrow
 /// before either calendar bucket is what keeps "soon" meaning soon.
 /// </para>
 /// <para>
 /// <b>The week start is a parameter.</b> It is a household preference, and this class has no
 /// business knowing which one. Pass it in; test both.
 /// </para>
+/// <para>
+/// <b>Which instant a row is filed by is the caller's decision, not this class's.</b> The timeline
+/// files by the EVENT's own start (see <see cref="RemindersViewLogic.Sections"/>); this class is
+/// generic over the row type and takes the instant as a selector so that choice lives in exactly one
+/// place rather than being baked in here.
+/// </para>
 /// </remarks>
 public static class ReminderBucketing
 {
     /// <summary>
-    /// Files <paramref name="pings"/> into the five sections, in match order Today → Tomorrow →
+    /// Files <paramref name="rows"/> into the five sections, in match order Today → Tomorrow →
     /// This week → This month → Next month, and always returns all five — an absent section would
     /// shuffle the view's fixed two-column layout, and collapsing an empty one is the view's job, not
     /// this class's.
     /// </summary>
     /// <remarks>
-    /// Sections are strictly non-overlapping: the first one a ping's local day satisfies is the one it
+    /// Sections are strictly non-overlapping: the first one a row's local day satisfies is the one it
     /// lands in, so <c>ThisWeek</c> begins the day after tomorrow and <c>ThisMonth</c> begins only
-    /// after the week containing <paramref name="today"/> has ended. A ping whose local day satisfies
+    /// after the week containing <paramref name="today"/> has ended. A row whose local day satisfies
     /// none of the five — beyond the window the server returned — is dropped rather than forced into
     /// the last section, where it would quietly misrepresent "next month".
     /// </remarks>
-    /// <param name="pings">The rows to file. Never mutated or reordered in place.</param>
-    /// <param name="triggerAt">
-    /// Reads the instant a row's phone notification fires. A <c>Func</c> rather than a view-model
+    /// <param name="rows">The rows to file. Never mutated or reordered in place.</param>
+    /// <param name="instant">
+    /// Reads the instant a row is filed and sorted by. A <c>Func</c> rather than a view-model
     /// dependency, so this class needs nothing about the row beyond the one value it files by.
     /// </param>
     /// <param name="today">The kiosk's current local date.</param>
@@ -42,13 +48,13 @@ public static class ReminderBucketing
     /// on is a household preference this class has no business assuming.
     /// </param>
     /// <param name="zone">
-    /// The zone a ping's local day is read in. A ping's day is its day <i>in this zone</i>, not its
+    /// The zone a row's local day is read in. A row's day is its day <i>in this zone</i>, not its
     /// UTC day — the two disagree for several hours around every midnight, and for an extra hour
     /// either side of a daylight-saving transition.
     /// </param>
     public static IReadOnlyList<ReminderSection<T>> File<T>(
-        IEnumerable<T> pings,
-        Func<T, DateTimeOffset> triggerAt,
+        IEnumerable<T> rows,
+        Func<T, DateTimeOffset> instant,
         DateOnly today,
         DayOfWeek weekStart,
         TimeZoneInfo zone)
@@ -70,31 +76,31 @@ public static class ReminderBucketing
         var thisMonthRows = new List<T>();
         var nextMonthRows = new List<T>();
 
-        // Sorting up front means each bucket is filled in trigger-time order already, so no section
-        // needs a sort of its own afterwards.
-        foreach (var ping in pings.OrderBy(triggerAt))
+        // Sorting up front means each bucket is filled in order already, so no section needs a sort
+        // of its own afterwards.
+        foreach (var row in rows.OrderBy(instant))
         {
-            var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(triggerAt(ping), zone).DateTime);
+            var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant(row), zone).DateTime);
 
             if (localDate == today)
             {
-                todayRows.Add(ping);
+                todayRows.Add(row);
             }
             else if (localDate == tomorrow)
             {
-                tomorrowRows.Add(ping);
+                tomorrowRows.Add(row);
             }
             else if (localDate > tomorrow && localDate <= weekEnd)
             {
-                thisWeekRows.Add(ping);
+                thisWeekRows.Add(row);
             }
             else if (localDate > thisMonthStart && localDate <= thisMonthEnd)
             {
-                thisMonthRows.Add(ping);
+                thisMonthRows.Add(row);
             }
             else if (localDate > thisMonthEnd && localDate <= nextMonthEnd)
             {
-                nextMonthRows.Add(ping);
+                nextMonthRows.Add(row);
             }
             // Else: outside every section the view can display. Dropped, not misfiled.
         }

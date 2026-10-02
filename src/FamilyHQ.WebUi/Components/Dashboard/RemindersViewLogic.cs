@@ -1,4 +1,4 @@
-using FamilyHQ.WebUi.ViewModels;
+﻿using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -18,6 +18,25 @@ public static class RemindersViewLogic
     public const int PreviewRows = 6;
 
     /// <summary>
+    /// The five sections the view lays out, with every row filed by its own EVENT's start.
+    /// </summary>
+    /// <remarks>
+    /// The selector is the whole requirement: a row belongs in the section containing when the event
+    /// HAPPENS, not in whichever section its next reminder's trigger instant falls in. An event with a
+    /// reminder on each of the seven days before it must appear once, under its own day — filing by
+    /// <c>NextReminderAt</c> instead would scatter it across every section those triggers touch. This
+    /// lives here rather than in the component's <c>@code</c> block for exactly that reason: swapping
+    /// the selector back is a one-word edit that undoes the whole behaviour, and there is no bUnit in
+    /// this repo, so a selector only a `.razor` file names is a selector nothing can assert on.
+    /// </remarks>
+    public static IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections(
+        IEnumerable<UpcomingReminderEventViewModel> rows,
+        DateOnly today,
+        DayOfWeek weekStart,
+        TimeZoneInfo zone) =>
+        ReminderBucketing.File(rows, r => r.EventStart, today, weekStart, zone);
+
+    /// <summary>
     /// Whether every section is empty — the view's single "No reminders coming up" state, distinct
     /// from a section that is merely empty on its own (which collapses to "Nothing" instead).
     /// </summary>
@@ -27,7 +46,7 @@ public static class RemindersViewLogic
     /// <summary>
     /// The rows a section actually renders: all of them once <paramref name="expanded"/>, otherwise
     /// capped at <see cref="PreviewRows"/>. Never fetches and never reorders — <paramref name="section"/>'s
-    /// own rows are already in trigger-time order from <see cref="ReminderBucketing"/>.
+    /// own rows are already in event-start order from <see cref="ReminderBucketing"/>.
     /// </summary>
     public static IReadOnlyList<UpcomingReminderEventViewModel> Preview(
         ReminderSection<UpcomingReminderEventViewModel> section, bool expanded) =>

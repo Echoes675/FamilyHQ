@@ -22,11 +22,62 @@ public class RemindersViewLogicTests
         IsDefault: false,
         Members: Array.Empty<ReminderMemberViewModel>());
 
+    private static UpcomingReminderEventViewModel RowStarting(
+        string title, DateTimeOffset eventStart, DateTimeOffset nextReminderAt) => new(
+        EventId: Guid.Empty,
+        EventTitle: title,
+        EventStart: eventStart,
+        EventIsAllDay: false,
+        ReminderCount: 1,
+        NextReminderAt: nextReminderAt,
+        NextReminderMinutes: (int)(eventStart - nextReminderAt).TotalMinutes,
+        NextReminderMethod: EventRemindersValidator.PopupMethod,
+        IsDefault: false,
+        Members: Array.Empty<ReminderMemberViewModel>());
+
     private static ReminderSection<UpcomingReminderEventViewModel> SectionWith(int rowCount) =>
         new(ReminderSectionKey.Today, "Today", Enumerable.Range(0, rowCount).Select(Row).ToList());
 
     private static ReminderSection<UpcomingReminderEventViewModel> EmptySection(ReminderSectionKey key) =>
         new(key, key.ToString(), Array.Empty<UpcomingReminderEventViewModel>());
+
+    private static IReadOnlyList<UpcomingReminderEventViewModel> Rows(
+        IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> sections, ReminderSectionKey key) =>
+        sections.Single(s => s.Key == key).Rows;
+
+    [Fact]
+    public void Sections_FileEachRowByItsEventStart_NotByItsNextReminder()
+    {
+        // The one assertion that holds the whole feature up. Both rows are built so that their event
+        // start and their next reminder fall in DIFFERENT sections, which is what makes the selector
+        // observable at all: with a reminder on the same day as its event, filing by either value
+        // gives the same answer and this test would pass on a broken implementation.
+        //
+        // Today is Tuesday 10 March 2026; a Monday-start week ends Sunday the 15th.
+        var today = new DateOnly(2026, 3, 10);
+
+        // Dentist happens today, but was reminded about a week ago — an instant before the timeline's
+        // own near edge, so filing by the reminder would drop the row from the view entirely.
+        var dentist = RowStarting(
+            "Dentist", new DateTimeOffset(2026, 3, 10, 18, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 3, 18, 0, 0, TimeSpan.Zero));
+
+        // Checkup happens on the 17th, which is This month (past the end of this week), and is
+        // reminded about tomorrow — the section it must NOT be filed under.
+        var checkup = RowStarting(
+            "Checkup", new DateTimeOffset(2026, 3, 17, 9, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero));
+
+        var sections = RemindersViewLogic.Sections(
+            new[] { dentist, checkup }, today, DayOfWeek.Monday, TimeZoneInfo.Utc);
+
+        Rows(sections, ReminderSectionKey.Today).Should().Equal(
+            [dentist], "the event happens today, whenever its reminders happened to fire");
+        Rows(sections, ReminderSectionKey.ThisMonth).Should().Equal(
+            [checkup], "the event happens on the 17th, which is past the end of this week");
+        Rows(sections, ReminderSectionKey.Tomorrow).Should().BeEmpty(
+            "tomorrow is when Checkup's reminder fires, which is not what files a row");
+    }
 
     [Fact]
     public void IsEntirelyEmpty_WhenEverySectionHasNoRows_IsTrue()
