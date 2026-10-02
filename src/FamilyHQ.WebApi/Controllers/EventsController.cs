@@ -47,10 +47,7 @@ public class EventsController : ControllerBase
         var evt = await _calendarRepository.GetEventAsync(eventId, userId, ct);
         if (evt is null) return NotFound();
 
-        // CalendarEvent has no navigation property to its owner, only the FK — one more lookup, but a
-        // single row rather than the whole calendar list this endpoint has no other use for.
-        var owner = await _calendarRepository.GetCalendarByIdAsync(evt.OwnerCalendarInfoId, ct);
-        return Ok(MapToDto(evt, owner));
+        return Ok(await MapToDtoAsync(evt, ct));
     }
 
     [HttpPost]
@@ -62,7 +59,7 @@ public class EventsController : ControllerBase
             return BadRequest(validation.Errors);
 
         var created = await _service.CreateAsync(request, ct);
-        return Created($"/api/events/{created.Id}", MapToDto(created));
+        return Created($"/api/events/{created.Id}", await MapToDtoAsync(created, ct));
     }
 
     [HttpPut("{eventId:guid}")]
@@ -74,7 +71,7 @@ public class EventsController : ControllerBase
             return BadRequest(validation.Errors);
 
         var updated = await _service.UpdateAsync(eventId, request, ct);
-        return Ok(MapToDto(updated));
+        return Ok(await MapToDtoAsync(updated, ct));
     }
 
     [HttpDelete("{eventId:guid}")]
@@ -99,7 +96,7 @@ public class EventsController : ControllerBase
             return BadRequest(validation.Errors);
 
         var updated = await _service.UpdateRecurringAsync(eventId, request, scope, ct);
-        return Ok(MapToDto(updated));
+        return Ok(await MapToDtoAsync(updated, ct));
     }
 
     /// <summary>Deletes a recurring series at the given <see cref="RecurrenceScope"/> (FHQ-18).</summary>
@@ -118,13 +115,28 @@ public class EventsController : ControllerBase
             return BadRequest("At least one member is required.");
 
         var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
-        return Ok(MapToDto(updated));
+        return Ok(await MapToDtoAsync(updated, ct));
     }
 
-    // owner is only supplied by GetEvent today: Create/Update/Delete/SetMembers don't have the
-    // calendar already loaded, and nothing yet consumes the two owning-calendar fields on their
-    // responses. Defaulting to null keeps every one of those call sites compiling unchanged.
-    private static CalendarEventDto MapToDto(CalendarEvent e, CalendarInfo? owner = null) => new(
+    /// <summary>
+    /// Resolves the event's owning calendar and maps. Every response that carries a
+    /// <see cref="CalendarEventDto"/> goes through this — not just <see cref="GetEvent"/> — so the two
+    /// owning-calendar fields mean the same thing everywhere: "the server's current answer", never
+    /// "populated on this endpoint but silently null on that one". A nullable field can't tell a
+    /// caller "not populated here" apart from "no owner", so leaving any response unresolved would be
+    /// a trap for whichever future reader is the first to trust a write response's null.
+    /// <para>
+    /// <see cref="CalendarEvent"/> has no navigation property to its owner, only the FK, so this is
+    /// one extra single-row lookup — noise on a path that already makes a Google round-trip.
+    /// </para>
+    /// </summary>
+    private async Task<CalendarEventDto> MapToDtoAsync(CalendarEvent e, CancellationToken ct)
+    {
+        var owner = await _calendarRepository.GetCalendarByIdAsync(e.OwnerCalendarInfoId, ct);
+        return MapToDto(e, owner);
+    }
+
+    private static CalendarEventDto MapToDto(CalendarEvent e, CalendarInfo? owner) => new(
         e.Id,
         e.GoogleEventId,
         e.Title,

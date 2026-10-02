@@ -23,12 +23,22 @@ public class EventModalOwningCalendarTests
     {
         // The server decides which calendar an event lives on. Predicting it client-side worked only
         // because exactly one calendar is shared; reading what the server stored cannot drift at all.
+        //
+        // The calendar list here is deliberately NON-empty and would yield a real, different
+        // prediction (the shared calendar's own defaults) if the coalesce order inside
+        // OwningCalendarDefaults were ever flipped from "stored ?? predicted" to "predicted ?? stored".
+        // An empty calendar list can only ever prove "a non-null stored value beats a null prediction",
+        // which a flipped `??` would also satisfy — it would not catch the regression this test name
+        // claims to catch.
         var stored = EventReminders.Explicit([new EventReminder("popup", 45)]);
+        var wrongPrediction = EventReminders.Explicit([new EventReminder("email", 5)]);
+        var shared = new CalendarSummaryViewModel(
+            SharedCalendarId, "Shared", "#00ff00", IsShared: true, DefaultReminders: wrongPrediction);
 
         var result = EventModalLogic.OwningCalendarDefaults(
             storedOwningCalendarDefaults: stored,
-            selectedCalendarIds: [MemberAId, MemberBId],   // would predict the shared calendar
-            calendars: []);                                 // deliberately empty: not consulted
+            selectedCalendarIds: [MemberAId, MemberBId],   // > 1 selected — would predict the shared calendar
+            calendars: [shared]);
 
         result.Should().BeSameAs(stored);
     }
