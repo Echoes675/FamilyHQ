@@ -174,10 +174,13 @@
     private DateOnly _remindersToday;
     private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
 
-    // No household week-start setting exists yet. Sunday matches the week start BuildCalendarGrid
-    // already assumes (DayOfWeek.Sunday == 0, used there as the grid's own row-zero day) — revisit
-    // together if a configurable household week start is ever added.
-    private readonly DayOfWeek _householdWeekStart = DayOfWeek.Sunday;
+    // The household runs Monday to Sunday. One named member at this composition point, so letting
+    // the family choose their own first day later is a one-line change here rather than a hunt
+    // through the view — ReminderBucketing already takes it as a parameter and is tested both ways.
+    // Deliberately NOT the same day BuildCalendarGrid's month grid starts its rows on (Sunday,
+    // DayOfWeek.Sunday == 0): a grid's row-zero is a layout convention, but a section labelled
+    // "This week" is a claim about the family's actual week, and that claim has to be true.
+    private readonly DayOfWeek _householdWeekStart = DayOfWeek.Monday;
 
     // FHQ-63: kiosk day-rollover.
     private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);

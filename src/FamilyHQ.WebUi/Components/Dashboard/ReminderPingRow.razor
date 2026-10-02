@@ -21,19 +21,18 @@
     {
         <span class="reminder-ping-row__default-tag" data-testid="reminder-ping-default-tag">default</span>
     }
+    @* The server substitutes the owning calendar's name as a member when it can resolve one, so an
+       empty Members list means it could not — there is no calendar name anywhere to fall back to,
+       not just none wired to this view. Rendering nothing here is the honest answer; inventing a
+       placeholder ("this calendar") would assert something meaningless to a family reading a wall
+       display, which is worse than admitting the gap — the same reasoning behind the standing
+       all-day footnote below. *@
     <div class="reminder-ping-row__people">
-        @if (Ping.Members.Count == 0)
+        @foreach (var member in Ping.Members)
         {
-            <span class="reminder-member-chip" style="--chip-color: var(--theme-accent)">@PeopleSummary</span>
-        }
-        else
-        {
-            @foreach (var member in Ping.Members)
-            {
-                <span @key="member.DisplayName"
-                      class="reminder-member-chip"
-                      style="--chip-color: @(member.Color ?? "var(--theme-accent)")">@member.DisplayName</span>
-            }
+            <span @key="member.DisplayName"
+                  class="reminder-member-chip"
+                  style="--chip-color: @(member.Color ?? "var(--theme-accent)")">@member.DisplayName</span>
         }
     </div>
 </div>
@@ -44,12 +43,4 @@
 
     /// <summary>Raised with the event's id when the row is tapped. The whole row is the tap target.</summary>
     [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
-
-    // UpcomingReminderViewModel carries no field naming the ping's owning calendar, so there is
-    // nothing truthful to show here when no member is known, beyond a generic placeholder. Flagged
-    // in the implementation report for whoever wires real data into this view: either add that
-    // field to the view model, or guarantee Members is never empty for a well-formed ping.
-    private const string OwnerCalendarNamePlaceholder = "this calendar";
-
-    private string PeopleSummary => ReminderRowDisplay.People(Ping.Members, OwnerCalendarNamePlaceholder);
 }
