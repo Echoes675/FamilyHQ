@@ -22,18 +22,15 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 /// called out here rather than left to be noticed by diffing the two files.
 /// </para>
 /// <para>
-/// <b>What <see cref="Lead"/> deliberately does not do.</b> It takes raw minutes, not an
-/// <c>isAllDay</c> flag — unlike <see cref="ReminderDescription.Timing"/>, it never reinterprets the
-/// value as "N days before local midnight". An all-day event's stored offset counts backwards from
-/// midnight on the event's first day, not from the event's start, so a ping built from one has to
-/// arrive here with a <see cref="UpcomingReminderViewModel.Minutes"/> that already means "minutes
-/// before the start" in the sense this class assumes — otherwise <see cref="Lead"/> reports a lead
-/// time that is arithmetically consistent but answers the wrong question. This type has no way to
-/// detect that case itself, because <see cref="UpcomingReminderViewModel"/> carries nothing that
-/// would let it recompute the value a different way. Flagged for whoever wires real data into this
-/// view: either normalise an all-day ping's minutes before it reaches here, or confirm the pipeline
-/// never needs to (same-day all-day reminders are excluded already — see the timeline's standing
-/// footnote — but a multi-day-before all-day reminder is not).
+/// <b>Where correctness outranks compactness.</b> An all-day event's stored offset counts backwards
+/// from midnight on the event's first day, not from the event's start, so the same "divide by 60"
+/// reading <see cref="Lead"/> uses for a timed event answers the wrong question for one — 420
+/// minutes is "7 hrs before" by that arithmetic, but it is actually "1 day before at 17:00". There
+/// is no compact form of that second sentence worth inventing, so <see cref="Lead"/> does not try:
+/// for an all-day event it hands the value straight to
+/// <see cref="ReminderDescription.Timing(int, bool)"/>, which already gets this right via
+/// <see cref="ReminderPickerModel.ToDaysBeforeAndTime"/>, and returns whatever that says verbatim.
+/// The tricky arithmetic stays defined in exactly one place either way.
 /// </para>
 /// </remarks>
 public static class ReminderRowDisplay
@@ -47,23 +44,36 @@ public static class ReminderRowDisplay
     private const int MinutesPerWeek = 7 * ReminderPickerModel.MinutesPerDay;
 
     /// <summary>
-    /// How long before the event this ping fires, in the compact units a timeline row has room for:
-    /// "30 min before", "2 hrs before", "1 day before". Uses the largest unit that divides the value
-    /// evenly, so a reminder set in minutes never reads as an approximate number of hours or days.
+    /// How long before the event this ping fires. For a timed event, the compact units a timeline
+    /// row has room for: "30 min before", "2 hrs before", "1 day before" — the largest unit that
+    /// divides the value evenly, so a reminder set in minutes never reads as an approximate number
+    /// of hours or days. For an all-day event, <paramref name="minutes"/> counts backwards from
+    /// local midnight rather than from the start, so this delegates to
+    /// <see cref="ReminderDescription.Timing(int, bool)"/> instead of reading it the timed way —
+    /// see the class remarks for why "7 hrs before" would be the wrong answer for the same value.
     /// </summary>
-    public static string Lead(int minutes) => minutes switch
+    public static string Lead(int minutes, bool isAllDay)
     {
-        // Not reachable from the kiosk's own reminder form (its floor is the event's start, i.e.
-        // zero), but a phone can set this, and Google accepts it — see EventReminder.Minutes.
-        0 => "at the start",
-        < 0 => $"{(-minutes).ToString(CultureInfo.InvariantCulture)} min after start",
-        _ when minutes % MinutesPerWeek == 0 => $"{Count(minutes / MinutesPerWeek, "wk", "wks")} before",
-        _ when minutes % MinutesPerDay == 0 => $"{Count(minutes / MinutesPerDay, "day", "days")} before",
-        _ when minutes % MinutesPerHour == 0 => $"{Count(minutes / MinutesPerHour, "hr", "hrs")} before",
-        // "min" is not pluralised — "47 min", not "47 mins" — matching how the word is actually used
-        // when written this short.
-        _ => $"{minutes.ToString(CultureInfo.InvariantCulture)} min before"
-    };
+        if (isAllDay)
+        {
+            return ReminderDescription.Timing(minutes, isAllDay: true);
+        }
+
+        return minutes switch
+        {
+            // Not reachable from the kiosk's own reminder form (its floor is the event's start,
+            // i.e. zero), but a phone can set this, and Google accepts it — see
+            // EventReminder.Minutes.
+            0 => "at the start",
+            < 0 => $"{(-minutes).ToString(CultureInfo.InvariantCulture)} min after start",
+            _ when minutes % MinutesPerWeek == 0 => $"{Count(minutes / MinutesPerWeek, "wk", "wks")} before",
+            _ when minutes % MinutesPerDay == 0 => $"{Count(minutes / MinutesPerDay, "day", "days")} before",
+            _ when minutes % MinutesPerHour == 0 => $"{Count(minutes / MinutesPerHour, "hr", "hrs")} before",
+            // "min" is not pluralised — "47 min", not "47 mins" — matching how the word is
+            // actually used when written this short.
+            _ => $"{minutes.ToString(CultureInfo.InvariantCulture)} min before"
+        };
+    }
 
     /// <summary>
     /// When the event itself starts, in the row's compact form: "starts 14:00". For an all-day

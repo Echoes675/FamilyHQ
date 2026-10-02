@@ -14,7 +14,7 @@
     <div class="reminder-ping-row__body">
         <span class="reminder-ping-row__title">@Ping.EventTitle</span>
         <span class="reminder-ping-row__detail">
-            @ReminderRowDisplay.Lead(Ping.Minutes) · @ReminderRowDisplay.StartsAt(Ping.EventStart, Ping.EventIsAllDay)
+            @ReminderRowDisplay.Lead(Ping.Minutes, Ping.EventIsAllDay) · @ReminderRowDisplay.StartsAt(Ping.EventStart, Ping.EventIsAllDay)
         </span>
     </div>
     @if (Ping.IsDefault)

@@ -11,23 +11,23 @@ public class ReminderRowDisplayTests
 {
     [Fact]
     public void Lead_UnderAnHour_ReadsInMinutes() =>
-        ReminderRowDisplay.Lead(30).Should().Be("30 min before");
+        ReminderRowDisplay.Lead(30, isAllDay: false).Should().Be("30 min before");
 
     [Fact]
     public void Lead_OnAWholeHour_ReadsInHours() =>
-        ReminderRowDisplay.Lead(120).Should().Be("2 hrs before");
+        ReminderRowDisplay.Lead(120, isAllDay: false).Should().Be("2 hrs before");
 
     [Fact]
     public void Lead_OnASingleHour_IsSingular() =>
-        ReminderRowDisplay.Lead(60).Should().Be("1 hr before");
+        ReminderRowDisplay.Lead(60, isAllDay: false).Should().Be("1 hr before");
 
     [Fact]
     public void Lead_OnAWholeDay_ReadsInDays() =>
-        ReminderRowDisplay.Lead(1440).Should().Be("1 day before");
+        ReminderRowDisplay.Lead(1440, isAllDay: false).Should().Be("1 day before");
 
     [Fact]
     public void Lead_OnAnAwkwardValueTheKioskCannotCreate_StillReads() =>
-        ReminderRowDisplay.Lead(47).Should().Be("47 min before");
+        ReminderRowDisplay.Lead(47, isAllDay: false).Should().Be("47 min before");
 
     // Not in the pinned set, but the same cascade ReminderDescription.Timing uses supports weeks —
     // leaving it unverified here would be exactly the "read by eye" this test class exists to avoid.
@@ -35,18 +35,43 @@ public class ReminderRowDisplayTests
     [InlineData(10080, "1 wk before")]
     [InlineData(20160, "2 wks before")]
     public void Lead_OnAWholeWeek_ReadsInWeeks(int minutes, string expected) =>
-        ReminderRowDisplay.Lead(minutes).Should().Be(expected);
+        ReminderRowDisplay.Lead(minutes, isAllDay: false).Should().Be(expected);
 
     [Fact]
     public void Lead_AtTheMomentTheEventStarts_ReadsAsTheStart() =>
         // Not reachable from the kiosk's own form, but Google accepts a reminder at the start itself.
-        ReminderRowDisplay.Lead(0).Should().Be("at the start");
+        ReminderRowDisplay.Lead(0, isAllDay: false).Should().Be("at the start");
 
     [Fact]
     public void Lead_AfterTheEventStarts_SaysAfterRatherThanNegative() =>
         // Google's schema declares no minimum, and a phone can set one of these even though the
         // kiosk's own form cannot.
-        ReminderRowDisplay.Lead(-15).Should().Be("15 min after start");
+        ReminderRowDisplay.Lead(-15, isAllDay: false).Should().Be("15 min after start");
+
+    [Theory]
+    [InlineData(900, "1 day before at 09:00")]
+    [InlineData(1860, "2 days before at 17:00")]
+    [InlineData(30, "1 day before at 23:30")]
+    public void Lead_ForAnAllDayEvent_ReadsAsTheDayAndTimeItFires(int minutes, string expected) =>
+        // Same fixtures as ReminderDescriptionTests.Timing_ForAnAllDayEvent_ReadsAsTheDayAndTimeItFires
+        // — Lead delegates to Timing for an all-day event, so this pins that it actually does rather
+        // than merely compiling against it.
+        ReminderRowDisplay.Lead(minutes, isAllDay: true).Should().Be(expected);
+
+    [Fact]
+    public void Lead_ForAnAllDayEvent_DoesNotMisreadTheOffsetAsHoursBeforeStart() =>
+        // The regression this fix exists for: a single-argument Lead(420) reads "7 hrs before"
+        // (420 / 60), dividing an all-day offset the way a timed one would. The value actually
+        // means "1 day before at 17:00" — 420 minutes before local midnight on the event's first
+        // day. Confirmed by hand before the fix: ReminderRowDisplay.Lead(420) (no isAllDay
+        // parameter, as it existed before this change) returned "7 hrs before".
+        ReminderRowDisplay.Lead(420, isAllDay: true).Should().Be("1 day before at 17:00");
+
+    [Fact]
+    public void Lead_ForAnAllDayEventAtTheDaysMidnight_SaysSoRatherThanZeroDaysBefore() =>
+        // Google clamps a negative all-day offset to 0; Timing already reads that as midnight
+        // rather than "0 days before", and Lead has to carry that through unchanged.
+        ReminderRowDisplay.Lead(0, isAllDay: true).Should().Be("At midnight as the day begins");
 
     [Fact]
     public void StartsAt_ForATimedEvent_ShowsA24HourTime() =>
