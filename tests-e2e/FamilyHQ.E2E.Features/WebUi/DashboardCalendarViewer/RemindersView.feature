@@ -4,13 +4,14 @@ Feature: Reminders view
   I want to see what will ping our phones and when
   So that nothing we rely on being told about passes unnoticed
 
-  Every row is one EVENT that still has a reminder due, filed by when the EVENT happens — never one
-  row per reminder, and never filed by when any one reminder's own trigger instant falls. An event
-  with several reminders due at very different lead times still appears exactly once, in the section
-  containing its own start, and nowhere else. A row appears only if at least one of its reminders will
-  actually still fire: an event inheriting from a calendar with no defaults does not ping, and neither
-  does one whose reminders were removed, so neither appears — and an event whose only reminder has
-  already fired is equally absent, even if the event itself has not started yet.
+  Every row is one EVENT that HAS reminders, filed by when the EVENT happens — never one row per
+  reminder, and never filed by when any one reminder's own trigger instant falls. An event with
+  several reminders due at very different lead times still appears exactly once, in the section
+  containing its own start, and nowhere else. A row appears if the event will ping at all: an event
+  inheriting from a calendar with no defaults does not ping, and neither does one whose reminders
+  were removed, so neither appears. A reminder having already fired is NOT such a reason — on the
+  day of an event its reminders have usually all gone off, which is exactly when the family needs
+  the row most, so it stays put and says "all sent" instead.
 
   No Background: scenarios need different seeding orders (a backdoor-seeded event has to exist
   BEFORE the login that triggers the first sync; a calendar's defaults have to be set AFTER any
@@ -18,13 +19,15 @@ Feature: Reminders view
   CalendarDefaultRemindersSteps for why. Folding all of that into one shared Background would hide
   the ordering each scenario actually needs.
 
-  A "today" reminder is seeded relative to NOW, not at a fixed clock time, and this is deliberate,
-  not a style choice: RemindersController excludes an event once EVERY one of its reminders has
-  already fired — a real wall-clock comparison no other seeding helper in this suite has to consider —
-  a Month/Day/Agenda assertion only cares which calendar day an event falls on, never what time of day
-  it already is. A reminder fixed at "09:00 today" has already fired, and its event is therefore
-  correctly ABSENT, for any run that happens to execute after 09:00 — most of the day. See
-  GivenTheUserHasATimedEventStartingInMinutesInCalendar.
+  A "today" event is seeded relative to NOW, not at a fixed clock time, and this is deliberate, not a
+  style choice: whether a reminder has fired yet decides what its row SAYS, and only a start relative
+  to now keeps that answer the same whatever time of day the suite runs. A reminder set against a
+  fixed "09:00 today" has already fired for most of the day, so a scenario expecting "next 2 hrs
+  before" would read "all sent" instead. The scenario below that wants an already-fired reminder asks
+  for one explicitly, by giving a lead time longer than the gap to the event. Seeding this way has one
+  constraint of its own — the start must still land on today's date — which
+  GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than letting the
+  scenario fail as a missing row.
 
   Scenario: The timeline is a fourth tab and does not displace the month view
     Given I have a user like "RemindersViewUser"
@@ -44,6 +47,22 @@ Feature: Reminders view
     And I save the event
     And I show the reminders view
     Then the "Today" section has a row for "Dentist Visit" showing "2 hrs before" and its start time
+    And the "Today" section has a row for "Dentist Visit"
+
+  # The ordinary state of a row on the day of its own event, and the one the view used to get wrong by
+  # dropping the row entirely. A reminder 3 hours before an event 65 minutes away has already fired,
+  # so there is nothing left pending — but the event itself is still ahead, which is the whole reason
+  # the family is looking at the panel.
+  Scenario: An event keeps its row under Today after its last reminder has fired
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Eye Test" starting in 65 minutes in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    When I open the event "Eye Test" for editing
+    And I give the event a reminder 3 hours before
+    And I save the event
+    And I show the reminders view
+    Then the "Today" section has a row for "Eye Test" saying its reminders have all been sent
 
   # The explicit two-step flip (own reminder first, then explicitly ask for the calendar's usual
   # ones) is used here rather than a bare untouched create — not because a bare create would fail

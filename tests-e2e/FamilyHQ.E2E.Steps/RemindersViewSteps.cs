@@ -1,3 +1,4 @@
+using System.Globalization;
 using FamilyHQ.E2E.Common.Helpers;
 using FamilyHQ.E2E.Common.Pages;
 using FamilyHQ.E2E.Data.Api;
@@ -33,17 +34,24 @@ public class RemindersViewSteps
         _simulatorApi = simulatorApi;
     }
 
-    // ── Seeding a reminder that is guaranteed not to have fired yet ─────────────────────────────
-    // RemindersController still excludes an event once EVERY one of its reminders has already fired —
-    // a real wall-clock comparison none of this suite's other seeding helpers have to consider,
-    // because a Month/Day/Agenda assertion only cares which CALENDAR DAY an event falls on, never what
-    // time of day "now" happens to be. A reminder seeded at a fixed clock time (e.g. "09:00 today") has
-    // already fired, and the event it belongs to is correctly ABSENT from this view, for any run that
-    // happens to execute after that time of day — which is most of the day. Seeding relative to "now"
-    // instead keeps the reminder in the future by construction, wherever in the day the suite actually
-    // runs. (The event's own start can land a few minutes into tomorrow if "now" is close enough to
-    // midnight; that's harmless here, because the row is filed by the EVENT's own start date, which
-    // moves with it.)
+    /// <summary>
+    /// The <see cref="ScenarioContext"/> key a seeded event's own start is stashed under, so the
+    /// assertion step can check the row's leading time column against the EXACT value seeded rather
+    /// than against the shape of a time. Keyed by event name: one scenario can seed several.
+    /// </summary>
+    private static string SeededStartKey(string eventName) => $"SeededStart:{eventName}";
+
+    // ── Seeding an event today, relative to "now" ───────────────────────────────────────────────
+    // Relative to "now" rather than at a fixed clock time so the reminder added on top of it is
+    // still in the future wherever in the day the suite runs: a reminder set against a fixed
+    // "09:00 today" has already fired for most of the day, which is a different row (one reading
+    // "all sent") from the one most of these scenarios assert.
+    //
+    // The start has to land on TODAY's local date, because the row is filed by the EVENT's own start:
+    // once "now" is within `minutes` of local midnight the start rolls into tomorrow and the row is
+    // correctly filed under Tomorrow while the scenario still asserts Today. The seeding offset IS
+    // the width of that window, so it is refused outright rather than left to fail later as a
+    // baffling "no row under Today" — see .agent/skills/fail-fast-standard/SKILL.md.
     [Given(@"the user has a timed event ""([^""]*)"" starting in (\d+) minutes in ""([^""]*)""")]
     public async Task GivenTheUserHasATimedEventStartingInMinutesInCalendar(
         string eventName, int minutes, string calendarName)
@@ -53,6 +61,18 @@ public class RemindersViewSteps
                        ?? throw new InvalidOperationException($"Calendar '{calendarName}' not found.");
 
         var start = BrowserClock.Now.AddMinutes(minutes);
+        var startDate = DateOnly.FromDateTime(start);
+        if (startDate != BrowserClock.TodayDate)
+        {
+            throw new InvalidOperationException(
+                $"Seeding '{eventName}' {minutes} minutes from now starts it on " +
+                $"{startDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}, not today " +
+                $"({BrowserClock.TodayDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}): " +
+                $"this scenario cannot run within {minutes.ToString(CultureInfo.InvariantCulture)} " +
+                "minutes of local midnight, because its row would be filed under Tomorrow.");
+        }
+
+        _scenarioContext[SeededStartKey(eventName)] = start;
 
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
@@ -120,19 +140,28 @@ public class RemindersViewSteps
         // sectionName is not re-resolved here: FindReminderRowByTitleAsync already searches the
         // whole view, and ThenTheSectionHasARowFor (above) is what pins WHICH section a row landed
         // in. This step is about what the row SAYS, not where it is.
-        //
-        // The start time itself is checked by FORMAT (a bare "HH:mm", the row's leading column — see
-        // ReminderRowDisplay.EventTime), not an exact clock value: the event is seeded relative to
-        // "now" (see GivenTheUserHasATimedEventStartingInMinutesInCalendar) so its exact wall-clock
-        // start isn't known until the seeding step runs, and re-deriving it here would just be
-        // re-implementing that computation a second time for no real gain — the row rendering SOME
-        // correctly-formatted start time, for the one event the scenario created, is what "and its
-        // start" actually asks of this row.
         var row = await _dashboardPage.FindReminderRowByTitleAsync(title);
 
         row.Text.Should().Contain(leadText, $"the row for '{title}' should state its reminder's lead time.");
-        row.Text.Should().MatchRegex(
-            @"\b\d{2}:\d{2}\b", $"the row for '{title}' should state when the event itself starts.");
+
+        // The leading column is read on its own, and against the exact instant the seeding step
+        // stashed. Matching an HH:mm pattern anywhere in the row's text would pass on a row that led
+        // with its NEXT REMINDER's time instead of the event's — precisely the regression this view
+        // was reworked to stop — and an all-day row's "next 1 day before at 17:00" satisfies such a
+        // pattern on its own. Nothing is re-derived here: the seeding step already computed the start.
+        if (!_scenarioContext.TryGetValue<DateTime>(SeededStartKey(title), out var seededStart))
+        {
+            throw new InvalidOperationException(
+                $"No seeded start recorded for '{title}', so this step cannot say what time the row " +
+                "should lead with. It needs the \"starting in N minutes\" seeding step, which is what " +
+                "records it.");
+        }
+
+        var expected = seededStart.ToString("HH:mm", CultureInfo.InvariantCulture);
+        var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
+
+        shown.Should().Be(expected,
+            $"the row for '{title}' should lead with when the EVENT starts, not when a reminder fires.");
     }
 
     [Then(@"the ""([^""]*)"" section has a default-tagged row for ""([^""]*)""")]
@@ -167,6 +196,25 @@ public class RemindersViewSteps
             $"{count} {noun}", $"the row for '{title}' should state it has {count} {noun}.");
     }
 
+    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" saying its reminders have all been sent")]
+    public async Task ThenTheSectionHasARowForSayingItsRemindersHaveAllBeenSent(string sectionName, string title)
+    {
+        var key = ParseSection(sectionName);
+        var rows = await _dashboardPage.ReadReminderRowsAsync(key);
+        var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
+
+        var match = rows.SingleOrDefault(r => r.EventId == target.EventId)
+            ?? throw new InvalidOperationException(
+                $"'{title}' has no row filed under '{sectionName}'. An event keeps its row until the " +
+                "event itself is past, so a reminder having already fired is not a reason for it to " +
+                "be missing.");
+
+        match.Text.Should().Contain(
+            "all sent",
+            $"every reminder on '{title}' has already fired, so its row should say so rather than " +
+            "naming a next one — or disappearing.");
+    }
+
     [Then(@"the row for ""([^""]*)"" appears only in the ""([^""]*)"" section")]
     public async Task ThenTheRowForAppearsOnlyInTheSection(string title, string sectionName)
     {
@@ -176,6 +224,13 @@ public class RemindersViewSteps
         // ALSO appears somewhere else is exactly the scattering bug this view used to have.
         var expected = ParseSection(sectionName);
         var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
+
+        // Counted across the whole view first, because the per-section read below only sees RENDERED
+        // rows: a collapsed section renders at most RemindersViewLogic.PreviewRows of them, so a
+        // duplicate sitting behind "Show all" would read as absent and this step would pass on the
+        // very scattering it exists to catch.
+        var total = await _dashboardPage.CountReminderRowsForTitleAsync(title);
+        total.Should().Be(1, $"'{title}' is one event, so the whole timeline should carry one row for it.");
 
         foreach (var key in Enum.GetValues<ReminderSectionKey>())
         {

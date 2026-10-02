@@ -2306,6 +2306,20 @@ public class DashboardPage : BasePage
         return await SnapshotAsync(row.First);
     }
 
+    /// <summary>
+    /// The leading time column of the row naming <paramref name="eventTitle"/>, read on its own
+    /// rather than out of the row's whole text. That is the point of it: the column renders the
+    /// EVENT's start, and only reading it in isolation can tell a correct row from one that led with
+    /// a reminder's trigger time instead.
+    /// </summary>
+    public async Task<string> ReadReminderRowStartTimeAsync(string eventTitle)
+    {
+        var row = AllReminderRows.Filter(new() { HasText = eventTitle });
+        await Assertions.Expect(row.First).ToBeVisibleAsync(new() { Timeout = 10000 });
+
+        return (await row.First.Locator(".reminder-row__time").InnerTextAsync()).Trim();
+    }
+
     /// <summary>Every row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.</summary>
     public Task<int> CountReminderRowsForTitleAsync(string eventTitle) =>
         AllReminderRows.Filter(new() { HasText = eventTitle }).CountAsync();
