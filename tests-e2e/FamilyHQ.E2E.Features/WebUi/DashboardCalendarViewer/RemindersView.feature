@@ -42,12 +42,14 @@ Feature: Reminders view
     And I show the reminders view
     Then the "Today" section has a row for "Dentist Visit" showing "2 hrs before" and its start time
 
-  # A bare create that never opens the Reminders tab leaves the event's reminders NEVER SYNCED, not
-  # "follows the calendar's default" — the two look the same in the Google app but are different
-  # states Google itself distinguishes (see ReminderPingCalculator's remarks), and only the first one
-  # pings nobody. Reaching the real "follows the default, badge=default" state therefore needs the
-  # same explicit flip EventReminders.feature's own "Dog Groomer" row uses: start the event in a
-  # state that is NOT the default, then explicitly ask for the calendar's usual reminders.
+  # The explicit two-step flip (own reminder first, then explicitly ask for the calendar's usual
+  # ones) is used here rather than a bare untouched create — not because a bare create would fail
+  # to reach the default state (CreateAsync persists Google's own create response, which already
+  # comes back useDefault:true for an untouched event; see CalendarSyncService.cs's remarks), but
+  # because the flip reaches the state through a write this scenario itself makes and can reason
+  # about directly, the same transition EventReminders.feature's own "Dog Groomer" row exercises.
+  # Relying on what a bare create happens to persist would make this scenario's result depend on an
+  # implementation detail of the create path rather than on the state it actually asks for.
   Scenario: An inherited reminder appears and is tagged as the calendar's default
     Given I have a user like "RemindersViewUser"
     And the "Appointments" calendar is the active calendar
@@ -68,9 +70,9 @@ Feature: Reminders view
     And I show the reminders view
     Then no row names "Quiet Visit" anywhere in the reminders view
 
-  # Same "an explicit follow, not a bare create" reasoning as the scenario above — this one needs the
-  # event to genuinely BE in the follows-default state (so Compute reaches the empty-overrides branch
-  # for a calendar with no defaults), not merely never-synced, which would pass for the wrong reason.
+  # Same reasoning as the scenario above: the explicit flip reaches the follows-default state
+  # (Compute's empty-overrides branch, for a calendar with no defaults of its own) through a write
+  # this scenario makes directly, rather than depending on what a bare create happens to persist.
   Scenario: An event inheriting from a calendar with no defaults never appears
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Bin Day" starting in 65 minutes in "Chores"
