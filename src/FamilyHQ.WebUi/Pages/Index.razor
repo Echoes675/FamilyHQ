@@ -682,7 +682,10 @@
         SignalR.OnEventsUpdated -= RefreshDataFromSignalR;
         SignalR.OnConnectionStatusUpdated -= RefreshConnectionStatusFromSignalR;
 
+        // Awaited to completion before disposing the gate it was holding — ReminderTickLoop.Dispose
+        // itself warns against doing this the other way round.
         await StopReminderTickLoopAsync();
+        _reminderTickLoop.Dispose();
 
         if (_idleTimer is not null)
             await _idleTimer.DisposeAsync();
