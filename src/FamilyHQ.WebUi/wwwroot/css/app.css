@@ -1410,7 +1410,7 @@ body:not([data-theme]) .brand-logo__img--morning {
     line-height: 1.4;
 }
 
-.reminder-ping-row {
+.reminder-row {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1423,7 +1423,7 @@ body:not([data-theme]) .brand-logo__img--morning {
                 border-color var(--theme-transition-duration, 15s) ease-in-out;
 }
 
-.reminder-ping-row__time {
+.reminder-row__time {
     flex: 0 0 auto;
     min-width: 44px;
     font-variant-numeric: tabular-nums;
@@ -1431,12 +1431,12 @@ body:not([data-theme]) .brand-logo__img--morning {
     color: var(--theme-text);
 }
 
-.reminder-ping-row__icon {
+.reminder-row__icon {
     flex: 0 0 auto;
     font-size: 1rem;
 }
 
-.reminder-ping-row__body {
+.reminder-row__body {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
@@ -1444,7 +1444,7 @@ body:not([data-theme]) .brand-logo__img--morning {
     gap: 2px;
 }
 
-.reminder-ping-row__title {
+.reminder-row__title {
     color: var(--theme-text);
     font-weight: 500;
     overflow: hidden;
@@ -1452,12 +1452,12 @@ body:not([data-theme]) .brand-logo__img--morning {
     white-space: nowrap;
 }
 
-.reminder-ping-row__detail {
+.reminder-row__detail {
     color: var(--theme-text-muted);
     font-size: 0.8rem;
 }
 
-.reminder-ping-row__default-tag {
+.reminder-row__default-tag {
     flex: 0 0 auto;
     font-size: 11px;
     font-weight: 600;
@@ -1467,7 +1467,7 @@ body:not([data-theme]) .brand-logo__img--morning {
     background: color-mix(in srgb, var(--theme-accent) 20%, transparent);
 }
 
-.reminder-ping-row__people {
+.reminder-row__people {
     flex: 0 0 auto;
     display: flex;
     flex-wrap: wrap;

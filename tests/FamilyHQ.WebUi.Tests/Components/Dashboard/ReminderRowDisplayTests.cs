@@ -4,7 +4,7 @@ using FluentAssertions;
 
 namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
 
-// The wording the Reminders timeline shows for one ping. Pinned here, not left to be read by eye,
+// The wording the Reminders timeline shows for one row. Pinned here, not left to be read by eye,
 // for the same reason ReminderDescriptionTests pins the edit modal's wording — a reminder shown with
 // the wrong lead time or the wrong start is a production bug that nothing here would catch by itself.
 public class ReminderRowDisplayTests
@@ -12,9 +12,9 @@ public class ReminderRowDisplayTests
     // Dublin, not a fixed offset built in this file: it is the zone the rest of the suite already
     // uses for the same DST transition (ReminderBucketingTests, ReminderPingCalculatorTests), and it
     // resolves in this suite without a tz-database dependency concern — see those files. BST (UTC+1)
-    // on 15 June means every StartsAt/PingTime value below genuinely exercises the conversion: a
-    // StartsAt/PingTime that went back to formatting the raw +00:00 value would read exactly one hour
-    // early, and these fixtures would catch that rather than passing either way.
+    // on 15 June means every EventTime value below genuinely exercises the conversion: an EventTime
+    // that went back to formatting the raw +00:00 value would read exactly one hour early, and these
+    // fixtures would catch that rather than passing either way.
     private static readonly TimeZoneInfo Dublin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
 
     [Fact]
@@ -82,31 +82,42 @@ public class ReminderRowDisplayTests
         ReminderRowDisplay.Lead(0, isAllDay: true).Should().Be("At midnight as the day begins");
 
     [Fact]
-    public void StartsAt_ForATimedEvent_ConvertsToTheGivenZoneBeforeShowingA24HourTime() =>
+    public void EventTime_ForATimedEvent_ConvertsToTheGivenZoneBeforeShowingA24HourTime() =>
         // 09:05+00:00 is what Npgsql hands back for a timestamptz regardless of where the event
         // actually is — 10:05 in Dublin on 15 June (BST, UTC+1). Pinning "10:05" rather than "09:05"
         // is what makes this fail against the raw-offset reading this fixes.
-        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 6, 15, 9, 5, 0, TimeSpan.Zero), isAllDay: false, Dublin)
-            .Should().Be("starts 10:05");
+        ReminderRowDisplay.EventTime(new DateTimeOffset(2026, 6, 15, 9, 5, 0, TimeSpan.Zero), isAllDay: false, Dublin)
+            .Should().Be("10:05");
 
     [Fact]
-    public void StartsAt_ForAnAllDayEvent_SaysAllDayRatherThanMidnight()
+    public void EventTime_ForAnAllDayEvent_SaysAllDayRatherThanMidnight()
     {
         // An all-day event's stored start is a date boundary. Rendering it as a time would tell the
         // family the event "starts 00:00", which is not a thing that happens. The zone is irrelevant
         // to this branch — passed anyway because the parameter is required — so Dublin here is just
         // "some zone", not a fixture that matters to the assertion.
-        ReminderRowDisplay.StartsAt(new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero), isAllDay: true, Dublin)
+        ReminderRowDisplay.EventTime(new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero), isAllDay: true, Dublin)
             .Should().Be("all day");
     }
 
     [Fact]
-    public void PingTime_ConvertsToTheGivenZoneBeforeFormatting() =>
-        // 23:30+00:00 on 15 June is 00:30 on the 16th in Dublin (BST, UTC+1) — a different HOUR, not
-        // just a different offset notation, so a reading that skipped the conversion cannot
-        // accidentally land on the same string the way a whole-hour-only test might.
-        ReminderRowDisplay.PingTime(new DateTimeOffset(2026, 6, 15, 23, 30, 0, TimeSpan.Zero), Dublin)
-            .Should().Be("00:30");
+    public void ReminderSummary_WithOneReminder_IsSingularAndNamesItsLead() =>
+        ReminderRowDisplay.ReminderSummary(reminderCount: 1, nextReminderMinutes: 120, isAllDay: false)
+            .Should().Be("1 reminder · next 2 hrs before");
+
+    [Fact]
+    public void ReminderSummary_WithSeveralReminders_IsPluralAndNamesTheSoonestOnesLead() =>
+        // The soonest to fire is whichever reminder the caller passes as "next" — ReminderSummary
+        // itself does not pick it, it only renders it (RemindersController.RowFor does the picking).
+        ReminderRowDisplay.ReminderSummary(reminderCount: 3, nextReminderMinutes: 30, isAllDay: false)
+            .Should().Be("3 reminders · next 30 min before");
+
+    [Fact]
+    public void ReminderSummary_ForAnAllDayEventsNextReminder_UsesTheAllDayWording() =>
+        // Delegates to Lead, which reads an all-day offset as days-before-at-a-time rather than as
+        // raw minutes — see Lead's own fixtures for why 420 means "1 day before at 17:00".
+        ReminderRowDisplay.ReminderSummary(reminderCount: 2, nextReminderMinutes: 420, isAllDay: true)
+            .Should().Be("2 reminders · next 1 day before at 17:00");
 
     [Theory]
     [InlineData(EventRemindersValidator.PopupMethod, "🔔")]

@@ -13,10 +13,10 @@ namespace FamilyHQ.WebUi.Tests.Services;
 
 /// <summary>
 /// The client half of the reminders timeline. <see cref="CalendarApiService.GetUpcomingRemindersAsync"/>
-/// has to carry every field of every row to the view model untouched — it is the only source the
-/// timeline has. <see cref="CalendarApiService.GetEventAsync"/> backs the tap-to-open path and must
-/// answer a 404 with null rather than an exception: a row can outlive its event if it is deleted on a
-/// phone between the list fetch and the tap, and that is ordinary, not an error worth a dialog.
+/// has to carry every field of every event row to the view model untouched — it is the only source
+/// the timeline has. <see cref="CalendarApiService.GetEventAsync"/> backs the tap-to-open path and
+/// must answer a 404 with null rather than an exception: a row can outlive its event if it is deleted
+/// on a phone between the list fetch and the tap, and that is ordinary, not an error worth a dialog.
 /// </summary>
 /// <remarks>
 /// These go through a real serialise/deserialise round trip, following
@@ -30,9 +30,9 @@ public class CalendarApiServiceUpcomingTests
     private static readonly Guid CalBId  = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static readonly Guid EventId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
-    private static readonly DateTimeOffset FixedTrigger = new(2026, 3, 21, 8, 45, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset FixedStart   = new(2026, 3, 21, 9, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset FixedEnd     = new(2026, 3, 21, 10, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset FixedNextReminder = new(2026, 3, 21, 8, 45, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset FixedStart        = new(2026, 3, 21, 9, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset FixedEnd          = new(2026, 3, 21, 10, 0, 0, TimeSpan.Zero);
 
     // The options ASP.NET Core serialises a response with, so the test feeds the client the same
     // camel-cased shape production does rather than a .NET-default one it would also accept.
@@ -43,22 +43,24 @@ public class CalendarApiServiceUpcomingTests
     [Fact]
     public async Task GetUpcomingRemindersAsync_MapsEveryFieldOfARow()
     {
-        var dto = new UpcomingReminderDto(
-            FixedTrigger, "popup", 15, IsDefault: false, EventId, "Dentist", FixedStart, EventIsAllDay: false,
-            [new ReminderMemberDto("Alice", "#ff0000")]);
-        var sut = CreateSut(Json(new List<UpcomingReminderDto> { dto }));
+        var dto = new UpcomingReminderEventDto(
+            EventId, "Dentist", FixedStart, EventIsAllDay: false,
+            ReminderCount: 2, FixedNextReminder, NextReminderMinutes: 15, NextReminderMethod: "popup",
+            IsDefault: false, [new ReminderMemberDto("Alice", "#ff0000")]);
+        var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
         var row = rows.Should().ContainSingle().Subject;
-        row.TriggerAt.Should().Be(FixedTrigger);
-        row.Method.Should().Be("popup");
-        row.Minutes.Should().Be(15);
-        row.IsDefault.Should().BeFalse();
         row.EventId.Should().Be(EventId);
         row.EventTitle.Should().Be("Dentist");
         row.EventStart.Should().Be(FixedStart);
         row.EventIsAllDay.Should().BeFalse();
+        row.ReminderCount.Should().Be(2);
+        row.NextReminderAt.Should().Be(FixedNextReminder);
+        row.NextReminderMinutes.Should().Be(15);
+        row.NextReminderMethod.Should().Be("popup");
+        row.IsDefault.Should().BeFalse();
         var member = row.Members.Should().ContainSingle().Subject;
         member.DisplayName.Should().Be("Alice");
         member.Color.Should().Be("#ff0000");
@@ -68,22 +70,24 @@ public class CalendarApiServiceUpcomingTests
     public async Task GetUpcomingRemindersAsync_PreservesAMethodTheKioskCannotCreate()
     {
         // The kiosk's own picker only ever offers popup/email, but a phone can set anything Google
-        // accepts — "sms" among them. Round-tripping it verbatim is exactly what UpcomingReminderDto's
-        // own remark promises; silently normalising it would be a display that disagrees with Google.
-        var dto = new UpcomingReminderDto(
-            FixedTrigger, "sms", 10, IsDefault: true, EventId, "Dentist", FixedStart, EventIsAllDay: false,
-            []);
-        var sut = CreateSut(Json(new List<UpcomingReminderDto> { dto }));
+        // accepts — "sms" among them. Round-tripping it verbatim is exactly what
+        // UpcomingReminderEventDto's own remark promises; silently normalising it would be a display
+        // that disagrees with Google.
+        var dto = new UpcomingReminderEventDto(
+            EventId, "Dentist", FixedStart, EventIsAllDay: false,
+            ReminderCount: 1, FixedNextReminder, NextReminderMinutes: 10, NextReminderMethod: "sms",
+            IsDefault: true, []);
+        var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
-        rows.Should().ContainSingle().Which.Method.Should().Be("sms");
+        rows.Should().ContainSingle().Which.NextReminderMethod.Should().Be("sms");
     }
 
     [Fact]
     public async Task GetUpcomingRemindersAsync_WithNoRows_ReturnsEmptyNotNull()
     {
-        var sut = CreateSut(Json(new List<UpcomingReminderDto>()));
+        var sut = CreateSut(Json(new List<UpcomingReminderEventDto>()));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 

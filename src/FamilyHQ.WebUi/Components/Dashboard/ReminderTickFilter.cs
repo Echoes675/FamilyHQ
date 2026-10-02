@@ -1,24 +1,30 @@
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
 /// <summary>
-/// The reminders timeline's per-minute tick re-files its in-memory pings with no server call — this
-/// is the one piece of that re-filing with a boundary worth getting wrong, so it is extracted here
-/// rather than living only in <c>Index.razor</c>'s `@code` block, the same reason
-/// <see cref="ReminderBucketing"/> and <see cref="RemindersViewLogic"/> sit beside it. There is no
-/// bUnit in this repo, so logic kept in a Razor component is logic nothing exercises directly.
+/// Drops every item in a list whose trigger instant has passed, keeping one at the instant itself —
+/// the boundary a per-minute re-filing tick needs to get right without a server call.
 /// </summary>
+/// <remarks>
+/// Not currently wired into <c>Index.razor</c>'s reminders-timeline tick. While a row was one ping,
+/// a fired one could simply be dropped locally and any other ping on the same event kept showing as
+/// its own separate row. Now that a row summarises an event's reminders rather than carrying one
+/// each, dropping it locally the same way could hide an event that still has a LATER reminder
+/// outstanding, which only a fresh fetch (<c>RemindersController.GetUpcoming</c>,
+/// <c>ReminderPingCalculator</c> server-side) can rule out — see <c>RefileRemindersForTick</c>'s own
+/// remarks. The boundary this pins is still correct for anything filed by a single trigger instant
+/// with nothing else depending on it, which is why it is kept rather than deleted.
+/// </remarks>
 public static class ReminderTickFilter
 {
     /// <summary>
     /// Drops every ping whose trigger instant is strictly before <paramref name="now"/>.
     /// </summary>
     /// <remarks>
-    /// A ping exactly AT <paramref name="now"/> is kept, deliberately matching
-    /// <c>RemindersController.GetUpcoming</c>'s own server-side filter
-    /// (<c>r.TriggerAt &gt;= now &amp;&amp; r.TriggerAt &lt; displayEnd</c>): the server already
-    /// decided that instant has not fired yet, and the client re-filing the same list on a later tick
-    /// must not quietly disagree with the server that built it. Flipping this to a strict <c>&gt;</c>
-    /// would drop a ping a full minute before its phone actually rings, for the one row whose trigger
+    /// A ping exactly AT <paramref name="now"/> is kept, deliberately matching the "has this fired
+    /// yet" boundary <c>RemindersController.GetUpcoming</c> applies server-side
+    /// (a trigger instant <c>&gt;= now</c> has not fired): whichever side decides that instant has
+    /// not fired yet, the other must not quietly disagree. Flipping this to a strict <c>&gt;</c> would
+    /// drop a ping a full minute before its phone actually rings, for the one row whose trigger
     /// instant happens to land on a tick boundary.
     /// </remarks>
     /// <param name="pings">The rows to re-file. Never mutated — a new list is returned.</param>

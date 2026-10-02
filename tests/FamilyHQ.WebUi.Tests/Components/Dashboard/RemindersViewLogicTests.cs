@@ -7,25 +7,26 @@ namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
 
 // RemindersView.razor delegates its display decisions here rather than keeping them in @code,
 // because there is no bUnit in this repo to exercise a .razor file's own code directly — the same
-// reason ReminderRowDisplay sits beside ReminderPingRow instead of living in its markup.
+// reason ReminderRowDisplay sits beside ReminderRow instead of living in its markup.
 public class RemindersViewLogicTests
 {
-    private static UpcomingReminderViewModel Row(int index) => new(
-        TriggerAt: new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero).AddMinutes(index),
-        Method: EventRemindersValidator.PopupMethod,
-        Minutes: 30,
-        IsDefault: false,
+    private static UpcomingReminderEventViewModel Row(int index) => new(
         EventId: Guid.Empty,
         EventTitle: $"Event {index}",
-        EventStart: new DateTimeOffset(2026, 3, 10, 9, 30, 0, TimeSpan.Zero),
+        EventStart: new DateTimeOffset(2026, 3, 10, 9, 30, 0, TimeSpan.Zero).AddMinutes(index),
         EventIsAllDay: false,
+        ReminderCount: 1,
+        NextReminderAt: new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero).AddMinutes(index),
+        NextReminderMinutes: 30,
+        NextReminderMethod: EventRemindersValidator.PopupMethod,
+        IsDefault: false,
         Members: Array.Empty<ReminderMemberViewModel>());
 
-    private static ReminderSection<UpcomingReminderViewModel> SectionWith(int rowCount) =>
+    private static ReminderSection<UpcomingReminderEventViewModel> SectionWith(int rowCount) =>
         new(ReminderSectionKey.Today, "Today", Enumerable.Range(0, rowCount).Select(Row).ToList());
 
-    private static ReminderSection<UpcomingReminderViewModel> EmptySection(ReminderSectionKey key) =>
-        new(key, key.ToString(), Array.Empty<UpcomingReminderViewModel>());
+    private static ReminderSection<UpcomingReminderEventViewModel> EmptySection(ReminderSectionKey key) =>
+        new(key, key.ToString(), Array.Empty<UpcomingReminderEventViewModel>());
 
     [Fact]
     public void IsEntirelyEmpty_WhenEverySectionHasNoRows_IsTrue()

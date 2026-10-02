@@ -195,24 +195,25 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             dto.OwningCalendarDefaultReminders);
     }
 
-    public async Task<IReadOnlyList<UpcomingReminderViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
     {
         var response = await httpClient.GetAsync("api/reminders/upcoming", ct);
         await EnsureSuccessAsync(response, ct);
 
-        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderDto>>(cancellationToken: ct)
-                   ?? new List<UpcomingReminderDto>();
+        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderEventDto>>(cancellationToken: ct)
+                   ?? new List<UpcomingReminderEventDto>();
 
         return dtos
-            .Select(d => new UpcomingReminderViewModel(
-                d.TriggerAt,
-                d.Method,
-                d.Minutes,
-                d.IsDefault,
+            .Select(d => new UpcomingReminderEventViewModel(
                 d.EventId,
                 d.EventTitle,
                 d.EventStart,
                 d.EventIsAllDay,
+                d.ReminderCount,
+                d.NextReminderAt,
+                d.NextReminderMinutes,
+                d.NextReminderMethod,
+                d.IsDefault,
                 d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
             .ToList();
     }

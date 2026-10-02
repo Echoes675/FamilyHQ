@@ -12,7 +12,7 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 /// <para>
 /// <b>Why this is its own class.</b> <see cref="ReminderDescription"/> exists to read correctly in
 /// the edit modal's reminder list, which the family opens rarely and reads carefully. This timeline
-/// is the opposite: a dense list of pings on a wall display, glanced at rather than read, where a
+/// is the opposite: a dense list of rows on a wall display, glanced at rather than read, where a
 /// full sentence per row ("30 minutes before · Notification") would not fit two columns of them.
 /// <see cref="Lead"/> therefore uses the compact unit words a form never would ("min"/"hr"/"day")
 /// but keeps the <i>same</i> "largest unit that divides evenly" cascade
@@ -76,10 +76,11 @@ public static class ReminderRowDisplay
     }
 
     /// <summary>
-    /// When the event itself starts, in the row's compact form: "starts 14:00". For an all-day
-    /// event this is "all day" rather than the event's stored midnight boundary read as a time —
-    /// rendering that literally would tell the family the event "starts 00:00", which is not a thing
-    /// that happens.
+    /// The event's own start, in the row's compact leading form: "14:00" — or "all day" for an
+    /// all-day event, rather than its stored midnight boundary read as a time, which would tell the
+    /// family the event "starts 00:00". This is what the row leads with where a per-ping row used to
+    /// lead with the ping's own trigger time — see the class remarks on why the row is filed, and now
+    /// labelled, by the event rather than by any one of its reminders.
     /// </summary>
     /// <remarks>
     /// <paramref name="start"/> arrives from Postgres via Npgsql as a <c>timestamptz</c> read back
@@ -90,21 +91,20 @@ public static class ReminderRowDisplay
     /// this used to, reads an hour early for every timed event for roughly half the year in a zone
     /// that observes DST.
     /// </remarks>
-    public static string StartsAt(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone) =>
-        isAllDay ? "all day" : $"starts {TimeZoneInfo.ConvertTime(start, zone).ToString("HH:mm", CultureInfo.InvariantCulture)}";
+    public static string EventTime(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone) =>
+        isAllDay ? "all day" : TimeZoneInfo.ConvertTime(start, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// The ping's own trigger time, in the row's compact form: "14:00" — the leading column every row
-    /// has, timed or all-day, since a ping (unlike the event it belongs to) always fires at a specific
-    /// instant.
+    /// The row's reminder summary: how many of the event's reminders are still due to fire, and the
+    /// lead time of the soonest one — "3 reminders · next 2 hrs before" (singular: "1 reminder · next
+    /// …"). Delegates the lead-time wording to <see cref="Lead"/> rather than re-deriving it, so the
+    /// two can never disagree about the same reminder.
     /// </summary>
-    /// <remarks>
-    /// Same reason <see cref="StartsAt"/> takes a zone: <paramref name="triggerAt"/> arrives from
-    /// Postgres with a +00:00 offset, not the household's, so formatting it without converting first
-    /// reads an hour early for roughly half the year in a zone that observes DST.
-    /// </remarks>
-    public static string PingTime(DateTimeOffset triggerAt, TimeZoneInfo zone) =>
-        TimeZoneInfo.ConvertTime(triggerAt, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
+    public static string ReminderSummary(int reminderCount, int nextReminderMinutes, bool isAllDay)
+    {
+        var noun = reminderCount == 1 ? "reminder" : "reminders";
+        return $"{reminderCount.ToString(CultureInfo.InvariantCulture)} {noun} · next {Lead(nextReminderMinutes, isAllDay)}";
+    }
 
     /// <summary>
     /// A one-glyph hint at how the ping is delivered. Falls back to a plain bullet for a method

@@ -27,10 +27,12 @@
                         <div class="reminders-section__rows">
                             @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
                             {
-                                <ReminderPingRow @key="(row.EventId, row.TriggerAt, row.Method, row.Minutes)"
-                                                 Ping="row"
-                                                 Zone="Zone"
-                                                 OnOpenEvent="OnOpenEvent" />
+                                @* EventId alone keys this row: unlike the per-ping row this replaced,
+                                   there is exactly one row per event. *@
+                                <ReminderRow @key="row.EventId"
+                                             Event="row"
+                                             Zone="Zone"
+                                             OnOpenEvent="OnOpenEvent" />
                             }
                         </div>
                         @if (!expanded && bucket.Rows.Count > RemindersViewLogic.PreviewRows)
@@ -58,9 +60,12 @@
 </div>
 
 @code {
-    /// <summary>The flat list of pings to file and render. Empty renders the no-reminders state.</summary>
+    /// <summary>
+    /// The flat list of event rows to file and render — one per event that has at least one reminder
+    /// due, never one per reminder. Empty renders the no-reminders state.
+    /// </summary>
     [Parameter, EditorRequired]
-    public IReadOnlyList<UpcomingReminderViewModel> Pings { get; set; } = Array.Empty<UpcomingReminderViewModel>();
+    public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();
 
     /// <summary>The kiosk's current local date — what "Today" and "Tomorrow" are measured against.</summary>
     [Parameter] public DateOnly Today { get; set; }
@@ -68,18 +73,22 @@
     /// <summary>The household's week-start day, passed straight through to <see cref="ReminderBucketing"/>.</summary>
     [Parameter] public DayOfWeek WeekStart { get; set; }
 
-    /// <summary>The zone a ping's local day is read in.</summary>
+    /// <summary>The zone a row's local day (its event's start) is read in.</summary>
     [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
 
-    /// <summary>Raised with an event's id when one of its pings is tapped.</summary>
+    /// <summary>Raised with an event's id when its row is tapped.</summary>
     [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
 
     // Which sections the family has asked to see in full. Local, UI-only state — expanding never
-    // raises OnOpenEvent or re-fetches Pings, it only changes which rows already in memory are shown.
+    // raises OnOpenEvent or re-fetches Rows, it only changes which rows already in memory are shown.
     private readonly HashSet<ReminderSectionKey> _expanded = [];
 
-    private IReadOnlyList<ReminderSection<UpcomingReminderViewModel>> Sections =>
-        ReminderBucketing.File(Pings, p => p.TriggerAt, Today, WeekStart, Zone);
+    // Filed by EventStart, never by NextReminderAt — an event with reminders due at very different
+    // lead times must still land in exactly one section, the one containing when it actually happens.
+    // ReminderBucketing itself needed no change for this: it was already generic over the row type via
+    // a Func<T, DateTimeOffset> selector, so only the selector passed in here changed.
+    private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
+        ReminderBucketing.File(Rows, r => r.EventStart, Today, WeekStart, Zone);
 
     private void Expand(ReminderSectionKey key) => _expanded.Add(key);
 }

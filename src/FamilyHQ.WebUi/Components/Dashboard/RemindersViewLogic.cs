@@ -5,7 +5,7 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 /// <summary>
 /// Pure display decisions for <see cref="RemindersView"/>, extracted so they have unit coverage
 /// instead of living only in a `.razor` file's `@code` block — the same reason
-/// <see cref="ReminderRowDisplay"/> sits beside <see cref="ReminderPingRow"/>. There is no bUnit in
+/// <see cref="ReminderRowDisplay"/> sits beside <see cref="ReminderRow"/>. There is no bUnit in
 /// this repo, so logic kept in a Razor component is logic nothing exercises directly.
 /// </summary>
 public static class RemindersViewLogic
@@ -21,7 +21,7 @@ public static class RemindersViewLogic
     /// Whether every section is empty — the view's single "No reminders coming up" state, distinct
     /// from a section that is merely empty on its own (which collapses to "Nothing" instead).
     /// </summary>
-    public static bool IsEntirelyEmpty(IReadOnlyList<ReminderSection<UpcomingReminderViewModel>> sections) =>
+    public static bool IsEntirelyEmpty(IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> sections) =>
         sections.All(s => s.Rows.Count == 0);
 
     /// <summary>
@@ -29,8 +29,8 @@ public static class RemindersViewLogic
     /// capped at <see cref="PreviewRows"/>. Never fetches and never reorders — <paramref name="section"/>'s
     /// own rows are already in trigger-time order from <see cref="ReminderBucketing"/>.
     /// </summary>
-    public static IReadOnlyList<UpcomingReminderViewModel> Preview(
-        ReminderSection<UpcomingReminderViewModel> section, bool expanded) =>
+    public static IReadOnlyList<UpcomingReminderEventViewModel> Preview(
+        ReminderSection<UpcomingReminderEventViewModel> section, bool expanded) =>
         expanded ? section.Rows : section.Rows.Take(PreviewRows).ToList();
 
     /// <summary>

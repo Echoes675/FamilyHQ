@@ -11,11 +11,13 @@ using Moq;
 namespace FamilyHQ.WebApi.Tests.Controllers;
 
 /// <summary>
-/// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. Three things are
-/// worth testing deliberately rather than incidentally: the 28-day reminder-lead tail on the query
-/// window (an event just past the display range can still ping inside it), the one-row-per-ping
-/// shape for a shared event (not one row per person), and that the owning calendar's own zone beats
-/// the family's configured one when anchoring an all-day reminder.
+/// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is now one
+/// EVENT that has at least one reminder still due, filed by <c>EventStart</c>, never one row per
+/// reminder — so what is worth testing deliberately here is: an event with several reminders still
+/// produces exactly one row naming how many and when the next one fires; an event is excluded the
+/// moment NONE of its reminders are still upcoming, even if some already fired; the query window has
+/// no reminder-lead tail any more (filing by event start removed the reason for one); and the owning
+/// calendar's own zone beats the family's configured one when anchoring an all-day reminder.
 /// </summary>
 public class RemindersControllerTests
 {
@@ -98,23 +100,23 @@ public class RemindersControllerTests
         return (repository, timeZoneService, clock, sut);
     }
 
-    private static async Task<IReadOnlyList<UpcomingReminderDto>> GetRows(RemindersController sut)
+    private static async Task<IReadOnlyList<UpcomingReminderEventDto>> GetRows(RemindersController sut)
     {
         var result = await sut.GetUpcoming(CancellationToken.None);
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
-        return ok.Value.Should().BeAssignableTo<IReadOnlyList<UpcomingReminderDto>>().Subject;
+        return ok.Value.Should().BeAssignableTo<IReadOnlyList<UpcomingReminderEventDto>>().Subject;
     }
 
     [Fact]
-    public async Task UpcomingReminders_FilesEveryPingSortedByWhenThePhoneGoesOff()
+    public async Task UpcomingReminders_FilesEveryEventSortedByItsOwnStart()
     {
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
         // Returned from the repository out of order — the controller, not the repository, is what
         // must produce the timeline order.
-        var later = EventWith(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Later Ping");
-        var earlier = EventWith(new DateTimeOffset(2026, 3, 5, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Earlier Ping");
+        var later = EventWith(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Later Event");
+        var earlier = EventWith(new DateTimeOffset(2026, 3, 5, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Earlier Event");
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { later, earlier });
@@ -122,17 +124,17 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().HaveCount(2);
-        rows.Select(r => r.TriggerAt).Should().BeInAscendingOrder();
-        rows[0].EventTitle.Should().Be("Earlier Ping");
-        rows[1].EventTitle.Should().Be("Later Ping");
+        rows.Select(r => r.EventStart).Should().BeInAscendingOrder();
+        rows[0].EventTitle.Should().Be("Earlier Event");
+        rows[1].EventTitle.Should().Be("Later Event");
     }
 
     [Fact]
-    public async Task UpcomingReminders_BreaksATieOnTriggerAtByEventTitle()
+    public async Task UpcomingReminders_BreaksATieOnEventStartByEventTitle()
     {
-        // Two different events whose pings land on the EXACT same instant — nothing but EventTitle
-        // can order them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than
-        // just happening to pass because TriggerAt alone already decided the order.
+        // Two different events that start at the EXACT same instant — nothing but EventTitle can
+        // order them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than just
+        // happening to pass because EventStart alone already decided the order.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -148,77 +150,74 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().HaveCount(2);
-        rows.Select(r => r.TriggerAt).Distinct().Should().ContainSingle("both pings land on the same instant");
+        rows.Select(r => r.EventStart).Distinct().Should().ContainSingle("both events start at the same instant");
         rows[0].EventTitle.Should().Be("Apple Event");
         rows[1].EventTitle.Should().Be("Zebra Event");
     }
 
     [Fact]
-    public async Task UpcomingReminders_IncludesAnEventStartingAfterTheWindowWhenItsPingFallsInside()
+    public async Task UpcomingReminders_QueriesOnlyTheDisplayWindow_WithNoReminderLeadTail()
     {
-        // Google's maximum lead is 40320 minutes (28 days), so an event starting after the end of
-        // next month can still ping inside it. A window that stops at the event start silently loses
-        // those.
+        // Filing by EVENT START (rather than by each ping's own trigger instant) removes the reason a
+        // 28-day reminder-lead tail used to exist on this query: a ping could previously precede its
+        // event into the display window, but a ROW's place in the timeline no longer depends on any
+        // ping's trigger instant at all, only on evt.Start — which this query already bounds. now = 10
+        // March 00:00Z is the queried start; 1 May 00:00Z is the exclusive "end of next month" bound.
         var (repository, _, clock, sut) = CreateSut();
-        var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
-        clock.SetUtcNow(now);
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
-        var justPastNextMonth = new DateTimeOffset(2026, 5, 10, 9, 0, 0, TimeSpan.Zero);
-        // The Setup matches ANY window on purpose, so the behaviour assertions below exercise only
-        // the ping-admission filter, in isolation from whatever window the controller actually asks
-        // for. That isolation is exactly why this test, on its own, cannot catch the query window
-        // itself shrinking or losing its 28-day tail — a regression there would still get handed this
-        // event by the stub below and would still pass. The Verify afterwards closes that gap by
-        // pinning the exact window requested.
-        repository.Setup(r => r.GetEventsAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { EventWith(justPastNextMonth, Explicit(("popup", 40320))) });
+        await GetRows(sut);
 
-        var rows = await GetRows(sut);
-
-        rows.Should().ContainSingle("the ping is inside the window even though the event is not");
-        rows[0].TriggerAt.Should().Be(justPastNextMonth.AddMinutes(-40320));
-
-        // now = 10 March 00:00Z is the queried start; 1 May 00:00Z is the exclusive "end of next
-        // month" display boundary; +28 days is the reminder-lead tail under test. If that tail were
-        // shrunk or dropped, this Verify — not the behaviour assertions above — is what fails.
         var expectedStart = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);
-        var expectedDisplayEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
-        var expectedQueryEnd = expectedDisplayEnd.AddDays(28);
+        var expectedEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
         repository.Verify(r => r.GetEventsAsync(
             It.Is<DateTimeOffset>(d => d == expectedStart),
-            It.Is<DateTimeOffset>(d => d == expectedQueryEnd),
+            It.Is<DateTimeOffset>(d => d == expectedEnd),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task UpcomingReminders_ExcludesAPingThatLandsAfterTheEndOfNextMonth()
+    public async Task UpcomingReminders_ExcludesAnEventThatStartedBeforeTheWindow()
     {
-        // The EVENT query reaches 28 days past the end of next month (the test above), but the
-        // returned PINGS do not: the client's bucketing ends at "next month" and discards anything
-        // past it, so a ping out there is pure payload. now = 10 March; "end of next month" is the
-        // exclusive start of May, i.e. 2026-05-01T00:00:00Z.
+        // GetEventsAsync matches on OVERLAP, not on Start falling inside the window, so an ongoing
+        // multi-day event that began before the window can come back from the repository with a Start
+        // earlier than it. The controller has to re-assert the lower bound itself rather than trust
+        // the repository's own query semantics.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
-        // A 0-minute ("at start time") reminder one minute past the display boundary — close enough
-        // that only the ping filter, not the event-query window, could be excluding it.
-        var start = new DateTimeOffset(2026, 5, 1, 0, 1, 0, TimeSpan.Zero);
-        var evt = EventWith(start, Explicit(("popup", 0)));
+        var startedYesterday = EventWith(new DateTimeOffset(2026, 3, 9, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { evt });
+            .ReturnsAsync(new List<CalendarEvent> { startedYesterday });
 
         var rows = await GetRows(sut);
 
-        rows.Should().BeEmpty("the ping falls after the end of next month, which the event query reaches but the display does not");
+        rows.Should().BeEmpty("the event's own start is before the window this view reports on");
     }
 
     [Fact]
-    public async Task UpcomingReminders_ExcludesAPingThatAlreadyFired_ButKeepsALaterPingOnTheSameEvent()
+    public async Task UpcomingReminders_ExcludesAnEventStartingOnOrAfterTheEndOfNextMonth()
     {
-        // One event, two reminders either side of "now" — proves the past-ping exclusion is a filter
-        // on each PING, not a reason to drop the whole event.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        // Exactly on the exclusive "end of next month" boundary — 1 May 00:00Z.
+        var onTheBoundary = EventWith(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { onTheBoundary });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty("the event starts exactly on the exclusive end-of-next-month boundary");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenOneOfTwoRemindersHasAlreadyFired_CountsOnlyTheStillUpcomingOne()
+    {
+        // One event, two reminders either side of "now" — proves the already-fired filter acts on
+        // each REMINDER, not on the whole event, the same way the old per-ping filter did.
         var (repository, _, clock, sut) = CreateSut();
         var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
         clock.SetUtcNow(now);
@@ -233,9 +232,58 @@ public class RemindersControllerTests
 
         var rows = await GetRows(sut);
 
-        rows.Should().ContainSingle("the already-fired 90-minute ping is dropped but the still-upcoming 30-minute ping is not");
-        rows[0].Minutes.Should().Be(30);
-        rows[0].TriggerAt.Should().Be(start.AddMinutes(-30));
+        rows.Should().ContainSingle("the event still has one upcoming reminder even though the other already fired");
+        rows[0].ReminderCount.Should().Be(1);
+        rows[0].NextReminderMinutes.Should().Be(30);
+        rows[0].NextReminderAt.Should().Be(start.AddMinutes(-30));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenEveryReminderHasAlreadyFired_ProducesNoRowForTheEvent()
+    {
+        // This view's subject is what the phone WILL do, not a log of what it already did (the same
+        // rule the old per-ping filter enforced). An event whose only reminder already fired must not
+        // produce a row just because its START is still inside the display window.
+        var (repository, _, clock, sut) = CreateSut();
+        var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        clock.SetUtcNow(now);
+
+        // Start is 10 minutes after "now"; its only reminder (15 minutes before) fired 5 minutes ago.
+        var start = new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 15)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty("the event's only reminder has already fired, even though the event itself has not started yet");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_AnEventWithSeveralReminders_ProducesOneRowNamingTheCountAndTheNextOne()
+    {
+        // The family's own motivating case: an event with reminders due at very different lead times
+        // (here 30 minutes, 2 hours, and a week before) must still produce exactly ONE row — not one
+        // per reminder — naming how many are left and which one fires soonest. The soonest to fire is
+        // the one with the LARGEST lead time (it is furthest from the event, so its trigger instant is
+        // the earliest), not the smallest.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var start = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 30), ("popup", 120), ("popup", 10080)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle("three reminders on one event must still file as one row, not three");
+        rows[0].ReminderCount.Should().Be(3);
+        rows[0].NextReminderMinutes.Should().Be(10080, "the week-ahead reminder fires soonest, being furthest from the event");
+        rows[0].NextReminderAt.Should().Be(start.AddMinutes(-10080));
+        rows[0].EventStart.Should().Be(start, "the row is filed and described by the EVENT's start, not any reminder's trigger");
     }
 
     [Fact]
@@ -274,7 +322,7 @@ public class RemindersControllerTests
     }
 
     [Fact]
-    public async Task UpcomingReminders_TagsAnInheritedPingAsDefault()
+    public async Task UpcomingReminders_TagsAnInheritedEventAsDefault()
     {
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
@@ -293,9 +341,9 @@ public class RemindersControllerTests
 
         rows.Should().ContainSingle();
         rows[0].IsDefault.Should().BeTrue();
-        rows[0].Method.Should().Be("popup");
-        rows[0].Minutes.Should().Be(15);
-        rows[0].TriggerAt.Should().Be(start.AddMinutes(-15));
+        rows[0].NextReminderMethod.Should().Be("popup");
+        rows[0].NextReminderMinutes.Should().Be(15);
+        rows[0].NextReminderAt.Should().Be(start.AddMinutes(-15));
     }
 
     [Fact]
@@ -341,10 +389,10 @@ public class RemindersControllerTests
     }
 
     [Fact]
-    public async Task UpcomingReminders_ProducesOneRowPerPing_NotOnePerPersonPerPing()
+    public async Task UpcomingReminders_ProducesOneRowPerEvent_NotOnePerPersonOnASharedEvent()
     {
         // The Agenda and Day views project a shared event once per person. Doing that here would
-        // double-count the notification: the phone goes off once.
+        // double-count the event — a row is a thing the family can tap once, not a thing per person.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -411,6 +459,6 @@ public class RemindersControllerTests
 
         rows.Should().ContainSingle();
         // UTC local midnight on 15 July coincides with the stored instant itself (zero offset).
-        rows[0].TriggerAt.Should().Be(allDayStart.AddMinutes(-60));
+        rows[0].NextReminderAt.Should().Be(allDayStart.AddMinutes(-60));
     }
 }

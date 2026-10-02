@@ -9,15 +9,15 @@ using Reqnroll;
 namespace FamilyHQ.E2E.Steps;
 
 /// <summary>
-/// Drives the Reminders VIEW — the fourth dashboard tab's standalone timeline of upcoming pings —
-/// as distinct from the event modal's own Reminders tab, which <see cref="EventRemindersSteps"/>
-/// already covers.
+/// Drives the Reminders VIEW — the fourth dashboard tab's standalone timeline of events that still
+/// have a reminder due — as distinct from the event modal's own Reminders tab, which
+/// <see cref="EventRemindersSteps"/> already covers.
 /// </summary>
 /// <remarks>
-/// Every assertion here addresses a row by its value (event id + ping instant + default flag), never
-/// by position, for the same reason the modal's Reminders tab rows do: Google returns a family's
-/// reminders in an order of its own, and this view re-sorts by ping time, so a row's position on
-/// screen is not a stable identifier a scenario can key off.
+/// Every assertion here addresses a row by its value (event id + next-reminder instant + default
+/// flag), never by position, for the same reason the modal's Reminders tab rows do: this view sorts
+/// by EVENT START, which depends on seeding order rather than on anything Google guarantees, so a
+/// row's position on screen is not a stable identifier a scenario can key off.
 /// </remarks>
 [Binding]
 public class RemindersViewSteps
@@ -34,15 +34,16 @@ public class RemindersViewSteps
     }
 
     // ── Seeding a reminder that is guaranteed not to have fired yet ─────────────────────────────
-    // RemindersController filters pings to TriggerAt >= now — a real wall-clock comparison none of
-    // this suite's other seeding helpers have to consider, because a Month/Day/Agenda assertion only
-    // cares which CALENDAR DAY an event falls on, never what time of day "now" happens to be. A
-    // reminder seeded at a fixed clock time (e.g. "09:00 today") has already fired, and is correctly
-    // absent, for any run that happens to execute after that time of day — which is most of the day.
-    // Seeding relative to "now" instead keeps the ping in the future by construction, wherever in
-    // the day the suite actually runs. (The event's own start can land a few minutes into tomorrow
-    // if "now" is close enough to midnight; that's harmless here, because ReminderBucketing files a
-    // row by its PING's own date, never the event's start date.)
+    // RemindersController still excludes an event once EVERY one of its reminders has already fired —
+    // a real wall-clock comparison none of this suite's other seeding helpers have to consider,
+    // because a Month/Day/Agenda assertion only cares which CALENDAR DAY an event falls on, never what
+    // time of day "now" happens to be. A reminder seeded at a fixed clock time (e.g. "09:00 today") has
+    // already fired, and the event it belongs to is correctly ABSENT from this view, for any run that
+    // happens to execute after that time of day — which is most of the day. Seeding relative to "now"
+    // instead keeps the reminder in the future by construction, wherever in the day the suite actually
+    // runs. (The event's own start can land a few minutes into tomorrow if "now" is close enough to
+    // midnight; that's harmless here, because the row is filed by the EVENT's own start date, which
+    // moves with it.)
     [Given(@"the user has a timed event ""([^""]*)"" starting in (\d+) minutes in ""([^""]*)""")]
     public async Task GivenTheUserHasATimedEventStartingInMinutesInCalendar(
         string eventName, int minutes, string calendarName)
@@ -120,17 +121,18 @@ public class RemindersViewSteps
         // whole view, and ThenTheSectionHasARowFor (above) is what pins WHICH section a row landed
         // in. This step is about what the row SAYS, not where it is.
         //
-        // The start time itself is checked by FORMAT ("starts HH:mm"), not an exact clock value: the
-        // event is seeded relative to "now" (see GivenTheUserHasATimedEventStartingInMinutesInCalendar)
-        // so its exact wall-clock start isn't known until the seeding step runs, and re-deriving it
-        // here would just be re-implementing that computation a second time for no real gain — the
-        // row rendering SOME correctly-formatted start time, for the one event the scenario created,
-        // is what "and its start" actually asks of this row.
+        // The start time itself is checked by FORMAT (a bare "HH:mm", the row's leading column — see
+        // ReminderRowDisplay.EventTime), not an exact clock value: the event is seeded relative to
+        // "now" (see GivenTheUserHasATimedEventStartingInMinutesInCalendar) so its exact wall-clock
+        // start isn't known until the seeding step runs, and re-deriving it here would just be
+        // re-implementing that computation a second time for no real gain — the row rendering SOME
+        // correctly-formatted start time, for the one event the scenario created, is what "and its
+        // start" actually asks of this row.
         var row = await _dashboardPage.FindReminderRowByTitleAsync(title);
 
-        row.Text.Should().Contain(leadText, $"the row for '{title}' should state its lead time.");
+        row.Text.Should().Contain(leadText, $"the row for '{title}' should state its reminder's lead time.");
         row.Text.Should().MatchRegex(
-            @"starts \d{2}:\d{2}", $"the row for '{title}' should state when the event itself starts.");
+            @"\b\d{2}:\d{2}\b", $"the row for '{title}' should state when the event itself starts.");
     }
 
     [Then(@"the ""([^""]*)"" section has a default-tagged row for ""([^""]*)""")]
@@ -148,8 +150,8 @@ public class RemindersViewSteps
             $"'{title}' follows the calendar's usual reminders, so its row should carry the default tag.");
     }
 
-    [Then(@"the ""([^""]*)"" section has two rows for ""([^""]*)""")]
-    public async Task ThenTheSectionHasTwoRowsFor(string sectionName, string title)
+    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" naming (\d+) reminders?")]
+    public async Task ThenTheSectionHasARowForNamingReminders(string sectionName, string title, int count)
     {
         var key = ParseSection(sectionName);
         var rows = await _dashboardPage.ReadReminderRowsAsync(key);
@@ -157,10 +159,40 @@ public class RemindersViewSteps
 
         var matching = rows.Where(r => r.EventId == target.EventId).ToList();
 
-        matching.Should().HaveCount(
-            2, $"'{title}' carries two reminders of its own, so its section should file one row per ping.");
-        matching.Select(r => r.PingAt).Distinct().Should().HaveCount(
-            2, $"'{title}'s two rows must be two DIFFERENT pings, not the same one rendered twice.");
+        matching.Should().ContainSingle(
+            $"'{title}' carries several reminders, so its section should file ONE row for it, never one per reminder.");
+
+        var noun = count == 1 ? "reminder" : "reminders";
+        matching[0].Text.Should().Contain(
+            $"{count} {noun}", $"the row for '{title}' should state it has {count} {noun}.");
+    }
+
+    [Then(@"the row for ""([^""]*)"" appears only in the ""([^""]*)"" section")]
+    public async Task ThenTheRowForAppearsOnlyInTheSection(string title, string sectionName)
+    {
+        // The business rule the family specifically asked for: a row is filed where its EVENT starts,
+        // and nowhere else — not in every section one of its reminders' trigger instants happens to
+        // land in. Checking every section rather than just the expected one is the point: a row that
+        // ALSO appears somewhere else is exactly the scattering bug this view used to have.
+        var expected = ParseSection(sectionName);
+        var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
+
+        foreach (var key in Enum.GetValues<ReminderSectionKey>())
+        {
+            var rows = await _dashboardPage.ReadReminderRowsAsync(key);
+            var present = rows.Any(r => r.EventId == target.EventId);
+
+            if (key == expected)
+            {
+                present.Should().BeTrue(
+                    $"'{title}' should be filed under '{sectionName}', the section containing its start.");
+            }
+            else
+            {
+                present.Should().BeFalse(
+                    $"'{title}' must not also appear under '{key}' — a row is filed once, by its event's start.");
+            }
+        }
     }
 
     [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" naming ""([^""]*)"" and ""([^""]*)""")]
@@ -190,7 +222,7 @@ public class RemindersViewSteps
         // Check the actual rows first: a mismatch here fails with the unexpected row's own data in
         // the message, which is far more useful than the plain "found False" a bare boolean leaves.
         var rows = await _dashboardPage.ReadReminderRowsAsync(key);
-        rows.Should().BeEmpty($"the '{sectionName}' section should have no pings filed into it.");
+        rows.Should().BeEmpty($"the '{sectionName}' section should have no events filed into it.");
 
         var isEmpty = await _dashboardPage.ReminderSectionIsEmptyAsync(key);
         isEmpty.Should().BeTrue(
@@ -202,7 +234,7 @@ public class RemindersViewSteps
     {
         var count = await _dashboardPage.CountReminderRowsForTitleAsync(title);
 
-        count.Should().Be(0, $"'{title}' will never ping, so the timeline must not carry a row for it.");
+        count.Should().Be(0, $"'{title}' will never have a reminder due, so the timeline must not carry a row for it.");
     }
 
     [Then(@"the reminders view says there is nothing coming up")]
@@ -211,7 +243,7 @@ public class RemindersViewSteps
         var empty = await _dashboardPage.RemindersViewIsEntirelyEmptyAsync();
 
         empty.Should().BeTrue(
-            "with no pings due, the view should state that plainly rather than rendering a blank panel.");
+            "with no reminders due, the view should state that plainly rather than rendering a blank panel.");
     }
 
     [Then(@"the all-day footnote is shown")]
@@ -231,7 +263,7 @@ public class RemindersViewSteps
     public async Task WhenITapTheRemindersRowFor(string title)
     {
         var row = await _dashboardPage.FindReminderRowByTitleAsync(title);
-        await _dashboardPage.TapReminderRowAsync(row.EventId, row.PingAt);
+        await _dashboardPage.TapReminderRowAsync(row.EventId);
     }
 
     [Then(@"the event modal is open on ""([^""]*)"" showing its Reminders tab")]

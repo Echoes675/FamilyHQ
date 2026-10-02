@@ -4,10 +4,13 @@ Feature: Reminders view
   I want to see what will ping our phones and when
   So that nothing we rely on being told about passes unnoticed
 
-  Every row is one ping, filed by when the phone goes off rather than when the event happens. A row
-  appears only if a ping will actually happen: an event inheriting from a calendar with no defaults
-  does not ping, and neither does one whose reminders were removed, so neither appears. Reminder data
-  that has never synced is absent too, and is never shown as "unknown".
+  Every row is one EVENT that still has a reminder due, filed by when the EVENT happens — never one
+  row per reminder, and never filed by when any one reminder's own trigger instant falls. An event
+  with several reminders due at very different lead times still appears exactly once, in the section
+  containing its own start, and nowhere else. A row appears only if at least one of its reminders will
+  actually still fire: an event inheriting from a calendar with no defaults does not ping, and neither
+  does one whose reminders were removed, so neither appears — and an event whose only reminder has
+  already fired is equally absent, even if the event itself has not started yet.
 
   No Background: scenarios need different seeding orders (a backdoor-seeded event has to exist
   BEFORE the login that triggers the first sync; a calendar's defaults have to be set AFTER any
@@ -16,11 +19,11 @@ Feature: Reminders view
   the ordering each scenario actually needs.
 
   A "today" reminder is seeded relative to NOW, not at a fixed clock time, and this is deliberate,
-  not a style choice: RemindersController filters to pings whose trigger is still in the future
-  (TriggerAt >= now), which is a real wall-clock comparison no other seeding helper in this suite has
-  to consider — a Month/Day/Agenda assertion only cares which calendar day an event falls on, never
-  what time of day it already is. A reminder fixed at "09:00 today" has already fired, and is
-  therefore correctly ABSENT, for any run that happens to execute after 09:00 — most of the day. See
+  not a style choice: RemindersController excludes an event once EVERY one of its reminders has
+  already fired — a real wall-clock comparison no other seeding helper in this suite has to consider —
+  a Month/Day/Agenda assertion only cares which calendar day an event falls on, never what time of day
+  it already is. A reminder fixed at "09:00 today" has already fired, and its event is therefore
+  correctly ABSENT, for any run that happens to execute after 09:00 — most of the day. See
   GivenTheUserHasATimedEventStartingInMinutesInCalendar.
 
   Scenario: The timeline is a fourth tab and does not displace the month view
@@ -83,7 +86,7 @@ Feature: Reminders view
     And I show the reminders view
     Then no row names "Bin Day" anywhere in the reminders view
 
-  Scenario: An event with two reminders appears twice, once per ping
+  Scenario: An event with two reminders of its own appears once, naming how many it has
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Parents Evening" starting in 150 minutes in "Appointments"
     And I login as the user "RemindersViewUser"
@@ -93,7 +96,28 @@ Feature: Reminders view
     And I give the event a reminder 30 minutes before
     And I save the event
     And I show the reminders view
-    Then the "Today" section has two rows for "Parents Evening"
+    Then the "Today" section has a row for "Parents Evening" naming 2 reminders
+
+  # The family's own motivating example: an event with reminders due at very different lead times —
+  # one soon, one more than two weeks out — must still appear exactly once, under its own start, and
+  # NOT under any section one of its reminders' own trigger instants happens to fall in. 360 hours
+  # (15 days) before a "next month" event always lands its trigger on or before the LAST day of the
+  # CURRENT month — "next month" is always day 15 of the following month (DateExpressionResolver), so
+  # 15 days before that is never later than the current month's final day — whatever day of the month
+  # this suite happens to run on. That is the exact scattering the old per-ping rows produced and the
+  # user explicitly asked to stop.
+  Scenario: An event with widely-spaced reminders still appears exactly once, under its own start
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Annual Checkup" at "10:00" on "next month" in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    When I navigate to the next month
+    And I open the event "Annual Checkup" for editing
+    And I give the event a reminder 2 hours before
+    And I give the event a reminder 360 hours before
+    And I save the event
+    And I show the reminders view
+    Then the row for "Annual Checkup" appears only in the "Next month" section
 
   Scenario: A shared event's row names each person rather than the shared calendar
     Given I have a user like "RemindersViewUser"
@@ -110,12 +134,12 @@ Feature: Reminders view
   # The real server clock cannot be moved in E2E (unlike the client-only kiosk day-rollover hook), so
   # this cannot force "today" to actually be the last day of a week. What it proves on every run is
   # the general rule the bucketing code applies unconditionally: Tomorrow is matched before This
-  # week, so a tomorrow-ping is never misfiled regardless of where the week boundary falls. The
+  # week, so tomorrow's event is never misfiled regardless of where the week boundary falls. The
   # deterministic edge itself — today IS the last day of the week — is pinned with a controlled
   # DateOnly in ReminderBucketingTests.File_OnTheLastDayOfAWeek_TomorrowIsStillTomorrowAndNotNextMonth.
   # Seeded at a fixed clock time on "tomorrow" rather than relative to now, unlike the "today"
   # scenarios above — tomorrow 08:00 is always in the future no matter what time of day it is today.
-  Scenario: Tomorrow's ping stays under Tomorrow on the last day of a week
+  Scenario: Tomorrow's event stays under Tomorrow on the last day of a week
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Bin Collection" at "08:00" on "tomorrow" in "Appointments"
     And I login as the user "RemindersViewUser"

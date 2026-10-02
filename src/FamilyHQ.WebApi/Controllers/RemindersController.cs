@@ -13,15 +13,6 @@ namespace FamilyHQ.WebApi.Controllers;
 [Route("api/reminders")]
 public class RemindersController : ControllerBase
 {
-    // Google documents 40320 minutes (28 days) as the maximum lead time on a reminders.overrides
-    // entry. An event that starts AFTER the end of the display window (see displayEnd in
-    // GetUpcoming) can still have a ping that lands INSIDE it — so the EVENT query has to reach 28
-    // days further than the window it reports on, or those pings are silently lost. It looks like
-    // slack added "to be safe"; it is the shortest range that is actually correct, derived straight
-    // from Google's own limit rather than picked. The returned PINGS are filtered back down to the
-    // narrower display window — see the ping filter in GetUpcoming.
-    private const int GoogleMaxReminderLeadDays = 28;
-
     private readonly ICalendarRepository _calendarRepository;
     private readonly ITimeZoneService _timeZoneService;
     private readonly TimeProvider _timeProvider;
@@ -40,9 +31,11 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// Every notification a phone will make from now through the end of next month, across every
-    /// calendar — filed by the instant each one actually fires. The event query reaches further than
-    /// that (see <see cref="GoogleMaxReminderLeadDays"/>), but the rows returned do not.
+    /// Every event, across every calendar, that has at least one reminder still due to fire between
+    /// now and the end of next month — filed by when the EVENT happens, never by when any one of its
+    /// reminders fires. An event with several reminders due at very different lead times (the
+    /// family's own example: one every day for the week before it) still produces exactly one row,
+    /// in the section containing its own start.
     /// </summary>
     [HttpGet("upcoming")]
     public async Task<IActionResult> GetUpcoming(CancellationToken ct)
@@ -58,24 +51,23 @@ public class RemindersController : ControllerBase
         var localToday = TimeZoneInfo.ConvertTime(now, familyZone).Date;
         var start = LocalMidnight(localToday, familyZone);
 
-        // "End of next month" expressed as the exclusive start of the month after that. This is the
-        // DISPLAY boundary — the last instant a ping is allowed to fall on to appear in the result —
-        // not the event-query boundary; see displayEnd's use in the ping filter below.
+        // "End of next month" expressed as the exclusive start of the month after that — the far edge
+        // of both the query window and the five sections the client buckets rows into.
         var startOfMonthAfterNext = new DateTime(localToday.Year, localToday.Month, 1).AddMonths(2);
         var displayEnd = LocalMidnight(startOfMonthAfterNext, familyZone);
 
-        // The EVENT query reaches further than displayEnd: an event that itself starts after
-        // displayEnd can still carry a reminder whose lead time pulls its TriggerAt back before
-        // displayEnd, and that row has to be reachable. AddDays — not a calendar-month add — because
-        // the tail is a fixed duration (40320 minutes), the same arithmetic ReminderPingCalculator
-        // itself uses.
-        var queryEnd = displayEnd.AddDays(GoogleMaxReminderLeadDays);
-
-        // Exactly two repository calls: every event in the (wider) query window, and every calendar.
-        // The second supplies each event's owner — its zone, its default reminders and its display
-        // name — by a dictionary lookup keyed on CalendarEvent.OwnerCalendarInfoId, so no event does
-        // a lookup of its own.
-        var events = await _calendarRepository.GetEventsAsync(start, queryEnd, ct);
+        // No 28-day reminder-lead tail on this query any more. It used to exist because a PING could
+        // precede its event into the display window — an event starting just after displayEnd could
+        // still carry a reminder whose trigger landed before it, and that ping had to be reachable.
+        // Filing by EVENT START removes that reason outright: a row's place in the timeline is decided
+        // by evt.Start alone, which the query below already guarantees is inside [start, displayEnd).
+        //
+        // GetEventsAsync matches on OVERLAP (e.Start < end && e.End > start), not on Start falling
+        // inside the window — an event that began before `start` and is still running (e.g. a
+        // multi-day event) would otherwise come back with evt.Start before the window's near edge. Both
+        // bounds on evt.Start are therefore re-asserted explicitly below rather than trusted to the
+        // repository's own query semantics, which this endpoint does not own.
+        var events = await _calendarRepository.GetEventsAsync(start, displayEnd, ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);
         var calendarsById = allCalendars.ToDictionary(c => c.Id);
 
@@ -84,27 +76,31 @@ public class RemindersController : ControllerBase
         // pings the family's phones. Filtering it out here would make the timeline silently
         // incomplete, which is the one failure this endpoint exists to prevent.
         var rows = events
-            .SelectMany(evt => RowsFor(evt, calendarsById, familyZone))
-            // The PING window is narrower than the event-query window above, and deliberately so —
-            // the asymmetry is not an inconsistency, it is the whole reason the query reaches past
-            // displayEnd in the first place:
-            //  - TriggerAt >= now drops a ping that has already fired. This view's subject is what
-            //    the phone WILL do, not a log of what it already did — a reminder from earlier today
-            //    is not something anyone opens this screen to read.
-            //  - TriggerAt < displayEnd drops a ping past "end of next month". The client buckets
-            //    rows into five sections ending there and discards anything beyond, so a row past it
-            //    is pure payload against the kiosk's stated ~20 KB budget for this endpoint.
-            .Where(r => r.TriggerAt >= now && r.TriggerAt < displayEnd)
-            .OrderBy(r => r.TriggerAt)
-            // Stable order when two pings land on the same instant.
+            .Where(evt => evt.Start >= start && evt.Start < displayEnd)
+            .Select(evt => RowFor(evt, calendarsById, familyZone, now))
+            .OfType<UpcomingReminderEventDto>()
+            .OrderBy(r => r.EventStart)
+            // Stable order when two events start at the exact same instant.
             .ThenBy(r => r.EventTitle, StringComparer.Ordinal)
             .ToList();
 
         return Ok(rows);
     }
 
-    private IEnumerable<UpcomingReminderDto> RowsFor(
-        CalendarEvent evt, IReadOnlyDictionary<Guid, CalendarInfo> calendarsById, TimeZoneInfo familyZone)
+    /// <summary>
+    /// One event's row, or null when it will not produce one. An event produces no row for two
+    /// distinct reasons, both ultimately resolved by <see cref="ReminderPingCalculator"/>: it may
+    /// compute no pings at all (never synced, explicitly none, or inheriting from a calendar with no
+    /// defaults), or every ping it does compute may already have fired. The second case cannot be
+    /// decided inside the calculator, which knows nothing of "now" — it is a pure function of the
+    /// event and the calendar — so it is applied here instead. Both are the same rule this view has
+    /// always followed: it shows what the phone WILL do, not a log of what it already did.
+    /// </summary>
+    private UpcomingReminderEventDto? RowFor(
+        CalendarEvent evt,
+        IReadOnlyDictionary<Guid, CalendarInfo> calendarsById,
+        TimeZoneInfo familyZone,
+        DateTimeOffset now)
     {
         calendarsById.TryGetValue(evt.OwnerCalendarInfoId, out var owner);
 
@@ -119,18 +115,18 @@ public class RemindersController : ControllerBase
         // Reminders==null (never synced), ExplicitlyNone, and "inherits from a calendar with no
         // defaults" are all handled inside Compute — nothing here re-implements those exclusions.
         var pings = ReminderPingCalculator.Compute(evt.Start, evt.IsAllDay, evt.Reminders, owner?.DefaultReminders, anchorZone);
-        if (pings.Count == 0) yield break;
+        if (pings.Count == 0) return null;
 
-        // Computed once per event, not once per ping — a shared event's member chips are identical
-        // across every one of its pings.
+        var upcoming = pings.Where(p => p.TriggerAt >= now).ToList();
+        if (upcoming.Count == 0) return null;
+
+        var next = upcoming.MinBy(p => p.TriggerAt)!;
         var members = BuildMembers(evt, owner);
 
-        foreach (var ping in pings)
-        {
-            yield return new UpcomingReminderDto(
-                ping.TriggerAt, ping.Method, ping.Minutes, ping.IsDefault,
-                evt.Id, evt.Title, evt.Start, evt.IsAllDay, members);
-        }
+        return new UpcomingReminderEventDto(
+            evt.Id, evt.Title, evt.Start, evt.IsAllDay,
+            upcoming.Count, next.TriggerAt, next.Minutes, next.Method,
+            next.IsDefault, members);
     }
 
     /// <summary>
