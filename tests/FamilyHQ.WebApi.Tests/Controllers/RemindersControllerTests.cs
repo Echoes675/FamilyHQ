@@ -11,13 +11,15 @@ using Moq;
 namespace FamilyHQ.WebApi.Tests.Controllers;
 
 /// <summary>
-/// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is now one
-/// EVENT that has at least one reminder still due, filed by <c>EventStart</c>, never one row per
-/// reminder — so what is worth testing deliberately here is: an event with several reminders still
-/// produces exactly one row naming how many and when the next one fires; an event is excluded the
-/// moment NONE of its reminders are still upcoming, even if some already fired; the query window has
-/// no reminder-lead tail any more (filing by event start removed the reason for one); and the owning
-/// calendar's own zone beats the family's configured one when anchoring an all-day reminder.
+/// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is one EVENT
+/// that has reminders, filed by <c>EventStart</c>, never one row per reminder — so what is worth
+/// testing deliberately here is: an event with several reminders still produces exactly one row
+/// naming how many it has and when the next one fires; a row survives its own reminders, because by
+/// the time an event starts they have usually all gone off and the family still needs the row;
+/// <c>ReminderCount</c> is the total rather than a countdown, which only shows once one has fired;
+/// the query window has no reminder-lead tail any more (filing by event start removed the reason for
+/// one); and the owning calendar's own zone beats the family's configured one when anchoring an
+/// all-day reminder.
 /// </summary>
 public class RemindersControllerTests
 {
@@ -214,10 +216,13 @@ public class RemindersControllerTests
     }
 
     [Fact]
-    public async Task UpcomingReminders_WhenOneOfTwoRemindersHasAlreadyFired_CountsOnlyTheStillUpcomingOne()
+    public async Task UpcomingReminders_WhenOneOfTwoRemindersHasAlreadyFired_CountsBothAndNamesTheOneStillToCome()
     {
-        // One event, two reminders either side of "now" — proves the already-fired filter acts on
-        // each REMINDER, not on the whole event, the same way the old per-ping filter did.
+        // The test that pins ReminderCount as the TOTAL rather than how many are left. It needs one
+        // reminder either side of "now" to say anything at all: before any of them fire the total and
+        // the remaining count are the same number, so a test written at that moment passes whichever
+        // the controller reports. Here they differ — two reminders, one fired — and only the total is
+        // the number the family set in Google.
         var (repository, _, clock, sut) = CreateSut();
         var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
         clock.SetUtcNow(now);
@@ -232,18 +237,19 @@ public class RemindersControllerTests
 
         var rows = await GetRows(sut);
 
-        rows.Should().ContainSingle("the event still has one upcoming reminder even though the other already fired");
-        rows[0].ReminderCount.Should().Be(1);
-        rows[0].NextReminderMinutes.Should().Be(30);
+        rows.Should().ContainSingle();
+        rows[0].ReminderCount.Should().Be(2, "the event carries two reminders; one of them having fired does not unset it");
+        rows[0].NextReminderMinutes.Should().Be(30, "only the still-upcoming reminder can be the next one");
         rows[0].NextReminderAt.Should().Be(start.AddMinutes(-30));
     }
 
     [Fact]
-    public async Task UpcomingReminders_WhenEveryReminderHasAlreadyFired_ProducesNoRowForTheEvent()
+    public async Task UpcomingReminders_WhenEveryReminderHasAlreadyFired_KeepsTheRowWithNoNextReminder()
     {
-        // This view's subject is what the phone WILL do, not a log of what it already did (the same
-        // rule the old per-ping filter enforced). An event whose only reminder already fired must not
-        // produce a row just because its START is still inside the display window.
+        // The row is filed by the EVENT's start, so it has to outlive its own reminders: on the day of
+        // an event they have usually all gone off, and an 18:00 event with one reminder two hours
+        // before would otherwise drop off the kiosk at 16:00 — vanishing from Today exactly when the
+        // family most needs it there. The row stays and reports no next reminder instead.
         var (repository, _, clock, sut) = CreateSut();
         var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
         clock.SetUtcNow(now);
@@ -257,7 +263,36 @@ public class RemindersControllerTests
 
         var rows = await GetRows(sut);
 
-        rows.Should().BeEmpty("the event's only reminder has already fired, even though the event itself has not started yet");
+        rows.Should().ContainSingle("the event has a reminder and has not started yet, which is what puts it on the timeline");
+        rows[0].NextReminderAt.Should().BeNull("every one of its reminders has already fired");
+        rows[0].NextReminderMinutes.Should().BeNull();
+        rows[0].NextReminderMethod.Should().BeNull();
+        rows[0].ReminderCount.Should().Be(1, "the count is what the event carries, not what is left to come");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenEveryReminderHasFiredOnAnInheritingEvent_StillTagsTheRowAsDefault()
+    {
+        // IsDefault describes where the event's reminders came FROM, which does not stop being true
+        // once they have fired. It is read off the event's resolved reminders rather than off the next
+        // ping, so the "default" tag survives into the day of the event.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 15)));
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var evt = EventWith(new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero), EventReminders.InheritsCalendarDefault);
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle();
+        rows[0].NextReminderAt.Should().BeNull("the calendar's 15-minute reminder fired five minutes ago");
+        rows[0].IsDefault.Should().BeTrue();
     }
 
     [Fact]

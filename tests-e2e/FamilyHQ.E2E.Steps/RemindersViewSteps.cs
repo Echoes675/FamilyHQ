@@ -14,10 +14,10 @@ namespace FamilyHQ.E2E.Steps;
 /// <see cref="EventRemindersSteps"/> already covers.
 /// </summary>
 /// <remarks>
-/// Every assertion here addresses a row by its value (event id + next-reminder instant + default
-/// flag), never by position, for the same reason the modal's Reminders tab rows do: this view sorts
-/// by EVENT START, which depends on seeding order rather than on anything Google guarantees, so a
-/// row's position on screen is not a stable identifier a scenario can key off.
+/// Every assertion here addresses a row by its value (event id, plus the default flag where that is
+/// what is being checked), never by position, for the same reason the modal's Reminders tab rows do:
+/// this view sorts by EVENT START, which depends on seeding order rather than on anything Google
+/// guarantees, so a row's position on screen is not a stable identifier a scenario can key off.
 /// </remarks>
 [Binding]
 public class RemindersViewSteps

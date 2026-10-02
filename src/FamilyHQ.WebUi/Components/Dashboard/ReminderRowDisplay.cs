@@ -95,15 +95,22 @@ public static class ReminderRowDisplay
         isAllDay ? "all day" : TimeZoneInfo.ConvertTime(start, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// The row's reminder summary: how many of the event's reminders are still due to fire, and the
-    /// lead time of the soonest one — "3 reminders · next 2 hrs before" (singular: "1 reminder · next
-    /// …"). Delegates the lead-time wording to <see cref="Lead"/> rather than re-deriving it, so the
-    /// two can never disagree about the same reminder.
+    /// The row's reminder summary: how many reminders the event carries in total, and the lead time
+    /// of the soonest one still to fire — "3 reminders · next 2 hrs before" (singular: "1 reminder ·
+    /// next …"). Delegates the lead-time wording to <see cref="Lead"/> rather than re-deriving it, so
+    /// the two can never disagree about the same reminder.
     /// </summary>
-    public static string ReminderSummary(int reminderCount, int nextReminderMinutes, bool isAllDay)
+    /// <remarks>
+    /// A null <paramref name="nextReminderMinutes"/> means every one of them has already gone off,
+    /// which reads "· all sent". That is the whole treatment: the row is not dimmed, struck through or
+    /// re-iconed, because the event itself is still ahead and the row is still the family's reminder
+    /// that it is coming — only the notifications are behind it.
+    /// </remarks>
+    public static string ReminderSummary(int reminderCount, int? nextReminderMinutes, bool isAllDay)
     {
         var noun = reminderCount == 1 ? "reminder" : "reminders";
-        return $"{reminderCount.ToString(CultureInfo.InvariantCulture)} {noun} · next {Lead(nextReminderMinutes, isAllDay)}";
+        var tail = nextReminderMinutes is null ? "all sent" : $"next {Lead(nextReminderMinutes.Value, isAllDay)}";
+        return $"{reminderCount.ToString(CultureInfo.InvariantCulture)} {noun} · {tail}";
     }
 
     /// <summary>

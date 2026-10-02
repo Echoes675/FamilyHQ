@@ -119,6 +119,19 @@ public class ReminderRowDisplayTests
         ReminderRowDisplay.ReminderSummary(reminderCount: 2, nextReminderMinutes: 420, isAllDay: true)
             .Should().Be("2 reminders · next 1 day before at 17:00");
 
+    [Fact]
+    public void ReminderSummary_WithEveryReminderAlreadySent_SaysSoRatherThanNamingALead() =>
+        // The ordinary state of a row on the day of its own event. The row still belongs on the
+        // timeline — it is filed by the event's start, not by a pending notification — so the summary
+        // reports the reminders as sent rather than leaving the sentence half-finished.
+        ReminderRowDisplay.ReminderSummary(reminderCount: 3, nextReminderMinutes: null, isAllDay: false)
+            .Should().Be("3 reminders · all sent");
+
+    [Fact]
+    public void ReminderSummary_WithOneReminderAlreadySent_StaysSingular() =>
+        ReminderRowDisplay.ReminderSummary(reminderCount: 1, nextReminderMinutes: null, isAllDay: true)
+            .Should().Be("1 reminder · all sent");
+
     [Theory]
     [InlineData(EventRemindersValidator.PopupMethod, "🔔")]
     [InlineData(EventRemindersValidator.EmailMethod, "✉")]

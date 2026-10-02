@@ -1,19 +1,21 @@
 @namespace FamilyHQ.WebUi.Components.Dashboard
 
-@* One event with at least one reminder due. data-event-id lets both the E2E suite and the preprod
-   smoke suite address a row by what it IS rather than by its position in the list — rows reorder as
-   events start and finish, so a positional selector would silently drift to the wrong row. It alone
-   is enough to identify a row now: unlike the per-ping row this replaces, there is exactly one row
-   per event, never several sharing an id. data-next-reminder-at is carried too, for a scenario that
-   needs to tell two rows' "next" instants apart without parsing the rendered text. *@
+@* One event that has reminders. data-event-id lets the E2E suite address a row by what it IS rather
+   than by its position in the list — rows reorder as events start and finish, so a positional
+   selector would silently drift to the wrong row. It alone is enough to identify a row: unlike the
+   per-ping row this replaces, there is exactly one row per event, never several sharing an id. *@
 <div class="reminder-row"
      data-testid="reminder-row"
      data-event-id="@Event.EventId"
-     data-next-reminder-at="@Event.NextReminderAt.ToString("O")"
      data-is-default="@(Event.IsDefault ? "true" : "false")"
      @onclick="() => OnOpenEvent.InvokeAsync(Event.EventId)">
     <span class="reminder-row__time">@ReminderRowDisplay.EventTime(Event.EventStart, Event.EventIsAllDay, Zone)</span>
-    <span class="reminder-row__icon" aria-hidden="true">@ReminderRowDisplay.MethodIcon(Event.NextReminderMethod)</span>
+    @* No glyph at all once every reminder has fired: there is no method left to picture, and a
+       stand-in icon would assert a delivery that is not coming. *@
+    @if (Event.NextReminderMethod is not null)
+    {
+        <span class="reminder-row__icon" aria-hidden="true">@ReminderRowDisplay.MethodIcon(Event.NextReminderMethod)</span>
+    }
     <div class="reminder-row__body">
         <span class="reminder-row__title">@Event.EventTitle</span>
         <span class="reminder-row__detail">

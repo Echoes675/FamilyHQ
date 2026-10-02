@@ -31,11 +31,11 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// Every event, across every calendar, that has at least one reminder still due to fire between
-    /// now and the end of next month — filed by when the EVENT happens, never by when any one of its
-    /// reminders fires. An event with several reminders due at very different lead times (the
-    /// family's own example: one every day for the week before it) still produces exactly one row,
-    /// in the section containing its own start.
+    /// Every event, across every calendar, that HAS reminders and starts between now and the end of
+    /// next month — filed by when the EVENT happens, never by when any one of its reminders fires. An
+    /// event with several reminders due at very different lead times (the family's own example: one
+    /// every day for the week before it) still produces exactly one row, in the section containing
+    /// its own start, and keeps that row after its last reminder has gone off.
     /// </summary>
     [HttpGet("upcoming")]
     public async Task<IActionResult> GetUpcoming(CancellationToken ct)
@@ -78,7 +78,8 @@ public class RemindersController : ControllerBase
         var rows = events
             .Where(evt => evt.Start >= start && evt.Start < displayEnd)
             .Select(evt => RowFor(evt, calendarsById, familyZone, now))
-            .OfType<UpcomingReminderEventDto>()
+            .Where(r => r is not null)
+            .Select(r => r!)
             .OrderBy(r => r.EventStart)
             // Stable order when two events start at the exact same instant.
             .ThenBy(r => r.EventTitle, StringComparer.Ordinal)
@@ -88,14 +89,19 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// One event's row, or null when it will not produce one. An event produces no row for two
-    /// distinct reasons, both ultimately resolved by <see cref="ReminderPingCalculator"/>: it may
-    /// compute no pings at all (never synced, explicitly none, or inheriting from a calendar with no
-    /// defaults), or every ping it does compute may already have fired. The second case cannot be
-    /// decided inside the calculator, which knows nothing of "now" — it is a pure function of the
-    /// event and the calendar — so it is applied here instead. Both are the same rule this view has
-    /// always followed: it shows what the phone WILL do, not a log of what it already did.
+    /// One event's row, or null when it will never produce a notification at all. That single
+    /// exclusion is <see cref="ReminderPingCalculator"/>'s: an event computes no pings when it was
+    /// never synced, when its reminders were explicitly removed, or when it inherits from a calendar
+    /// with no defaults of its own.
     /// </summary>
+    /// <remarks>
+    /// Having already fired is NOT an exclusion. A row is filed by the event's start, so it has to
+    /// survive its own reminders: by the time an event begins, its reminders have usually all gone
+    /// off, and dropping the row then would empty the Today section exactly when the family most
+    /// needs it. "Every ping has fired" is the ordinary state of a row on the day of its event, which
+    /// is why <paramref name="now"/> decides only which reminder is described as next — it never
+    /// decides whether the row exists.
+    /// </remarks>
     private UpcomingReminderEventDto? RowFor(
         CalendarEvent evt,
         IReadOnlyDictionary<Guid, CalendarInfo> calendarsById,
@@ -117,16 +123,19 @@ public class RemindersController : ControllerBase
         var pings = ReminderPingCalculator.Compute(evt.Start, evt.IsAllDay, evt.Reminders, owner?.DefaultReminders, anchorZone);
         if (pings.Count == 0) return null;
 
-        var upcoming = pings.Where(p => p.TriggerAt >= now).ToList();
-        if (upcoming.Count == 0) return null;
-
-        var next = upcoming.MinBy(p => p.TriggerAt)!;
+        // Null once they have all fired, which the row renders as "all sent" rather than hiding.
+        var next = pings.Where(p => p.TriggerAt >= now).MinBy(p => p.TriggerAt);
         var members = BuildMembers(evt, owner);
 
         return new UpcomingReminderEventDto(
             evt.Id, evt.Title, evt.Start, evt.IsAllDay,
-            upcoming.Count, next.TriggerAt, next.Minutes, next.Method,
-            next.IsDefault, members);
+            // The TOTAL, not how many are left: see the DTO's own remarks on why a count that decays
+            // as the event approaches is the wrong number to show the family.
+            pings.Count, next?.TriggerAt, next?.Minutes, next?.Method,
+            // Read off any ping rather than off `next`, which may be null — inheritance is resolved
+            // once per event, so every ping carries the same answer and the row can still be tagged
+            // as the calendar's default after the last one has fired.
+            pings[0].IsDefault, members);
     }
 
     /// <summary>

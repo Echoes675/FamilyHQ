@@ -1,8 +1,8 @@
 namespace FamilyHQ.Core.DTOs;
 
 /// <summary>
-/// One row of the reminders timeline: an event that has at least one reminder due to fire, filed by
-/// when the EVENT itself happens rather than by any one reminder's own trigger instant.
+/// One row of the reminders timeline: an event that HAS reminders, filed by when the EVENT itself
+/// happens rather than by any one reminder's own trigger instant.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,6 +22,14 @@ namespace FamilyHQ.Core.DTOs;
 /// timeline's per-minute tick in <c>Index.razor</c>). Carrying every ping's trigger would avoid that
 /// refetch at the cost of reintroducing the per-ping payload this shape was built to drop.
 /// </para>
+/// <para>
+/// <b>A row outlives its own reminders.</b> The three "next reminder" values are nullable because a
+/// row is not evidence that a notification is still coming — it is evidence that the event has
+/// reminders. By the time an event starts its reminders have all usually fired, so excluding a row
+/// once nothing is pending would empty the Today section exactly when the family most needs it, and
+/// would drop an 18:00 event with one two-hour reminder off the kiosk at 16:00. The row therefore
+/// stays until <see cref="EventStart"/> leaves the window, and says "all sent" instead.
+/// </para>
 /// </remarks>
 /// <param name="EventId">The event this row describes — what tapping it opens.</param>
 /// <param name="EventTitle">The event's title, for the row's label.</param>
@@ -34,25 +42,36 @@ namespace FamilyHQ.Core.DTOs;
 /// rather than a time).
 /// </param>
 /// <param name="ReminderCount">
-/// How many of this event's reminders have not yet fired. Never zero — an event with none left
-/// upcoming produces no row at all (see <c>RemindersController.GetUpcoming</c>), the same rule that
-/// already excluded a never-synced or explicitly-empty event.
+/// How many reminders the event carries in TOTAL, fired or not — the number the family actually set
+/// in Google, which is the system of record. Deliberately not a count of the ones still to come: a
+/// decaying count reads as though reminders had gone missing ("2 reminders" on day five of an event
+/// with one every day for a week), and it would disagree with what the event modal's own Reminders
+/// tab shows for the same event. Never zero: an event that will produce no notification at all
+/// produces no row either (see <c>RemindersController.RowFor</c>), which is what keeps a never-synced
+/// event distinct from one whose reminders were removed.
 /// </param>
-/// <param name="NextReminderAt">The absolute instant the soonest still-upcoming reminder fires.</param>
+/// <param name="NextReminderAt">
+/// The absolute instant the soonest reminder that has NOT yet fired goes off, or null once every one
+/// of them has. Null is an ordinary end state rather than missing data — see the remarks on why the
+/// row stays regardless.
+/// </param>
 /// <param name="NextReminderMinutes">
 /// The stored offset the soonest still-upcoming reminder was computed from, so the row can describe
-/// its lead time in the event's own terms
-/// (<see cref="FamilyHQ.WebUi.Components.Dashboard.ReminderRowDisplay.Lead"/>) without re-deriving it
-/// from <see cref="EventStart"/> and <see cref="NextReminderAt"/>.
+/// its lead time in the event's own terms (<c>ReminderRowDisplay.Lead</c>) without re-deriving it
+/// from <see cref="EventStart"/> and <see cref="NextReminderAt"/>. Null exactly when
+/// <see cref="NextReminderAt"/> is.
 /// </param>
 /// <param name="NextReminderMethod">
 /// The soonest still-upcoming reminder's delivery method — <c>"popup"</c> or <c>"email"</c> in
-/// practice, but carried verbatim for the same reason <c>EventReminder.Method</c> is.
+/// practice, but carried verbatim for the same reason <c>EventReminder.Method</c> is. Null exactly
+/// when <see cref="NextReminderAt"/> is, and the row then renders no method glyph rather than a
+/// stand-in for one.
 /// </param>
 /// <param name="IsDefault">
 /// Whether this event's reminders come from the calendar's default rather than overrides of its own.
-/// One value for the whole event: <c>ReminderPingCalculator.EffectiveReminders</c> resolves inheritance
-/// once per event, so every one of its pings agrees on this.
+/// One value for the whole event, and known even when nothing is still pending:
+/// <c>ReminderPingCalculator.EffectiveReminders</c> resolves inheritance once per event, so every one
+/// of its pings agrees on this and any of them can be asked.
 /// </param>
 /// <param name="Members">The people the event is shared with, for the row's chips.</param>
 public sealed record UpcomingReminderEventDto(
@@ -61,8 +80,8 @@ public sealed record UpcomingReminderEventDto(
     DateTimeOffset EventStart,
     bool EventIsAllDay,
     int ReminderCount,
-    DateTimeOffset NextReminderAt,
-    int NextReminderMinutes,
-    string NextReminderMethod,
+    DateTimeOffset? NextReminderAt,
+    int? NextReminderMinutes,
+    string? NextReminderMethod,
     bool IsDefault,
     IReadOnlyList<ReminderMemberDto> Members);
