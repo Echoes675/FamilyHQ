@@ -1,0 +1,55 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+@* One phone notification. data-ping-at/data-event-id/data-is-default let both the E2E suite and the
+   preprod smoke suite address a row by what it IS rather than by its position in the list — pings
+   reorder as time passes, so a positional selector would silently drift to the wrong row. *@
+<div class="reminder-ping-row"
+     data-testid="reminder-ping-row"
+     data-ping-at="@Ping.TriggerAt.ToString("O")"
+     data-event-id="@Ping.EventId"
+     data-is-default="@(Ping.IsDefault ? "true" : "false")"
+     @onclick="() => OnOpenEvent.InvokeAsync(Ping.EventId)">
+    <span class="reminder-ping-row__time">@Ping.TriggerAt.ToString("HH:mm")</span>
+    <span class="reminder-ping-row__icon" aria-hidden="true">@ReminderRowDisplay.MethodIcon(Ping.Method)</span>
+    <div class="reminder-ping-row__body">
+        <span class="reminder-ping-row__title">@Ping.EventTitle</span>
+        <span class="reminder-ping-row__detail">
+            @ReminderRowDisplay.Lead(Ping.Minutes) · @ReminderRowDisplay.StartsAt(Ping.EventStart, Ping.EventIsAllDay)
+        </span>
+    </div>
+    @if (Ping.IsDefault)
+    {
+        <span class="reminder-ping-row__default-tag" data-testid="reminder-ping-default-tag">default</span>
+    }
+    <div class="reminder-ping-row__people">
+        @if (Ping.Members.Count == 0)
+        {
+            <span class="reminder-member-chip" style="--chip-color: var(--theme-accent)">@PeopleSummary</span>
+        }
+        else
+        {
+            @foreach (var member in Ping.Members)
+            {
+                <span @key="member.DisplayName"
+                      class="reminder-member-chip"
+                      style="--chip-color: @(member.Color ?? "var(--theme-accent)")">@member.DisplayName</span>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The ping this row renders. Required — there is no meaningful empty row.</summary>
+    [Parameter, EditorRequired] public UpcomingReminderViewModel Ping { get; set; } = default!;
+
+    /// <summary>Raised with the event's id when the row is tapped. The whole row is the tap target.</summary>
+    [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
+
+    // UpcomingReminderViewModel carries no field naming the ping's owning calendar, so there is
+    // nothing truthful to show here when no member is known, beyond a generic placeholder. Flagged
+    // in the implementation report for whoever wires real data into this view: either add that
+    // field to the view model, or guarantee Members is never empty for a well-formed ping.
+    private const string OwnerCalendarNamePlaceholder = "this calendar";
+
+    private string PeopleSummary => ReminderRowDisplay.People(Ping.Members, OwnerCalendarNamePlaceholder);
+}

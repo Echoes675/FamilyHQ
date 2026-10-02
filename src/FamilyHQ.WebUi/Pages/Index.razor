@@ -111,6 +111,14 @@
             <div class="alert alert-warning">@_saveOrderError</div>
         }
     }
+    else if (_currentView == DashboardView.Reminders)
+    {
+        <RemindersView Pings="_upcomingReminders"
+                       Today="_remindersToday"
+                       WeekStart="_householdWeekStart"
+                       Zone="_remindersZone"
+                       OnOpenEvent="OpenEventFromReminders" />
+    }
     }
     }
 </div>
@@ -159,6 +167,18 @@
     private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
     private ConnectionStatusDto? _connectionStatus;
 
+    // Reminders tab. Empty for now — the task that loads real pings fills this; mounting the tab
+    // against an empty list now is deliberate, so no commit ever leaves "Reminders" showing a blank
+    // region (RemindersView renders its "No reminders coming up" state instead).
+    private IReadOnlyList<UpcomingReminderViewModel> _upcomingReminders = Array.Empty<UpcomingReminderViewModel>();
+    private DateOnly _remindersToday;
+    private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
+
+    // No household week-start setting exists yet. Sunday matches the week start BuildCalendarGrid
+    // already assumes (DayOfWeek.Sunday == 0, used there as the grid's own row-zero day) — revisit
+    // together if a configurable household week start is ever added.
+    private readonly DayOfWeek _householdWeekStart = DayOfWeek.Sunday;
+
     // FHQ-63: kiosk day-rollover.
     private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
@@ -171,6 +191,8 @@
         var today = Clock.GetLocalNow().Date;
         _selectedDate = today;
         CurrentMonth = new DateTime(today.Year, today.Month, 1);
+        _remindersToday = DateOnly.FromDateTime(today);
+        _remindersZone = Clock.LocalTimeZone;
 
         // Check authentication state
         _isAuthenticated = await AuthService.IsAuthenticatedAsync();
@@ -468,6 +490,13 @@
 
     private void OpenEditEventModal(CalendarEventViewModel evt) =>
         _eventModal.OpenForEdit(evt);
+
+    // Stub: _upcomingReminders is empty for now, so this is never actually invoked. Declared here
+    // rather than left for the task that loads real pings, so this commit's tab is a working dead
+    // end rather than a wired-up callback with nothing on the other end of it.
+    private void OpenEventFromReminders(Guid eventId)
+    {
+    }
 
     private async Task CheckIdleSnapAsync()
     {

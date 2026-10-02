@@ -1,0 +1,107 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+<div class="reminders-view" data-testid="reminders-view">
+    @{
+        var sections = Sections;
+    }
+    @if (IsEntirelyEmpty(sections))
+    {
+        <p class="reminders-view__empty" data-testid="reminders-empty">No reminders coming up</p>
+    }
+    else
+    {
+        <div class="reminders-view__columns">
+            @foreach (var section in sections)
+            {
+                var slug = SectionSlug(section.Key);
+                <div @key="section.Key" class="reminders-section glass-surface reminders-section--@slug"
+                     data-testid="reminder-section-@slug">
+                    <h3 class="reminders-section__heading">@section.Heading</h3>
+                    @if (section.Rows.Count == 0)
+                    {
+                        <p class="reminders-section__empty" data-testid="reminder-section-empty">Nothing</p>
+                    }
+                    else
+                    {
+                        var expanded = _expanded.Contains(section.Key);
+                        <div class="reminders-section__rows">
+                            @foreach (var row in Preview(section, expanded))
+                            {
+                                <ReminderPingRow @key="(row.EventId, row.TriggerAt, row.Method, row.Minutes)"
+                                                 Ping="row"
+                                                 OnOpenEvent="OnOpenEvent" />
+                            }
+                        </div>
+                        @if (!expanded && section.Rows.Count > PreviewRows)
+                        {
+                            <button type="button"
+                                    class="btn btn-secondary reminders-section__show-all"
+                                    data-testid="reminder-section-show-all"
+                                    @onclick="() => Expand(section.Key)">
+                                Show all @section.Rows.Count
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @* Not conditional, and not dismissible. Google stores a same-day all-day reminder and shows it in
+       its own apps, but its API returns no override for it, so those pings are missing from this view
+       and always will be — and they are plausibly the most common all-day reminder there is. A timeline
+       that looks complete and is not is worse than one that admits the gap. *@
+    <p class="reminders-footnote" data-testid="reminders-allday-footnote">
+        All-day reminders set for the day itself aren't shown — Google doesn't share them.
+    </p>
+</div>
+
+@code {
+    // Capped so a busy week doesn't turn the timeline into a scroll of its own; "Show all" below
+    // re-renders the rows already in memory rather than raising an event, so expanding never fetches.
+    private const int PreviewRows = 6;
+
+    /// <summary>The flat list of pings to file and render. Empty renders the no-reminders state.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<UpcomingReminderViewModel> Pings { get; set; } = Array.Empty<UpcomingReminderViewModel>();
+
+    /// <summary>The kiosk's current local date — what "Today" and "Tomorrow" are measured against.</summary>
+    [Parameter] public DateOnly Today { get; set; }
+
+    /// <summary>The household's week-start day, passed straight through to <see cref="ReminderBucketing"/>.</summary>
+    [Parameter] public DayOfWeek WeekStart { get; set; }
+
+    /// <summary>The zone a ping's local day is read in.</summary>
+    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
+
+    /// <summary>Raised with an event's id when one of its pings is tapped.</summary>
+    [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
+
+    // Which sections the family has asked to see in full. Local, UI-only state — expanding never
+    // raises OnOpenEvent or re-fetches Pings, it only changes which rows already in memory are shown.
+    private readonly HashSet<ReminderSectionKey> _expanded = [];
+
+    private IReadOnlyList<ReminderSection<UpcomingReminderViewModel>> Sections =>
+        ReminderBucketing.File(Pings, p => p.TriggerAt, Today, WeekStart, Zone);
+
+    private static bool IsEntirelyEmpty(IReadOnlyList<ReminderSection<UpcomingReminderViewModel>> sections) =>
+        sections.All(s => s.Rows.Count == 0);
+
+    private void Expand(ReminderSectionKey key) => _expanded.Add(key);
+
+    private static IReadOnlyList<UpcomingReminderViewModel> Preview(
+        ReminderSection<UpcomingReminderViewModel> section, bool expanded) =>
+        expanded ? section.Rows : section.Rows.Take(PreviewRows).ToList();
+
+    // Kebab-case to match every other data-testid in the dashboard (month-tab, day-tab, ...); also
+    // doubles as the CSS modifier that places each section in the two-column grid (see app.css).
+    private static string SectionSlug(ReminderSectionKey key) => key switch
+    {
+        ReminderSectionKey.Today => "today",
+        ReminderSectionKey.Tomorrow => "tomorrow",
+        ReminderSectionKey.ThisWeek => "this-week",
+        ReminderSectionKey.ThisMonth => "this-month",
+        ReminderSectionKey.NextMonth => "next-month",
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Unknown reminder section.")
+    };
+}
