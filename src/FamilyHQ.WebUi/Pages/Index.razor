@@ -183,11 +183,13 @@
     // "This week" is a claim about the family's actual week, and that claim has to be true.
     private readonly DayOfWeek _householdWeekStart = DayOfWeek.Monday;
 
-    // The tick that keeps the Reminders timeline honest between fetches. It makes NO server call —
-    // it only re-reads "today" off the clock and drops pings whose TriggerAt has passed — which is
-    // also what keeps the view correct across midnight without a reload or a timer aimed at midnight
-    // itself. Started when the Reminders tab is switched to and stopped when it is switched away
-    // from, mirroring DayView's now-line loop but scoped to this tab rather than the whole page.
+    // The tick that keeps the Reminders timeline honest between fetches. Every minute it re-reads
+    // "today" off the clock and drops pings whose TriggerAt has passed — no server call — which is
+    // what keeps the view correct across midnight with no timer aimed at midnight itself. The one
+    // case it DOES call the server for is a month change (see RefileRemindersForTick), because that
+    // moves the server's window rather than just ageing rows out of it. Started when the Reminders
+    // tab is switched to and stopped when it is switched away from, mirroring DayView's now-line loop
+    // but scoped to this tab rather than the whole page.
     private static readonly TimeSpan ReminderTickPeriod = TimeSpan.FromMinutes(1);
     private CancellationTokenSource? _reminderTickCts;
     private Task? _reminderTickLoop;
@@ -583,15 +585,32 @@
         _reminderTickLoop = null;
     }
 
-    // The tick callback itself: no server call. Re-reads "today" from the clock (kiosk-adjusted, so
-    // never DateTime.Today) and drops any ping whose TriggerAt has passed, so a fired reminder stops
-    // being shown without waiting for the next fetch — and the day rolls over correctly at midnight
-    // with no separate midnight timer.
-    private void RefileRemindersForTick()
+    // The tick callback itself. Re-reads "today" from the clock (kiosk-adjusted, so never
+    // DateTime.Today) and drops any ping whose TriggerAt has passed — via ReminderTickFilter, so the
+    // ">=" boundary is pinned by a unit test rather than re-typed here — so a fired reminder stops
+    // being shown without waiting for the next fetch.
+    //
+    // Crossing a MONTH is the one case that still needs a server round trip: RemindersController's
+    // window is [now, end of next month], so going from 31 March to 1 April moves that far edge from
+    // end-of-April to end-of-May, and the newly-in-window pings for May are not in memory — nothing
+    // local can conjure them. Crossing MIDNIGHT within the same month moves neither edge: the far
+    // edge is unchanged, and the near edge only ever needs pings REMOVED, which DropFired already
+    // does every tick regardless. So this refetches on a month change and deliberately does NOT
+    // refetch on every midnight — if a future reader "fixes" this to run nightly, it trades twelve
+    // real network calls a year for roughly three hundred and sixty, for a case (a plain day
+    // rollover) that already needs none.
+    private async Task RefileRemindersForTick()
     {
-        _remindersToday = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
-        var now = Clock.GetUtcNow();
-        _upcomingReminders = _upcomingReminders.Where(p => p.TriggerAt >= now).ToList();
+        var today = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
+        var monthChanged = today.Month != _remindersToday.Month || today.Year != _remindersToday.Year;
+        _remindersToday = today;
+
+        if (monthChanged)
+        {
+            await RefreshUpcomingRemindersAsync();
+        }
+
+        _upcomingReminders = ReminderTickFilter.DropFired(_upcomingReminders, p => p.TriggerAt, Clock.GetUtcNow());
         StateHasChanged();
     }
 
