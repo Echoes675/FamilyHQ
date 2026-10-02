@@ -509,9 +509,11 @@
     /// event opened with: the member change this handler fires for can itself move the event onto a
     /// different calendar than the one it opened on (e.g. adding a second member moves it onto the
     /// shared calendar), and the stored owner describes the selection before that change, not after
-    /// it. The write itself is unaffected either way — it still sends <c>useDefault:true</c> and lets
-    /// Google apply whichever calendar's defaults the new owner actually has; this only changes what
-    /// the tab previews before Save is pressed.
+    /// it. The write itself is unaffected either way — the tab is still untouched, so
+    /// <see cref="EventModalLogic.RemindersToWrite"/> sends nothing about reminders at all, leaving
+    /// the event's already-stored <c>useDefault:true</c> in place for Google to keep applying against
+    /// whichever calendar actually ends up owning it; this only changes what the tab previews before
+    /// Save is pressed.
     /// </para>
     /// </summary>
     private void OnSelectedCalendarsChanged(HashSet<Guid> ids)
