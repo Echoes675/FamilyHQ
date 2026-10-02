@@ -138,11 +138,17 @@ public class ReminderTickLoopTests
         }, NullLogger.Instance);
 
         // "Call 2": its own `_gate.WaitAsync()` cannot complete synchronously — call1 is still
-        // holding the gate — so this is guaranteed to be queued behind call1, not racing it.
+        // holding the gate — so this is guaranteed to be queued behind call1, not racing it. By
+        // construction, call2 is therefore always the one that runs ITS stop-then-start AFTER call1
+        // has already finished starting call1's loop — so call2 is deterministically the one that
+        // stops call1's loop, never the other way round. That asymmetry is what makes the final
+        // assertion below a fact about which call ran second through the gate, not a guess.
         var call2Ticks = 0;
+        using var call2Ticked = new SemaphoreSlim(0);
         var call2 = sut.EnsureRunningAsync(clock, Period, () =>
         {
             Interlocked.Increment(ref call2Ticks);
+            call2Ticked.Release();
             return Task.CompletedTask;
         }, NullLogger.Instance);
 
@@ -151,14 +157,21 @@ public class ReminderTickLoopTests
         releaseInitial.SetResult();
         await Task.WhenAll(call1, call2).WaitAsync(Guard);
 
-        // Whichever of call1/call2 ends up as the surviving loop, the OTHER must have been fully
-        // stopped by the one that ran after it through the gate — not left running unseen. Advance
-        // once: exactly one of the two callbacks may fire.
+        // Deliberately mirrors EnsureRunningAsync_CalledAgainWhileRunning_TheEarlierLoopNeverTicksAgain
+        // above rather than waiting a fixed wall-clock interval and checking a total: wait for call2's
+        // OWN tick (a thing that is expected to happen, bounded only by the Guard as a failure-path
+        // tripwire — never a fixed budget backing a negative assertion) on each of two advances, then
+        // assert call1Ticks is still zero with no further wait. If call1's loop had been orphaned
+        // instead of stopped, it shares the exact same clock and the exact same tick-scheduling path
+        // as call2's loop — by the time call2's continuation has run twice, call1's would have had
+        // every opportunity to run too, exactly as it does in the shallow test above.
         clock.Advance(Period);
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        (await call2Ticked.WaitAsync(Guard)).Should().BeTrue();
+        clock.Advance(Period);
+        (await call2Ticked.WaitAsync(Guard)).Should().BeTrue();
 
-        (call1Ticks + call2Ticks).Should().Be(
-            1, "exactly one of the two later loops must survive the race — never both (an orphan), never neither");
+        call2Ticks.Should().Be(2);
+        call1Ticks.Should().Be(0, "call1's loop must have been fully stopped before call2's started, never left running alongside it");
 
         await sut.StopAsync();
     }
