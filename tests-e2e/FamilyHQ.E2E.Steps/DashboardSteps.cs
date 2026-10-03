@@ -106,6 +106,12 @@ public class DashboardSteps
         await _dashboardPage.NavigateToNextMonthAsync();
     }
 
+    [When(@"I navigate back to the current month")]
+    public async Task WhenINavigateBackToTheCurrentMonth()
+    {
+        await _dashboardPage.NavigateToCurrentMonthAsync();
+    }
+
     [When(@"I navigate the month view to show a date in (\d+) days")]
     public async Task WhenINavigateTheMonthViewToShowDateInDays(int days)
     {
