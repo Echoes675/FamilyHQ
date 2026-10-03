@@ -63,7 +63,7 @@ public sealed class ReminderPickerModel
     private int _amount = DefaultAmount;
     private ReminderUnit _unit = ReminderUnit.Minutes;
 
-    private ReminderPickerModel(EventReminders opened, IReadOnlyList<EventReminder> calendarDefault, bool isAllDay)
+    private ReminderPickerModel(EventReminders opened, IReadOnlyList<EventReminder>? calendarDefault, bool isAllDay)
     {
         _opened = opened;
         CalendarDefault = calendarDefault;
@@ -81,7 +81,9 @@ public sealed class ReminderPickerModel
     /// <param name="eventReminders">The event's stored reminders, or null if never synced.</param>
     /// <param name="calendarDefault">
     /// The calendar's own default reminders, shown read-only while inheriting and copied in when
-    /// inheritance is switched off. Null until a calendar-list sync has reported them.
+    /// inheritance is switched off. Null until a calendar-list sync has reported them, which is not
+    /// the same answer as a calendar that reported having none — see
+    /// <see cref="CalendarDefault"/>.
     /// </param>
     /// <param name="isAllDay">
     /// Whether the event is all-day, which decides the form the tab offers. Fixed for the model's
@@ -92,12 +94,21 @@ public sealed class ReminderPickerModel
         EventReminders? eventReminders, EventReminders? calendarDefault, bool isAllDay) =>
         new(
             eventReminders ?? EventReminders.InheritsCalendarDefault,
-            // A calendar's defaults arrive from Google as a bare array, so only the list carries
-            // meaning here, and it is ordered for the same reason the event's own list is. Capped at
-            // the per-event limit: copying more in would build a set Google would reject outright.
-            InDisplayOrder(calendarDefault?.Overrides ?? [])
-                .Take(EventRemindersValidator.MaxOverrides)
-                .ToList(),
+            // Null is kept as null rather than flattened to an empty list: the two mean different
+            // things to the family, and the tab is the only place that can tell them apart.
+            //
+            // Only Overrides is read, and UseDefault must not be consulted — reading it would look
+            // reasonable and be wrong. A calendar's defaults arrive from Google as a BARE ARRAY on a
+            // calendar-list entry, which GoogleCalendarClient maps through EventReminders.Explicit,
+            // so UseDefault is false for every calendar in existence and says nothing about it.
+            //
+            // The list is ordered for the same reason the event's own list is, and capped at the
+            // per-event limit: copying more in would build a set Google would reject outright.
+            calendarDefault is null
+                ? null
+                : InDisplayOrder(calendarDefault.Overrides)
+                    .Take(EventRemindersValidator.MaxOverrides)
+                    .ToList(),
             isAllDay);
 
     /// <summary>Whether the event is all-day, and therefore which form the tab offers.</summary>
@@ -105,9 +116,25 @@ public sealed class ReminderPickerModel
 
     /// <summary>
     /// The calendar's own default reminders, so the tab can say what inheriting actually does rather
-    /// than showing an empty list. Empty when no calendar-list sync has reported them yet.
+    /// than showing an empty list. One nullable field carries three states, so they cannot drift
+    /// apart:
+    /// <list type="bullet">
+    /// <item><description><c>null</c> — unknown: no calendar-list sync has reported this calendar's
+    /// defaults. Not an answer, just no data yet.</description></item>
+    /// <item><description>empty — the calendar has no default reminders, so following them notifies
+    /// nobody.</description></item>
+    /// <item><description>non-empty — the calendar's defaults, in display order and capped at the
+    /// per-event limit.</description></item>
+    /// </list>
     /// </summary>
-    public IReadOnlyList<EventReminder> CalendarDefault { get; }
+    /// <remarks>
+    /// The first two have to stay apart for the same reason the event-level states do. Shown an
+    /// empty panel for a calendar whose defaults are merely unknown, a family reads "no reminders";
+    /// <see cref="StopUsingCalendarDefault"/> then leaves an empty list, and the save sends
+    /// <c>useDefault:false</c> with an empty overrides array — Google replaces the whole reminders
+    /// object, so the reminders the event was really inheriting are gone.
+    /// </remarks>
+    public IReadOnlyList<EventReminder>? CalendarDefault { get; }
 
     /// <summary>Whether the event still follows the calendar's defaults.</summary>
     public bool FollowsCalendarDefault { get; private set; }
@@ -200,13 +227,15 @@ public sealed class ReminderPickerModel
     /// <summary>
     /// Stops following the calendar and copies its defaults in as editable entries — the Google
     /// Calendar app pre-fills them rather than dropping the family onto an empty list they did not
-    /// ask for. Leaves an empty list when the calendar's defaults are not known yet.
+    /// ask for. Copies nothing when the calendar's defaults are unknown, and nothing when the
+    /// calendar has none; both leave an empty list, which is the state Google records as "replace
+    /// the calendar's defaults with nothing".
     /// </summary>
     public void StopUsingCalendarDefault()
     {
         FollowsCalendarDefault = false;
         _overrides.Clear();
-        _overrides.AddRange(InDisplayOrder(CalendarDefault));
+        _overrides.AddRange(InDisplayOrder(CalendarDefault ?? []));
     }
 
     /// <summary>

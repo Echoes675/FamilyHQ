@@ -168,13 +168,32 @@ public class ReminderPickerModelTests
     }
 
     [Fact]
-    public void StopUsingCalendarDefault_WhenTheCalendarHasNoDefaultsStored_LeavesAnEmptyList()
+    public void StopUsingCalendarDefault_WhenTheCalendarsDefaultsAreUnknown_CopiesNothingIn()
     {
+        // There is nothing to pre-fill: inventing a reminder here would be the kiosk guessing at what
+        // Google holds. The tab says so instead, which is the whole point of keeping unknown apart
+        // from "the calendar has none".
         var model = ReminderPickerModel.From(
             EventReminders.InheritsCalendarDefault, calendarDefault: null, isAllDay: false);
 
         model.StopUsingCalendarDefault();
 
+        model.Overrides.Should().BeEmpty();
+        model.State.Should().Be(ReminderPickerState.ExplicitlyNone);
+    }
+
+    [Fact]
+    public void StopUsingCalendarDefault_WhenTheCalendarReportedHavingNoDefaults_CopiesNothingIn()
+    {
+        // The same list, reached from the other state. Here it is the honest answer rather than an
+        // absence of one: the calendar really has nothing to pre-fill, so switching inheritance off
+        // changes nothing a phone would do differently.
+        var model = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault, EventReminders.Explicit([]), isAllDay: false);
+
+        model.StopUsingCalendarDefault();
+
+        model.Overrides.Should().BeEmpty();
         model.State.Should().Be(ReminderPickerState.ExplicitlyNone);
     }
 
@@ -562,6 +581,63 @@ public class ReminderPickerModelTests
         model.CalendarDefault.Should().Equal(
             new EventReminder(EventRemindersValidator.PopupMethod, 30),
             new EventReminder(EventRemindersValidator.EmailMethod, 1440));
+    }
+
+    // The three states the tab has to tell apart. Two of them are both "nothing to list", and
+    // collapsing them is the defect these tests exist for: shown "no reminders" for an event that is
+    // in fact inheriting real ones, a family that saves sends useDefault:false with an empty
+    // overrides array, and Google — which replaces the whole reminders object — is left holding
+    // nothing. Only the state decides which sentence the tab shows; Count alone cannot.
+
+    [Fact]
+    public void From_WhenNothingHasReportedTheCalendarsDefaults_LeavesThemUnknownRatherThanEmpty()
+    {
+        var model = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault, calendarDefault: null, isAllDay: false);
+
+        model.CalendarDefault.Should().BeNull(
+            "null is 'nobody has told us', which is not an answer and must not read as one");
+    }
+
+    [Fact]
+    public void From_WhenTheCalendarReportedHavingNoDefaults_IsAnEmptyListRatherThanUnknown()
+    {
+        // What GoogleCalendarClient stores for a calendar whose `defaultReminders` array Google sent
+        // empty: a real answer, and the one case where the tab may say following the calendar will
+        // notify nobody.
+        var model = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault, EventReminders.Explicit([]), isAllDay: false);
+
+        model.CalendarDefault.Should().NotBeNull().And.BeEmpty();
+    }
+
+    [Fact]
+    public void From_WhenTheCalendarHasMoreDefaultsThanGoogleAcceptsOnAnEvent_OrdersThemAndCapsTheList()
+    {
+        // A calendar may carry more defaults than an event is allowed overrides, and switching
+        // inheritance off copies this list in — so an uncapped list would build a set Google rejects
+        // outright (400 eventRemindersCountExceedsLimit). Soonest first, then by method, for the same
+        // reason the event's own list is ordered: Google returns the array in an order of its own.
+        var model = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault,
+            EventReminders.Explicit(
+            [
+                new EventReminder(EventRemindersValidator.PopupMethod, 60),
+                new EventReminder(EventRemindersValidator.PopupMethod, 10),
+                new EventReminder(EventRemindersValidator.EmailMethod, 10),
+                new EventReminder(EventRemindersValidator.PopupMethod, 1440),
+                new EventReminder(EventRemindersValidator.PopupMethod, 30),
+                new EventReminder(EventRemindersValidator.PopupMethod, 20)
+            ]),
+            isAllDay: false);
+
+        model.CalendarDefault.Should().Equal(
+            new EventReminder(EventRemindersValidator.EmailMethod, 10),
+            new EventReminder(EventRemindersValidator.PopupMethod, 10),
+            new EventReminder(EventRemindersValidator.PopupMethod, 20),
+            new EventReminder(EventRemindersValidator.PopupMethod, 30),
+            new EventReminder(EventRemindersValidator.PopupMethod, 60));
+        model.CalendarDefault.Should().HaveCount(EventRemindersValidator.MaxOverrides);
     }
 
     [Fact]
