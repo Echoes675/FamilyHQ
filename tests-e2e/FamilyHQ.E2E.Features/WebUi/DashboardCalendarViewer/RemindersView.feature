@@ -36,13 +36,22 @@ Feature: Reminders view
   CalendarDefaultRemindersSteps for why. Folding all of that into one shared Background would hide
   the ordering each scenario actually needs.
 
-  A "today" event is seeded relative to NOW, not at a fixed clock time. Nothing a row RENDERS depends
-  on that any more — a row reads the same before and after its reminders fire — but a start relative
-  to now is still what keeps each scenario's reminder a reminder the family could actually have set
-  on a future event, and it is what records the exact start the "leading with its start time" step
-  asserts against. Seeding this way has one constraint — the start must still land on today's date —
-  which GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than letting
-  the scenario fail as a missing row.
+  A "today" event is seeded at a FIXED time — 09:00 — not at an offset from now. That is not a
+  convenience: a row is filed by its event's start DATE and stays under Today for the whole of that
+  day, after the event has begun and after every one of its reminders has fired.
+  RemindersController's window opens at local midnight rather than at now, and RowFor reads no clock
+  at all, so a 09:00 event is in the response at 23:00 just as it is at 09:30. Seeding against now
+  instead made every one of these scenarios refuse to run inside its own offset of local midnight,
+  and they failed on a CI pass that happened to start thirteen minutes later than the one before it.
+  A fixed seed is also the louder of the two if that near edge ever moves back to now: a 09:00 event
+  would drop out of the response, where a future one would not.
+
+  One scenario keeps a start relative to now — "An event keeps its row under Today after its last
+  reminder has fired" — because the state it is about is the position of now itself: a reminder that
+  has already fired on an event that has not yet happened. No fixed clock time can construct that
+  when the suite runs at an arbitrary hour. It therefore cannot run within its own offset of local
+  midnight, and GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than
+  letting it fail later as a baffling missing row.
 
   Scenario: The timeline and the month view do not displace each other
     Given I have a user like "RemindersViewUser"
@@ -55,16 +64,20 @@ Feature: Reminders view
   # Today spans one day and its heading says which, so a date on every row there would be noise. The
   # assertion is an EQUALITY on the row's leading column for that reason: a row reading
   # "Tue 10 Mar · 18:00" under Today is the failure, and only equality catches it.
+  #
+  # The expected time is written out here rather than read back from what the seeding step computed,
+  # which is what the fixed seed buys. It is the stronger form: a seeding bug that derived the wrong
+  # start used to produce the same wrong value on both sides of the comparison and pass.
   Scenario: A row under Today leads with the event's start time and nothing else
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Dentist Visit" starting in 140 minutes in "Appointments"
+    And the user has a timed event "Dentist Visit" at "09:00" on "today" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
     When I open the event "Dentist Visit" for editing
     And I give the event a reminder 2 hours before
     And I save the event
     And I show the reminders view
-    Then the "Today" section has a row for "Dentist Visit" leading with its start time alone
+    Then the "Today" section has a row for "Dentist Visit" leading with "09:00" and nothing else
 
   # The ordinary state of a row on the day of its own event, and the one the view used to get wrong by
   # dropping the row entirely. A reminder 3 hours before an event 65 minutes away has already fired,
@@ -72,6 +85,13 @@ Feature: Reminders view
   # the family is looking at the panel. The row's PRESENCE is the whole assertion now: it used to also
   # say "all sent", and with nothing on a row describing its reminders there is no longer any wording
   # for firing to change. The scenario stays because what it pins is that the row exists at all.
+  #
+  # The ONLY scenario here still seeded relative to now, and the only one that should be: "fired, but
+  # not yet happened" is a statement about where now sits, and a fixed clock time cannot put it
+  # between the two when the suite runs at an arbitrary hour. Pick a fixed early time and the event
+  # is behind for most runs; pick a late one and the reminder has not fired yet. The price is that
+  # this scenario alone cannot run in the last 65 minutes before local midnight, and the seeding
+  # step says so outright rather than letting it fail as a missing row.
   Scenario: An event keeps its row under Today after its last reminder has fired
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Eye Test" starting in 65 minutes in "Appointments"
@@ -94,9 +114,9 @@ Feature: Reminders view
   # TWO of them, not one: switching inheritance off copies the calendar's 45-minute default in as an
   # editable row before the 30 is added (the gotcha is documented in e2e-testing-maintenance.md).
   # Harmless here, because the Then asserts the row's presence and nothing about its count — but two
-  # is what is on screen. Seeded at the same 65 minutes as "Checkup" deliberately: a scenario's
-  # widest seeding offset is what decides how close to local midnight it can still run, so matching
-  # the offset adds a control without costing any of that margin.
+  # is what is on screen. Seeded at the same 09:00 as "Checkup", which costs nothing now that neither
+  # start is measured from the clock: two rows at the same instant are ordered by title
+  # (RemindersController's ThenBy), and both assertions address their row by event id regardless.
   #
   # The explicit two-step flip (own reminder first, then explicitly ask for the calendar's usual
   # ones) is used rather than a bare untouched create — not because a bare create would fail to reach
@@ -109,8 +129,8 @@ Feature: Reminders view
   Scenario: An event following its calendar's usual reminders never appears
     Given I have a user like "RemindersViewUser"
     And the "Appointments" calendar is the active calendar
-    And the user has a timed event "Checkup" starting in 65 minutes in "Appointments"
-    And the user has a timed event "Swim Lesson" starting in 65 minutes in "Appointments"
+    And the user has a timed event "Checkup" at "09:00" on "today" in "Appointments"
+    And the user has a timed event "Swim Lesson" at "09:00" on "today" in "Appointments"
     And the active calendar's usual reminders in Google are 45 minutes
     And I login as the user "RemindersViewUser"
     And I view the dashboard
@@ -141,7 +161,7 @@ Feature: Reminders view
   # A second origin for the same state is still worth having, which is why the scenario stays.
   Scenario: An event inheriting from a calendar with no defaults never appears
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Bin Day" starting in 65 minutes in "Chores"
+    And the user has a timed event "Bin Day" at "09:00" on "today" in "Chores"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
     When I change the event "Bin Day" to reminders of its own
@@ -194,7 +214,7 @@ Feature: Reminders view
 
   Scenario: A shared event's row names each person rather than the shared calendar
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Family Movie Night" starting in 50 minutes in "Work Calendar"
+    And the user has a timed event "Family Movie Night" at "09:00" on "today" in "Work Calendar"
     And the user has the event "Family Movie Night" also in "Personal Calendar"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
@@ -269,7 +289,7 @@ Feature: Reminders view
 
   Scenario: A section with nothing in it collapses to one line
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Checkup" starting in 140 minutes in "Appointments"
+    And the user has a timed event "Checkup" at "09:00" on "today" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
     When I change the event "Checkup" to reminders of its own
@@ -287,7 +307,7 @@ Feature: Reminders view
 
   Scenario: The view always states that same-day all-day reminders cannot be shown
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Checkup" starting in 140 minutes in "Appointments"
+    And the user has a timed event "Checkup" at "09:00" on "today" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
     When I change the event "Checkup" to reminders of its own
@@ -300,7 +320,7 @@ Feature: Reminders view
   # hidden right now" is precisely when the line looks like clutter worth tidying away.
   Scenario: The view always states that events on their calendar's usual reminders are left out
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Checkup" starting in 65 minutes in "Appointments"
+    And the user has a timed event "Checkup" at "09:00" on "today" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
     When I open the event "Checkup" for editing

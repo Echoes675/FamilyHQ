@@ -27,7 +27,7 @@ Feature: The kiosk's home view
 
   Scenario: A page load opens on the reminders timeline with its rows already filed
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Dentist Visit" starting in 140 minutes in "Appointments"
+    And the user has a timed event "Dentist Visit" at "09:00" on "today" in "Appointments"
     And I login as the user "RemindersViewUser"
     And the event "Dentist Visit" on "today" has been given a reminder 2 hours before
     When the kiosk loads the dashboard
