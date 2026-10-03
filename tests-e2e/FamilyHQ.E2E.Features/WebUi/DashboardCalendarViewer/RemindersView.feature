@@ -212,15 +212,22 @@ Feature: Reminders view
   # DateOnly in ReminderBucketingTests.File_OnTheLastDayOfAWeek_TomorrowIsStillTomorrowAndNotNextMonth.
   # Seeded at a fixed clock time on "tomorrow" rather than relative to now, unlike the "today"
   # scenarios above — tomorrow 08:00 is always in the future no matter what time of day it is today.
+  #
+  # Its reminder is set through the date-aware precondition step rather than the three-step modal
+  # chain the "today" scenarios use, and that is not a tidying-up: the month grid stops as soon as a
+  # row completes past the month's end, so on a month ending on a Saturday "tomorrow" is not rendered
+  # at all and the click to open the event finds nothing. Once every seven months or so is worse than
+  # never — it surfaces long after whatever change exposed it, with no obvious cause. The step
+  # navigates to the date when the grid does not already show it, and is a no-op when it does. The
+  # "next month" scenarios below reach the same safety by navigating explicitly; the ones seeded
+  # today need nothing, because today is always on the grid.
   Scenario: Tomorrow's event stays under Tomorrow on the last day of a week
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Bin Collection" at "08:00" on "tomorrow" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
-    When I open the event "Bin Collection" for editing
-    And I give the event a reminder 15 minutes before
-    And I save the event
-    And I show the reminders view
+    And the event "Bin Collection" on "tomorrow" has been given a reminder 15 minutes before
+    When I show the reminders view
     Then the "Tomorrow" section has a row for "Bin Collection"
     And the "This week" section has no row for "Bin Collection"
 
