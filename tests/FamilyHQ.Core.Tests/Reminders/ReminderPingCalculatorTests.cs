@@ -15,6 +15,12 @@ public class ReminderPingCalculatorTests
     private static readonly TimeZoneInfo Dublin =
         TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
 
+    // Greenland shifts its clocks at 22:00 local, two hours BEFORE local midnight, which makes it the
+    // clean case for where the offset is sampled: on a transition date, local midnight and 00:00Z fall
+    // on opposite sides of the change, and local midnight is itself neither invalid nor ambiguous.
+    private static readonly TimeZoneInfo Nuuk =
+        TimeZoneInfo.FindSystemTimeZoneById("America/Nuuk");
+
     private static EventReminders Explicit(params (string Method, int Minutes)[] overrides) =>
         EventReminders.Explicit(overrides.Select(o => new EventReminder(o.Method, o.Minutes)));
 
@@ -140,6 +146,27 @@ public class ReminderPingCalculatorTests
             allDayStart, isAllDay: true, Explicit(("popup", 60)), null, Dublin);
 
         pings[0].TriggerAt.Should().Be(new DateTimeOffset(2026, 3, 29, 22, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public void Compute_WhenTheZoneShiftsBetweenLocalMidnightAndMidnightUtc_SamplesTheOffsetAtLocalMidnight()
+    {
+        // Greenland goes forward at 22:00 local on 28 March 2026, so by local midnight on the 29th the
+        // new offset (UTC-1) is already in force and local midnight is 2026-03-29T01:00Z. Sampling the
+        // offset at 2026-03-29T00:00Z instead reads the pre-transition UTC-2 and anchors to 02:00Z —
+        // an hour late, every reminder on that event firing an hour late with it.
+        //
+        // This is only ever wrong on a transition date, and never for Europe/London or Europe/Dublin,
+        // whose transitions do not fall between the two sampling points. It is pinned here because the
+        // zone used for the anchor is the one GOOGLE reports for the owning calendar, so the household's
+        // own zone being safe proves nothing about the ones that reach this code.
+        var allDayStart = new DateTimeOffset(2026, 3, 29, 0, 0, 0, TimeSpan.Zero);
+
+        var pings = ReminderPingCalculator.Compute(
+            allDayStart, isAllDay: true, Explicit(("popup", 30)), null, Nuuk);
+
+        pings[0].TriggerAt.Should().Be(new DateTimeOffset(2026, 3, 29, 0, 30, 0, TimeSpan.Zero),
+            "local midnight is 01:00Z and the reminder is 30 minutes before it");
     }
 
     [Fact]

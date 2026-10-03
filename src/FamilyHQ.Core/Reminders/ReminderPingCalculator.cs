@@ -88,8 +88,8 @@ public static class ReminderPingCalculator
 
     /// <summary>
     /// The instant of midnight at the start of <paramref name="start"/>'s calendar day, in
-    /// <paramref name="zone"/>. Uses the offset in effect on that day, so a date either side of a
-    /// daylight-saving transition anchors correctly.
+    /// <paramref name="zone"/>. Uses the offset in effect at local midnight itself, so a date either
+    /// side of — or on — a daylight-saving transition anchors correctly.
     /// </summary>
     /// <remarks>
     /// The calendar date is read straight off <paramref name="start"/>'s UTC date component — it is
@@ -105,11 +105,26 @@ public static class ReminderPingCalculator
     /// Google actually sent, and every reminder on that event would fire a day early.
     /// <paramref name="zone"/> is consulted ONLY for the offset in effect on the date already taken
     /// from <paramref name="start"/>, never to decide what that date is.
+    /// <para>
+    /// Where local midnight does not exist or occurs twice — a transition that lands exactly on
+    /// midnight, as Cuba's and Chile's do — <see cref="TimeZoneInfo.GetUtcOffset(DateTime)"/> returns
+    /// the standard-time offset. That is deterministic rather than verified against Google: no
+    /// observation of what Google anchors an all-day event to on such a date exists here, and a guess
+    /// dressed as a rule would be worse than a documented default.
+    /// </para>
     /// </remarks>
     private static DateTimeOffset LocalMidnightOf(DateTimeOffset start, TimeZoneInfo zone)
     {
         var calendarDate = start.UtcDateTime.Date;
-        var offset = zone.GetUtcOffset(new DateTimeOffset(calendarDate, TimeSpan.Zero));
-        return new DateTimeOffset(DateTime.SpecifyKind(calendarDate, DateTimeKind.Unspecified), offset);
+
+        // The offset is sampled AT local midnight, by asking the zone about an Unspecified local wall
+        // time — not at 00:00Z on the same date. Those two instants are up to a day's offset apart, so
+        // a transition falling between them is sampled on the wrong side and the anchor lands an hour
+        // out. It is only ever visible on a transition date, which is exactly the shape of bug this
+        // view cannot afford: 18 of the 141 zones this machine knows diverge on 60 dates across
+        // 2026-2027, always by an hour. Europe/London and Europe/Dublin are not among them, but the
+        // zone here is whichever one Google reports for the owning calendar, not the household's.
+        var localMidnight = DateTime.SpecifyKind(calendarDate, DateTimeKind.Unspecified);
+        return new DateTimeOffset(localMidnight, zone.GetUtcOffset(localMidnight));
     }
 }

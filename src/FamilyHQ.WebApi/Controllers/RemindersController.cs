@@ -171,11 +171,24 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// The people chips for one row: every non-shared member calendar, by name. A shared event names
-    /// the people assigned to it, never the shared calendar itself — the phone rings in one person's
-    /// pocket, not the household's. Falls back to the owning calendar's own name for a plain event
-    /// that carries no member tags at all, mirroring the owner fallback in
-    /// <c>CalendarsController.GetEventsForMonth</c>.
+    /// The people chips for one row: every non-shared member calendar, by name, so an event assigned
+    /// to people names those people rather than the calendar carrying it.
+    /// <para>
+    /// When an event carries no member tags at all the owning calendar's own name is used instead,
+    /// mirroring the owner fallback in <c>CalendarsController.GetEventsForMonth</c>. That fallback
+    /// names the owning calendar WHATEVER it is, a shared household calendar included — it does not
+    /// exempt them. Two reasons it is right not to: a chip-less row is a blank region on a wall
+    /// display, and every phone in this household signs into one shared Google account, so a reminder
+    /// on a shared-calendar event really does ring all of them. Naming the household is the accurate
+    /// answer there, not a stand-in for a missing person.
+    /// </para>
+    /// <para>
+    /// Note the deliberate difference from the month view: its <c>EventCalendarDto</c> carries
+    /// <c>IsShared</c> so the client can tell a calendar from a person, and
+    /// <see cref="ReminderMemberDto"/> does not. Nothing on a reminder row behaves differently for a
+    /// shared chip, so carrying the flag here would add a field with no reader — and a field with no
+    /// reader is the one most likely to be trusted wrongly later.
+    /// </para>
     /// </summary>
     private static IReadOnlyList<ReminderMemberDto> BuildMembers(CalendarEvent evt, CalendarInfo? owner)
     {
