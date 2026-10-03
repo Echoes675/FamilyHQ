@@ -51,6 +51,19 @@ Feature: Event Reminders
     And I save the event
     Then the event was saved without mentioning reminders
 
+  # The sequence a family reported as a reminder that had been set and then did not arrive. Nothing
+  # had been set: the Add form describes a reminder from the moment the tab opens, and that
+  # description used to sit on a line of its own, in the same voice as the note above it saying the
+  # event had none. Saving none was what the family asked for by turning the toggle off, so the save
+  # is correct and stays correct — the last step pins that down. What had to change is that the
+  # screen stops presenting the form's own starting value as something the event already carries.
+  Scenario: An event taken off its calendar's reminders without adding one is left with none, and says so
+    Given the event "Parents Evening" in "Appointments" follows the calendar's usual reminders
+    When I take the event "Parents Evening" off its calendar's reminders without adding one
+    Then the Reminders tab states the event has no reminders
+    And the Add control offers "30 minutes before" by "Notification" rather than stating it
+    And the event "Parents Evening" still has no reminders after it is saved and opened again
+
   # The twin of the preprod scenario that asks the same question of real Google. What is provable here
   # is that the SAVE carries the other fields back unchanged; what is not is whether fields FamilyHQ
   # never models survive, because the Simulator does not store them to begin with. That half stays in

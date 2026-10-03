@@ -360,13 +360,22 @@ Tests the full webhook → sync → UI update pipeline using the Simulator's bac
 - **Any new `SimulatedEvent` column needs a Simulator EF migration** (the Simulator `Migrate()`s on startup).
 - **Scope every between-scenario backdoor reset to the scenario's isolated user** — a global reset races concurrent scenarios (see Intermittent Issues #3 and #5).
 
-### Event reminders — `EventReminders.feature` (11 scenarios, 16 tests)
+### Event reminders — `EventReminders.feature` (12 scenarios, 17 tests)
 
 An event's reminders through the modal's Reminders tab: add, edit and remove; every transition between
 the three states Google distinguishes — follows-the-calendar-default, explicit, explicitly-none — in
 both directions; the tab badge; the All-day reset; the day-of-event floor; and the series scope
-warning. One six-row `Scenario Outline` carries the transitions, which is why 11 scenarios are 16
+warning. One six-row `Scenario Outline` carries the transitions, which is why 12 scenarios are 17
 tests.
+
+One scenario is about the screen rather than the save. The Add form describes a reminder from the
+moment the tab opens — nobody has to touch it — and that description used to sit on a line of its own
+in the same voice as the note above it saying the event had none, so a family read it as a reminder
+that existed. It is now part of the Add button's own label, and
+*"An event taken off its calendar's reminders without adding one is left with none, and says so"*
+asserts both halves: the empty-state warning still showing (it is true and must not be suppressed to
+make the contradiction go away) and the description reading as an offer inside the button. Its last
+step pins the save down as unchanged — turning the toggle off **is** a request for no reminders.
 
 **A new assertion idiom lives here: assert what the save SENT, not what the screen shows.**
 `EventWriteRecorder` (`FamilyHQ.E2E.Common/Helpers`) attaches to the scenario's own page and records
