@@ -73,11 +73,17 @@ public class DayRolloverSteps
 
     // ── When steps ───────────────────────────────────────────────────────────
 
-    [When(@"the kiosk has been idle for {int} minutes")]
-    public Task IdleFor(int minutes) => _dashboard.ForceIdleMinutesAsync(minutes);
-
-    [When(@"the user interacted {int} minutes ago")]
-    public Task InteractedAgo(int minutes) => _dashboard.ForceIdleMinutesAsync(minutes);
+    // Phrased as the READING on the timer, not as elapsed time, because no scenario ever waits:
+    // this sets idle.js's counter straight through the dev bridge and the idle check that follows
+    // evaluates immediately. "The kiosk has been idle for 16 minutes" said otherwise, and was read
+    // by the family as the suite sleeping for a quarter of an hour.
+    //
+    // One step where there were two. "The user interacted 2 minutes ago" was the same call with a
+    // different sentence, and under this phrasing it is the same sentence as well — a timer reading
+    // two minutes IS a recent interaction. The scenario titles and their comments carry which of the
+    // two situations a reading stands for; the step only sets a number.
+    [When(@"the kiosk's idle timer reads {int} minutes")]
+    public Task IdleTimerReads(int minutes) => _dashboard.ForceIdleMinutesAsync(minutes);
 
     [When(@"the date rolls over by {int} day")]
     public Task RolloverDays(int days) => _dashboard.AdvanceClockDaysAsync(days);

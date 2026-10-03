@@ -255,7 +255,7 @@ Feature: Reminders view
     Then the "Tomorrow" section has a row for "Bin Collection"
     When I switch to the Month View tab
     And the date rolls over by 1 day
-    And the kiosk has been idle for 16 minutes
+    And the kiosk's idle timer reads 16 minutes
     And the idle check runs
     Then the "Today" section has a row for "Bin Collection"
     And the "Tomorrow" section has no row for "Bin Collection"

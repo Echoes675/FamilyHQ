@@ -38,7 +38,7 @@ Feature: The kiosk's home view
     Given I have a user like "RemindersViewUser"
     And I login as the user "RemindersViewUser"
     And I am on the Month view showing the current month
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the idle check runs
     Then the reminders view is showing
 
@@ -49,6 +49,6 @@ Feature: The kiosk's home view
     And I login as the user "RemindersViewUser"
     And I am on the Month view showing the current month
     And the create-event modal is open
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the idle check runs
     Then the dashboard is showing the month view

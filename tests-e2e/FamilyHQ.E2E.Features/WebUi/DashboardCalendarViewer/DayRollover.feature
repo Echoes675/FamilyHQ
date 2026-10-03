@@ -33,7 +33,7 @@ Feature: Kiosk auto-advances to the current day after idle
 
   Scenario: An idle kiosk on the Day view goes home and the day it reopens on has rolled over
     Given I am on the Day view showing today
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the date rolls over by 1 day
     And the idle check runs
     Then the reminders view is showing
@@ -42,7 +42,7 @@ Feature: Kiosk auto-advances to the current day after idle
 
   Scenario: Month view advances to the new month after rollover while idle
     Given I am on the Month view showing the current month
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the date rolls over by 1 month
     And the idle check runs
     And I switch to the Month View tab
@@ -50,7 +50,7 @@ Feature: Kiosk auto-advances to the current day after idle
 
   Scenario: Agenda view advances to the new month after rollover while idle
     Given I am on the Agenda view showing the current month
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the date rolls over by 1 month
     And the idle check runs
     And I switch to the Agenda View tab
@@ -58,7 +58,7 @@ Feature: Kiosk auto-advances to the current day after idle
 
   Scenario: A kiosk left on a future day goes home and reopens the Day view on today
     Given I am on the Day view navigated 5 days into the future
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the idle check runs
     Then the reminders view is showing
     When I switch to the Day View tab
@@ -70,22 +70,24 @@ Feature: Kiosk auto-advances to the current day after idle
   Scenario: An open event modal defers the rollover until it is closed
     Given I am on the Day view showing today
     And the create-event modal is open
-    When the kiosk has been idle for 16 minutes
+    When the kiosk's idle timer reads 16 minutes
     And the date rolls over by 1 day
     And the idle check runs
     Then the Day view still shows the previous day
     When I cancel the event modal
-    And the kiosk has been idle for 16 minutes
+    And the kiosk's idle timer reads 16 minutes
     And the idle check runs
     Then the reminders view is showing
     When I switch to the Day View tab
     Then the Day view shows the new current day
 
-  # Two minutes is below the threshold both rules share, so nothing fires and the Day view is still
-  # the view on screen — no re-selection, and the assertion reads exactly as it always did.
+  # A timer reading two minutes IS a recent interaction — somebody touched the kiosk two minutes ago.
+  # Two minutes is below the threshold both idle rules share, so neither fires: the date stays put
+  # and the Day view is still the view on screen, which is why this is the one idle scenario that
+  # needs no re-selection and whose assertion reads exactly as it always did.
   Scenario: Recent interaction defers the rollover
     Given I am on the Day view showing today
     When the date rolls over by 1 day
-    And the user interacted 2 minutes ago
+    And the kiosk's idle timer reads 2 minutes
     And the idle check runs
     Then the Day view still shows the previous day
