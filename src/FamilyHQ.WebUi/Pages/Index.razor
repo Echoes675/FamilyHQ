@@ -142,7 +142,13 @@
             OnDeleted="OnEventModalDeleted" />
 
 @code {
-    private DashboardView _currentView = DashboardView.Month;
+    // The view a page load lands on, and the one an idle kiosk returns to. One named constant for
+    // both because they are the same product decision: the family asked for the Reminders timeline
+    // to be the first tab AND what the kiosk shows by default, and a wall display that opened on one
+    // view and came home to another would be the odd one out, not a feature.
+    private const DashboardView HomeView = DashboardView.Reminders;
+
+    private DashboardView _currentView = HomeView;
     private DateTime _selectedDate;
 
     // Authentication State
@@ -198,7 +204,9 @@
     private static readonly TimeSpan ReminderTickPeriod = TimeSpan.FromMinutes(1);
     private readonly ReminderTickLoop _reminderTickLoop = new();
 
-    // FHQ-63: kiosk day-rollover.
+    // How long with no touch counts as "nobody is at it". Decided with the family and shared by
+    // both idle rules — pulling the date back to today, and returning to the home view — because it
+    // is one judgement about the room, not two about the two behaviours.
     private static readonly TimeSpan IdleSnapThreshold = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(30);
     private System.Threading.Timer? _idleTimer;
@@ -236,9 +244,18 @@
 
         await LoadMonthDataAsync();
 
-        // Defensive, not reachable today: _currentView is always Month at this point. Kept so a
-        // future change that lets the dashboard remember its last-viewed tab does not silently skip
-        // the fetch-on-open rule the Reminders tab otherwise gets only from SwitchToView.
+        // The landing path's entry work, and the only place it can happen: SwitchToView runs on a
+        // tab tap or a drill-down and so never runs on a page load. Initialising _currentView alone
+        // would render the timeline with no rows and no tick — EnterRemindersViewAsync is what
+        // anchors _remindersToday to the clock, fetches the rows and starts the per-minute loop.
+        //
+        // This is the one entry a load makes: OnAfterRenderAsync starts the idle poll and nothing
+        // else, so the loop is never started twice over a load. (EnsureRunningAsync is idempotent
+        // regardless — see ReminderTickLoop's remarks and its CalledAgainWhileRunning test — so a
+        // future second caller would not orphan a loop either.)
+        //
+        // Still a check on _currentView rather than on HomeView: a future change that lets the
+        // dashboard remember its last-viewed tab must not silently skip the fetch-on-open rule.
         if (_currentView == DashboardView.Reminders)
         {
             await EnterRemindersViewAsync();
@@ -661,22 +678,57 @@
             ? DateOnly.FromDateTime(_selectedDate.Date)
             : DateOnly.FromDateTime(CurrentMonth);
 
-        if (!IdleSnapDecision.ShouldSnap(
-                modalOpen, idleMs, IdleSnapThreshold.TotalMilliseconds,
-                anchor, DateOnly.FromDateTime(today), isDayView))
+        // Both rules are asked about the SAME observed state before either is acted on. Returning
+        // home assigns _currentView, which is one of the date rule's own inputs (isDayView, and
+        // which anchor it reads), so deciding them one after the other would have the second rule
+        // judge a view the family never left it on.
+        var snapDate = IdleSnapDecision.ShouldSnap(
+            modalOpen, idleMs, IdleSnapThreshold.TotalMilliseconds,
+            anchor, DateOnly.FromDateTime(today), isDayView);
+
+        var returnHome = IdleSnapDecision.ShouldReturnToHomeView(
+            modalOpen, idleMs, IdleSnapThreshold.TotalMilliseconds, _currentView, HomeView);
+
+        // The date first, so the home view is entered against the snapped date rather than the one
+        // being replaced: EnterRemindersViewAsync re-reads the clock itself, but SnapToTodayAsync
+        // may reload the month the Reminders timeline drills into.
+        //
+        // Guarded separately rather than in one try: the two are independent behaviours, and a month
+        // reload that fails is no reason to leave the kiosk parked on a view nobody is looking at.
+        if (snapDate)
         {
-            return;
+            try
+            {
+                await SnapToTodayAsync(today);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Idle snap to today failed; will retry on next poll.");
+            }
         }
 
-        try
+        if (returnHome)
         {
-            await SnapToTodayAsync(today);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Idle snap to today failed; will retry on next poll.");
+            try
+            {
+                await ReturnToHomeViewAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Idle return to the home view failed; will retry on next poll.");
+            }
         }
     }
+
+    // Returns through SwitchToView — the same path a tab tap takes — rather than assigning
+    // _currentView and re-rendering. That is what re-anchors _remindersToday from the clock, fetches
+    // the rows and starts the per-minute tick, so an idle return needs no refresh of its own.
+    //
+    // It also resets the timeline's sections to their preview state for free: RemindersView keeps
+    // the sections expanded by "Show all" in an instance field, and it is rendered only inside the
+    // `_currentView == DashboardView.Reminders` branch above, so a kiosk sitting on another view has
+    // no instance at all and the one built on return starts collapsed.
+    private Task ReturnToHomeViewAsync() => SwitchToView(HomeView);
 
     private async Task SnapToTodayAsync(DateTime today)
     {
