@@ -44,7 +44,7 @@ Feature: Reminders view
   which GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than letting
   the scenario fail as a missing row.
 
-  Scenario: The timeline is a fourth tab and does not displace the month view
+  Scenario: The timeline and the month view do not displace each other
     Given I have a user like "RemindersViewUser"
     And I login as the user "RemindersViewUser"
     And I view the dashboard

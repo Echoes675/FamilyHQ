@@ -260,7 +260,19 @@ dashboard loaded" into a claim about which view the kiosk opens on.
 An idle kiosk returns to the home view after 15 minutes, the same threshold that pulls a stale date
 back to today, so **any** scenario that forces idle and runs the idle check ends up on the Reminders
 timeline unless a modal is open. A `Then` that reads another view's header after an idle check is
-asserting against a view that is no longer on screen.
+asserting against a view that is no longer on screen. `DayRollover.feature` is the worked example:
+it re-selects the view under test with a tab step after the idle check, and two things come with
+that.
+
+- The tap is a real interaction, so it re-stamps `idle.js`'s monotonic clock. That is what stops the
+  30-second poll from sending the kiosk home again mid-assertion — do **not** re-force idle after it.
+- Re-selecting **Month or Agenda** costs the assertion nothing: those tabs do not touch the
+  displayed month, so the label still reads what the snap put there. Re-selecting **Day** does,
+  because tapping the Day View tab without a date opens on today by design
+  (`Index.SwitchToView`) — so any "the Day view shows &lt;date&gt;" assertion after an idle check is a
+  statement about the clock rather than about the snap. A Day-view idle scenario therefore asserts
+  the kiosk going home as its own `Then`: that is the half which can still fail for the reason the
+  scenario exists.
 
 ### Adding New Step Definitions
 
@@ -457,9 +469,8 @@ clearest case. That half is asserted against real Google in the preprod smoke su
 The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
 one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
 Reminders tab above (which edits one event's reminders). Covers: the month grid still being reachable
-from the timeline and vice versa (the scenario titled "a fourth tab" — its wording predates the
-timeline becoming the first tab and the landing view, which `KioskHomeView.feature` covers; what it
-asserts, that the two views do not displace each other, is unchanged); a row under Today leading with
+from the timeline and vice versa (which tab comes first, and which view a load lands on, belong to
+`KioskHomeView.feature` instead); a row under Today leading with
 its event's start time and nothing else;
 a row in a section covering several days leading with the day and date as well; an event following
 its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
