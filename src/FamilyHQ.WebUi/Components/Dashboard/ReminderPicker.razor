@@ -36,16 +36,36 @@
     @if (Model.FollowsCalendarDefault)
     {
         <div class="reminder-panel" data-testid="reminder-default-panel">
-            @if (Model.CalendarDefault.Count == 0)
+            @* THREE branches, not two, and they must not be collapsed back. "Nobody has told us this
+               calendar's defaults" (null) and "this calendar has none" (an empty list) are different
+               answers, and only one of them is safe to describe as no reminders: told "no reminders"
+               for an event that is in fact inheriting real ones, a family that saves sends
+               useDefault:false with an empty overrides array and Google is left holding nothing.
+               Model.CalendarDefault carries the distinction; Count alone cannot. *@
+            @{
+                var calendarDefault = Model.CalendarDefault;
+            }
+            @if (calendarDefault is null)
             {
-                @* The calendar list degrades to empty on any non-success status, so the defaults can
-                   simply be unknown. Saying nothing would let the family read the empty panel as "no
-                   reminders", and switching the toggle off would then turn inheriting into the
-                   different state "none" without anyone choosing it. *@
+                @* Unknown. Do not soften this wording: ToggleUseDefaultAsync below switches
+                   inheritance off with nothing in front of it, so the last sentence here is the only
+                   warning the family gets before landing on an empty list. Not always the
+                   calendar's doing either — CalendarApiService degrades the calendar list to empty on
+                   any non-success status, and a create modal reads the owner out of that list. *@
                 <p class="reminder-note" data-testid="reminder-default-unavailable">
                     This calendar's usual reminders can't be read right now, so they can't be shown
                     here. Google Calendar still applies them. Switching this off would start from an
                     empty list instead of from them, leaving this event with no reminders at all.
+                </p>
+            }
+            else if (calendarDefault.Count == 0)
+            {
+                @* The calendar reported having no defaults. Nothing is being inherited, so switching
+                   the toggle off changes nothing the family would notice — and the Reminders view
+                   agrees, filing no row for an event that inherits from a calendar like this. *@
+                <p class="reminder-note" data-testid="reminder-default-none">
+                    This calendar has no usual reminders, so following it means this event won't
+                    notify anyone.
                 </p>
             }
             else
@@ -54,7 +74,7 @@
                     @(IsNewEvent ? "When you save, Google Calendar will apply:" : "Google Calendar applies:")
                 </p>
                 <ul class="reminder-list" data-testid="reminder-default-list">
-                    @foreach (var reminder in Model.CalendarDefault)
+                    @foreach (var reminder in calendarDefault)
                     {
                         <li class="reminder-row"
                             data-testid="reminder-default-item"

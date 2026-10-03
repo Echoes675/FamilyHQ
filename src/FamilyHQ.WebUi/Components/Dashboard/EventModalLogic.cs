@@ -238,17 +238,26 @@ public static class EventModalLogic
     }
 
     /// <summary>
-    /// The default reminders of the calendar this event will live on.
+    /// The default reminders of the calendar this event will live on, or null when nothing has
+    /// reported them.
     /// <para>
     /// The branch is on whether the event has a stored owner at all
     /// (<paramref name="ownerCalendarId"/>.HasValue) — never on whether
     /// <paramref name="storedOwningCalendarDefaults"/> happens to be non-null. An <b>existing</b>
     /// event already has an owner and the server says which it is, so its defaults are read exactly
-    /// as stored, <i>including when that is <c>null</c></i> — a calendar a defaults backfill has not
-    /// reached yet is a real "no defaults" answer, not a missing one, and must not fall through to a
+    /// as stored, <i>including when that is <c>null</c></i>: a null must not fall through to a
     /// client-side guess that can only agree with the server by coincidence. Only a <b>new</b> event
     /// — which has no owner yet because its member chips are still being chosen — has nothing stored
     /// to read, and there the member-routing rule is the only answer available.
+    /// </para>
+    /// <para>
+    /// What that null <i>means</i> is "no calendar-list sync has reported this calendar's defaults",
+    /// NOT "this calendar has none". The two stay separate all the way to the screen:
+    /// <c>GoogleCalendarClient</c> maps an empty <c>defaultReminders</c> array — what Google sends
+    /// for a calendar with no defaults — to an explicit empty set, and only an absent array to null,
+    /// so null is the state of a calendar nothing has reported on yet.
+    /// <see cref="ReminderPickerModel.CalendarDefault"/> carries both, and the Reminders tab says
+    /// something different about each.
     /// </para>
     /// </summary>
     public static EventReminders? OwningCalendarDefaults(
