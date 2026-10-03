@@ -13,6 +13,13 @@ namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
 /// is stored (<c>ownerCalendarId.HasValue</c>) and not on whether the DEFAULTS happen to be non-null.
 /// Only a NEW event — which has no owner yet because its member chips are still being chosen — still
 /// needs the prediction.
+/// <para>
+/// The prediction's routing itself is no longer stated here: it lives in
+/// <c>FamilyHQ.Core.Calendar.OwningCalendarRule</c>, covered by its own tests and pinned to the
+/// server's create path by <c>CalendarEventServiceOwningCalendarAgreementTests</c>. What these tests
+/// still own is the decision this layer makes — stored owner versus prediction — and the mapping from
+/// a calendar to the <c>DefaultReminders</c> the tab reads.
+/// </para>
 /// </summary>
 public class EventModalOwningCalendarTests
 {
