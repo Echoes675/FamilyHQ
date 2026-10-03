@@ -30,7 +30,6 @@ public class ReminderPingCalculatorTests
         pings[0].TriggerAt.Should().Be(start.AddMinutes(-30));
         pings[0].Method.Should().Be("popup");
         pings[0].Minutes.Should().Be(30);
-        pings[0].IsDefault.Should().BeFalse();
     }
 
     [Fact]
@@ -65,9 +64,9 @@ public class ReminderPingCalculatorTests
 
         pings.Should().ContainSingle();
         pings[0].TriggerAt.Should().Be(start.AddMinutes(-45));
-        pings[0].IsDefault.Should().BeTrue(
-            "an inherited ping has to stay distinguishable from one set on the event, which is what " +
-            "lets the reminders timeline leave it out");
+        pings[0].Minutes.Should().Be(45,
+            "an inheriting event resolves to the calendar's defaults, which is what the event modal " +
+            "shows the family when the inherit toggle is on");
     }
 
     [Fact]

@@ -42,7 +42,7 @@ public static class ReminderPingCalculator
         EventReminders? calendarDefaults,
         TimeZoneInfo zone)
     {
-        var effective = EffectiveReminders(eventReminders, calendarDefaults, out var isDefault);
+        var effective = EffectiveReminders(eventReminders, calendarDefaults);
         if (effective.Count == 0)
         {
             return [];
@@ -53,8 +53,7 @@ public static class ReminderPingCalculator
         return [.. effective.Select(reminder => new ReminderPing(
             anchor.AddMinutes(-reminder.Minutes),
             reminder.Method,
-            reminder.Minutes,
-            isDefault))];
+            reminder.Minutes))];
     }
 
     /// <summary>
@@ -62,14 +61,15 @@ public static class ReminderPingCalculator
     /// that will not ping: never synced, explicitly none, and inheriting from a calendar that has no
     /// defaults of its own.
     /// </summary>
-    /// <param name="isDefault">True when the result came from the calendar rather than the event.</param>
+    /// <remarks>
+    /// Deliberately does not report WHICH of the two sources the answer came from. That question is
+    /// already answered authoritatively by <c>EventReminders.UseDefault</c> on the stored event — the
+    /// field Google itself sets — so a derived second copy of it could only ever drift from the first.
+    /// </remarks>
     public static IReadOnlyList<EventReminder> EffectiveReminders(
         EventReminders? eventReminders,
-        EventReminders? calendarDefaults,
-        out bool isDefault)
+        EventReminders? calendarDefaults)
     {
-        isDefault = false;
-
         // Never synced. NOT the same as "no reminders" — the calendar's defaults must not stand in
         // for an answer nobody has yet.
         if (eventReminders is null)
@@ -79,7 +79,6 @@ public static class ReminderPingCalculator
 
         if (eventReminders.UseDefault)
         {
-            isDefault = true;
             return calendarDefaults?.Overrides ?? [];
         }
 

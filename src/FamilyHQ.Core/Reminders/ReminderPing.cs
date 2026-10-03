@@ -10,8 +10,4 @@ namespace FamilyHQ.Core.Reminders;
 /// application cannot create. Never normalised: Google is the authority on its own data.</param>
 /// <param name="Minutes">The stored offset, kept so a row can say "30 min before" without
 /// re-deriving it from two timestamps.</param>
-/// <param name="IsDefault">True when this ping comes from the calendar's defaults rather than from
-/// the event's own reminders — the four reminder states resolved down to one answer, so a caller can
-/// tell an inherited notification from one set on the event. The reminders timeline uses it to drop
-/// the event rather than to label it; no view tags a row with it.</param>
-public record ReminderPing(DateTimeOffset TriggerAt, string Method, int Minutes, bool IsDefault);
+public record ReminderPing(DateTimeOffset TriggerAt, string Method, int Minutes);
