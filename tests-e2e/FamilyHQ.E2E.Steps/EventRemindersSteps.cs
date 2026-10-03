@@ -140,6 +140,15 @@ public class EventRemindersSteps
         await _dashboardPage.AddTimedReminderAsync(amount, unit);
     }
 
+    // The reported sequence: the form is left describing a reminder the family configured, and Add
+    // was never pressed. Inheritance is NOT switched here — the caller has already reached the state
+    // the scenario is about, and switching it would re-copy the calendar's usual reminders in.
+    [When(@"I configure a reminder (\d+) (minutes|hours) before without adding it")]
+    public async Task WhenIConfigureAReminderBeforeWithoutAddingIt(int amount, string unit)
+    {
+        await _dashboardPage.ConfigureTimedReminderAsync(amount, unit);
+    }
+
     [When(@"I give the event a reminder (\d+) (minutes|hours) before and take it away again")]
     public async Task WhenIGiveTheEventAReminderAndTakeItAwayAgain(int amount, string unit)
     {
@@ -192,6 +201,17 @@ public class EventRemindersSteps
     {
         await _dashboardPage.OpenEventForEditingAsync(title);
         await _dashboardPage.ShowRemindersTabAsync();
+        await _dashboardPage.AssertReminderPresentAsync(MinutesFor(amount, unit));
+    }
+
+    [Then(@"the event ""([^""]*)"" has one reminder (\d+) (minutes|hours) before when it is opened again")]
+    public async Task ThenTheEventHasOneReminderBeforeWhenOpenedAgain(string title, int amount, string unit)
+    {
+        await _dashboardPage.OpenEventForEditingAsync(title);
+        await _dashboardPage.ShowRemindersTabAsync();
+        // The count is the half that matters as much as the offset: a save that committed the form's
+        // pending reminder must not also have left the calendar's usual one behind it.
+        await _dashboardPage.AssertReminderCountAsync(1);
         await _dashboardPage.AssertReminderPresentAsync(MinutesFor(amount, unit));
     }
 

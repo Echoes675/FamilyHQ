@@ -648,4 +648,265 @@ public class ReminderPickerModelTests
         AllDay(EventReminders.ExplicitlyNone).IsAllDay.Should().BeTrue();
         Timed(EventReminders.ExplicitlyNone).IsAllDay.Should().BeFalse();
     }
+
+    // --- The pending form value, committed on save ----------------------------------------------
+    //
+    // A family member who switches inheritance off, configures a reminder and saves without pressing
+    // Add believes they set one, and production shows them finding out they did not. The save commits
+    // the form's pending value — but ONLY when the form was touched, because it holds
+    // "30 · Minutes · Notification" from the moment it appears and committing that untouched would
+    // invent a reminder for somebody who switched inheritance off wanting silence.
+
+    // A calendar that reported having no defaults, so switching inheritance off lands on the empty
+    // list the production defect was reported against rather than pre-filling anything.
+    private static ReminderPickerModel OnEmptyList(bool isAllDay = false)
+    {
+        var model = ReminderPickerModel.From(
+            EventReminders.InheritsCalendarDefault, EventReminders.ExplicitlyNone, isAllDay);
+        model.StopUsingCalendarDefault();
+        model.Overrides.Should().BeEmpty();
+        return model;
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenTheFormWasConfiguredAndAddWasNeverPressed_CommitsIt()
+    {
+        var model = OnEmptyList();
+
+        model.Amount = 45;
+
+        model.CommitPendingFormReminder().Should().BeTrue();
+        model.State.Should().Be(ReminderPickerState.Explicit);
+        model.Overrides.Should().Equal(new EventReminder(EventRemindersValidator.PopupMethod, 45));
+        model.HasChanged.Should().BeTrue("the write has to carry what was committed");
+        model.ToEventReminders()
+            .SameAs(EventReminders.Explicit([new EventReminder(EventRemindersValidator.PopupMethod, 45)]))
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenInheritanceWasSwitchedOffAndNothingTouched_CommitsNothing()
+    {
+        // The whole safety property. Explicitly-none is a state the family can ask for, and this is
+        // how they ask for it.
+        var model = OnEmptyList();
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.State.Should().Be(ReminderPickerState.ExplicitlyNone);
+        model.Overrides.Should().BeEmpty();
+        model.ToEventReminders().SameAs(EventReminders.ExplicitlyNone).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_OnAnUntouchedTabThatIsStillInheriting_SendsNothingAtAll()
+    {
+        // The golden rule's default: an ordinary title edit must say nothing about reminders, so a
+        // save on a tab nobody opened cannot commit anything.
+        var model = Timed(EventReminders.InheritsCalendarDefault);
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.HasChanged.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("amount")]
+    [InlineData("unit")]
+    [InlineData("method")]
+    public void CommitPendingFormReminder_AfterAnyOneOfTheFormsControlsMoves_CommitsThePendingValue(string control)
+    {
+        var model = OnEmptyList();
+
+        switch (control)
+        {
+            case "amount": model.Amount = 15; break;
+            case "unit": model.Unit = ReminderUnit.Hours; break;
+            default: model.Method = EventRemindersValidator.EmailMethod; break;
+        }
+
+        model.IsFormTouched.Should().BeTrue();
+        model.CommitPendingFormReminder().Should().BeTrue();
+        model.Overrides.Should().Equal(control switch
+        {
+            "amount" => new EventReminder(EventRemindersValidator.PopupMethod, 15),
+            "unit" => new EventReminder(EventRemindersValidator.PopupMethod, 30 * 60),
+            _ => new EventReminder(EventRemindersValidator.EmailMethod, 30)
+        });
+    }
+
+    [Theory]
+    [InlineData("days")]
+    [InlineData("time")]
+    public void CommitPendingFormReminder_OnAnAllDayEventAfterItsOwnControlsMove_CommitsThePendingValue(string control)
+    {
+        // The all-day form carries the same hazard for the same reason: it reads "1 day before at
+        // 09:00 · Notification" before anybody touches it, and its two controls are the ones that
+        // move the pending value there.
+        var model = OnEmptyList(isAllDay: true);
+
+        if (control == "days")
+        {
+            model.DaysBefore = 2;
+        }
+        else
+        {
+            model.TimeOfDay = new TimeOnly(18, 0);
+        }
+
+        model.CommitPendingFormReminder().Should().BeTrue();
+        model.Overrides.Should().Equal(new EventReminder(
+            EventRemindersValidator.PopupMethod,
+            control == "days"
+                ? ReminderPickerModel.ToMinutesBeforeMidnight(2, new TimeOnly(9, 0))
+                : ReminderPickerModel.ToMinutesBeforeMidnight(1, new TimeOnly(18, 0))));
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenAControlIsMovedAndMovedBack_StillCommits()
+    {
+        // The documented choice: touched is sticky. Somebody who dials 45 and settles on 30 has
+        // engaged with the form and is configuring a reminder, not asking for silence — reading them
+        // as untouched again would discard the reminder the screen is offering, which is the defect.
+        var model = OnEmptyList();
+
+        model.Amount = 45;
+        model.Amount = 30;
+
+        model.IsFormTouched.Should().BeTrue();
+        model.CommitPendingFormReminder().Should().BeTrue();
+        model.Overrides.Should().Equal(new EventReminder(EventRemindersValidator.PopupMethod, 30));
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenAControlIsAssignedTheValueItAlreadyHolds_CommitsNothing()
+    {
+        // A change event can fire on a blur that altered nothing, and a no-op is not a choice.
+        var model = OnEmptyList();
+
+        model.Amount = model.Amount;
+        model.Unit = model.Unit;
+        model.Method = model.Method;
+
+        model.IsFormTouched.Should().BeFalse();
+        model.CommitPendingFormReminder().Should().BeFalse();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenTheClampRejectedTheTypedValue_CommitsNothing()
+    {
+        // Typing a day-of reminder into the all-day form is refused by the floor, so the form never
+        // moved. A value that could not reach the form is not a value the family chose.
+        var model = OnEmptyList(isAllDay: true);
+
+        model.DaysBefore = 0;
+
+        model.DaysBefore.Should().Be(ReminderPickerModel.MinimumDaysBefore);
+        model.IsFormTouched.Should().BeFalse();
+        model.CommitPendingFormReminder().Should().BeFalse();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenTheFormHoldsAReminderTheFamilyTookAway_DoesNotHandItBack()
+    {
+        // Adding a reminder and then removing it is the clearest the tab gets about not wanting that
+        // reminder, and the form is left showing it — so committing would undo exactly that.
+        var model = OnEmptyList();
+        model.Amount = 45;
+        model.TryAddSelectedReminder().Should().BeTrue();
+        model.Remove(new EventReminder(EventRemindersValidator.PopupMethod, 45)).Should().BeTrue();
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.State.Should().Be(ReminderPickerState.ExplicitlyNone);
+        model.Overrides.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenADifferentReminderWasTakenAwayAndThisOneConfigured_CommitsIt()
+    {
+        // Taking one reminder away and configuring another is a replacement, not a request for
+        // silence — and leaving the event silent is the defect this commit exists to prevent.
+        var model = Timed(EventReminders.Explicit([new EventReminder(EventRemindersValidator.PopupMethod, 30)]));
+        model.Remove(new EventReminder(EventRemindersValidator.PopupMethod, 30)).Should().BeTrue();
+        model.Amount = 45;
+
+        model.CommitPendingFormReminder().Should().BeTrue();
+
+        model.Overrides.Should().Equal(new EventReminder(EventRemindersValidator.PopupMethod, 45));
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenTheOnlyReminderWasTakenAwayAndNothingConfigured_LeavesTheEventSilent()
+    {
+        // Remove on its own, with the form never touched, is how the family ask for silence.
+        var model = Timed(EventReminders.Explicit([new EventReminder(EventRemindersValidator.PopupMethod, 30)]));
+
+        model.Remove(new EventReminder(EventRemindersValidator.PopupMethod, 30)).Should().BeTrue();
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+        model.State.Should().Be(ReminderPickerState.ExplicitlyNone);
+        model.ToEventReminders().SameAs(EventReminders.ExplicitlyNone).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenAReminderWasAlreadyAdded_DoesNotAddTheFormsPendingOneToo()
+    {
+        // The list in front of the family IS their answer once they have used Add; a second reminder
+        // they can see they did not add is an incidental change.
+        var model = OnEmptyList();
+        model.Amount = 45;
+        model.TryAddSelectedReminder().Should().BeTrue();
+        model.Amount = 90;
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.Overrides.Should().Equal(new EventReminder(EventRemindersValidator.PopupMethod, 45));
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhenTheCalendarsDefaultsWereCopiedIn_CommitsNothingExtra()
+    {
+        // Switching inheritance off pre-fills the calendar's defaults, so the list is not empty and
+        // the family can see exactly what the event will have.
+        var model = Timed(EventReminders.InheritsCalendarDefault);
+        model.StopUsingCalendarDefault();
+        model.Amount = 45;
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.Overrides.Should().Equal(
+            new EventReminder(EventRemindersValidator.PopupMethod, 30),
+            new EventReminder(EventRemindersValidator.EmailMethod, 1440));
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_WhileTheEventStillInheritsButTheFormWasTouched_CommitsNothing()
+    {
+        // Switching inheritance back on is a choice to inherit. Google answers a body carrying both
+        // an inherited and an own reminder with 400 cannotUseDefaultRemindersAndSpecifyOverride, so
+        // committing here would not merely be wrong, it would be rejected.
+        var model = OnEmptyList();
+        model.Amount = 45;
+        model.UseCalendarDefault();
+
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.State.Should().Be(ReminderPickerState.FollowsCalendarDefault);
+        model.HasChanged.Should().BeFalse();
+    }
+
+    [Fact]
+    public void CommitPendingFormReminder_CalledTwice_CommitsOnlyOnce()
+    {
+        // Idempotent by construction: the first commit fills the list, and an empty list is one of
+        // the three conditions. Pinned because a save that is retried must not stack duplicates.
+        var model = OnEmptyList();
+        model.Amount = 45;
+
+        model.CommitPendingFormReminder().Should().BeTrue();
+        model.CommitPendingFormReminder().Should().BeFalse();
+
+        model.Overrides.Should().HaveCount(1);
+    }
 }

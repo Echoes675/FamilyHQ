@@ -51,12 +51,29 @@ Feature: Event Reminders
     And I save the event
     Then the event was saved without mentioning reminders
 
+  # The defect the wording change above was not enough to fix: a family member who takes an event off
+  # its calendar's reminders, configures one on the form and saves without pressing Add gets an event
+  # with no reminders, and nothing tells them. The save now commits what the form describes, because
+  # the alternative is silence they did not ask for. Exactly one reminder, and it is the configured
+  # one — the calendar's usual reminder they took away must not come back with it.
+  Scenario: A reminder configured on the form but never added is saved with the event
+    Given the event "Allergy Jab" in "Appointments" follows the calendar's usual reminders
+    When I take the event "Allergy Jab" off its calendar's reminders without adding one
+    And I configure a reminder 2 hours before without adding it
+    And I save the event
+    Then the event "Allergy Jab" has one reminder 2 hours before when it is opened again
+
   # The sequence a family reported as a reminder that had been set and then did not arrive. Nothing
   # had been set: the Add form describes a reminder from the moment the tab opens, and that
   # description used to sit on a line of its own, in the same voice as the note above it saying the
   # event had none. Saving none was what the family asked for by turning the toggle off, so the save
   # is correct and stays correct — the last step pins that down. What had to change is that the
   # screen stops presenting the form's own starting value as something the event already carries.
+  #
+  # It is also the guard on the scenario above, and the reason that fix is a commit rather than an
+  # unconditional one: the form here is never touched, so the save commits nothing and the event
+  # keeps the no-reminders state the family asked for. If committing ever stopped depending on the
+  # form having been touched, this is the scenario that would fail.
   Scenario: An event taken off its calendar's reminders without adding one is left with none, and says so
     Given the event "Parents Evening" in "Appointments" follows the calendar's usual reminders
     When I take the event "Parents Evening" off its calendar's reminders without adding one
