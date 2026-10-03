@@ -640,6 +640,7 @@ public class CalendarEventService(
         await googleCalendarClient.PatchEventFieldsAsync(
             owner.GoogleCalendarId, master, hash, ct, request.Reminders);
         RecordOutbound(master.GoogleEventId, hash);
+        await ApplySeriesRemindersAsync(master, seriesRows, ct);
     }
 
     /// <summary>
@@ -678,6 +679,60 @@ public class CalendarEventService(
         await googleCalendarClient.PatchEventFieldsPreservingTimesAsync(
             owner.GoogleCalendarId, master, hash, ct, request.Reminders);
         RecordOutbound(master.GoogleEventId, hash);
+        await ApplySeriesRemindersAsync(master, seriesRows, ct);
+    }
+
+    /// <summary>
+    /// Gives the series' own local rows the reminders Google returned for a master patch. Does
+    /// nothing when the write said nothing about reminders, or when Google's answer did not mention
+    /// them.
+    /// </summary>
+    /// <param name="patchedMaster">
+    /// The event the master patch was sent on. It is built for the write and discarded, and the
+    /// client puts Google's answer onto it — so its <c>Reminders</c> is Google's own account of what
+    /// it stored, or null when the write carried none and there was nothing to read back.
+    /// </param>
+    /// <param name="seriesRows">The series' local rows, as they were loaded for this write.</param>
+    /// <remarks>
+    /// <para>
+    /// Without this a reminder edit at all-in-series reached Google and not the rows FamilyHQ holds.
+    /// The reconcile that follows re-fetches the owner's window and does carry reminders per
+    /// instance, which covers most of it — but only for rows inside that window, and the window is
+    /// the one the last FULL sync stored. Incremental syncs neither move it nor confine the rows
+    /// they add to it, so a long-lived calendar accumulates rows outside it, and the window can stop
+    /// covering today altogether. The occurrence the family just edited is in <paramref
+    /// name="seriesRows"/> whatever the window says, which is the case that matters: left stale, the
+    /// modal re-opens on reminders Google no longer holds, and a family member who then switches the
+    /// inheritance toggle writes <c>useDefault:false</c> with an empty overrides array — destroying
+    /// in Google a reminder that had been set successfully.
+    /// </para>
+    /// <para>
+    /// Deliberately Google's answer and not <c>request.Reminders</c>: Google accepts almost any
+    /// reminder with a 200 and then rewrites it — clamping an offset, collapsing a duplicate,
+    /// dropping a method it does not know. The request is what was asked for; this is what is held.
+    /// </para>
+    /// <para>
+    /// Runs BEFORE the reconcile, which is the right precedence rather than a coincidence. The
+    /// reconcile reads each instance's own reminders from Google and keeps the stored value only
+    /// when the fetch says nothing, so for a row Google reports on, its per-instance answer still
+    /// wins — an exception instance may carry reminders of its own that the master's do not describe.
+    /// It also means the reconcile's <c>SaveChanges</c> is what commits these rows, so a reconcile
+    /// that fails leaves them exactly as unsaved as every other field this path writes.
+    /// </para>
+    /// </remarks>
+    private async Task ApplySeriesRemindersAsync(
+        CalendarEvent patchedMaster, IReadOnlyList<CalendarEvent> seriesRows, CancellationToken ct)
+    {
+        if (patchedMaster.Reminders is not { } googleReturned)
+        {
+            return;
+        }
+
+        foreach (var row in seriesRows)
+        {
+            row.Reminders = googleReturned;
+            await calendarRepository.UpdateEventAsync(row, ct);
+        }
     }
 
     /// <summary>

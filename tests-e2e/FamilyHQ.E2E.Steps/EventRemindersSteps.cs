@@ -179,6 +179,15 @@ public class EventRemindersSteps
         await _dashboardPage.SaveOpenEventAsync();
     }
 
+    // Save, then confirm the recurrence-scope prompt with "All events". The whole-series channel is
+    // the one that patches the master, so it is the only way to reach the write this scenario is
+    // about.
+    [When(@"I save the event applying to every occurrence")]
+    public async Task WhenISaveTheEventApplyingToEveryOccurrence()
+    {
+        await _dashboardPage.SubmitEditWithScopeAsync("all");
+    }
+
     [When(@"I ask for a reminder (\d+) days before")]
     public async Task WhenIAskForAReminderDaysBefore(int days)
     {
@@ -197,6 +206,7 @@ public class EventRemindersSteps
     }
 
     [Then(@"the event ""([^""]*)"" still has a reminder (\d+) (minutes|hours) before")]
+    [Then(@"the event ""([^""]*)"" has a reminder (\d+) (minutes|hours) before when it is opened again")]
     public async Task ThenTheEventStillHasAReminderBefore(string title, int amount, string unit)
     {
         await _dashboardPage.OpenEventForEditingAsync(title);

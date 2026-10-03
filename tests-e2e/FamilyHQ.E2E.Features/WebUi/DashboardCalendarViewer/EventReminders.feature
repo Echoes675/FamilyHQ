@@ -130,3 +130,20 @@ Feature: Event Reminders
     And I give the event a reminder 2 hours before
     And I attempt to save the event
     Then I am warned that the change replaces the reminders on every occurrence
+
+  # The warning above is only honest if the change actually lands, and nothing asserted that it did:
+  # a whole-series edit patches the master, and what FamilyHQ then holds for each occurrence decides
+  # what the modal re-opens on and what the reminders timeline lists. Re-opening the event is the
+  # assertion, not a pane being non-empty, so the scenario names the event it is talking about.
+  #
+  # Worth knowing what this does NOT prove. The Simulator reports a series master's reminders on
+  # every expanded instance, as Google does, so the window re-fetch that follows the write carries
+  # them here and this scenario would pass without the master patch applying them itself. What it
+  # cannot reach is a row outside that window — the window is the last full sync's, and a fresh run
+  # has only one. That half is covered by the service's own unit tests.
+  Scenario: A reminder added to every occurrence of a repeating event is there when it is re-opened
+    When I create a weekly recurring event "Piano Lesson" in "Appointments"
+    And I open the event "Piano Lesson" for editing
+    And I give the event a reminder 2 hours before
+    And I save the event applying to every occurrence
+    Then the event "Piano Lesson" has a reminder 2 hours before when it is opened again
