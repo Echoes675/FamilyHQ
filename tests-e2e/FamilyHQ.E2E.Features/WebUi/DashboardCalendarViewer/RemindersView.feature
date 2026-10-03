@@ -86,22 +86,24 @@ Feature: Reminders view
   # say "all sent", and with nothing on a row describing its reminders there is no longer any wording
   # for firing to change. The scenario stays because what it pins is that the row exists at all.
   #
-  # The ONLY scenario here still seeded relative to now, and the only one that should be: "fired, but
-  # not yet happened" is a statement about where now sits, and a fixed clock time cannot put it
-  # between the two when the suite runs at an arbitrary hour. Pick a fixed early time and the event
-  # is behind for most runs; pick a late one and the reminder has not fired yet. The price is that
-  # this scenario alone cannot run in the last 65 minutes before local midnight, and the seeding
-  # step says so outright rather than letting it fail as a missing row.
-  Scenario: An event keeps its row under Today after its last reminder has fired
+  # "Fired, but not yet happened" is a statement about where NOW sits, which is why this scenario was
+  # once seeded relative to the clock — and why it could not run in the last 65 minutes before local
+  # midnight. It does not need to be. An event TOMORROW with a reminder 48 hours before it puts that
+  # reminder YESTERDAY: fired at every hour of today, on an event that has not happened at any hour of
+  # today. Both halves hold whenever the suite runs, so the clock is out of the precondition entirely
+  # rather than merely given a wider margin.
+  #
+  # It files under Tomorrow rather than Today for the same reason, and that costs the scenario nothing:
+  # which pane holds the row is incidental to what it pins, which is that the row exists at all once
+  # every reminder has gone.
+  Scenario: An event keeps its row under Tomorrow after its last reminder has fired
     Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Eye Test" starting in 65 minutes in "Appointments"
+    And the user has a timed event "Eye Test" at "09:00" on "tomorrow" in "Appointments"
     And I login as the user "RemindersViewUser"
     And I view the dashboard
-    When I open the event "Eye Test" for editing
-    And I give the event a reminder 3 hours before
-    And I save the event
-    And I show the reminders view
-    Then the "Today" section has a row for "Eye Test"
+    And the event "Eye Test" on "tomorrow" has been given a reminder 48 hours before
+    When I show the reminders view
+    Then the "Tomorrow" section has a row for "Eye Test"
 
   # The pin for the whole exclusion, and the one case that used to produce a row: the calendar HAS
   # usual reminders, so "Checkup" really will ping the family's phones — it is absent because nobody
