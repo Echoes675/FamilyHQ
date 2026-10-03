@@ -1401,13 +1401,21 @@ body:not([data-theme]) .brand-logo__img--morning {
 }
 
 .reminders-footnote {
-    /* Permanent, not a dismissible alert — see RemindersView.razor for why this line exists at all. */
+    /* Permanent, not a dismissible alert — see RemindersView.razor for why these lines exist at all. */
     margin: 0;
     padding-top: 8px;
     border-top: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
     color: var(--theme-text-muted);
     font-size: 0.8rem;
     line-height: 1.4;
+}
+
+/* Each gap the view admits to gets its own line, but only the first is ruled off from the sections
+   above it: repeating the divider between them would read as a second, unrelated footer rather than
+   as one standing note about what this timeline does not show. */
+.reminders-footnote + .reminders-footnote {
+    padding-top: 2px;
+    border-top: none;
 }
 
 .reminder-row {
@@ -1455,16 +1463,6 @@ body:not([data-theme]) .brand-logo__img--morning {
 .reminder-row__detail {
     color: var(--theme-text-muted);
     font-size: 0.8rem;
-}
-
-.reminder-row__default-tag {
-    flex: 0 0 auto;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 999px;
-    color: var(--theme-text);
-    background: color-mix(in srgb, var(--theme-accent) 20%, transparent);
 }
 
 .reminder-row__people {

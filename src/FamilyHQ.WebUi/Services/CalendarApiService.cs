@@ -213,7 +213,6 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                 d.NextReminderAt,
                 d.NextReminderMinutes,
                 d.NextReminderMethod,
-                d.IsDefault,
                 d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
             .ToList();
     }

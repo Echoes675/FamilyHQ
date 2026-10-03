@@ -57,12 +57,22 @@
     <p class="reminders-footnote" data-testid="reminders-allday-footnote">
         All-day reminders set for the day itself aren't shown — Google doesn't share them.
     </p>
+    @* The second standing gap, and permanent for the same reason as the first: this view lists only
+       reminders somebody set on an event, so an event following its calendar's usual ones is left out
+       even though its phone will ping (RemindersController.RowFor). The family chose that exclusion
+       knowing it under-reports, on the condition that the view says so — a timeline that looks
+       complete and is not is the exact failure this feature exists to prevent. Not clutter to tidy
+       away, and not conditional: with nothing inherited on screen there is nothing to tell the family
+       the line is about, which is precisely when they would read the list as the whole truth. *@
+    <p class="reminders-footnote" data-testid="reminders-inherited-footnote">
+        Events that just use their calendar's usual reminders aren't listed here.
+    </p>
 </div>
 
 @code {
     /// <summary>
-    /// The flat list of event rows to file and render — one per event that has reminders, never one
-    /// per reminder. Empty renders the no-reminders state.
+    /// The flat list of event rows to file and render — one per event whose reminders were set on the
+    /// event itself, never one per reminder. Empty renders the no-reminders state.
     /// </summary>
     [Parameter, EditorRequired]
     public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();

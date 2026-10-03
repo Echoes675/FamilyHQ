@@ -1,8 +1,8 @@
 namespace FamilyHQ.Core.DTOs;
 
 /// <summary>
-/// One row of the reminders timeline: an event that HAS reminders, filed by when the EVENT itself
-/// happens rather than by any one reminder's own trigger instant.
+/// One row of the reminders timeline: an event whose reminders were set ON THE EVENT, filed by when
+/// the EVENT itself happens rather than by any one reminder's own trigger instant.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,6 +21,15 @@ namespace FamilyHQ.Core.DTOs;
 /// <see cref="NextReminderAt"/> once it passes; a fresh fetch is required instead (see the reminders
 /// timeline's per-minute tick in <c>Index.razor</c>). Carrying every ping's trigger would avoid that
 /// refetch at the cost of reintroducing the per-ping payload this shape was built to drop.
+/// </para>
+/// <para>
+/// <b>There is no "inherited" row, so there is no field saying a row is one.</b> An event that merely
+/// follows its calendar's usual reminders produces no row at all (see <c>RemindersController.RowFor</c>
+/// for why that is the requirement rather than an oversight), so every row that exists carries
+/// reminders somebody set on the event itself. A flag distinguishing the two could only ever hold one
+/// value here, which is why this shape has none — it is not that inheritance stopped mattering, only
+/// that it is settled before a row is built. The event modal still tells the family where an event's
+/// reminders came from, and the four stored reminder states stay distinguishable in the model.
 /// </para>
 /// <para>
 /// <b>A row outlives its own reminders.</b> The three "next reminder" values are nullable because a
@@ -67,12 +76,6 @@ namespace FamilyHQ.Core.DTOs;
 /// when <see cref="NextReminderAt"/> is, and the row then renders no method glyph rather than a
 /// stand-in for one.
 /// </param>
-/// <param name="IsDefault">
-/// Whether this event's reminders come from the calendar's default rather than overrides of its own.
-/// One value for the whole event, and known even when nothing is still pending:
-/// <c>ReminderPingCalculator.EffectiveReminders</c> resolves inheritance once per event, so every one
-/// of its pings agrees on this and any of them can be asked.
-/// </param>
 /// <param name="Members">The people the event is shared with, for the row's chips.</param>
 public sealed record UpcomingReminderEventDto(
     Guid EventId,
@@ -83,5 +86,4 @@ public sealed record UpcomingReminderEventDto(
     DateTimeOffset? NextReminderAt,
     int? NextReminderMinutes,
     string? NextReminderMethod,
-    bool IsDefault,
     IReadOnlyList<ReminderMemberDto> Members);

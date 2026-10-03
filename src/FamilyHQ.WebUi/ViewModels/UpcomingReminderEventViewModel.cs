@@ -1,8 +1,8 @@
 namespace FamilyHQ.WebUi.ViewModels;
 
 /// <summary>
-/// One row in the Reminders timeline: an event that HAS reminders, filed by when the EVENT happens
-/// rather than by any one reminder's own trigger instant. Mirrors
+/// One row in the Reminders timeline: an event whose reminders were set ON THE EVENT, filed by when
+/// the EVENT happens rather than by any one reminder's own trigger instant. Mirrors
 /// <see cref="FamilyHQ.Core.DTOs.UpcomingReminderEventDto"/> field for field — see its own remarks for
 /// why the row carries only the soonest upcoming reminder rather than every one, and why that one is
 /// nullable.
@@ -34,10 +34,6 @@ namespace FamilyHQ.WebUi.ViewModels;
 /// The soonest still-upcoming reminder's delivery method. Null exactly when
 /// <see cref="NextReminderAt"/> is, and the row then shows no method glyph.
 /// </param>
-/// <param name="IsDefault">
-/// Whether this event's reminders come from the calendar's default rather than overrides of its own.
-/// Known for the whole event, so still answerable once every reminder has fired.
-/// </param>
 /// <param name="Members">The people the event is shared with, for the row's chips.</param>
 public sealed record UpcomingReminderEventViewModel(
     Guid EventId,
@@ -48,5 +44,4 @@ public sealed record UpcomingReminderEventViewModel(
     DateTimeOffset? NextReminderAt,
     int? NextReminderMinutes,
     string? NextReminderMethod,
-    bool IsDefault,
     IReadOnlyList<ReminderMemberViewModel> Members);

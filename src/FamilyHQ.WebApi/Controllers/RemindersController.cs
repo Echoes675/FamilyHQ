@@ -31,11 +31,12 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// Every event, across every calendar, that HAS reminders and starts between now and the end of
-    /// next month — filed by when the EVENT happens, never by when any one of its reminders fires. An
-    /// event with several reminders due at very different lead times (the family's own example: one
-    /// every day for the week before it) still produces exactly one row, in the section containing
-    /// its own start, and keeps that row after its last reminder has gone off.
+    /// Every event, across every calendar, whose reminders were deliberately set on the event itself
+    /// and which starts between now and the end of next month — filed by when the EVENT happens,
+    /// never by when any one of its reminders fires. An event with several reminders due at very
+    /// different lead times (the family's own example: one every day for the week before it) still
+    /// produces exactly one row, in the section containing its own start, and keeps that row after
+    /// its last reminder has gone off.
     /// </summary>
     [HttpGet("upcoming")]
     public async Task<IActionResult> GetUpcoming(CancellationToken ct)
@@ -89,10 +90,11 @@ public class RemindersController : ControllerBase
     }
 
     /// <summary>
-    /// One event's row, or null when it will never produce a notification at all. That single
-    /// exclusion is <see cref="ReminderPingCalculator"/>'s: an event computes no pings when it was
-    /// never synced, when its reminders were explicitly removed, or when it inherits from a calendar
-    /// with no defaults of its own.
+    /// One event's row, or null when this view does not report the event. There are two exclusions,
+    /// for two different reasons: the first is deliberate scope — an event that merely inherits its
+    /// calendar's reminders is left out although it really will ping, which the filter below explains
+    /// — and the second is <see cref="ReminderPingCalculator"/>'s, which computes no pings for an
+    /// event that was never synced or whose reminders were explicitly removed.
     /// </summary>
     /// <remarks>
     /// Having already fired is NOT an exclusion. A row is filed by the event's start, so it has to
@@ -114,12 +116,33 @@ public class RemindersController : ControllerBase
         // entry — outranks the family's FamilyHQ setting. The setting is a fallback for data Google
         // did not supply, never a substitute for data it did (AGENTS.md's golden rule); using it
         // ahead of a zone Google actually sent would anchor an all-day reminder to the wrong midnight
-        // for no reason other than convenience. The calendar list is already loaded for the default
-        // reminders below, so consulting it here costs no extra query.
+        // for no reason other than convenience. The calendar list is already loaded for this row's
+        // member chips, so consulting it here costs no extra query.
         var anchorZone = TryFindZone(owner?.IanaTimeZone) ?? familyZone;
 
-        // Reminders==null (never synced), ExplicitlyNone, and "inherits from a calendar with no
-        // defaults" are all handled inside Compute — nothing here re-implements those exclusions.
+        // The subject of this view is reminders somebody DELIBERATELY set on an event. An event that
+        // merely follows its calendar's usual reminders is therefore out of scope — knowingly, and
+        // even though its phone really will ping. That makes the timeline under-report what Google
+        // will do, which is why the view carries a permanent footnote admitting it: the family chose
+        // to own that gap rather than fill the panel with every event nobody asked to be reminded
+        // about. Letting inherited events back in would turn that footnote into a lie, so an
+        // inherited ping missing from this list is the requirement, not a bug.
+        //
+        // Checked BEFORE Compute rather than left to fall out of an empty ping list, because an
+        // inheriting event on a calendar that HAS defaults does produce pings: it is excluded on
+        // intent, not for want of a notification. The filter also belongs to this endpoint alone —
+        // ReminderPingCalculator is shared, and has to keep all four reminder states resolvable for
+        // the event modal, which still shows an inherited reminder for what it is.
+        //
+        // No all-day special case is needed, and adding one would be wrong: Google materialises a
+        // calendar's defaults onto an all-day event rather than letting it inherit, so a birthday or
+        // bin-day event arrives carrying explicit overrides and this filter never sees it.
+        if (evt.Reminders is { UseDefault: true }) return null;
+
+        // Reminders==null (never synced) and ExplicitlyNone are handled inside Compute — nothing here
+        // re-implements those exclusions. The owner's defaults are still handed over even though the
+        // filter above leaves Compute no inheriting event to consult them for: what an inheriting
+        // event resolves to is Compute's contract to define, not this call site's to pre-empt.
         var pings = ReminderPingCalculator.Compute(evt.Start, evt.IsAllDay, evt.Reminders, owner?.DefaultReminders, anchorZone);
         if (pings.Count == 0) return null;
 
@@ -131,11 +154,7 @@ public class RemindersController : ControllerBase
             evt.Id, evt.Title, evt.Start, evt.IsAllDay,
             // The TOTAL, not how many are left: see the DTO's own remarks on why a count that decays
             // as the event approaches is the wrong number to show the family.
-            pings.Count, next?.TriggerAt, next?.Minutes, next?.Method,
-            // Read off any ping rather than off `next`, which may be null — inheritance is resolved
-            // once per event, so every ping carries the same answer and the row can still be tagged
-            // as the calendar's default after the last one has fired.
-            pings[0].IsDefault, members);
+            pings.Count, next?.TriggerAt, next?.Minutes, next?.Method, members);
     }
 
     /// <summary>
