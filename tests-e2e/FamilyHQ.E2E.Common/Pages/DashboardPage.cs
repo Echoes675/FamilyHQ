@@ -1960,6 +1960,14 @@ public class DashboardPage : BasePage
     // were set separately. Google does the same; the prompt says so first.
     private ILocator ScopePromptReminderWarning => Page.GetByTestId("recurrence-scope-reminder-warning");
 
+    // The two things the inheriting panel can say when it has no list to show. They are addressed by
+    // testid rather than by their copy because which of the two appears is the assertion: one says
+    // the calendar has no usual reminders, the other that they could not be read. Telling a family
+    // the first when the second is true is how an event's real reminders get saved away.
+    private ILocator ReminderDefaultNone => RemindersSection.GetByTestId("reminder-default-none");
+    private ILocator ReminderDefaultUnavailable =>
+        RemindersSection.GetByTestId("reminder-default-unavailable");
+
     private ILocator ReminderRow(string method, int minutes) => RemindersSection.Locator(
         $"[data-testid='reminder-item'][data-reminder-method='{method}'][data-reminder-minutes='{minutes}']");
 
@@ -2067,6 +2075,38 @@ public class DashboardPage : BasePage
         await Assertions.Expect(ReminderUseDefaultToggle)
             .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
         await Assertions.Expect(CalendarDefaultRow(method, minutes)).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the event follows its calendar's usual reminders and that the tab states the calendar
+    /// has none of its own — so following them notifies nobody.
+    /// </summary>
+    /// <remarks>
+    /// The second assertion is the half that cannot be dropped. Both messages render in the same
+    /// place for the same reason (there is no list to show), so asserting only that the "none"
+    /// message is present would pass again the moment the two states are collapsed back into one.
+    /// </remarks>
+    public async Task AssertCalendarHasNoUsualRemindersStatedAsync()
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultNone).ToBeVisibleAsync(new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultUnavailable).ToHaveCountAsync(0, new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the event follows its calendar's usual reminders and that the tab states they could
+    /// not be read — Google still applies them, so the tab must not claim the event has none.
+    /// </summary>
+    /// <remarks>The mirror of <see cref="AssertCalendarHasNoUsualRemindersStatedAsync"/>.</remarks>
+    public async Task AssertCalendarUsualRemindersUnreadableStatedAsync()
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultUnavailable).ToBeVisibleAsync(new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultNone).ToHaveCountAsync(0, new() { Timeout = 5000 });
     }
 
     /// <summary>
