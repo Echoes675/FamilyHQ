@@ -13,10 +13,11 @@ Feature: Reminders view
   usual reminders is left out although its phone really will go off, because the subject of this view
   is reminders somebody deliberately set; the family chose that, knowing it under-reports, on the
   condition that the view says so in a permanent footnote. An event whose reminders were removed, and
-  one inheriting from a calendar with no defaults, do not appear either. All-day events are NOT
-  caught by the inherited exclusion and must keep appearing: Google materialises a calendar's
-  defaults onto an all-day event instead of letting it inherit, so a birthday or bin-day event
-  arrives carrying reminders of its own.
+  one inheriting from a calendar with no defaults, do not appear either. An all-day event as Google
+  CREATES it is NOT caught by the inherited exclusion and must keep appearing: Google materialises a
+  calendar's defaults onto it instead of letting it inherit, so a birthday or bin-day event arrives
+  carrying reminders of its own. (The kiosk's own All-day toggle can send a revert-to-default body
+  on an all-day event; what Google returns for that is recorded, not yet known — preprod smoke RM4.)
 
   A reminder having already fired is not a reason to drop a row — on the day of an event its
   reminders have usually all gone off, which is exactly when the family needs the row most, so it
@@ -79,11 +80,14 @@ Feature: Reminders view
   #
   # "Swim Lesson" is a control, not decoration. Without it the Then would pass just as well if the
   # sync never ran, the tab never rendered or the whole timeline came back empty — the scenario would
-  # stop being able to fail for the reason it exists for. One event with a reminder of its own must
-  # be listed in the same view that leaves the inheriting one out. Seeded at the same 65 minutes as
-  # "Checkup" deliberately: a scenario's widest seeding offset is what decides how close to local
-  # midnight it can still run, so matching the offset adds a control without costing any of that
-  # margin.
+  # stop being able to fail for the reason it exists for. One event whose reminders were set on the
+  # event itself must be listed in the same view that leaves the inheriting one out. It ends up with
+  # TWO of them, not one: switching inheritance off copies the calendar's 45-minute default in as an
+  # editable row before the 30 is added (the gotcha is documented in e2e-testing-maintenance.md).
+  # Harmless here, because the Then asserts the row's presence and nothing about its count — but two
+  # is what is on screen. Seeded at the same 65 minutes as "Checkup" deliberately: a scenario's
+  # widest seeding offset is what decides how close to local midnight it can still run, so matching
+  # the offset adds a control without costing any of that margin.
   #
   # The explicit two-step flip (own reminder first, then explicitly ask for the calendar's usual
   # ones) is used rather than a bare untouched create — not because a bare create would fail to reach
@@ -118,9 +122,14 @@ Feature: Reminders view
     And I show the reminders view
     Then no row names "Quiet Visit" anywhere in the reminders view
 
-  # Same reasoning as the scenario above: the explicit flip reaches the follows-default state
-  # (Compute's empty-overrides branch, for a calendar with no defaults of its own) through a write
-  # this scenario makes directly, rather than depending on what a bare create happens to persist.
+  # Same reasoning as the scenario above: the explicit flip reaches the follows-default state through
+  # a write this scenario makes directly, rather than depending on what a bare create happens to
+  # persist. Both scenarios land on that same follows-default state, which RemindersController.RowFor
+  # excludes BEFORE ReminderPingCalculator.Compute is called — so neither one reaches Compute's own
+  # empty-overrides branch, and this scenario does not cover a different branch from the one above.
+  # That branch is pinned at the unit level, by
+  # ReminderPingCalculatorTests.Compute_WhenTheEventInheritsAndTheCalendarHasNoDefaults_ProducesNothing.
+  # A second origin for the same state is still worth having, which is why the scenario stays.
   Scenario: An event inheriting from a calendar with no defaults never appears
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Bin Day" starting in 65 minutes in "Chores"

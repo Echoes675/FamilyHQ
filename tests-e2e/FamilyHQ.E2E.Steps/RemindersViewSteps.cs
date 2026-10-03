@@ -274,7 +274,7 @@ public class RemindersViewSteps
     {
         var count = await _dashboardPage.CountReminderRowsForTitleAsync(title);
 
-        count.Should().Be(0, $"'{title}' will never have a reminder due, so the timeline must not carry a row for it.");
+        count.Should().Be(0, $"'{title}' is not an event this view reports, so the timeline must not carry a row for it.");
     }
 
     [Then(@"the reminders view says there is nothing coming up")]
