@@ -199,6 +199,33 @@ public class RemindersControllerTests
     }
 
     [Fact]
+    public async Task UpcomingReminders_WhenAnEventStartedEarlierToday_KeepsItsRowForTheRestOfTheDay()
+    {
+        // The window's near edge is local MIDNIGHT, not "now", which is what keeps an event listed for
+        // the whole of its own day: a 09:00 event is still reported at 20:00. Anchoring the near edge to
+        // `now` would drop an event out of Today the moment it began — the panel the family looks at
+        // most, and the one place a disappearing row is most likely to be read as the event being
+        // cancelled. By 20:00 its only reminder has long fired, so this also pins that the two
+        // conditions compose: a start in the past AND nothing left pending still produces a row.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 20, 0, 0, TimeSpan.Zero));
+
+        var startedThisMorning = EventWith(
+            new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { startedThisMorning });
+
+        var rows = await GetRows(sut);
+
+        var row = rows.Should().ContainSingle().Subject;
+        row.EventStart.Should().Be(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero),
+            "the client files by the event's own start, which is what holds the row under Today all day");
+        row.NextReminderAt.Should().BeNull("its one reminder fired at 08:30, eleven and a half hours ago");
+        row.ReminderCount.Should().Be(1, "the count is the event's total, not the number still to come");
+    }
+
+    [Fact]
     public async Task UpcomingReminders_ExcludesAnEventStartingOnOrAfterTheEndOfNextMonth()
     {
         var (repository, _, clock, sut) = CreateSut();
