@@ -416,31 +416,54 @@ clearest case. That half is asserted against real Google in the preprod smoke su
   it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
   needs.
 
-### Reminders view — `RemindersView.feature` (15 scenarios)
+### Reminders view — `RemindersView.feature` (16 scenarios)
 
-The fourth dashboard tab's standalone timeline of events that have reminders — one row per EVENT,
-filed by when the event itself starts — as distinct from the event modal's own Reminders tab above
-(which edits one event's reminders). Covers: the tab existing alongside Month without becoming the
-default; a reminder of its own showing its lead and its event's start; an inherited reminder carrying
-the default tag; an explicitly-removed reminder and an event inheriting from a calendar with no
-defaults both never appearing; an event whose last reminder has already fired keeping its row and
-reading "all sent"; two reminders on one event filing as **one** row that names how many it has; an
-event with widely-spaced reminders (one soon, one over two weeks out) appearing exactly once, under
-its own start and in no other section; a shared event's row naming the people it is shared with
-rather than the shared calendar; tomorrow's event staying under Tomorrow rather than This week; an
-empty section collapsing to one line; the fully-empty view stating it plainly; the permanent all-day
-footnote; tapping a row opening that event on its Reminders tab (fetched by id, since the row's event
-may sit in a month the dashboard has never loaded); and leaving the tab for another view, which
-exercises the enter/leave path a closed tick-loop race guards but which no other scenario (and no
-bUnit, which this repo does not have) touches.
+The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
+one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
+Reminders tab above (which edits one event's reminders). Covers: the tab existing alongside Month
+without becoming the default; a reminder of its own showing its lead and its event's start; an event
+following its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
+inheriting from a calendar with no defaults both never appearing; an event whose last reminder has
+already fired keeping its row and reading "all sent"; two reminders on one event filing as **one** row
+that names how many it has; an event with widely-spaced reminders (one soon, one over two weeks out)
+appearing exactly once, under its own start and in no other section; a shared event's row naming the
+people it is shared with rather than the shared calendar; tomorrow's event staying under Tomorrow
+rather than This week; an empty section collapsing to one line; the fully-empty view stating it
+plainly; both permanent footnotes (all-day, and the one admitting the inherited exclusion); tapping a
+row opening that event on its Reminders tab (fetched by id, since the row's event may sit in a month
+the dashboard has never loaded); and leaving the tab for another view, which exercises the enter/leave
+path a closed tick-loop race guards but which no other scenario (and no bUnit, which this repo does
+not have) touches.
+
+**There is no default-tag coverage any more, because there is no default tag.** The view lists only
+events whose reminders were set on the event itself, so an inheriting event produces no row to label
+— the DTO, the view model, the pill and the row's `data-is-default` attribute all went with it. What
+replaced that scenario asserts the inheriting event is *absent*, and the footnote scenario asserts
+the view says so. Both halves are the requirement: the exclusion is known to under-report what Google
+will do, and was accepted only on condition the view admits it, so a reworded or removed footnote is
+as much a failure as a missing exclusion.
+
+**An absence scenario needs a control event in the same view.** "An event following its calendar's
+usual reminders never appears" seeds a second event with a reminder of its own and asserts *that* one
+is listed. Without it the scenario would pass just as well if the sync never ran or the tab rendered
+empty — it would stop being able to fail for the reason it exists for. The same shape is worth
+copying for any new negative assertion here.
+
+**The exclusion does not hide all-day events, and must not be "fixed" to spare them.** Google
+materialises a calendar's defaults onto an all-day event rather than letting it inherit, so a
+birthday or bin-day event arrives carrying explicit overrides and the uniform filter never sees it.
+That property is pinned at the unit level
+(`RemindersControllerTests.UpcomingReminders_StillListsAnAllDayEventCarryingTheMaterialisedCalendarDefaults`)
+rather than here, because the Simulator is a test double for Google's create response and a green
+scenario would not be evidence about what Google actually sends.
 
 **Address a row by its `data-event-id`, never by position.** The view sorts by event start, which
 depends on seeding order rather than on anything Google guarantees, so a row's position is not a
 stable identifier — the same rule, and the same reason, as the modal's Reminders tab rows. One row
 per event means the id alone identifies it. `DashboardPage.ReadReminderRowsAsync` reads a section's
-rows as `ReminderRowSnapshot`s carrying that id, the default flag and the row's text for assertions
-to key off; the row's own start time is read separately, off the leading column, so that an
-assertion about it cannot be satisfied by some other time rendered elsewhere in the row.
+rows as `ReminderRowSnapshot`s carrying that id and the row's text for assertions to key off; the
+row's own start time is read separately, off the leading column, so that an assertion about it cannot
+be satisfied by some other time rendered elsewhere in the row.
 
 **A "today" scenario cannot run close to local midnight.** A row is filed by its event's start, so an
 event seeded N minutes from now files under Tomorrow once "now" is within N minutes of midnight,
