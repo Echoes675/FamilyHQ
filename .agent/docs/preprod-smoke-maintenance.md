@@ -215,7 +215,7 @@ Never add a `cat` of the env file, an `echo` of a matched line, or an interpolat
 
 | What | Where |
 |---|---|
-| Test results | Published **once**, in the pipeline-level `post`, with a single `mstest` step over `**/smoke-*-results.trx` — so all 47 tests appear on the build's **Tests** page instead of by scrolling the console. See [why the results are published once](#why-the-results-are-published-once). |
+| Test results | Published **once**, in the pipeline-level `post`, with a single `mstest` step over `**/smoke-*-results.trx` — so all 48 tests appear on the build's **Tests** page instead of by scrolling the console. See [why the results are published once](#why-the-results-are-published-once). |
 | Failure screenshots | Archived as build artifacts from `**/TestResults/smoke-artifacts/*.png` in the same `post` (`allowEmptyArchive`, because preflight never drives a browser and so never produces one). One per failed kiosk scenario, named `<scenario>-<shortid>.png`. |
 | Console output | `--logger "console;verbosity=detailed"`, so each scenario's correlation id and any `kiosk console:` lines are in the log to search Seq with. |
 
@@ -383,7 +383,8 @@ failure names the days that escaped.
 #### The budget
 
 Every block comes out of `Smoke__SyncHorizonDays` (365), less two weeks of headroom — so roughly **351 days**
-for the whole suite. The 47 scenarios currently reserve about **331** of them. There is room, not much of it,
+for the whole suite. The suite currently reserves about **331** of them — the 41 kiosk scenarios
+only; the 7 preflight checks drive no browser and reserve nothing. There is room, not much of it,
 and `SmokeScenarioDays.Reserve` throws with an actionable message rather than overrunning quietly. If you add
 scenarios and it fires, reclaim room before widening the horizon: the cheapest room is a scenario reserving
 more days than its events cover.
