@@ -55,7 +55,7 @@ public class ReminderPingCalculatorTests
     }
 
     [Fact]
-    public void Compute_WhenTheEventInheritsAndTheCalendarHasDefaults_UsesThemAndFlagsThem()
+    public void Compute_WhenTheEventInheritsAndTheCalendarHasDefaults_UsesThem()
     {
         var start = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
 
@@ -65,8 +65,8 @@ public class ReminderPingCalculatorTests
         pings.Should().ContainSingle();
         pings[0].TriggerAt.Should().Be(start.AddMinutes(-45));
         pings[0].Minutes.Should().Be(45,
-            "an inheriting event resolves to the calendar's defaults, which is what the event modal " +
-            "shows the family when the inherit toggle is on");
+            "an inheriting event resolves to the calendar's defaults — those are the pings its phone " +
+            "will actually make, which is the only question Compute answers");
     }
 
     [Fact]

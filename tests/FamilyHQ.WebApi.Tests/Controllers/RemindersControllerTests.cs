@@ -372,6 +372,11 @@ public class RemindersControllerTests
         // appear. That is why the separately named "still tags an inheriting event as default once
         // every reminder has fired" test this replaces is gone rather than inverted — both moments
         // are now the same single fact.
+        //
+        // The third event is a CONTROL and not decoration, the same rule this view's E2E absence
+        // scenarios follow: asserting an empty list proves nothing on its own, because a broken
+        // query window, a mis-set clock or a repository stub that returned nothing would all satisfy
+        // it. Exactly one row must survive, and it must be the one carrying reminders of its own.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
@@ -385,23 +390,31 @@ public class RemindersControllerTests
         var defaultAlreadyFired = EventWith(
             new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero),
             EventReminders.InheritsCalendarDefault, title: "Eye Test");
+        var ownReminder = EventWith(
+            new DateTimeOffset(2026, 3, 10, 13, 0, 0, TimeSpan.Zero),
+            Explicit(("popup", 30)), title: "Parents Evening");
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { defaultStillAhead, defaultAlreadyFired });
+            .ReturnsAsync(new List<CalendarEvent> { defaultStillAhead, defaultAlreadyFired, ownReminder });
 
         var rows = await GetRows(sut);
 
-        rows.Should().BeEmpty(
-            "neither event's reminders were set on the event itself, so this view does not report them");
+        rows.Should().ContainSingle(
+                "the control event's reminders were set on the event itself, and a surviving row is " +
+                "what stops the two exclusions passing for a reason that has nothing to do with them")
+            .Which.EventTitle.Should().Be("Parents Evening",
+                "neither inheriting event's reminders were set on the event, so this view does not " +
+                "report them — whether their calendar's default is still ahead or has already fired");
     }
 
     [Fact]
     public async Task UpcomingReminders_StillListsAnEventWithRemindersOfItsOwnOnACalendarThatHasDefaults()
     {
-        // The other half of the exclusion above, and the reason it is a test of its own: the filter
-        // reads the EVENT's reminder state, not whether its calendar happens to have defaults. A
-        // filter keyed on the calendar instead would still pass the exclusion test and would silently
-        // empty the timeline for every family that has set calendar-wide defaults.
+        // The other half of the exclusion above, and still a test of its own because it is the one
+        // that checks the row's VALUES rather than only its existence: the lead, the method and the
+        // trigger instant must all come from the event's own 45 minutes and never from the
+        // calendar's 15. The exclusion test proves such an event survives the filter; this proves
+        // the surviving row then describes the right reminder.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
