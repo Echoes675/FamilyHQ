@@ -299,7 +299,12 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
         var found = await SmokeLookup.WaitForGoogleAsync(
             state,
             state.EventDate,
-            candidates => candidates.Count == 1 && candidates[0].Event.Reminders?.UseDefault != true,
+            // `is { UseDefault: false }`, not `?.UseDefault != true`: the latter is also satisfied by
+            // Reminders being absent altogether, which is not the state this scenario is waiting for
+            // and which the assertion below then dereferences. Requiring the state outright means an
+            // event Google reports without reminders times out with the message below rather than
+            // failing on a null.
+            candidates => candidates.Count == 1 && candidates[0].Event.Reminders is { UseDefault: false },
             "Google never stopped showing this event as following its calendar's own reminders after the "
             + "kiosk took it off them. An event left inheriting keeps alerting the family at times they "
             + "have just given up, and the kiosk shows them a state Google does not hold");

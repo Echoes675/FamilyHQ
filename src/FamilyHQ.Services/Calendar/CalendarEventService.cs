@@ -1624,8 +1624,19 @@ public class CalendarEventService(
         // Not an answer — no sync has reported this event's reminders yet.
         null => "never-synced",
         { UseDefault: true } => "inherits-default",
-        { Overrides.Count: 0 } => "explicitly-none",
-        { Overrides.Count: var count } => $"explicit-with-{count.ToString(CultureInfo.InvariantCulture)}"
+        // `Overrides: null` is matched explicitly rather than left to the arms below. A property
+        // pattern does not throw on a null sub-property, it fails to match, so without this arm the
+        // switch is non-exhaustive for that shape and would throw SwitchExpressionException.
+        //
+        // Nothing reaches here with a null Overrides today: `EventContentHash.Canonicalise` orders
+        // the same list earlier in this method and throws first, before the event is patched to
+        // Google. The arm is insurance, not a live path — but the insurance is worth carrying,
+        // because this line sits AFTER the write and its only job is to observe one. If the earlier
+        // throw ever moves or is made tolerant, a non-exhaustive switch here would start failing
+        // requests whose work had already succeeded, and a retry would duplicate the event.
+        { Overrides: null or { Count: 0 } } => "explicitly-none",
+        var explicitReminders =>
+            $"explicit-with-{explicitReminders.Overrides.Count.ToString(CultureInfo.InvariantCulture)}"
     };
 
     /// <param name="remindersSent">

@@ -82,6 +82,36 @@ public class CalendarEventServiceReminderAuditTests
     }
 
     [Fact]
+    public async Task UpdateAsync_RemindersWithNullOverrides_FailsBeforeAnythingReachesGoogle()
+    {
+        // `Overrides` is documented never-null and carries an initialiser, but it is an `init`
+        // property on a type deserialised from request bodies and from an EF JSON column, and a
+        // literal `"overrides": null` bypasses an initialiser. Nothing validates it away, so the
+        // request does reach the service.
+        //
+        // What matters is not that it fails — malformed input should — but WHERE. It fails while
+        // hashing the event's content, which happens before the event is patched to Google, so the
+        // request cannot leave a write that succeeded behind a response that reported failure. That
+        // ordering is the property worth pinning: a retry after this error cannot duplicate anything,
+        // because nothing was written.
+        var f = new Fixture();
+        f.ArrangeSingleEvent(storedReminders: EventReminders.InheritsCalendarDefault);
+
+        var malformed = new EventReminders { UseDefault = false, Overrides = null! };
+
+        var act = async () => await f.Sut.UpdateAsync(EventId, UpdateReq(malformed));
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+        f.Google.Verify(
+            g => g.PatchEventFieldsAsync(
+                It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()),
+            Times.Never,
+            "the failure must come before the write, or a caller retrying it would duplicate the event");
+        f.ReminderLines.Should().BeEmpty("nothing was decided about reminders, because nothing was written");
+    }
+
+    [Fact]
     public async Task UpdateAsync_ReminderWrite_RecordsTheStateTheEventHeldBeforeIt_NotGooglesAnswer()
     {
         // The client replaces the event's reminders with what Google stored, so a state read after
@@ -106,6 +136,8 @@ public class CalendarEventServiceReminderAuditTests
     private sealed class Fixture
     {
         private readonly Mock<IGoogleCalendarClient> _google = new();
+
+        internal Mock<IGoogleCalendarClient> Google => _google;
         private readonly Mock<ICalendarRepository> _repo = new();
         private readonly List<string> _informationLines = [];
 
