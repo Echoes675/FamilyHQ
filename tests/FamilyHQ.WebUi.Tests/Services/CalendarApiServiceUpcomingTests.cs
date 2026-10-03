@@ -46,7 +46,7 @@ public class CalendarApiServiceUpcomingTests
         var dto = new UpcomingReminderEventDto(
             EventId, "Dentist", FixedStart, EventIsAllDay: false,
             ReminderCount: 2, FixedNextReminder, NextReminderMinutes: 15, NextReminderMethod: "popup",
-            IsDefault: false, [new ReminderMemberDto("Alice", "#ff0000")]);
+            [new ReminderMemberDto("Alice", "#ff0000")]);
         var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
@@ -60,7 +60,6 @@ public class CalendarApiServiceUpcomingTests
         row.NextReminderAt.Should().Be(FixedNextReminder);
         row.NextReminderMinutes.Should().Be(15);
         row.NextReminderMethod.Should().Be("popup");
-        row.IsDefault.Should().BeFalse();
         var member = row.Members.Should().ContainSingle().Subject;
         member.DisplayName.Should().Be("Alice");
         member.Color.Should().Be("#ff0000");
@@ -76,7 +75,7 @@ public class CalendarApiServiceUpcomingTests
         var dto = new UpcomingReminderEventDto(
             EventId, "Dentist", FixedStart, EventIsAllDay: false,
             ReminderCount: 1, FixedNextReminder, NextReminderMinutes: 10, NextReminderMethod: "sms",
-            IsDefault: true, []);
+            []);
         var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
@@ -94,7 +93,7 @@ public class CalendarApiServiceUpcomingTests
         var dto = new UpcomingReminderEventDto(
             EventId, "Dentist", FixedStart, EventIsAllDay: false,
             ReminderCount: 3, NextReminderAt: null, NextReminderMinutes: null, NextReminderMethod: null,
-            IsDefault: true, []);
+            []);
         var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
 
         var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
@@ -104,7 +103,6 @@ public class CalendarApiServiceUpcomingTests
         row.NextReminderMinutes.Should().BeNull();
         row.NextReminderMethod.Should().BeNull();
         row.ReminderCount.Should().Be(3, "the count is what the event carries, not what is left to come");
-        row.IsDefault.Should().BeTrue("where the reminders came from does not stop being true once they fire");
     }
 
     [Fact]

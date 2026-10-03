@@ -12,14 +12,15 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 
 /// <summary>
 /// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is one EVENT
-/// that has reminders, filed by <c>EventStart</c>, never one row per reminder — so what is worth
-/// testing deliberately here is: an event with several reminders still produces exactly one row
-/// naming how many it has and when the next one fires; a row survives its own reminders, because by
-/// the time an event starts they have usually all gone off and the family still needs the row;
-/// <c>ReminderCount</c> is the total rather than a countdown, which only shows once one has fired;
-/// the query window has no reminder-lead tail any more (filing by event start removed the reason for
-/// one); and the owning calendar's own zone beats the family's configured one when anchoring an
-/// all-day reminder.
+/// whose reminders were set ON THE EVENT, filed by <c>EventStart</c>, never one row per reminder — so
+/// what is worth testing deliberately here is: an event that merely inherits its calendar's usual
+/// reminders yields no row at all, while one carrying overrides of its own on that same calendar
+/// still does; an event with several reminders still produces exactly one row naming how many it has
+/// and when the next one fires; a row survives its own reminders, because by the time an event starts
+/// they have usually all gone off and the family still needs the row; <c>ReminderCount</c> is the
+/// total rather than a countdown, which only shows once one has fired; the query window has no
+/// reminder-lead tail any more (filing by event start removed the reason for one); and the owning
+/// calendar's own zone beats the family's configured one when anchoring an all-day reminder.
 /// </summary>
 public class RemindersControllerTests
 {
@@ -298,31 +299,6 @@ public class RemindersControllerTests
     }
 
     [Fact]
-    public async Task UpcomingReminders_WhenEveryReminderHasFiredOnAnInheritingEvent_StillTagsTheRowAsDefault()
-    {
-        // IsDefault describes where the event's reminders came FROM, which does not stop being true
-        // once they have fired. It is read off the event's resolved reminders rather than off the next
-        // ping, so the "default" tag survives into the day of the event.
-        var (repository, _, clock, sut) = CreateSut();
-        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
-
-        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 15)));
-        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { owner });
-
-        var evt = EventWith(new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero), EventReminders.InheritsCalendarDefault);
-        repository.Setup(r => r.GetEventsAsync(
-                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { evt });
-
-        var rows = await GetRows(sut);
-
-        rows.Should().ContainSingle();
-        rows[0].NextReminderAt.Should().BeNull("the calendar's 15-minute reminder fired five minutes ago");
-        rows[0].IsDefault.Should().BeTrue();
-    }
-
-    [Fact]
     public async Task UpcomingReminders_AnEventWithSeveralReminders_ProducesOneRowNamingTheCountAndTheNextOne()
     {
         // The family's own motivating case: an event with reminders due at very different lead times
@@ -384,8 +360,48 @@ public class RemindersControllerTests
     }
 
     [Fact]
-    public async Task UpcomingReminders_TagsAnInheritedEventAsDefault()
+    public async Task UpcomingReminders_ExcludesAnEventThatOnlyInheritsItsCalendarsDefaults()
     {
+        // The pin for the whole filter, and the one case that used to produce a row: the calendar HAS
+        // defaults, so the event really will ping — it is excluded because nobody set that reminder
+        // on the event itself, which is the only kind this view reports.
+        //
+        // Two inheriting events rather than one, because the exclusion is about where the reminders
+        // came FROM and not about whether any of them are still pending: the first event's 15-minute
+        // default is still ahead of `now`, the second's fired five minutes ago, and neither may
+        // appear. That is why the separately named "still tags an inheriting event as default once
+        // every reminder has fired" test this replaces is gone rather than inverted — both moments
+        // are now the same single fact.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 15)));
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var defaultStillAhead = EventWith(
+            new DateTimeOffset(2026, 3, 10, 11, 0, 0, TimeSpan.Zero),
+            EventReminders.InheritsCalendarDefault, title: "Checkup");
+        var defaultAlreadyFired = EventWith(
+            new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero),
+            EventReminders.InheritsCalendarDefault, title: "Eye Test");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { defaultStillAhead, defaultAlreadyFired });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty(
+            "neither event's reminders were set on the event itself, so this view does not report them");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_StillListsAnEventWithRemindersOfItsOwnOnACalendarThatHasDefaults()
+    {
+        // The other half of the exclusion above, and the reason it is a test of its own: the filter
+        // reads the EVENT's reminder state, not whether its calendar happens to have defaults. A
+        // filter keyed on the calendar instead would still pass the exclusion test and would silently
+        // empty the timeline for every family that has set calendar-wide defaults.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -394,18 +410,55 @@ public class RemindersControllerTests
             .ReturnsAsync(new List<CalendarInfo> { owner });
 
         var start = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
-        var evt = EventWith(start, EventReminders.InheritsCalendarDefault);
+        var evt = EventWith(start, Explicit(("popup", 45)));
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { evt });
 
         var rows = await GetRows(sut);
 
-        rows.Should().ContainSingle();
-        rows[0].IsDefault.Should().BeTrue();
+        rows.Should().ContainSingle("the event carries reminders of its own, whatever its calendar also has");
         rows[0].NextReminderMethod.Should().Be("popup");
-        rows[0].NextReminderMinutes.Should().Be(15);
-        rows[0].NextReminderAt.Should().Be(start.AddMinutes(-15));
+        rows[0].NextReminderMinutes.Should().Be(45, "the event's own 45 minutes, never the calendar's 15");
+        rows[0].NextReminderAt.Should().Be(start.AddMinutes(-45));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_StillListsAnAllDayEventCarryingTheMaterialisedCalendarDefaults()
+    {
+        // Why excluding inherited events is narrower than it sounds, pinned so nobody "fixes" the
+        // exclusion by special-casing all-day events back in. Google does not let an all-day event
+        // inherit: it MATERIALISES the calendar's defaults onto the event as explicit overrides when
+        // it is created, so a birthday or bin-day event made on a phone arrives with UseDefault false
+        // and overrides of its own. The uniform filter therefore never touches it, and the all-day
+        // rows the family actually relies on keep appearing without any special case existing at all.
+        //
+        // Shaped exactly as Google sends it: the event's overrides are a copy of the calendar's own
+        // defaults, which is what makes this different from the test above. If the filter ever grew a
+        // "do these match the calendar's list?" comparison instead of reading UseDefault, this is the
+        // test that would catch it.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 540)), ianaTimeZone: "Europe/Dublin");
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var allDayStart = new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(allDayStart, Explicit(("popup", 540)), isAllDay: true, title: "Bin Day");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle(
+            "Google materialises a calendar's defaults onto an all-day event, so it arrives with " +
+            "overrides of its own and the inherited-event filter never applies to it");
+        rows[0].ReminderCount.Should().Be(1);
+        // Counted back from local midnight on 15 July in Dublin (23:00Z on the 14th, UTC+1), not from
+        // the stored instant — the owning calendar's own Google-supplied zone anchors it.
+        rows[0].NextReminderAt.Should().Be(new DateTimeOffset(2026, 7, 14, 14, 0, 0, TimeSpan.Zero));
     }
 
     [Fact]

@@ -65,7 +65,9 @@ public class ReminderPingCalculatorTests
 
         pings.Should().ContainSingle();
         pings[0].TriggerAt.Should().Be(start.AddMinutes(-45));
-        pings[0].IsDefault.Should().BeTrue("the row carries a 'default' tag, so the view has to know");
+        pings[0].IsDefault.Should().BeTrue(
+            "an inherited ping has to stay distinguishable from one set on the event, which is what " +
+            "lets the reminders timeline leave it out");
     }
 
     [Fact]

@@ -19,7 +19,6 @@ public class RemindersViewLogicTests
         NextReminderAt: new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero).AddMinutes(index),
         NextReminderMinutes: 30,
         NextReminderMethod: EventRemindersValidator.PopupMethod,
-        IsDefault: false,
         Members: Array.Empty<ReminderMemberViewModel>());
 
     private static UpcomingReminderEventViewModel RowStarting(
@@ -32,7 +31,6 @@ public class RemindersViewLogicTests
         NextReminderAt: nextReminderAt,
         NextReminderMinutes: (int)(eventStart - nextReminderAt).TotalMinutes,
         NextReminderMethod: EventRemindersValidator.PopupMethod,
-        IsDefault: false,
         Members: Array.Empty<ReminderMemberViewModel>());
 
     private static ReminderSection<UpcomingReminderEventViewModel> SectionWith(int rowCount) =>
