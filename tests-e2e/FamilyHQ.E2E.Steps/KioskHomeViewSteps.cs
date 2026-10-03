@@ -12,9 +12,10 @@ namespace FamilyHQ.E2E.Steps;
 /// <remarks>
 /// Only the steps unique to that behaviour live here. Getting idle, running the idle check, opening
 /// the create-event modal and arriving on the Month view all already exist for the day-rollover
-/// scenarios (<see cref="DayRolloverSteps"/>), and reading the timeline exists for the Reminders view
-/// (<see cref="RemindersViewSteps"/>); a second copy of any of them would be a second definition of
-/// the same words.
+/// scenarios (<see cref="DayRolloverSteps"/>), and reading the timeline — along with giving an event
+/// a reminder of its own, which the home view's landing scenario needs as a precondition — exists
+/// for the Reminders view (<see cref="RemindersViewSteps"/>); a second copy of any of them would be
+/// a second definition of the same words.
 /// </remarks>
 [Binding]
 public class KioskHomeViewSteps
@@ -24,22 +25,6 @@ public class KioskHomeViewSteps
     public KioskHomeViewSteps(ScenarioContext scenarioContext)
     {
         _dashboard = new DashboardPage(scenarioContext.Get<IPage>());
-    }
-
-    /// <summary>
-    /// Gives an event already on the grid a reminder of its own, through the modal, because there is
-    /// no backdoor that seeds one: the Simulator's event model carries no reminder overrides, so the
-    /// only way to reach the state this precondition describes is the write the kiosk itself makes.
-    /// Inheritance goes off first — the Add form is not offered while an event follows its
-    /// calendar's usual reminders.
-    /// </summary>
-    [Given(@"the event ""([^""]*)"" has been given a reminder (\d+) hours before")]
-    public async Task GivenTheEventHasBeenGivenAReminderHoursBefore(string title, int hours)
-    {
-        await _dashboard.OpenEventForEditingAsync(title);
-        await _dashboard.SetReminderInheritanceAsync(follow: false);
-        await _dashboard.AddTimedReminderAsync(hours, "hours");
-        await _dashboard.SaveOpenEventAsync();
     }
 
     /// <summary>

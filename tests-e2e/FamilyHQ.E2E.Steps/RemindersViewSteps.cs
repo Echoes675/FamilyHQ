@@ -87,6 +87,39 @@ public class RemindersViewSteps
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
     }
 
+    /// <summary>
+    /// Gives an event already on the calendar a reminder of its own, through the modal, because
+    /// nothing seeds one: the Simulator's event model carries no reminder overrides, so the only way
+    /// to reach the state this precondition describes is the write the kiosk itself makes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Takes the event's own date so the grid can be moved to it first. The month grid renders only
+    /// the weeks its own month needs and stops as soon as a row completes past the month's end, so
+    /// on a month that ends on a Saturday "tomorrow" is not on screen at all and the click would
+    /// find nothing — once every seven months or so, which is worse than never.
+    /// <see cref="DashboardPage.NavigateToShowDateIfNeededAsync"/> is a no-op for a date already
+    /// showing, so passing "today" costs nothing.
+    /// </para>
+    /// <para>
+    /// Inheritance goes off first: the Add form is not offered while an event still follows its
+    /// calendar's usual reminders.
+    /// </para>
+    /// </remarks>
+    [Given(@"the event ""([^""]*)"" on ""([^""]*)"" has been given a reminder (\d+) (minutes|hours) before")]
+    public async Task GivenTheEventOnDateHasBeenGivenAReminderBefore(
+        string title, string dateExpr, int amount, string unit)
+    {
+        var date = DateTime.ParseExact(
+            DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        await _dashboardPage.NavigateToShowDateIfNeededAsync(date);
+        await _dashboardPage.OpenEventForEditingAsync(title);
+        await _dashboardPage.SetReminderInheritanceAsync(follow: false);
+        await _dashboardPage.AddTimedReminderAsync(amount, unit);
+        await _dashboardPage.SaveOpenEventAsync();
+    }
+
     // ── Entering / leaving ───────────────────────────────────────────────────
 
     [When(@"I show the reminders view")]

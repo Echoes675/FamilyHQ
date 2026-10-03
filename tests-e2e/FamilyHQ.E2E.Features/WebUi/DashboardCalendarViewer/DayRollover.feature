@@ -21,6 +21,12 @@ Feature: Kiosk auto-advances to the current day after idle
   view that will not open on the new day is still worth catching — it is a weaker claim than it was,
   not an empty one.
 
+  The rollover's strongest assertion is therefore not in this file. It is in RemindersView.feature,
+  where a seeded row has to MOVE from the Tomorrow section to the Today section once the day turns —
+  on the home view, which is the one the kiosk is actually left showing. Look there as well as here
+  when a rollover regresses; its event has to be seeded before the login, which is why it cannot live
+  behind this file's Background.
+
   Background:
     Given I have a user like "KioskRolloverUser"
     And I login as the user "KioskRolloverUser"

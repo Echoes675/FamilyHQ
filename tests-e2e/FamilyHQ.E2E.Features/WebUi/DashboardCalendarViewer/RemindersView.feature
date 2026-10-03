@@ -224,6 +224,42 @@ Feature: Reminders view
     Then the "Tomorrow" section has a row for "Bin Collection"
     And the "This week" section has no row for "Bin Collection"
 
+  # The kiosk's own day rollover, asserted where the family actually looks. It sits in this file
+  # rather than in DayRollover.feature for two reasons. What it pins is which SECTION a row is filed
+  # in, which is this file's whole subject; and that file has a Background whose login runs before
+  # any scenario step, while a backdoor-seeded event has to exist BEFORE that login to reach FamilyHQ
+  # at all — the same ordering this file has no Background for.
+  #
+  # It is also the rollover's strongest remaining assertion, which is why it is worth the seeding.
+  # The Day view's own scenarios can no longer prove the date moved: tapping the Day View tab without
+  # a date opens on today by design, so what it shows afterwards is a statement about the clock. The
+  # Month and Agenda ones still prove it, but on views a kiosk is rarely left on. Here the row has to
+  # MOVE, and both halves are asserted — a row appearing under Today while still showing under
+  # Tomorrow is a filing bug that either half alone would pass.
+  #
+  # Nothing is tapped after the idle check, and nothing needs to be: the kiosk brings itself back to
+  # the timeline, and that return is what re-anchors the view's "today"
+  # (Index.EnterRemindersViewAsync) and so what refiles the row. The server's clock does not move and
+  # its window returns the same event either way, so a row that did not move means the re-anchor did
+  # not happen. Leaving the timeline first is what makes the return fire at all — an idle check on a
+  # kiosk already at home has nothing to do, which is exactly why this cannot be asserted without
+  # going somewhere else first.
+  @day-rollover
+  Scenario: An idle kiosk refiles tomorrow's row under Today once the day rolls over
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Bin Collection" at "08:00" on "tomorrow" in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    And the event "Bin Collection" on "tomorrow" has been given a reminder 15 minutes before
+    When I show the reminders view
+    Then the "Tomorrow" section has a row for "Bin Collection"
+    When I switch to the Month View tab
+    And the date rolls over by 1 day
+    And the kiosk has been idle for 16 minutes
+    And the idle check runs
+    Then the "Today" section has a row for "Bin Collection"
+    And the "Tomorrow" section has no row for "Bin Collection"
+
   Scenario: A section with nothing in it collapses to one line
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Checkup" starting in 140 minutes in "Appointments"

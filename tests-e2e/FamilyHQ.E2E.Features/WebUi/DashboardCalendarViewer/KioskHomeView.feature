@@ -29,7 +29,7 @@ Feature: The kiosk's home view
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Dentist Visit" starting in 140 minutes in "Appointments"
     And I login as the user "RemindersViewUser"
-    And the event "Dentist Visit" has been given a reminder 2 hours before
+    And the event "Dentist Visit" on "today" has been given a reminder 2 hours before
     When the kiosk loads the dashboard
     Then the reminders view is showing
     And the "Today" section has a row for "Dentist Visit"
