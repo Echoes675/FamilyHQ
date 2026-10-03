@@ -34,24 +34,25 @@ public class RemindersViewSteps
         _simulatorApi = simulatorApi;
     }
 
-    /// <summary>
-    /// The <see cref="ScenarioContext"/> key a seeded event's own start is stashed under, so the
-    /// assertion step can check the row's leading time column against the EXACT value seeded rather
-    /// than against the shape of a time. Keyed by event name: one scenario can seed several.
-    /// </summary>
-    private static string SeededStartKey(string eventName) => $"SeededStart:{eventName}";
-
     // ── Seeding an event today, relative to "now" ───────────────────────────────────────────────
-    // Relative to "now" rather than at a fixed clock time so the reminder added on top of it is
-    // still in the future wherever in the day the suite runs: a reminder set against a fixed
-    // "09:00 today" has already fired for most of the day, which is a different row (one reading
-    // "all sent") from the one most of these scenarios assert.
+    // For the ONE scenario whose subject is the state of "now" itself: a reminder that has already
+    // fired on an event that has not yet happened. No fixed clock time can construct that, because
+    // the suite runs at an arbitrary hour — "now" has to be between the trigger and the start, and
+    // only an offset from now guarantees it.
+    //
+    // Every other scenario that wants a row under Today uses a FIXED time instead
+    // ("at 09:00 on today"), and should: a row is filed by its event's start date and stays under
+    // Today for the whole of that day — RemindersController's window opens at local midnight, not at
+    // now, and RowFor reads no clock at all. A fixed seed therefore also fails LOUDER than a relative
+    // one if that near edge ever moves back to "now", because a 09:00 event would drop out of the
+    // response while a future one would not.
     //
     // The start has to land on TODAY's local date, because the row is filed by the EVENT's own start:
     // once "now" is within `minutes` of local midnight the start rolls into tomorrow and the row is
     // correctly filed under Tomorrow while the scenario still asserts Today. The seeding offset IS
     // the width of that window, so it is refused outright rather than left to fail later as a
-    // baffling "no row under Today" — see .agent/skills/fail-fast-standard/SKILL.md.
+    // baffling "no row under Today" — see .agent/skills/fail-fast-standard/SKILL.md. That window is
+    // the unavoidable cost of needing "now" to sit mid-way, and the reason only one scenario pays it.
     [Given(@"the user has a timed event ""([^""]*)"" starting in (\d+) minutes in ""([^""]*)""")]
     public async Task GivenTheUserHasATimedEventStartingInMinutesInCalendar(
         string eventName, int minutes, string calendarName)
@@ -72,8 +73,6 @@ public class RemindersViewSteps
                 "minutes of local midnight, because its row would be filed under Tomorrow.");
         }
 
-        _scenarioContext[SeededStartKey(eventName)] = start;
-
         isolatedTemplate.Events.Add(new SimulatorEventModel
         {
             Id = "evt_" + Guid.NewGuid().ToString("N"),
@@ -85,6 +84,39 @@ public class RemindersViewSteps
         });
 
         await _simulatorApi.ConfigureUserTemplateAsync(isolatedTemplate);
+    }
+
+    /// <summary>
+    /// Gives an event already on the calendar a reminder of its own, through the modal, because
+    /// nothing seeds one: the Simulator's event model carries no reminder overrides, so the only way
+    /// to reach the state this precondition describes is the write the kiosk itself makes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Takes the event's own date so the grid can be moved to it first. The month grid renders only
+    /// the weeks its own month needs and stops as soon as a row completes past the month's end, so
+    /// on a month that ends on a Saturday "tomorrow" is not on screen at all and the click would
+    /// find nothing — once every seven months or so, which is worse than never.
+    /// <see cref="DashboardPage.NavigateToShowDateIfNeededAsync"/> is a no-op for a date already
+    /// showing, so passing "today" costs nothing.
+    /// </para>
+    /// <para>
+    /// Inheritance goes off first: the Add form is not offered while an event still follows its
+    /// calendar's usual reminders.
+    /// </para>
+    /// </remarks>
+    [Given(@"the event ""([^""]*)"" on ""([^""]*)"" has been given a reminder (\d+) (minutes|hours) before")]
+    public async Task GivenTheEventOnDateHasBeenGivenAReminderBefore(
+        string title, string dateExpr, int amount, string unit)
+    {
+        var date = DateTime.ParseExact(
+            DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        await _dashboardPage.NavigateToShowDateIfNeededAsync(date);
+        await _dashboardPage.OpenEventForEditingAsync(title);
+        await _dashboardPage.SetReminderInheritanceAsync(follow: false);
+        await _dashboardPage.AddTimedReminderAsync(amount, unit);
+        await _dashboardPage.SaveOpenEventAsync();
     }
 
     // ── Entering / leaving ───────────────────────────────────────────────────
@@ -133,8 +165,9 @@ public class RemindersViewSteps
             $"'{title}' must not also be filed under '{sectionName}'.");
     }
 
-    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with its start time alone")]
-    public async Task ThenTheSectionHasARowForLeadingWithItsStartTimeAlone(string sectionName, string title)
+    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with ""([^""]*)"" and nothing else")]
+    public async Task ThenTheSectionHasARowForLeadingWithAndNothingElse(
+        string sectionName, string title, string expected)
     {
         // sectionName is not re-resolved here: FindReminderRowByTitleAsync already searches the
         // whole view, and ThenTheSectionHasARowFor (above) is what pins WHICH section a row landed
@@ -143,17 +176,12 @@ public class RemindersViewSteps
         // The leading column is read on its own and compared for EQUALITY, which is what makes this
         // the "no date" half of the requirement: Today spans one day and its heading already names
         // it, so repeating the date on every row there is noise. A `Contain` check would pass just
-        // as well on "Tue 10 Mar · 18:00". Nothing is re-derived either — the seeding step already
-        // computed the start, and this reads back the instant it stashed.
-        if (!_scenarioContext.TryGetValue<DateTime>(SeededStartKey(title), out var seededStart))
-        {
-            throw new InvalidOperationException(
-                $"No seeded start recorded for '{title}', so this step cannot say what time the row " +
-                "should lead with. It needs the \"starting in N minutes\" seeding step, which is what " +
-                "records it.");
-        }
-
-        var expected = seededStart.ToString("HH:mm", CultureInfo.InvariantCulture);
+        // as well on "Tue 10 Mar · 18:00".
+        //
+        // The expected time is stated by the scenario rather than read back from what the seeding
+        // step computed, which the fixed seed is what makes possible. It is the stronger of the two:
+        // a seeding bug that derived the wrong start would previously have produced the same wrong
+        // value on both sides of this assertion and passed.
         var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
 
         shown.Should().Be(expected,

@@ -42,6 +42,15 @@ public class DashboardPage : BasePage
     public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
     public ILocator RemindersTab => Page.GetByTestId("reminders-tab");
     public ILocator RemindersViewContainer => Page.GetByTestId("reminders-view");
+
+    /// <summary>
+    /// Any one of the dashboard's four views. This is what "the calendar is on screen" means — the
+    /// signed-in dashboard as opposed to the login prompt — and it deliberately says nothing about
+    /// WHICH view: a page load lands on whichever view the kiosk calls home, so a locator naming one
+    /// of them would turn every "the dashboard is up" wait into a claim about the home view.
+    /// </summary>
+    public ILocator AnyCalendarView => Page.Locator(
+        ".month-table, .day-view-container, .agenda-view-container, [data-testid='reminders-view']");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
 
@@ -120,13 +129,54 @@ public class DashboardPage : BasePage
         await WaitForCalendarVisibleAsync();
     }
 
+    /// <summary>
+    /// Loads the dashboard as the kiosk does on power-on and leaves it on whatever view the app
+    /// itself lands on — no tab is tapped, which is the whole point of this method existing beside
+    /// <see cref="NavigateAndWaitAsync"/>.
+    /// <para>
+    /// Waits for the upcoming-reminders response as well as the events one, so a landing path that
+    /// rendered the timeline without fetching its rows fails here, where the cause is obvious,
+    /// rather than later as an unexplained missing row. The listener is registered before navigation
+    /// for the same reason <see cref="NavigateAndWaitAsync"/> registers its own first: the response
+    /// can land before the await is reached.
+    /// </para>
+    /// </summary>
+    public async Task LoadKioskHomeViewAsync()
+    {
+        var remindersResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/reminders/upcoming"),
+            new() { Timeout = 30000 });
+
+        await NavigateAndWaitAsync();
+        await remindersResponseTask;
+
+        await RemindersViewContainer.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    /// <summary>
+    /// The dashboard's view-tab labels in the order they are rendered, left to right.
+    /// <para>
+    /// Scoped to <c>#dashboard-container</c> deliberately: the event modal's own tab strip carries
+    /// the same <c>.view-tabs</c>/<c>.view-tab</c> classes for its look, and it is rendered outside
+    /// that container, so an unscoped selector would read the modal's tabs too whenever one is open.
+    /// </para>
+    /// </summary>
+    public Task<string[]> ReadViewTabLabelsAsync() =>
+        Page.Locator("#dashboard-container .view-tabs .view-tab")
+            .EvaluateAllAsync<string[]>("els => els.map(e => e.innerText.trim())");
+
     private async Task WaitForCalendarVisibleAsync()
     {
-        // Wait for either the month table or day view container to be visible.
+        // Wait for ANY of the four views to be on screen — that is what "the dashboard has finished
+        // loading" means, and which one it is depends on where the app lands rather than on
+        // anything a caller chose. The Reminders timeline is in AnyCalendarView because it is what a
+        // page load now lands on: without it every navigation here would wait out its whole timeout
+        // for a month/day/agenda container that is not rendered until a tab is tapped.
         // This is safe to call at any point — it simply waits for the final rendered state.
         // We intentionally do NOT wait for the spinner first because in some flows
         // (e.g. after OAuth redirect) the spinner may never appear in the DOM.
-        await Page.Locator(".month-table, .day-view-container, .agenda-view-container").First.WaitForAsync(
+        await AnyCalendarView.First.WaitForAsync(
             new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 
@@ -215,6 +265,21 @@ public class DashboardPage : BasePage
         await MonthTab.ClickAsync();
         await MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
+
+    /// <summary>
+    /// Puts the dashboard on the month grid, which is where a scenario that has not said otherwise
+    /// has always started — it is simply what a page load used to land on. Now that the kiosk opens
+    /// on the Reminders timeline instead, the grid has to be asked for rather than inherited, and
+    /// this is the one place that says so: the steps that leave a scenario sitting on the dashboard
+    /// call it, so the starting view is explicit setup instead of a side effect of loading the page.
+    /// <para>
+    /// Deliberately unconditional and deliberately not called from the ready-waits. A scenario about
+    /// the home view itself must reach the dashboard through
+    /// <see cref="LoadKioskHomeViewAsync"/>, and one that has switched to the Day or Agenda view must
+    /// not have the grid put back under it.
+    /// </para>
+    /// </summary>
+    public Task ShowCalendarGridAsync() => SwitchToMonthViewAsync();
 
     public async Task SwitchToAgendaViewAsync()
     {

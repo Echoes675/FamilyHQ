@@ -1,4 +1,9 @@
+@* Tab order is the family's: the Reminders timeline comes first because it is what the kiosk opens
+   on and what an idle one returns to, so the leftmost tab and the landing view agree. *@
 <div class="view-tabs mb-4">
+    <button data-testid="reminders-tab"
+            class="view-tab @(CurrentView == DashboardView.Reminders ? "active" : "")"
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">Reminders</button>
     <button data-testid="month-tab"
             class="view-tab @(CurrentView == DashboardView.Month ? "active" : "")"
             @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Month)">Month View</button>
@@ -8,9 +13,6 @@
     <button data-testid="day-tab"
             class="view-tab @(CurrentView == DashboardView.Day ? "active" : "")"
             @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Day)">Day View</button>
-    <button data-testid="reminders-tab"
-            class="view-tab @(CurrentView == DashboardView.Reminders ? "active" : "")"
-            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">Reminders</button>
 </div>
 
 @code {

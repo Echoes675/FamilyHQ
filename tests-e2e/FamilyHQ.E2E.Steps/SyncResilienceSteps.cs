@@ -137,6 +137,10 @@ public class SyncResilienceSteps
         await page.GotoAsync(_config.BaseUrl + "/");
         await _dashboardPage.WaitForCalendarToLoadAsync();
 
+        // The capsules read below are the month grid's, and a load lands on the Reminders timeline,
+        // so the grid has to be asked for.
+        await _dashboardPage.ShowCalendarGridAsync();
+
         var titles = await _dashboardPage.GetVisibleEventsAsync();
         titles.Any(t => t.Contains("Soccer practice")).Should().BeTrue(
             "the legitimate event seeded alongside the poisoned event must still sync to the dashboard");
@@ -243,6 +247,11 @@ public class SyncResilienceSteps
         // own DB and 200s regardless of the injected Simulator mode; only the Google-shaped write
         // fails.) This scenario needs only the modal, and AttemptCreateEventAsync's ClickAsync
         // auto-waits for the Add button to be actionable.
+        //
+        // The grid still has to be selected first: the Add Event button belongs to the month and day
+        // views, and a load lands on the Reminders timeline, which has no such button for the click
+        // to wait for.
+        await _dashboardPage.ShowCalendarGridAsync();
         await _dashboardPage.AttemptCreateEventAsync(title);
     }
 

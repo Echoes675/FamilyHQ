@@ -339,6 +339,12 @@ The Settings page has a fifth tab, **Weather Override**, rendered only when `Fea
 
 When the tab's "Override active" pill is on, a developer can tap any `WeatherCondition` and optionally toggle the Windy modifier to immediately force the full-screen weather animation (`WeatherOverlay`) to that condition. The override is purely client-side transient state held in a scoped `IWeatherOverrideService` and is never persisted — refreshing the browser reverts to the real weather pipeline. The `WeatherStrip`, backend API, user `WeatherSetting`, and real weather data flow are untouched.
 
+### Clock Override (dev/staging only)
+
+`FeatureClockOverride` is wired identically — `appsettings.json` key, flipped at container startup from `FEATURE_CLOCK_OVERRIDE_ENABLED` — and reaches `KioskTimeProvider.OverrideEnabled` via `FeatureFlags.ClockOverrideEnabled`. When it is on, `Index` attaches `window.familyHqKiosk` (`wwwroot/js/idle.js` `attachDevBridge`), which lets a caller shift the displayed date by whole days and force an immediate idle evaluation. That is what makes the day-rollover and kiosk-home-view E2E scenarios run in milliseconds instead of waiting out a real fifteen minutes; it is also why the bridge must never exist on a kiosk on a wall.
+
+**The `environment:` block in each compose file is not the gate.** Every `docker-compose.*.yml` also passes `env_file: .env`, which forwards the whole file into the container — so a `FEATURE_CLOCK_OVERRIDE_ENABLED=true` line in any environment's env file takes effect whether or not that compose file lists the variable. Containment is: the shipped `appsettings.json` says `false`, the entrypoint flips it only on an exact `"true"`, and no production env file sets it. `tests/FamilyHQ.Core.Tests/ClockOverrideBridgeGuardTests.cs` guards the repository's half of that (ships off, read with no fallback, one guarded call site); the deployed env files are a deployment control and no test can reach them.
+
 ## Deployment tier & the preprod smoke endpoints (FHQ-139)
 
 `Deployment__Tier` (`dev | staging | preprod | prod`) is the only thing that distinguishes preprod from prod at runtime. **Preprod deliberately runs `ASPNETCORE_ENVIRONMENT=Production`** so it loads prod settings and takes prod code paths, so `IsProduction()` cannot gate anything preprod-only; and the same image is promoted preprod → prod, so nothing can be compiled out. **A missing or unrecognised tier counts as not-allowed** — forgetting the key fails safe, and no environment fails to boot for lacking it.

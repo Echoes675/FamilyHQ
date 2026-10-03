@@ -31,11 +31,20 @@ public class DashboardSteps
         return calendar.BackgroundColor ?? "#9e9e9e";
     }
 
+    // "Viewing the dashboard" means the month grid to every scenario written while the month grid
+    // was what a load landed on, which is the overwhelming majority of them. Selecting Month here is
+    // explicit state setup rather than a workaround for the Reminders timeline becoming the landing
+    // view: a scenario about the month grid should begin on the month grid, and the only other way
+    // to say so is a tab-tap step repeated across a hundred-odd places in the feature files.
+    //
+    // Scenarios about the landing view itself must NOT come through here — they use the step that
+    // loads the dashboard and leaves it on whatever view the app chose.
     [Given(@"I view the dashboard")]
     [When(@"I view the dashboard")]
     public async Task WhenIViewTheDashboard()
     {
         await _dashboardPage.NavigateAndWaitAsync();
+        await _dashboardPage.ShowCalendarGridAsync();
     }
 
     [Then(@"I see the event ""([^""]*)"" displayed on the calendar")]

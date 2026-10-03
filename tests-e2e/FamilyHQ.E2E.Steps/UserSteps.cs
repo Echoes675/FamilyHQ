@@ -229,5 +229,16 @@ public class UserSteps
         // exception (worker-persisted LastError) here instead of letting it manifest as a downstream
         // "no events" flake on a random scenario.
         await FamilyHQ.E2E.Common.Helpers.SyncSettle.ThrowIfLoginSyncFailedAsync(page);
+
+        // Finish on the month grid, which is the "known state" the navigation above has always
+        // meant: it is what a load landed on before the kiosk started opening on the Reminders
+        // timeline. Scenarios that go straight from the Background login to the grid or to the
+        // month view's Add Event button — the event-editor and recurring-create features do — would
+        // otherwise find neither on screen.
+        //
+        // After the sync-settle checks on purpose: a login whose initial sync failed should still
+        // fail with that failure's own diagnostic rather than as a timeout waiting for a grid the
+        // missing data would never fill.
+        await dashboardPage.ShowCalendarGridAsync();
     }
 }
