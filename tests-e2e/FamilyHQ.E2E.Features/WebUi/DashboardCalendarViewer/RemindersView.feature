@@ -21,7 +21,14 @@ Feature: Reminders view
 
   A reminder having already fired is not a reason to drop a row — on the day of an event its
   reminders have usually all gone off, which is exactly when the family needs the row most, so it
-  stays put and says "all sent" instead.
+  stays put, and reads no differently for it.
+
+  A row says "[when] · title · [who]" and nothing about the reminders it exists because of: the
+  family asked for the bell glyph and the "1 reminder · next 45 min before" line to go, because on
+  a wall display they crowded out the three things a row is glanced at for. The FILTER above is what
+  makes this a reminders view, not anything printed on a row. "[when]" is the time alone under Today
+  and Tomorrow, whose own headings say which day they are, and the day and date as well in the three
+  sections that span several days.
 
   No Background: scenarios need different seeding orders (a backdoor-seeded event has to exist
   BEFORE the login that triggers the first sync; a calendar's defaults have to be set AFTER any
@@ -29,15 +36,13 @@ Feature: Reminders view
   CalendarDefaultRemindersSteps for why. Folding all of that into one shared Background would hide
   the ordering each scenario actually needs.
 
-  A "today" event is seeded relative to NOW, not at a fixed clock time, and this is deliberate, not a
-  style choice: whether a reminder has fired yet decides what its row SAYS, and only a start relative
-  to now keeps that answer the same whatever time of day the suite runs. A reminder set against a
-  fixed "09:00 today" has already fired for most of the day, so a scenario expecting "next 2 hrs
-  before" would read "all sent" instead. The scenario below that wants an already-fired reminder asks
-  for one explicitly, by giving a lead time longer than the gap to the event. Seeding this way has one
-  constraint of its own — the start must still land on today's date — which
-  GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than letting the
-  scenario fail as a missing row.
+  A "today" event is seeded relative to NOW, not at a fixed clock time. Nothing a row RENDERS depends
+  on that any more — a row reads the same before and after its reminders fire — but a start relative
+  to now is still what keeps each scenario's reminder a reminder the family could actually have set
+  on a future event, and it is what records the exact start the "leading with its start time" step
+  asserts against. Seeding this way has one constraint — the start must still land on today's date —
+  which GivenTheUserHasATimedEventStartingInMinutesInCalendar refuses outright rather than letting
+  the scenario fail as a missing row.
 
   Scenario: The timeline is a fourth tab and does not displace the month view
     Given I have a user like "RemindersViewUser"
@@ -47,7 +52,10 @@ Feature: Reminders view
     When I show the reminders view
     Then the reminders view is showing
 
-  Scenario: A reminder on an event today appears under Today with its lead and start
+  # Today spans one day and its heading says which, so a date on every row there would be noise. The
+  # assertion is an EQUALITY on the row's leading column for that reason: a row reading
+  # "Tue 10 Mar · 18:00" under Today is the failure, and only equality catches it.
+  Scenario: A row under Today leads with the event's start time and nothing else
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Dentist Visit" starting in 140 minutes in "Appointments"
     And I login as the user "RemindersViewUser"
@@ -56,13 +64,14 @@ Feature: Reminders view
     And I give the event a reminder 2 hours before
     And I save the event
     And I show the reminders view
-    Then the "Today" section has a row for "Dentist Visit" showing "2 hrs before" and its start time
-    And the "Today" section has a row for "Dentist Visit"
+    Then the "Today" section has a row for "Dentist Visit" leading with its start time alone
 
   # The ordinary state of a row on the day of its own event, and the one the view used to get wrong by
   # dropping the row entirely. A reminder 3 hours before an event 65 minutes away has already fired,
   # so there is nothing left pending — but the event itself is still ahead, which is the whole reason
-  # the family is looking at the panel.
+  # the family is looking at the panel. The row's PRESENCE is the whole assertion now: it used to also
+  # say "all sent", and with nothing on a row describing its reminders there is no longer any wording
+  # for firing to change. The scenario stays because what it pins is that the row exists at all.
   Scenario: An event keeps its row under Today after its last reminder has fired
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Eye Test" starting in 65 minutes in "Appointments"
@@ -72,7 +81,7 @@ Feature: Reminders view
     And I give the event a reminder 3 hours before
     And I save the event
     And I show the reminders view
-    Then the "Today" section has a row for "Eye Test" saying its reminders have all been sent
+    Then the "Today" section has a row for "Eye Test"
 
   # The pin for the whole exclusion, and the one case that used to produce a row: the calendar HAS
   # usual reminders, so "Checkup" really will ping the family's phones — it is absent because nobody
@@ -140,18 +149,6 @@ Feature: Reminders view
     And I show the reminders view
     Then no row names "Bin Day" anywhere in the reminders view
 
-  Scenario: An event with two reminders of its own appears once, naming how many it has
-    Given I have a user like "RemindersViewUser"
-    And the user has a timed event "Parents Evening" starting in 150 minutes in "Appointments"
-    And I login as the user "RemindersViewUser"
-    And I view the dashboard
-    When I change the event "Parents Evening" to reminders of its own
-    And I open the event "Parents Evening" for editing
-    And I give the event a reminder 30 minutes before
-    And I save the event
-    And I show the reminders view
-    Then the "Today" section has a row for "Parents Evening" naming 2 reminders
-
   # The family's own motivating example: an event with reminders due at very different lead times —
   # one soon, one more than two weeks out — must still appear exactly once, under its own start, and
   # NOT under any section one of its reminders' own trigger instants happens to fall in. 360 hours
@@ -172,6 +169,28 @@ Feature: Reminders view
     And I save the event
     And I show the reminders view
     Then the row for "Annual Checkup" appears only in the "Next month" section
+
+  # The other half of the "[when]" requirement, and the failure the family actually reported: three
+  # occurrences of one recurring series under Next month all read "10:00 · Series from Google" and
+  # were indistinguishable. This month and Next month each cover a whole month and This week can run
+  # across two, so a row in any of the three has to say which day it is.
+  #
+  # Seeded "next month" because the Then has to NAME a section, and that is the only relative
+  # expression whose section is the same on every run date: "next month" resolves to the 15th of the
+  # following month, which is always inside Next month's span. An "in N days" event lands in This
+  # week or This month or Next month depending on what day of the month the suite happens to run on
+  # — all three of which do show the date, but only one of which the assertion could name.
+  Scenario: A row in a section covering several days leads with the day and date
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Blood Test" at "10:00" on "next month" in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    When I navigate to the next month
+    And I open the event "Blood Test" for editing
+    And I give the event a reminder 2 hours before
+    And I save the event
+    And I show the reminders view
+    Then the "Next month" section has a row for "Blood Test" leading with the day and date of "next month"
 
   Scenario: A shared event's row names each person rather than the shared calendar
     Given I have a user like "RemindersViewUser"
@@ -248,10 +267,16 @@ Feature: Reminders view
     Then the "Today" section has a row for "Checkup"
     And the inherited-reminders footnote is shown
 
-  # Seeded "next month", like the Tomorrow scenario above — always in the future regardless of time
-  # of day, and also the case this task exists to cover: the event is far outside the month the
-  # dashboard has loaded, so tapping the row can only work via the fetch-by-id endpoint (Task 3).
-  Scenario: Tapping a row opens that event on its Reminders tab
+  # A tap drills into the event's day, as every other view's rows do. The careful case is an event
+  # OUTSIDE the month the dashboard has loaded, which is what exercises the month fetch rather than
+  # just the view switch — so this navigates BACK to the current month after editing. Without that
+  # step the edit itself has already loaded next month and the tap never has anything to fetch,
+  # which is how the scenario this replaces came to claim a case it was not actually taking.
+  #
+  # The Then asserts the event's own TILE, not that a day view appeared: DayView renders only the
+  # events filed under the day it is showing, so a tile for this event can only be there if the
+  # right day opened and its month was loaded.
+  Scenario: Tapping a row opens the day view on that event's own day
     Given I have a user like "RemindersViewUser"
     And the user has a timed event "Flu Clinic" at "10:00" on "next month" in "Appointments"
     And I login as the user "RemindersViewUser"
@@ -260,9 +285,10 @@ Feature: Reminders view
     And I open the event "Flu Clinic" for editing
     And I give the event a reminder 2 hours before
     And I save the event
+    And I navigate back to the current month
     And I show the reminders view
     And I tap the reminders row for "Flu Clinic"
-    Then the event modal is open on "Flu Clinic" showing its Reminders tab
+    Then the day view is showing "Flu Clinic"
 
   # The regression target: EnterRemindersViewAsync re-checks the current view after its own fetch
   # completes before starting the per-minute tick loop, specifically so switching away mid-fetch

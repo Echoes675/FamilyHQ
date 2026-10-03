@@ -30,8 +30,10 @@ public class EventsController : ControllerBase
     }
 
     /// <summary>
-    /// One event by id. The reminders timeline needs this: a row's event may sit in a month the
-    /// dashboard has never loaded, so there is nothing in memory to open.
+    /// One event by id, for a caller holding an id but no event: an event in a month the dashboard
+    /// has never loaded is not in memory to be read. Also the first endpoint to populate the two
+    /// owning-calendar fields <c>EventModalLogic.OwningCalendarDefaults</c> reads for an existing
+    /// event rather than re-predicting the owner client-side — see <c>MapToDtoAsync</c>.
     /// </summary>
     [HttpGet("{eventId:guid}")]
     public async Task<IActionResult> GetEvent(Guid eventId, CancellationToken ct)

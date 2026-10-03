@@ -656,6 +656,45 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
+    /// Returns the dashboard to the month containing today, clicking Prev until the month header
+    /// says so.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="NavigateToNextMonthAsync"/>, and formatted the same way on
+    /// purpose, so the two helpers and the header they both read agree by construction. A scenario
+    /// needs this when it had to navigate FORWARD to edit a future event and then has to exercise a
+    /// path whose whole point is that the event is OUTSIDE the loaded month — without coming back,
+    /// the month is loaded and the path is never taken.
+    /// <para>
+    /// Bounded rather than a <c>while</c>: a header that never arrives means a page that is not
+    /// rendering, and saying how many clicks were tried is more use than a bare timeout on the last
+    /// one. Six is well past the one click any current caller needs.
+    /// </para>
+    /// </remarks>
+    public async Task NavigateToCurrentMonthAsync()
+    {
+        var expectedMonthText = BrowserClock.Today.ToString("MMMM yyyy"); // e.g. "April 2026"
+        var monthHeaderBtn = Page.GetByRole(AriaRole.Button, new() { Name = expectedMonthText });
+
+        for (var clicks = 0; clicks < 6; clicks++)
+        {
+            if (await monthHeaderBtn.CountAsync() > 0)
+            {
+                await monthHeaderBtn.WaitForAsync(
+                    new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+                return;
+            }
+
+            await PrevMonthBtn.ClickAsync();
+            await WaitForCalendarVisibleAsync();
+        }
+
+        throw new InvalidOperationException(
+            $"The month grid never showed '{expectedMonthText}' after six Prev clicks, so the " +
+            "dashboard could not be returned to the current month.");
+    }
+
+    /// <summary>
     /// Navigates to the next month only if <paramref name="date"/> falls outside the
     /// currently-visible month grid. The grid spans from the Sunday on or before the
     /// first of the current month to the Saturday on or after the last day of the month.
@@ -2396,14 +2435,37 @@ public class DashboardPage : BasePage
         AllReminderRows.Filter(new() { HasText = eventTitle }).CountAsync();
 
     /// <summary>
-    /// Taps the row for <paramref name="eventId"/> and waits for the event modal to open.
-    /// <paramref name="eventId"/> alone is enough: unlike the per-ping row this replaced, there is
-    /// exactly one row per event.
+    /// Taps the row for <paramref name="eventId"/> and waits for the Day view to render.
+    /// <paramref name="eventId"/> alone is enough to address it: there is exactly one row per event.
     /// </summary>
+    /// <remarks>
+    /// The Day view, not the event modal: a tap drills into the event's own day, as the Month and
+    /// Agenda views' rows do. For an event outside the loaded month that involves a month fetch
+    /// before the view can paint, which is why this waits rather than returning on the click.
+    /// </remarks>
     public async Task TapReminderRowAsync(Guid eventId)
     {
         var row = Page.Locator($"[data-testid='reminder-row'][data-event-id='{eventId}']");
         await row.ClickAsync();
-        await EventModal.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    /// <summary>
+    /// Asserts the Day view is rendering a tile for <paramref name="eventName"/> on whichever day it
+    /// is currently showing — without navigating anywhere, unlike
+    /// <see cref="AssertEventVisibleInDayViewOnDateAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// The tile is the assertion, not the container: DayView renders only the events filed under its
+    /// own <c>SelectedDate</c>, so a tile for this event can only be here if the view opened on the
+    /// event's day AND that day's month was loaded. A visible container alone would pass for the
+    /// wrong day.
+    /// </remarks>
+    public async Task AssertDayViewShowingEventAsync(string eventName)
+    {
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 }

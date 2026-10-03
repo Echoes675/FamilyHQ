@@ -78,7 +78,7 @@ public class RemindersController : ControllerBase
         // incomplete, which is the one failure this endpoint exists to prevent.
         var rows = events
             .Where(evt => evt.Start >= start && evt.Start < displayEnd)
-            .Select(evt => RowFor(evt, calendarsById, familyZone, now))
+            .Select(evt => RowFor(evt, calendarsById, familyZone))
             .Where(r => r is not null)
             .Select(r => r!)
             .OrderBy(r => r.EventStart)
@@ -100,15 +100,14 @@ public class RemindersController : ControllerBase
     /// Having already fired is NOT an exclusion. A row is filed by the event's start, so it has to
     /// survive its own reminders: by the time an event begins, its reminders have usually all gone
     /// off, and dropping the row then would empty the Today section exactly when the family most
-    /// needs it. "Every ping has fired" is the ordinary state of a row on the day of its event, which
-    /// is why <paramref name="now"/> decides only which reminder is described as next — it never
-    /// decides whether the row exists.
+    /// needs it. "Every ping has fired" is the ordinary state of a row on the day of its event, and
+    /// nothing here reads the clock at all — whether a row exists has never depended on when the
+    /// request arrived, and now there is no "next reminder" to describe either.
     /// </remarks>
     private UpcomingReminderEventDto? RowFor(
         CalendarEvent evt,
         IReadOnlyDictionary<Guid, CalendarInfo> calendarsById,
-        TimeZoneInfo familyZone,
-        DateTimeOffset now)
+        TimeZoneInfo familyZone)
     {
         calendarsById.TryGetValue(evt.OwnerCalendarInfoId, out var owner);
 
@@ -118,6 +117,11 @@ public class RemindersController : ControllerBase
         // ahead of a zone Google actually sent would anchor an all-day reminder to the wrong midnight
         // for no reason other than convenience. The calendar list is already loaded for this row's
         // member chips, so consulting it here costs no extra query.
+        //
+        // The anchor reaches no field of the row: all this endpoint reads of Compute's answer is
+        // whether it is empty, and that count is the same whatever zone is passed. It is resolved
+        // correctly anyway because Compute's contract takes a zone and a wrong one would make its
+        // trigger instants wrong — not because anything below shows them.
         var anchorZone = TryFindZone(owner?.IanaTimeZone) ?? familyZone;
 
         // The subject of this view is reminders somebody DELIBERATELY set on an event. An event that
@@ -152,6 +156,10 @@ public class RemindersController : ControllerBase
         // and there is still nothing to special-case.
         if (evt.Reminders is { UseDefault: true }) return null;
 
+        // Computed for its emptiness alone. Nothing on the row describes a reminder, so no individual
+        // ping is carried anywhere — but "will this event ping at all" is still the second exclusion,
+        // and Compute is the only thing that answers it across all four stored reminder states.
+        //
         // Reminders==null (never synced) and ExplicitlyNone are handled inside Compute — nothing here
         // re-implements those exclusions. The owner's defaults are still handed over even though the
         // filter above leaves Compute no inheriting event to consult them for: what an inheriting
@@ -159,15 +167,8 @@ public class RemindersController : ControllerBase
         var pings = ReminderPingCalculator.Compute(evt.Start, evt.IsAllDay, evt.Reminders, owner?.DefaultReminders, anchorZone);
         if (pings.Count == 0) return null;
 
-        // Null once they have all fired, which the row renders as "all sent" rather than hiding.
-        var next = pings.Where(p => p.TriggerAt >= now).MinBy(p => p.TriggerAt);
-        var members = BuildMembers(evt, owner);
-
         return new UpcomingReminderEventDto(
-            evt.Id, evt.Title, evt.Start, evt.IsAllDay,
-            // The TOTAL, not how many are left: see the DTO's own remarks on why a count that decays
-            // as the event approaches is the wrong number to show the family.
-            pings.Count, next?.TriggerAt, next?.Minutes, next?.Method, members);
+            evt.Id, evt.Title, evt.Start, evt.IsAllDay, BuildMembers(evt, owner));
     }
 
     /// <summary>

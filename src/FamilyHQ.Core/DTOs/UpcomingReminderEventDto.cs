@@ -10,17 +10,19 @@ namespace FamilyHQ.Core.DTOs;
 /// own example is one every day for the week before it — used to produce one row per ping, scattered
 /// across whichever section each trigger instant happened to land in. A single event then appeared
 /// repeatedly, under headings that did not agree with each other about when it actually was. This
-/// shape carries the event once and summarises its reminders (<see cref="ReminderCount"/>,
-/// <see cref="NextReminderAt"/>) instead, so the row exists exactly where <see cref="EventStart"/>
+/// shape carries the event once instead, so the row exists exactly where <see cref="EventStart"/>
 /// files it.
 /// </para>
 /// <para>
-/// <b>Only the next reminder is carried, not every one.</b> The timeline is fetched whole and every
-/// field here is paid for once per event rather than once per ping, which is most of the saving this
-/// shape exists for — but it does mean the client cannot locally recompute
-/// <see cref="NextReminderAt"/> once it passes; a fresh fetch is required instead (see the reminders
-/// timeline's per-minute tick in <c>Index.razor</c>). Carrying every ping's trigger would avoid that
-/// refetch at the cost of reintroducing the per-ping payload this shape was built to drop.
+/// <b>Nothing here describes the reminders themselves.</b> The row reads "[when] · title · [who]":
+/// the family asked for the bell glyph and the "1 reminder · next 45 min before" line to go, because
+/// on a wall display they crowded out the three things a row is glanced at for. What makes this a
+/// reminders view is therefore the FILTER — only events whose reminders were set on the event reach
+/// it — and not any field on the row. The count, the next reminder's instant, its stored offset and
+/// its delivery method were all carried here for that removed second line and the glyph, and were
+/// removed with them rather than left unrendered: a field with no reader is the one most likely to be
+/// trusted wrongly later. The event modal remains where a family member reads what an event's
+/// reminders actually are, and the four stored reminder states stay distinguishable in the model.
 /// </para>
 /// <para>
 /// <b>There is no "inherited" row, so there is no field saying a row is one.</b> An event that merely
@@ -28,53 +30,25 @@ namespace FamilyHQ.Core.DTOs;
 /// for why that is the requirement rather than an oversight), so every row that exists carries
 /// reminders somebody set on the event itself. A flag distinguishing the two could only ever hold one
 /// value here, which is why this shape has none — it is not that inheritance stopped mattering, only
-/// that it is settled before a row is built. The event modal still tells the family where an event's
-/// reminders came from, and the four stored reminder states stay distinguishable in the model.
+/// that it is settled before a row is built.
 /// </para>
 /// <para>
-/// <b>A row outlives its own reminders.</b> The three "next reminder" values are nullable because a
-/// row is not evidence that a notification is still coming — it is evidence that the event has
-/// reminders. By the time an event starts its reminders have all usually fired, so excluding a row
-/// once nothing is pending would empty the Today section exactly when the family most needs it, and
-/// would drop an 18:00 event with one two-hour reminder off the kiosk at 16:00. The row therefore
-/// stays until <see cref="EventStart"/> leaves the window, and says "all sent" instead.
+/// <b>A row outlives its own reminders.</b> A row is not evidence that a notification is still coming
+/// — it is evidence that the event has reminders. By the time an event starts its reminders have all
+/// usually fired, so excluding a row once nothing is pending would empty the Today section exactly
+/// when the family most needs it, and would drop an 18:00 event with one two-hour reminder off the
+/// kiosk at 16:00. The row therefore stays until <see cref="EventStart"/> leaves the window.
 /// </para>
 /// </remarks>
-/// <param name="EventId">The event this row describes — what tapping it opens.</param>
+/// <param name="EventId">The event this row describes.</param>
 /// <param name="EventTitle">The event's title, for the row's label.</param>
 /// <param name="EventStart">
 /// The event's own start. What the reminders timeline files this row by (never a reminder's trigger
-/// instant), and shown on the row in place of the ping time a per-ping row used to lead with.
+/// instant), what the row's leading "when" is read from, and the day a tap on the row opens.
 /// </param>
 /// <param name="EventIsAllDay">
 /// Whether the event is all-day, which decides how <see cref="EventStart"/> is displayed ("all day"
 /// rather than a time).
-/// </param>
-/// <param name="ReminderCount">
-/// How many reminders the event carries in TOTAL, fired or not — the number the family actually set
-/// in Google, which is the system of record. Deliberately not a count of the ones still to come: a
-/// decaying count reads as though reminders had gone missing ("2 reminders" on day five of an event
-/// with one every day for a week), and it would disagree with what the event modal's own Reminders
-/// tab shows for the same event. Never zero: an event that will produce no notification at all
-/// produces no row either (see <c>RemindersController.RowFor</c>), which is what keeps a never-synced
-/// event distinct from one whose reminders were removed.
-/// </param>
-/// <param name="NextReminderAt">
-/// The absolute instant the soonest reminder that has NOT yet fired goes off, or null once every one
-/// of them has. Null is an ordinary end state rather than missing data — see the remarks on why the
-/// row stays regardless.
-/// </param>
-/// <param name="NextReminderMinutes">
-/// The stored offset the soonest still-upcoming reminder was computed from, so the row can describe
-/// its lead time in the event's own terms (<c>ReminderRowDisplay.Lead</c>) without re-deriving it
-/// from <see cref="EventStart"/> and <see cref="NextReminderAt"/>. Null exactly when
-/// <see cref="NextReminderAt"/> is.
-/// </param>
-/// <param name="NextReminderMethod">
-/// The soonest still-upcoming reminder's delivery method — <c>"popup"</c> or <c>"email"</c> in
-/// practice, but carried verbatim for the same reason <c>EventReminder.Method</c> is. Null exactly
-/// when <see cref="NextReminderAt"/> is, and the row then renders no method glyph rather than a
-/// stand-in for one.
 /// </param>
 /// <param name="Members">The people the event is shared with, for the row's chips.</param>
 public sealed record UpcomingReminderEventDto(
@@ -82,8 +56,4 @@ public sealed record UpcomingReminderEventDto(
     string EventTitle,
     DateTimeOffset EventStart,
     bool EventIsAllDay,
-    int ReminderCount,
-    DateTimeOffset? NextReminderAt,
-    int? NextReminderMinutes,
-    string? NextReminderMethod,
     IReadOnlyList<ReminderMemberDto> Members);

@@ -209,10 +209,6 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                 d.EventTitle,
                 d.EventStart,
                 d.EventIsAllDay,
-                d.ReminderCount,
-                d.NextReminderAt,
-                d.NextReminderMinutes,
-                d.NextReminderMethod,
                 d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
             .ToList();
     }
@@ -221,8 +217,8 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
     {
         var response = await httpClient.GetAsync($"api/events/{eventId}", ct);
 
-        // A row's event can be deleted on a phone between the reminders-list fetch and the tap that
-        // opens it — ordinary, not a hard failure, so this is the one GET that does not run through
+        // An event can be deleted on a phone between whatever named this id and the fetch for it —
+        // ordinary, not a hard failure, so this is the one GET that does not run through
         // EnsureSuccessAsync's throw-and-show-dialog treatment for a 404. Every other status still
         // throws, exactly like every other method here.
         if (response.StatusCode == HttpStatusCode.NotFound) return null;

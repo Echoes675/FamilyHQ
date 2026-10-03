@@ -117,7 +117,7 @@
                        Today="_remindersToday"
                        WeekStart="_householdWeekStart"
                        Zone="_remindersZone"
-                       OnOpenEvent="OpenEventFromReminders" />
+                       OnOpenDay="OnRemindersDrillDown" />
     }
     }
     }
@@ -170,7 +170,7 @@
     // Reminders tab state. Starts empty before the first fetch — RemindersView renders its
     // "No reminders coming up" state for that, rather than a blank region — and is then kept live by
     // RefreshUpcomingRemindersAsync (on opening the tab, on EventsUpdated, and on the per-minute tick
-    // below once any row's next reminder has passed).
+    // below when the month changes).
     private IReadOnlyList<UpcomingReminderEventViewModel> _upcomingReminders = Array.Empty<UpcomingReminderEventViewModel>();
     private DateOnly _remindersToday;
     private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
@@ -185,13 +185,10 @@
 
     // The tick that keeps the Reminders timeline honest between fetches. Every minute it re-reads
     // "today" off the clock, which is what keeps a row's SECTION correct across midnight (bucketing
-    // recomputes from _remindersToday on every render) with no timer aimed at midnight itself. It also
-    // refetches from the server — see RefileRemindersForTick — on a month change or once any row's own
-    // NextReminderAt has passed, because a row now summarises an event's reminders rather than
-    // carrying one each: only the server (ReminderPingCalculator) knows whether a LATER reminder on
-    // the same event is still outstanding once the one this row already knows about has fired. Started
-    // when the Reminders tab is switched to and stopped when it is switched away from, mirroring
-    // DayView's now-line loop but scoped to this tab rather than the whole page.
+    // recomputes from _remindersToday on every render) with no timer aimed at midnight itself. It
+    // refetches from the server only on a month change — see RefileRemindersForTick. Started when the
+    // Reminders tab is switched to and stopped when it is switched away from, mirroring DayView's
+    // now-line loop but scoped to this tab rather than the whole page.
     //
     // Owned through ReminderTickLoop rather than a bare CancellationTokenSource/Task pair: a tab
     // switch away and back before a slow fetch resolves is an ordinary interleaving, not a rare one,
@@ -401,6 +398,13 @@
 
     private Task OnAgendaDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
 
+    // The Reminders timeline drills into the Day view exactly as the Month and Agenda views do, and
+    // is the first caller that can pass a date OUTSIDE the loaded month: the timeline spans to the
+    // end of NEXT month, while the other two only ever offer dates from the month grid they render.
+    // SwitchToView already handles that — a date in another month sets CurrentMonth and awaits
+    // LoadMonthDataAsync before the Day view reads _monthView — so this needs nothing of its own.
+    private Task OnRemindersDrillDown(DateTime date) => SwitchToView(DashboardView.Day, date);
+
     private string? _saveOrderError;
 
     private async Task HandleSaveOrder(Dictionary<Guid, int> order)
@@ -536,37 +540,24 @@
     private void OpenEditEventModal(CalendarEventViewModel evt) =>
         _eventModal.OpenForEdit(evt);
 
-    private async Task OpenEventFromReminders(Guid eventId)
-    {
-        // The event may sit in a month the dashboard has never loaded, so there is nothing in memory
-        // to open — it is fetched by id. A null answer means it was deleted elsewhere between the
-        // list fetch and the tap, which is ordinary and not an error worth a dialog: just refresh the
-        // timeline so the row that no longer has an event stops being offered.
-        var evt = await CalendarApi.GetEventAsync(eventId);
-        if (evt is null)
-        {
-            await RefreshUpcomingRemindersAsync();
-            StateHasChanged();
-            return;
-        }
-
-        OpenEditEventModal(evt);
-        _eventModal.ShowRemindersTab();
-    }
-
     private async Task RefreshUpcomingRemindersAsync()
     {
         _upcomingReminders = await CalendarApi.GetUpcomingRemindersAsync();
     }
 
-    // EventModal.OnSaved/OnDeleted fire for every tab the modal can be opened from, not only
-    // Reminders — LoadMonthDataAsync always runs because Month/Day/Agenda all read the same month
-    // grid regardless of which one is currently showing. The reminders timeline is different: it is
-    // its own fetch, scoped to whichever tab happens to be open, so it only refreshes itself when
-    // that tab IS the Reminders view — the same "originating view refreshes itself" convention
-    // SwitchToView/EnterRemindersViewAsync already follow. Without this, editing or deleting a
-    // reminder's event from the Reminders tab leaves its row showing the pre-edit lead time (or
-    // present at all, for a delete) until the next SignalR EventsUpdated happens to land.
+    // EventModal.OnSaved/OnDeleted fire for every tab the modal can be opened from, and
+    // LoadMonthDataAsync always runs because Month/Day/Agenda all read the same month grid
+    // regardless of which one is currently showing. The reminders timeline is its own fetch, so it
+    // only refreshes itself when that tab IS the Reminders view — the same "originating view
+    // refreshes itself" convention SwitchToView/EnterRemindersViewAsync already follow.
+    //
+    // No path opens the modal from the Reminders tab today: tapping a row drills into the Day view,
+    // and the only OpenForEdit/OpenForCreate callers are wired to the Month, Day and Agenda
+    // components, none of which render while the Reminders view does. The guard is kept rather than
+    // dropped because these two callbacks are shared by every view, so it costs nothing while
+    // unreachable and is what a re-added path would otherwise have to remember to restore. Entering
+    // the tab refetches regardless (EnterRemindersViewAsync), so nothing stale survives a tab
+    // switch either way.
     private async Task OnEventModalSaved()
     {
         await LoadMonthDataAsync();
@@ -578,8 +569,7 @@
         }
     }
 
-    // Same reasoning and refresh as OnEventModalSaved — a delete from the Reminders tab needs its
-    // row gone just as promptly as an edit needs its row's lead time updated.
+    // Same reasoning and refresh as OnEventModalSaved.
     private async Task OnEventModalDeleted()
     {
         await LoadMonthDataAsync();
@@ -622,41 +612,25 @@
 
     // The tick callback itself. Re-reads "today" from the clock (kiosk-adjusted, so never
     // DateTime.Today) so sections recompute correctly across midnight, and refetches from the server
-    // in the two cases memory alone cannot resolve:
+    // in the one case memory alone cannot resolve: crossing a MONTH. RemindersController's window is
+    // [now, end of next month], so going from 31 March to 1 April moves that far edge from
+    // end-of-April to end-of-May, and the newly-in-window events for May are not in memory — nothing
+    // local can conjure them.
     //
-    //  - Crossing a MONTH: RemindersController's window is [now, end of next month], so going from
-    //    31 March to 1 April moves that far edge from end-of-April to end-of-May, and the newly-in-
-    //    window events for May are not in memory — nothing local can conjure them.
-    //  - A row's NextReminderAt has passed: a row summarises potentially SEVERAL reminders, and only
-    //    the server (ReminderPingCalculator holds the schedule) knows whether a LATER one is still
-    //    outstanding — the seven-reminders-before-one-event case this view exists to get right. The
-    //    row itself never goes away for that; what changes is what it SAYS, from naming the next
-    //    reminder to "all sent", and that wording comes from the server too.
+    // Crossing MIDNIGHT inside the same month needs no refetch: the window's far edge is unchanged,
+    // and all that has changed is which SECTION a row's EventStart falls into — which is recomputed
+    // from _remindersToday on every render regardless.
     //
-    // Crossing MIDNIGHT without either of those is the case that needs no refetch: the window's far
-    // edge is unchanged and nothing about which reminders remain outstanding has changed either, only
-    // which SECTION a row's EventStart falls into — and sections are recomputed from _remindersToday
-    // on every render regardless.
+    // A reminder firing is not a trigger either, and no longer could be: nothing on a row describes
+    // a reminder, so there is nothing for a fired one to make stale. The row is filed by its EVENT's
+    // start and reads the same before and after every one of its reminders has gone off.
     private async Task RefileRemindersForTick()
     {
         var today = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
         var monthChanged = today.Month != _remindersToday.Month || today.Year != _remindersToday.Year;
         _remindersToday = today;
 
-        // Strictly earlier than the cut-off, because the server counts a reminder as not-yet-fired
-        // while TriggerAt >= now: comparing the other way made the tick that lands on the trigger
-        // instant itself spend a round trip to be told nothing had changed.
-        //
-        // The cut-off is a tick period in the past rather than "now" because a kiosk clock running
-        // AHEAD of the server's would otherwise refetch every minute forever — the row comes back
-        // with the same still-pending NextReminderAt the kiosk has already decided is overdue, and
-        // the next tick decides it again. One tick period of slack absorbs any skew smaller than
-        // the tick, and a genuinely fired reminder is simply picked up on the following tick instead.
-        // A row with nothing left pending carries a null NextReminderAt and never qualifies at all.
-        var firedBefore = Clock.GetUtcNow() - ReminderTickPeriod;
-        var reminderDue = _upcomingReminders.Any(r => r.NextReminderAt < firedBefore);
-
-        if (monthChanged || reminderDue)
+        if (monthChanged)
         {
             await RefreshUpcomingRemindersAsync();
         }

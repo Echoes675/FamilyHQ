@@ -133,22 +133,18 @@ public class RemindersViewSteps
             $"'{title}' must not also be filed under '{sectionName}'.");
     }
 
-    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" showing ""([^""]*)"" and its start time")]
-    public async Task ThenTheSectionHasARowForShowingAndItsStartTime(
-        string sectionName, string title, string leadText)
+    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with its start time alone")]
+    public async Task ThenTheSectionHasARowForLeadingWithItsStartTimeAlone(string sectionName, string title)
     {
         // sectionName is not re-resolved here: FindReminderRowByTitleAsync already searches the
         // whole view, and ThenTheSectionHasARowFor (above) is what pins WHICH section a row landed
         // in. This step is about what the row SAYS, not where it is.
-        var row = await _dashboardPage.FindReminderRowByTitleAsync(title);
-
-        row.Text.Should().Contain(leadText, $"the row for '{title}' should state its reminder's lead time.");
-
-        // The leading column is read on its own, and against the exact instant the seeding step
-        // stashed. Matching an HH:mm pattern anywhere in the row's text would pass on a row that led
-        // with its NEXT REMINDER's time instead of the event's — precisely the regression this view
-        // was reworked to stop — and an all-day row's "next 1 day before at 17:00" satisfies such a
-        // pattern on its own. Nothing is re-derived here: the seeding step already computed the start.
+        //
+        // The leading column is read on its own and compared for EQUALITY, which is what makes this
+        // the "no date" half of the requirement: Today spans one day and its heading already names
+        // it, so repeating the date on every row there is noise. A `Contain` check would pass just
+        // as well on "Tue 10 Mar · 18:00". Nothing is re-derived either — the seeding step already
+        // computed the start, and this reads back the instant it stashed.
         if (!_scenarioContext.TryGetValue<DateTime>(SeededStartKey(title), out var seededStart))
         {
             throw new InvalidOperationException(
@@ -161,43 +157,39 @@ public class RemindersViewSteps
         var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
 
         shown.Should().Be(expected,
-            $"the row for '{title}' should lead with when the EVENT starts, not when a reminder fires.");
+            $"the row for '{title}' should lead with when the EVENT starts, and with nothing else.");
     }
 
-    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" naming (\d+) reminders?")]
-    public async Task ThenTheSectionHasARowForNamingReminders(string sectionName, string title, int count)
+    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with the day and date of ""([^""]*)""")]
+    public async Task ThenTheSectionHasARowForLeadingWithTheDayAndDateOf(
+        string sectionName, string title, string dateExpr)
     {
+        // The other half: a section spanning several days has to say WHICH day each row is, or
+        // several occurrences of one recurring series render as identical rows — the screenshot that
+        // prompted this showed three of them.
+        //
+        // The expected date comes from DateExpressionResolver, the same single source of truth the
+        // seeding step resolved the expression through, so this cannot disagree with the seed about
+        // what "next month" means. The day NAME is asserted along with the date because the row
+        // renders both, and InvariantCulture because that is what the row formats with.
+        var expectedDate = DateTime.ParseExact(
+            DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var expectedPrefix = expectedDate.ToString("ddd d MMM", CultureInfo.InvariantCulture);
+
         var key = ParseSection(sectionName);
         var rows = await _dashboardPage.ReadReminderRowsAsync(key);
         var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
 
-        var matching = rows.Where(r => r.EventId == target.EventId).ToList();
+        rows.Should().Contain(
+            r => r.EventId == target.EventId,
+            $"'{title}' should have a row filed under '{sectionName}' to read a date off.");
 
-        matching.Should().ContainSingle(
-            $"'{title}' carries several reminders, so its section should file ONE row for it, never one per reminder.");
+        var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
 
-        var noun = count == 1 ? "reminder" : "reminders";
-        matching[0].Text.Should().Contain(
-            $"{count} {noun}", $"the row for '{title}' should state it has {count} {noun}.");
-    }
-
-    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" saying its reminders have all been sent")]
-    public async Task ThenTheSectionHasARowForSayingItsRemindersHaveAllBeenSent(string sectionName, string title)
-    {
-        var key = ParseSection(sectionName);
-        var rows = await _dashboardPage.ReadReminderRowsAsync(key);
-        var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
-
-        var match = rows.SingleOrDefault(r => r.EventId == target.EventId)
-            ?? throw new InvalidOperationException(
-                $"'{title}' has no row filed under '{sectionName}'. An event keeps its row until the " +
-                "event itself is past, so a reminder having already fired is not a reason for it to " +
-                "be missing.");
-
-        match.Text.Should().Contain(
-            "all sent",
-            $"every reminder on '{title}' has already fired, so its row should say so rather than " +
-            "naming a next one — or disappearing.");
+        shown.Should().StartWith(
+            expectedPrefix,
+            $"a row in '{sectionName}' should lead with the day and date of its event, because the " +
+            "section covers more than one day and its heading cannot say which.");
     }
 
     [Then(@"the row for ""([^""]*)"" appears only in the ""([^""]*)"" section")]
@@ -319,13 +311,14 @@ public class RemindersViewSteps
         await _dashboardPage.TapReminderRowAsync(row.EventId);
     }
 
-    [Then(@"the event modal is open on ""([^""]*)"" showing its Reminders tab")]
-    public async Task ThenTheEventModalIsOpenOnShowingItsRemindersTab(string title)
+    [Then(@"the day view is showing ""([^""]*)""")]
+    public async Task ThenTheDayViewIsShowing(string title)
     {
-        var openTitle = await _dashboardPage.GetEventDetailsAsync();
-        openTitle.Should().Be(title, "tapping a row should fetch and open THAT event, by id.");
-
-        await _dashboardPage.AssertModalTabActiveAsync("reminders");
+        // Asserted on the event's own TILE rather than on the Day view merely being visible: the
+        // Day view renders only the events filed under the day it is showing, so this can pass only
+        // if it opened on the event's day — and, when that day is outside the month the dashboard
+        // had loaded, only if the month was fetched first.
+        await _dashboardPage.AssertDayViewShowingEventAsync(title);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

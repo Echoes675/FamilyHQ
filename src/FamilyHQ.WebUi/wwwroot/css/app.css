@@ -1434,35 +1434,23 @@ body:not([data-theme]) .brand-logo__img--morning {
 .reminder-row__time {
     flex: 0 0 auto;
     min-width: 44px;
+    /* Never wrapped: on the three sections that lead with the date this column carries a day, a date
+       and a time ("Mon 15 Jun · 10:05"), and a title long enough to squeeze the row would otherwise
+       break it across two lines. The title is the part that gives way, by ellipsis, below. */
+    white-space: nowrap;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     color: var(--theme-text);
 }
 
-.reminder-row__icon {
-    flex: 0 0 auto;
-    font-size: 1rem;
-}
-
-.reminder-row__body {
+.reminder-row__title {
     flex: 1 1 auto;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.reminder-row__title {
     color: var(--theme-text);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.reminder-row__detail {
-    color: var(--theme-text-muted);
-    font-size: 0.8rem;
 }
 
 .reminder-row__people {

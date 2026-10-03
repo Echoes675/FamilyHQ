@@ -24,6 +24,10 @@
                     else
                     {
                         var expanded = _expanded.Contains(bucket.Key);
+                        @* Answered once per section rather than per row: every row in a section
+                           shows the date or none of them does, and the row itself is not told which
+                           section it is in. *@
+                        var showsDate = RemindersViewLogic.ShowsDate(bucket.Key);
                         <div class="reminders-section__rows">
                             @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
                             {
@@ -32,7 +36,8 @@
                                 <ReminderRow @key="row.EventId"
                                              Event="row"
                                              Zone="Zone"
-                                             OnOpenEvent="OnOpenEvent" />
+                                             ShowsDate="showsDate"
+                                             OnOpenDay="OnOpenDay" />
                             }
                         </div>
                         @if (!expanded && bucket.Rows.Count > RemindersViewLogic.PreviewRows)
@@ -86,11 +91,11 @@
     /// <summary>The zone a row's local day (its event's start) is read in.</summary>
     [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
 
-    /// <summary>Raised with an event's id when its row is tapped.</summary>
-    [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
+    /// <summary>Raised with an event's own local day when its row is tapped.</summary>
+    [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
 
     // Which sections the family has asked to see in full. Local, UI-only state — expanding never
-    // raises OnOpenEvent or re-fetches Rows, it only changes which rows already in memory are shown.
+    // raises OnOpenDay or re-fetches Rows, it only changes which rows already in memory are shown.
     private readonly HashSet<ReminderSectionKey> _expanded = [];
 
     private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
