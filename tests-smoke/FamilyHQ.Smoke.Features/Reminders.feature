@@ -50,6 +50,16 @@ Feature: Reminders, against the real Google API
     When I hand that event's reminders back to its calendar on the kiosk
     Then Google holds that event as following its calendar's own reminders
 
+  # RM3 drives the inheritance toggle one way — an explicit list handed back to the calendar. This drives
+  # it the other, which is the direction a family reported going wrong: an event following its calendar's
+  # reminders, taken off them with nothing put in their place. Following the calendar and carrying none of
+  # its own are two different states in Google, and this is the only scenario that lands in the second.
+  @RM7
+  Scenario: Taking an event off its calendar's reminders leaves it carrying none in Google
+    Given the kiosk has created an event that follows its calendar's reminders
+    When I take that event off its calendar's reminders on the kiosk without adding one
+    Then Google holds that event as carrying no reminders of its own
+
   # This one RECORDS a behaviour nobody has observed, rather than asserting an expected value. Switching an
   # event to all day on the kiosk sends Google a revert-to-default reminder body on an all-day event, and
   # no fixture from the spike covers that: every all-day event it looked at came back with the calendar's
