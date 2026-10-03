@@ -1,4 +1,3 @@
-using FamilyHQ.Core.Validators;
 using FamilyHQ.WebUi.Components.Dashboard;
 using FamilyHQ.WebUi.ViewModels;
 using FluentAssertions;
@@ -15,22 +14,13 @@ public class RemindersViewLogicTests
         EventTitle: $"Event {index}",
         EventStart: new DateTimeOffset(2026, 3, 10, 9, 30, 0, TimeSpan.Zero).AddMinutes(index),
         EventIsAllDay: false,
-        ReminderCount: 1,
-        NextReminderAt: new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero).AddMinutes(index),
-        NextReminderMinutes: 30,
-        NextReminderMethod: EventRemindersValidator.PopupMethod,
         Members: Array.Empty<ReminderMemberViewModel>());
 
-    private static UpcomingReminderEventViewModel RowStarting(
-        string title, DateTimeOffset eventStart, DateTimeOffset nextReminderAt) => new(
+    private static UpcomingReminderEventViewModel RowStarting(string title, DateTimeOffset eventStart) => new(
         EventId: Guid.Empty,
         EventTitle: title,
         EventStart: eventStart,
         EventIsAllDay: false,
-        ReminderCount: 1,
-        NextReminderAt: nextReminderAt,
-        NextReminderMinutes: (int)(eventStart - nextReminderAt).TotalMinutes,
-        NextReminderMethod: EventRemindersValidator.PopupMethod,
         Members: Array.Empty<ReminderMemberViewModel>());
 
     private static ReminderSection<UpcomingReminderEventViewModel> SectionWith(int rowCount) =>
@@ -44,37 +34,24 @@ public class RemindersViewLogicTests
         sections.Single(s => s.Key == key).Rows;
 
     [Fact]
-    public void Sections_FileEachRowByItsEventStart_NotByItsNextReminder()
+    public void Sections_FileEachRowByItsEventStart()
     {
-        // The one assertion that holds the whole feature up. Both rows are built so that their event
-        // start and their next reminder fall in DIFFERENT sections, which is what makes the selector
-        // observable at all: with a reminder on the same day as its event, filing by either value
-        // gives the same answer and this test would pass on a broken implementation.
-        //
-        // Today is Tuesday 10 March 2026; a Monday-start week ends Sunday the 15th.
+        // Today is Tuesday 10 March 2026; a Monday-start week ends Sunday the 15th. The two rows sit
+        // either side of that boundary, so this pins the whole composition — today, the week start
+        // and the selector handed to ReminderBucketing — and not merely that a list comes back.
         var today = new DateOnly(2026, 3, 10);
 
-        // Dentist happens today, but was reminded about a week ago — an instant before the timeline's
-        // own near edge, so filing by the reminder would drop the row from the view entirely.
-        var dentist = RowStarting(
-            "Dentist", new DateTimeOffset(2026, 3, 10, 18, 0, 0, TimeSpan.Zero),
-            new DateTimeOffset(2026, 3, 3, 18, 0, 0, TimeSpan.Zero));
-
-        // Checkup happens on the 17th, which is This month (past the end of this week), and is
-        // reminded about tomorrow — the section it must NOT be filed under.
-        var checkup = RowStarting(
-            "Checkup", new DateTimeOffset(2026, 3, 17, 9, 0, 0, TimeSpan.Zero),
-            new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero));
+        var dentist = RowStarting("Dentist", new DateTimeOffset(2026, 3, 10, 18, 0, 0, TimeSpan.Zero));
+        var checkup = RowStarting("Checkup", new DateTimeOffset(2026, 3, 17, 9, 0, 0, TimeSpan.Zero));
 
         var sections = RemindersViewLogic.Sections(
             new[] { dentist, checkup }, today, DayOfWeek.Monday, TimeZoneInfo.Utc);
 
         Rows(sections, ReminderSectionKey.Today).Should().Equal(
-            [dentist], "the event happens today, whenever its reminders happened to fire");
+            [dentist], "the event happens today");
         Rows(sections, ReminderSectionKey.ThisMonth).Should().Equal(
             [checkup], "the event happens on the 17th, which is past the end of this week");
-        Rows(sections, ReminderSectionKey.Tomorrow).Should().BeEmpty(
-            "tomorrow is when Checkup's reminder fires, which is not what files a row");
+        Rows(sections, ReminderSectionKey.Tomorrow).Should().BeEmpty();
     }
 
     [Fact]
@@ -117,6 +94,31 @@ public class RemindersViewLogicTests
 
         RemindersViewLogic.Preview(section, expanded: true)
             .Should().HaveCount(RemindersViewLogic.PreviewRows + 1);
+    }
+
+    [Theory]
+    [InlineData(ReminderSectionKey.Today, false)]
+    [InlineData(ReminderSectionKey.Tomorrow, false)]
+    [InlineData(ReminderSectionKey.ThisWeek, true)]
+    [InlineData(ReminderSectionKey.ThisMonth, true)]
+    [InlineData(ReminderSectionKey.NextMonth, true)]
+    public void ShowsDate_IsTrueForEverySectionSpanningMoreThanOneDay(ReminderSectionKey key, bool expected) =>
+        // All five enumerated rather than only the three that are true: the near two being FALSE is
+        // half the requirement. Today and Tomorrow each cover one day and say which in their own
+        // heading, so repeating the date on every row there is noise on a wall display — and the
+        // further-out three each span several days, where three occurrences of one recurring series
+        // read as three identical rows without it.
+        RemindersViewLogic.ShowsDate(key).Should().Be(expected);
+
+    [Fact]
+    public void ShowsDate_ForAValueOutsideTheKnownFive_ThrowsRatherThanFallingThrough()
+    {
+        // A cast to an undeclared value, not a sixth enum member. Whether a new section shows dates
+        // depends on how many days it spans, which only whoever adds it knows — so it is refused
+        // here rather than defaulted to either answer, the same treatment SectionSlug gives it.
+        var act = () => RemindersViewLogic.ShowsDate((ReminderSectionKey)99);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
     }
 
     [Theory]

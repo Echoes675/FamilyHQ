@@ -29,9 +29,9 @@ public interface ICalendarApiService
     Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// One event by id, for the reminders timeline's tap-to-open path. Null on a 404 — a row can
-    /// outlive its event if it is deleted on a phone between the list fetch and the tap, and that
-    /// is ordinary, not an error worth throwing over.
+    /// One event by id, for a caller holding an id but no event — an event in a month the dashboard
+    /// has never loaded is not in memory to be read. Null on a 404 rather than a throw: an event can
+    /// be deleted on a phone between whatever named the id and the fetch for it, which is ordinary.
     /// </summary>
     Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default);
 }

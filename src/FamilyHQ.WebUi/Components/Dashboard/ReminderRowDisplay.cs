@@ -1,88 +1,56 @@
 using System.Globalization;
-using FamilyHQ.Core.Validators;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
 /// <summary>
-/// Puts one Reminders-timeline row into words. Deliberately separate from
-/// <see cref="ReminderDescription"/> rather than reusing it — see the remarks below for why that is a
-/// considered choice, not an accidental duplicate.
+/// The one place a Reminders-timeline row's "when" is decided — both the text the row leads with and
+/// the day a tap on it opens.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why this is its own class.</b> <see cref="ReminderDescription"/> exists to read correctly in
-/// the edit modal's reminder list, which the family opens rarely and reads carefully. This timeline
-/// is the opposite: a dense list of rows on a wall display, glanced at rather than read, where a
-/// full sentence per row ("30 minutes before · Notification") would not fit two columns of them.
-/// <see cref="Lead"/> therefore uses the compact unit words a form never would ("min"/"hr"/"day")
-/// but keeps the <i>same</i> "largest unit that divides evenly" cascade
-/// <see cref="ReminderDescription.Timing"/> uses, so a reminder is never reported as a different
-/// number of units in the two places — only with a shorter word for the same one. That shared
-/// cascade is the part that would actually create the hazard if it drifted, which is why it is
-/// called out here rather than left to be noticed by diffing the two files.
+/// <b>Why this is its own class rather than a <c>.razor</c> <c>@code</c> block.</b> There is no bUnit
+/// in this repo, so anything a Razor component computes for itself is computed where no unit test can
+/// reach it — the same reason <see cref="RemindersViewLogic"/> exists beside
+/// <see cref="RemindersView"/>. A row's displayed time was once formatted in raw UTC while every
+/// other view converted to the household zone, and it shipped: that is the class of mistake this file
+/// exists to keep testable.
 /// </para>
 /// <para>
-/// <b>Where correctness outranks compactness.</b> An all-day event's stored offset counts backwards
-/// from midnight on the event's first day, not from the event's start, so the same "divide by 60"
-/// reading <see cref="Lead"/> uses for a timed event answers the wrong question for one — 420
-/// minutes is "7 hrs before" by that arithmetic, but it is actually "1 day before at 17:00". There
-/// is no compact form of that second sentence worth inventing, so <see cref="Lead"/> does not try:
-/// for an all-day event it hands the value straight to
-/// <see cref="ReminderDescription.Timing(int, bool)"/>, which already gets this right via
-/// <see cref="ReminderPickerModel.ToDaysBeforeAndTime"/>, and returns whatever that says verbatim.
-/// The tricky arithmetic stays defined in exactly one place either way.
+/// <b>The row says nothing about the reminders.</b> It reads "[when] · title · [who]". The bell glyph
+/// and the "1 reminder · next 45 min before" line were removed at the family's request, and with them
+/// the lead-time wording this class used to hold — the compact "30 min before" / "2 hrs before" form
+/// and its all-day special case. <c>ReminderDescription</c> is now the only renderer of a reminder's
+/// timing, which is where a family member reads it anyway: in the event modal, carefully, rather than
+/// at a glance across a wall display.
 /// </para>
 /// </remarks>
 public static class ReminderRowDisplay
 {
-    private const int MinutesPerHour = 60;
-
-    // Shared with ReminderDescription, which defines the same two constants off the same source —
-    // see ReminderPickerModel.MinutesPerDay — so the day/week boundary cannot drift between the two
-    // renderers even though the words either side of it are deliberately different.
-    private const int MinutesPerDay = ReminderPickerModel.MinutesPerDay;
-    private const int MinutesPerWeek = 7 * ReminderPickerModel.MinutesPerDay;
-
     /// <summary>
-    /// How long before the event this ping fires. For a timed event, the compact units a timeline
-    /// row has room for: "30 min before", "2 hrs before", "1 day before" — the largest unit that
-    /// divides the value evenly, so a reminder set in minutes never reads as an approximate number
-    /// of hours or days. For an all-day event, <paramref name="minutes"/> counts backwards from
-    /// local midnight rather than from the start, so this delegates to
-    /// <see cref="ReminderDescription.Timing(int, bool)"/> instead of reading it the timed way —
-    /// see the class remarks for why "7 hrs before" would be the wrong answer for the same value.
-    /// </summary>
-    public static string Lead(int minutes, bool isAllDay)
-    {
-        if (isAllDay)
-        {
-            return ReminderDescription.Timing(minutes, isAllDay: true);
-        }
-
-        return minutes switch
-        {
-            // Not reachable from the kiosk's own reminder form (its floor is the event's start,
-            // i.e. zero), but a phone can set this, and Google accepts it — see
-            // EventReminder.Minutes.
-            0 => "at the start",
-            < 0 => $"{(-minutes).ToString(CultureInfo.InvariantCulture)} min after start",
-            _ when minutes % MinutesPerWeek == 0 => $"{Count(minutes / MinutesPerWeek, "wk", "wks")} before",
-            _ when minutes % MinutesPerDay == 0 => $"{Count(minutes / MinutesPerDay, "day", "days")} before",
-            _ when minutes % MinutesPerHour == 0 => $"{Count(minutes / MinutesPerHour, "hr", "hrs")} before",
-            // "min" is not pluralised — "47 min", not "47 mins" — matching how the word is
-            // actually used when written this short.
-            _ => $"{minutes.ToString(CultureInfo.InvariantCulture)} min before"
-        };
-    }
-
-    /// <summary>
-    /// The event's own start, in the row's compact leading form: "14:00" — or "all day" for an
-    /// all-day event, rather than its stored midnight boundary read as a time, which would tell the
-    /// family the event "starts 00:00". This is what the row leads with where a per-ping row used to
-    /// lead with the ping's own trigger time — see the class remarks on why the row is filed, and now
-    /// labelled, by the event rather than by any one of its reminders.
+    /// The row's leading "when": the event's own start as the family sees it. A timed event reads
+    /// "14:00"; an all-day event reads "all day" rather than its stored midnight boundary read as a
+    /// time, which would tell the family the event "starts 00:00".
+    /// <para>
+    /// With <paramref name="withDate"/> the day and date lead it — "Sat 4 Oct · 10:00",
+    /// "Sat 4 Oct · all day" — which the three further-out sections need and the near two do not:
+    /// This week, This month and Next month each span several days, so three occurrences of one
+    /// recurring series on three different days otherwise render as three identical rows (the
+    /// screenshot that prompted this showed exactly that). Today and Tomorrow span one day each and
+    /// their own heading already names it.
+    /// </para>
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The month is in the format on purpose, and <c>ddd d</c> alone would not do. This week is the
+    /// one section whose span can cross a month boundary: with a Monday-start week and today on
+    /// Monday 28 September, <see cref="ReminderBucketing.File{T}"/> gives it 30 September through 4
+    /// October, so "Wed 30" and "Thu 1" sit in the same pane saying nothing about which month either
+    /// is in. (This month and Next month are each bounded to one calendar month, so neither needs it
+    /// to tell its own rows apart — but a row that reads correctly only once the reader has resolved
+    /// it against the pane heading above is a row that reads wrongly at a glance, which is the only
+    /// way this view is ever read.)
+    /// </para>
+    /// <para>
     /// <paramref name="start"/> arrives from Postgres via Npgsql as a <c>timestamptz</c> read back
     /// with a <c>+00:00</c> offset — not wall-clock-correct for the household, whatever offset it
     /// carries. Every other dashboard view converts before formatting
@@ -90,43 +58,29 @@ public static class ReminderRowDisplay
     /// is why <paramref name="zone"/> is required rather than optional: formatting the raw value, as
     /// this used to, reads an hour early for every timed event for roughly half the year in a zone
     /// that observes DST.
+    /// </para>
+    /// <para>
+    /// <see cref="CultureInfo.InvariantCulture"/> throughout, so the kiosk's own locale cannot reorder
+    /// the date or translate the day name, and so CI — which runs globalization-invariant — formats it
+    /// the same way the Pi does.
+    /// </para>
     /// </remarks>
-    public static string EventTime(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone) =>
-        isAllDay ? "all day" : TimeZoneInfo.ConvertTime(start, zone).ToString("HH:mm", CultureInfo.InvariantCulture);
-
-    /// <summary>
-    /// The row's reminder summary: how many reminders the event carries in total, and the lead time
-    /// of the soonest one still to fire — "3 reminders · next 2 hrs before" (singular: "1 reminder ·
-    /// next …"). Delegates the lead-time wording to <see cref="Lead"/> rather than re-deriving it, so
-    /// the two can never disagree about the same reminder.
-    /// </summary>
-    /// <remarks>
-    /// A null <paramref name="nextReminderMinutes"/> means every one of them has already gone off,
-    /// which reads "· all sent". That is the whole treatment: the row is not dimmed, struck through or
-    /// re-iconed, because the event itself is still ahead and the row is still the family's reminder
-    /// that it is coming — only the notifications are behind it.
-    /// </remarks>
-    public static string ReminderSummary(int reminderCount, int? nextReminderMinutes, bool isAllDay)
+    public static string EventTime(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone, bool withDate)
     {
-        var noun = reminderCount == 1 ? "reminder" : "reminders";
-        var tail = nextReminderMinutes is null ? "all sent" : $"next {Lead(nextReminderMinutes.Value, isAllDay)}";
-        return $"{reminderCount.ToString(CultureInfo.InvariantCulture)} {noun} · {tail}";
+        var local = TimeZoneInfo.ConvertTime(start, zone);
+        var when = isAllDay ? "all day" : local.ToString("HH:mm", CultureInfo.InvariantCulture);
+
+        return withDate
+            ? $"{local.ToString("ddd d MMM", CultureInfo.InvariantCulture)} · {when}"
+            : when;
     }
 
     /// <summary>
-    /// A one-glyph hint at how the next reminder is delivered. Falls back to a plain bullet for a
-    /// method Google did name but that the kiosk's own form cannot create — a method this cannot
-    /// picture is not a reason to throw. That is distinct from an event with no reminder still to
-    /// come, which has no method at all: the row omits the glyph entirely rather than calling this,
-    /// because a bullet there would stand in for a delivery that is not going to happen.
+    /// The row's own day: the date a tap on it drills into. Read through the same conversion
+    /// <see cref="EventTime"/> formats and <see cref="ReminderBucketing.File{T}"/> files by, so the
+    /// date the row shows, the section it sits under and the day the tap opens cannot disagree — a
+    /// late-evening event read in UTC instead would drill into the day before the one on the row.
     /// </summary>
-    public static string MethodIcon(string method) => method switch
-    {
-        EventRemindersValidator.PopupMethod => "🔔",
-        EventRemindersValidator.EmailMethod => "✉",
-        _ => "•"
-    };
-
-    private static string Count(int amount, string singular, string plural) =>
-        $"{amount.ToString(CultureInfo.InvariantCulture)} {(amount == 1 ? singular : plural)}";
+    public static DateTime LocalDate(DateTimeOffset start, TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(start, zone).Date;
 }

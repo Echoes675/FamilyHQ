@@ -1,4 +1,4 @@
-﻿# E2E Testing Maintenance Guide
+# E2E Testing Maintenance Guide
 
 This document provides comprehensive guidance for maintaining and extending the FamilyHQ end-to-end (E2E) test suite.
 
@@ -430,19 +430,44 @@ clearest case. That half is asserted against real Google in the preprod smoke su
 The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
 one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
 Reminders tab above (which edits one event's reminders). Covers: the tab existing alongside Month
-without becoming the default; a reminder of its own showing its lead and its event's start; an event
-following its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
+without becoming the default; a row under Today leading with its event's start time and nothing else;
+a row in a section covering several days leading with the day and date as well; an event following
+its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
 inheriting from a calendar with no defaults both never appearing; an event whose last reminder has
-already fired keeping its row and reading "all sent"; two reminders on one event filing as **one** row
-that names how many it has; an event with widely-spaced reminders (one soon, one over two weeks out)
-appearing exactly once, under its own start and in no other section; a shared event's row naming the
-people it is shared with rather than the shared calendar; tomorrow's event staying under Tomorrow
+already fired keeping its row; an event with widely-spaced reminders (one soon, one over two weeks
+out) appearing exactly once, under its own start and in no other section; a shared event's row naming
+the people it is shared with rather than the shared calendar; tomorrow's event staying under Tomorrow
 rather than This week; an empty section collapsing to one line; the fully-empty view stating it
 plainly; both permanent footnotes (all-day, and the one admitting the inherited exclusion); tapping a
-row opening that event on its Reminders tab (fetched by id, since the row's event may sit in a month
-the dashboard has never loaded); and leaving the tab for another view, which exercises the enter/leave
-path a closed tick-loop race guards but which no other scenario (and no bUnit, which this repo does
-not have) touches.
+row opening the **Day view** on that event's own day; and leaving the tab for another view, which
+exercises the enter/leave path a closed tick-loop race guards but which no other scenario (and no
+bUnit, which this repo does not have) touches.
+
+**A row describes the event, not its reminders.** It reads `[when] · title · [who]`; the bell glyph
+and the `1 reminder · next 45 min before` line were removed at the family's request, and the DTO
+fields that fed them went with them rather than being left unrendered. So there is nothing on a row
+for a scenario to assert about a reminder's count, method or lead time, and nothing for a reminder
+firing to change — which is why the already-fired scenario now asserts only that the row is *there*.
+Its subject survived the change; only its wording assertion did not. What makes this a reminders view
+is the filter, so the scenarios that matter most here are the absence ones.
+
+**`[when]` is two different things, and both halves need a scenario.** Today and Tomorrow show the
+time alone — their headings already say which day they are — and This week, This month and Next month
+lead with `ddd d MMM · HH:mm`. The Today assertion is an **equality** on the leading column rather
+than a `Contain`, because the failure it guards is a date appearing where one is not wanted, and only
+equality catches that. The further-out assertion resolves its expected date through
+`DateExpressionResolver`, the same single source of truth the seeding step used, so the two cannot
+disagree about what "next month" means.
+
+**The tap scenario has to navigate BACK to the current month, and that step is the scenario.** Its
+careful case is an event *outside* the month the dashboard has loaded, because that is what exercises
+`SwitchToView`'s month fetch rather than just the view switch. But setting a reminder on a next-month
+event requires navigating forward to edit it, which loads that month — so the scenario that claimed
+this case before was not actually taking it. `I navigate back to the current month` after the save is
+what makes it real; removing it leaves a scenario that still passes and no longer tests the thing it
+names. The `Then` asserts the event's own **tile**, not that a Day view appeared: `DayView` renders
+only the events filed under the day it is showing, so a visible container alone would pass for the
+wrong day.
 
 **There is no default-tag coverage any more, because there is no default tag.** The view lists only
 events whose reminders were set on the event itself, so an inheriting event produces no row to label

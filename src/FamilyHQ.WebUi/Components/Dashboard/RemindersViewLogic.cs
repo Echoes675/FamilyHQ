@@ -22,12 +22,13 @@ public static class RemindersViewLogic
     /// </summary>
     /// <remarks>
     /// The selector is the whole requirement: a row belongs in the section containing when the event
-    /// HAPPENS, not in whichever section its next reminder's trigger instant falls in. An event with a
-    /// reminder on each of the seven days before it must appear once, under its own day — filing by
-    /// <c>NextReminderAt</c> instead would scatter it across every section those triggers touch. This
-    /// lives here rather than in the component's <c>@code</c> block for exactly that reason: swapping
-    /// the selector back is a one-word edit that undoes the whole behaviour, and there is no bUnit in
-    /// this repo, so a selector only a `.razor` file names is a selector nothing can assert on.
+    /// HAPPENS, not in whichever section a reminder's own trigger instant falls in. An event with a
+    /// reminder on each of the seven days before it must appear once, under its own day; filing by a
+    /// reminder instead scattered it across every section those triggers touched, which is the bug the
+    /// family asked to have stopped. The row no longer carries any reminder's instant for a selector to
+    /// reach for, so that regression now needs a field put back as well — but this still lives here
+    /// rather than in the component's <c>@code</c> block, because there is no bUnit in this repo and a
+    /// selector only a `.razor` file names is a selector nothing can assert on.
     /// </remarks>
     public static IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections(
         IEnumerable<UpcomingReminderEventViewModel> rows,
@@ -51,6 +52,35 @@ public static class RemindersViewLogic
     public static IReadOnlyList<UpcomingReminderEventViewModel> Preview(
         ReminderSection<UpcomingReminderEventViewModel> section, bool expanded) =>
         expanded ? section.Rows : section.Rows.Take(PreviewRows).ToList();
+
+    /// <summary>
+    /// Whether a section's rows lead with the day and date as well as the time
+    /// (<see cref="ReminderRowDisplay.EventTime"/>'s <c>withDate</c>). True for the three sections
+    /// that span several days — This week, This month, Next month — and false for Today and
+    /// Tomorrow, whose own headings already say which day they are.
+    /// </summary>
+    /// <remarks>
+    /// The decision lives here, not on the row, because the row has no idea which section it was
+    /// rendered into and should not acquire one: <see cref="RemindersView"/> already loops the
+    /// sections and holds each <see cref="ReminderSectionKey"/>, so it can answer this once per
+    /// section and pass the answer down. Keeping it here is also the only way it gets a unit test at
+    /// all — there is no bUnit in this repo, so a predicate a <c>.razor</c> file computes for itself
+    /// is a predicate nothing can assert on.
+    /// <para>
+    /// Throws on a value outside the five <see cref="ReminderSectionKey"/> carries, for the same
+    /// reason <see cref="SectionSlug"/> does: whether a sixth section shows dates is a decision
+    /// somebody has to make, and defaulting it would quietly make that decision badly.
+    /// </para>
+    /// </remarks>
+    public static bool ShowsDate(ReminderSectionKey key) => key switch
+    {
+        ReminderSectionKey.Today => false,
+        ReminderSectionKey.Tomorrow => false,
+        ReminderSectionKey.ThisWeek => true,
+        ReminderSectionKey.ThisMonth => true,
+        ReminderSectionKey.NextMonth => true,
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Unknown reminder section.")
+    };
 
     /// <summary>
     /// The kebab-case identifier one <see cref="ReminderSectionKey"/> renders as, used for both the
