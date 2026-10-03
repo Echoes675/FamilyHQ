@@ -62,11 +62,11 @@ public static class ReminderPingCalculator
     /// defaults of its own.
     /// </summary>
     /// <remarks>
-    /// Deliberately does not report WHICH of the two sources the answer came from. That question is
-    /// already answered authoritatively by <c>EventReminders.UseDefault</c> on the stored event — the
-    /// field Google itself sets — so a derived second copy of it could only ever drift from the first.
+    /// Deliberately does not report WHICH of the two sources the answer came from, because no caller
+    /// needs to be told: <c>EventReminders.UseDefault</c> on the stored event — the field Google
+    /// itself sets — already answers that question for anyone who does.
     /// </remarks>
-    public static IReadOnlyList<EventReminder> EffectiveReminders(
+    private static IReadOnlyList<EventReminder> EffectiveReminders(
         EventReminders? eventReminders,
         EventReminders? calendarDefaults)
     {
