@@ -270,30 +270,37 @@ public static class EventModalLogic
             : PredictForSelection(selectedCalendarIds, calendars);
 
     /// <summary>
-    /// Reminders belong to one Google calendar, and an event lands on the single chosen member's
-    /// calendar or, when several members are chosen, on the shared one — the same routing the server
-    /// applies when it creates the event. Null when no calendar-list sync has reported the chosen
-    /// calendar's defaults, which the tab states rather than showing an empty list as though it were
-    /// the calendar's answer.
+    /// Reminders belong to one Google calendar, so the tab has to know which calendar a not-yet-saved
+    /// event will land on. <see cref="OwningCalendarRule"/> answers that; this maps its answer back to
+    /// the calendar in order to read its defaults. Null when no calendar-list sync has reported the
+    /// chosen calendar's defaults, which the tab states rather than showing an empty list as though it
+    /// were the calendar's answer.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The routing itself deliberately lives in <c>FamilyHQ.Core</c> rather than here. The server
+    /// applies the same rule for real when it creates the event, and this used to be a second copy of
+    /// it with nothing tying the two together — so a change to the server's routing would have shipped
+    /// silently and shown up as the tab pre-filling the wrong values.
+    /// </para>
+    /// <para>
     /// Public (not just <see cref="OwningCalendarDefaults"/>'s private helper) because the modal also
     /// calls this directly for a live preview while a member change is in flight — see
     /// <c>EventModal.OnSelectedCalendarsChanged</c>. That preview has to predict from whatever is
     /// currently selected rather than trust an existing event's stored owner, because the member
     /// change it is reacting to can itself move the event onto a different calendar than the one it
     /// opened on.
+    /// </para>
     /// </remarks>
     public static EventReminders? PredictForSelection(
         IReadOnlyCollection<Guid> selectedCalendarIds, IReadOnlyList<CalendarSummaryViewModel> calendars)
     {
-        CalendarSummaryViewModel? owner = selectedCalendarIds.Count switch
-        {
-            1 => calendars.FirstOrDefault(c => c.Id == selectedCalendarIds.First()),
-            > 1 => calendars.FirstOrDefault(c => c.IsShared),
-            _ => null
-        };
+        var owningCalendarId = OwningCalendarRule.OwningCalendarFor(
+            selectedCalendarIds,
+            [.. calendars.Select(c => new OwningCalendarCandidate(c.Id, c.IsShared))]);
 
-        return owner?.DefaultReminders;
+        return owningCalendarId is { } id
+            ? calendars.FirstOrDefault(c => c.Id == id)?.DefaultReminders
+            : null;
     }
 }
