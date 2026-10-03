@@ -449,13 +449,18 @@ is listed. Without it the scenario would pass just as well if the sync never ran
 empty — it would stop being able to fail for the reason it exists for. The same shape is worth
 copying for any new negative assertion here.
 
-**The exclusion does not hide all-day events, and must not be "fixed" to spare them.** Google
-materialises a calendar's defaults onto an all-day event rather than letting it inherit, so a
-birthday or bin-day event arrives carrying explicit overrides and the uniform filter never sees it.
-That property is pinned at the unit level
+**The exclusion does not hide all-day events, and must not be "fixed" to spare them.** An all-day
+event *as Google creates it* does not inherit: Google materialises the calendar's defaults onto it,
+so a birthday or bin-day event arrives carrying explicit overrides and the uniform filter never sees
+it. (What Google returns for the revert-to-default body the kiosk's own All-day toggle sends is
+recorded rather than known — preprod smoke RM4.) That property is pinned at the unit level
 (`RemindersControllerTests.UpcomingReminders_StillListsAnAllDayEventCarryingTheMaterialisedCalendarDefaults`)
 rather than here, because the Simulator is a test double for Google's create response and a green
-scenario would not be evidence about what Google actually sends.
+scenario would not be evidence about what Google actually sends. The other half is pinned against
+**real Google** by preprod smoke **RM5**, and the two halves are not interchangeable: the unit test
+fixes how FamilyHQ treats an event arriving in that shape, while RM5 is the only check in the repo
+that Google still produces that shape at all. Neither the unit test nor any E2E twin can tell you
+that, which is why a change here should keep the RM5 pointer with it.
 
 **Address a row by its `data-event-id`, never by position.** The view sorts by event start, which
 depends on seeding order rather than on anything Google guarantees, so a row's position is not a
