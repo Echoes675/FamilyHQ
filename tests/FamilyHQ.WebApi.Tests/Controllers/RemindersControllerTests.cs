@@ -1,0 +1,525 @@
+using FamilyHQ.Core.DTOs;
+using FamilyHQ.Core.Interfaces;
+using FamilyHQ.Core.Models;
+using FamilyHQ.WebApi.Controllers;
+using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
+using Moq;
+
+namespace FamilyHQ.WebApi.Tests.Controllers;
+
+/// <summary>
+/// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is one EVENT
+/// whose reminders were set ON THE EVENT, filed by <c>EventStart</c>, never one row per reminder, and
+/// carrying nothing that describes those reminders. What is worth testing deliberately here is
+/// therefore all about WHICH events produce a row and WHERE its start puts it: an event that merely
+/// inherits its calendar's usual reminders yields none at all, while one carrying overrides of its
+/// own on that same calendar still does; an event with several reminders still produces exactly one;
+/// a row survives its own reminders, because by the time an event starts they have usually all gone
+/// off and the family still needs the row; and the query window has no reminder-lead tail any more,
+/// filing by event start having removed the reason for one.
+/// </summary>
+public class RemindersControllerTests
+{
+    // Static, predictable GUIDs throughout this file (per .agent/skills/testing-standards/SKILL.md)
+    // rather than Guid.NewGuid() — matches CalendarsControllerTests.cs's CalAId/CalBId/EventId style.
+    // No test in this file asserts on an event's own Id, so every CalendarEvent built by EventWith
+    // shares Guid.Empty; the named people/calendar ids below exist only because their DisplayName
+    // needs to be distinguishable, not because their Id is ever compared.
+    private static readonly Guid OwnerCalendarId = Guid.Parse("00000000-0000-0000-0000-00000000c411");
+    private static readonly Guid EoinCalendarId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid SarahCalendarId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid SharedFamilyCalendarId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    private static EventReminders Explicit(params (string Method, int Minutes)[] overrides) =>
+        EventReminders.Explicit(overrides.Select(o => new EventReminder(o.Method, o.Minutes)));
+
+    private static CalendarInfo DefaultOwnerCalendar(
+        EventReminders? defaultReminders = null,
+        string? ianaTimeZone = null,
+        string displayName = "Family Calendar",
+        string? color = null) =>
+        new()
+        {
+            Id = OwnerCalendarId,
+            DisplayName = displayName,
+            Color = color,
+            IanaTimeZone = ianaTimeZone,
+            DefaultReminders = defaultReminders,
+            IsShared = false
+        };
+
+    // Factory METHODS, not shared static fields — CalendarInfo is a mutable class, and a shared
+    // instance could pick up a mutation from one test and leak it into another. A fresh instance
+    // with the same deterministic Id every call keeps both properties.
+    private static CalendarInfo Eoin() => new() { Id = EoinCalendarId, DisplayName = "Eoin", Color = "#111111", IsShared = false };
+    private static CalendarInfo Sarah() => new() { Id = SarahCalendarId, DisplayName = "Sarah", Color = "#222222", IsShared = false };
+    private static CalendarInfo SharedFamilyCalendar() => new() { Id = SharedFamilyCalendarId, DisplayName = "Family", IsShared = true };
+
+    private static CalendarEvent EventWith(
+        DateTimeOffset start,
+        EventReminders? reminders,
+        bool isAllDay = false,
+        string title = "Event",
+        Guid? ownerCalendarId = null) =>
+        new()
+        {
+            Id = Guid.Empty,
+            GoogleEventId = "google-event-id",
+            Title = title,
+            Start = start,
+            End = start.AddHours(1),
+            IsAllDay = isAllDay,
+            Reminders = reminders,
+            OwnerCalendarInfoId = ownerCalendarId ?? OwnerCalendarId,
+            Members = new List<CalendarInfo>()
+        };
+
+    private static (
+        Mock<ICalendarRepository> Repository,
+        Mock<ITimeZoneService> TimeZoneService,
+        FakeTimeProvider Clock,
+        RemindersController SystemUnderTest) CreateSut()
+    {
+        var repository = new Mock<ICalendarRepository>();
+        var timeZoneService = new Mock<ITimeZoneService>();
+        var clock = new FakeTimeProvider();
+        var logger = new Mock<ILogger<RemindersController>>();
+
+        // Sane defaults every test can rely on unless it overrides them: one plain owner calendar,
+        // no events. GetSendZoneAsync is left unconfigured deliberately — Moq's default for an
+        // unconfigured Task<string?> method is a completed task with a null result, which is exactly
+        // the "no zone persisted" case this endpoint must fall back to UTC from.
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { DefaultOwnerCalendar() });
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+
+        var sut = new RemindersController(repository.Object, timeZoneService.Object, clock, logger.Object);
+        return (repository, timeZoneService, clock, sut);
+    }
+
+    private static async Task<IReadOnlyList<UpcomingReminderEventDto>> GetRows(RemindersController sut)
+    {
+        var result = await sut.GetUpcoming(CancellationToken.None);
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        return ok.Value.Should().BeAssignableTo<IReadOnlyList<UpcomingReminderEventDto>>().Subject;
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_FilesEveryEventSortedByItsOwnStart()
+    {
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        // Returned from the repository out of order — the controller, not the repository, is what
+        // must produce the timeline order.
+        var later = EventWith(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Later Event");
+        var earlier = EventWith(new DateTimeOffset(2026, 3, 5, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: "Earlier Event");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { later, earlier });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().HaveCount(2);
+        rows.Select(r => r.EventStart).Should().BeInAscendingOrder();
+        rows[0].EventTitle.Should().Be("Earlier Event");
+        rows[1].EventTitle.Should().Be("Later Event");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_BreaksATieOnEventStartByEventTitle()
+    {
+        // Two different events that start at the EXACT same instant — nothing but EventTitle can
+        // order them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than just
+        // happening to pass because EventStart alone already decided the order.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var sameInstant = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        var zebra = EventWith(sameInstant, Explicit(("popup", 0)), title: "Zebra Event");
+        var apple = EventWith(sameInstant, Explicit(("popup", 0)), title: "Apple Event");
+        // Returned "Zebra" first — if the sort didn't apply the tie-break, this input order would
+        // survive unchanged and the test would catch it.
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { zebra, apple });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().HaveCount(2);
+        rows.Select(r => r.EventStart).Distinct().Should().ContainSingle("both events start at the same instant");
+        rows[0].EventTitle.Should().Be("Apple Event");
+        rows[1].EventTitle.Should().Be("Zebra Event");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_QueriesOnlyTheDisplayWindow_WithNoReminderLeadTail()
+    {
+        // Filing by EVENT START (rather than by each ping's own trigger instant) removes the reason a
+        // 28-day reminder-lead tail used to exist on this query: a ping could previously precede its
+        // event into the display window, but a ROW's place in the timeline no longer depends on any
+        // ping's trigger instant at all, only on evt.Start — which this query already bounds. now = 10
+        // March 00:00Z is the queried start; 1 May 00:00Z is the exclusive "end of next month" bound.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        await GetRows(sut);
+
+        var expectedStart = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);
+        var expectedEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
+        repository.Verify(r => r.GetEventsAsync(
+            It.Is<DateTimeOffset>(d => d == expectedStart),
+            It.Is<DateTimeOffset>(d => d == expectedEnd),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAnEventThatStartedBeforeTheWindow()
+    {
+        // GetEventsAsync matches on OVERLAP, not on Start falling inside the window, so an ongoing
+        // multi-day event that began before the window can come back from the repository with a Start
+        // earlier than it. The controller has to re-assert the lower bound itself rather than trust
+        // the repository's own query semantics.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        var startedYesterday = EventWith(new DateTimeOffset(2026, 3, 9, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { startedYesterday });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty("the event's own start is before the window this view reports on");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenAnEventStartedEarlierToday_KeepsItsRowForTheRestOfTheDay()
+    {
+        // The window's near edge is local MIDNIGHT, not "now", which is what keeps an event listed for
+        // the whole of its own day: a 09:00 event is still reported at 20:00. Anchoring the near edge to
+        // `now` would drop an event out of Today the moment it began — the panel the family looks at
+        // most, and the one place a disappearing row is most likely to be read as the event being
+        // cancelled. By 20:00 its only reminder has long fired, so this also pins that the two
+        // conditions compose: a start in the past AND nothing left pending still produces a row.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 20, 0, 0, TimeSpan.Zero));
+
+        var startedThisMorning = EventWith(
+            new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { startedThisMorning });
+
+        var rows = await GetRows(sut);
+
+        var row = rows.Should().ContainSingle().Subject;
+        row.EventStart.Should().Be(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero),
+            "the client files by the event's own start, which is what holds the row under Today all day");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAnEventStartingOnOrAfterTheEndOfNextMonth()
+    {
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        // Exactly on the exclusive "end of next month" boundary — 1 May 00:00Z.
+        var onTheBoundary = EventWith(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { onTheBoundary });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty("the event starts exactly on the exclusive end-of-next-month boundary");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenEveryReminderHasAlreadyFired_StillProducesARow()
+    {
+        // The row is filed by the EVENT's start, so it has to outlive its own reminders: on the day of
+        // an event they have usually all gone off, and an 18:00 event with one reminder two hours
+        // before would otherwise drop off the kiosk at 16:00 — vanishing from Today exactly when the
+        // family most needs it there. The row stays, and reads no differently for it: nothing on a
+        // row describes a reminder, so firing has nothing about it left to change.
+        var (repository, _, clock, sut) = CreateSut();
+        var now = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        clock.SetUtcNow(now);
+
+        // Start is 10 minutes after "now"; its only reminder (15 minutes before) fired 5 minutes ago.
+        var start = new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 15)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle("the event has a reminder and has not started yet, which is what puts it on the timeline");
+        rows[0].EventStart.Should().Be(start, "the row is filed and described by the EVENT's start");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_AnEventWithSeveralReminders_ProducesExactlyOneRow()
+    {
+        // The family's own motivating case: an event with reminders due at very different lead times
+        // (here 30 minutes, 2 hours, and a week before) must still produce exactly ONE row — not one
+        // per reminder — carrying the EVENT's own start, whatever sections those three trigger
+        // instants are scattered across.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var start = new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(start, Explicit(("popup", 30), ("popup", 120), ("popup", 10080)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle("three reminders on one event must still file as one row, not three");
+        rows[0].EventStart.Should().Be(start, "the row is filed and described by the EVENT's start, not any reminder's trigger");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAnEventWhoseRemindersWereNeverSynced()
+    {
+        // Reminders == null means "not yet synced", not "no reminders" — ReminderPingCalculator
+        // already refuses to invent a ping for it. This only confirms the controller does not
+        // special-case it into a row of its own.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var evt = EventWith(new DateTimeOffset(2026, 3, 12, 9, 0, 0, TimeSpan.Zero), reminders: null);
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAnEventWhoseRemindersWereRemoved()
+    {
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var evt = EventWith(new DateTimeOffset(2026, 3, 12, 9, 0, 0, TimeSpan.Zero), EventReminders.ExplicitlyNone);
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ExcludesAnEventThatOnlyInheritsItsCalendarsDefaults()
+    {
+        // The pin for the whole filter, and the one case that used to produce a row: the calendar HAS
+        // defaults, so the event really will ping — it is excluded because nobody set that reminder
+        // on the event itself, which is the only kind this view reports.
+        //
+        // Two inheriting events rather than one, because the exclusion is about where the reminders
+        // came FROM and not about whether any of them are still pending: the first event's 15-minute
+        // default is still ahead of `now`, the second's fired five minutes ago, and neither may
+        // appear. That is why the separately named "still tags an inheriting event as default once
+        // every reminder has fired" test this replaces is gone rather than inverted — both moments
+        // are now the same single fact.
+        //
+        // The third event is a CONTROL and not decoration, the same rule this view's E2E absence
+        // scenarios follow: asserting an empty list proves nothing on its own, because a broken
+        // query window, a mis-set clock or a repository stub that returned nothing would all satisfy
+        // it. Exactly one row must survive, and it must be the one carrying reminders of its own.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 15)));
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var defaultStillAhead = EventWith(
+            new DateTimeOffset(2026, 3, 10, 11, 0, 0, TimeSpan.Zero),
+            EventReminders.InheritsCalendarDefault, title: "Checkup");
+        var defaultAlreadyFired = EventWith(
+            new DateTimeOffset(2026, 3, 10, 9, 10, 0, TimeSpan.Zero),
+            EventReminders.InheritsCalendarDefault, title: "Eye Test");
+        var ownReminder = EventWith(
+            new DateTimeOffset(2026, 3, 10, 13, 0, 0, TimeSpan.Zero),
+            Explicit(("popup", 30)), title: "Parents Evening");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { defaultStillAhead, defaultAlreadyFired, ownReminder });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle(
+                "the control event's reminders were set on the event itself, and a surviving row is " +
+                "what stops the two exclusions passing for a reason that has nothing to do with them")
+            .Which.EventTitle.Should().Be("Parents Evening",
+                "neither inheriting event's reminders were set on the event, so this view does not " +
+                "report them — whether their calendar's default is still ahead or has already fired");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_StillListsAnAllDayEventCarryingTheMaterialisedCalendarDefaults()
+    {
+        // Why excluding inherited events is narrower than it sounds, pinned so nobody "fixes" the
+        // exclusion by special-casing all-day events back in. Google does not let an all-day event
+        // inherit: it MATERIALISES the calendar's defaults onto the event as explicit overrides when
+        // it is created, so a birthday or bin-day event made on a phone arrives with UseDefault false
+        // and overrides of its own. The uniform filter therefore never touches it, and the all-day
+        // rows the family actually relies on keep appearing without any special case existing at all.
+        //
+        // Shaped exactly as Google sends it: the event's overrides are a copy of the calendar's own
+        // defaults. If the filter ever grew a "do these match the calendar's list?" comparison
+        // instead of reading UseDefault, this is the test that would catch it.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 540)), ianaTimeZone: "Europe/Dublin");
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var allDayStart = new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(allDayStart, Explicit(("popup", 540)), isAllDay: true, title: "Bin Day");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle(
+            "Google materialises a calendar's defaults onto an all-day event, so it arrives with " +
+            "overrides of its own and the inherited-event filter never applies to it");
+        rows[0].EventTitle.Should().Be("Bin Day");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_NamesEveryPersonOnASharedEvent_NotTheSharedCalendar()
+    {
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var evt = EventWith(new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        evt.Members = new List<CalendarInfo> { SharedFamilyCalendar(), Eoin(), Sarah() };
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle();
+        rows[0].Members.Select(m => m.DisplayName).Should().BeEquivalentTo(new[] { "Eoin", "Sarah" });
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_FallsBackToTheOwnerCalendarNameWhenNoMembersAreAssigned()
+    {
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var owner = DefaultOwnerCalendar(displayName: "Eoin", color: "#333333");
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        // No `members:` supplied — a plain event with no member tags at all.
+        var evt = EventWith(new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle();
+        rows[0].Members.Should().ContainSingle();
+        rows[0].Members[0].DisplayName.Should().Be("Eoin");
+        rows[0].Members[0].Color.Should().Be("#333333");
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ProducesOneRowPerEvent_NotOnePerPersonOnASharedEvent()
+    {
+        // The Agenda and Day views project a shared event once per person. Doing that here would
+        // double-count the event — a row is a thing the family can tap once, not a thing per person.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var shared = EventWith(new DateTimeOffset(2026, 3, 11, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 30)));
+        shared.Members = new List<CalendarInfo> { Eoin(), Sarah() };
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { shared });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle();
+        rows[0].Members.Select(m => m.DisplayName).Should().BeEquivalentTo(new[] { "Eoin", "Sarah" });
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_AsksTheRepositoryOnce()
+    {
+        // Three events, each with their own reminder. Times.Once on GetEventsAsync/GetCalendarsAsync
+        // alone would NOT catch an owner resolved per event through some OTHER repository method
+        // (e.g. GetCalendarByIdAsync(evt.OwnerCalendarInfoId, ct)) — that regression leaves both of
+        // those counts at exactly one. VerifyNoOtherCalls is what actually rules out an N+1: it fails
+        // on any invocation this test has not explicitly verified, whatever method it went through.
+        var (repository, _, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var events = Enumerable.Range(0, 3)
+            .Select(i => EventWith(
+                new DateTimeOffset(2026, 3, 10 + i, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 10)), title: $"Event {i}"))
+            .ToList();
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(events);
+
+        await GetRows(sut);
+
+        repository.Verify(r => r.GetEventsAsync(
+            It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        repository.Verify(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Once);
+        repository.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WhenNoZoneIsPersisted_StillProducesItsRows()
+    {
+        // Neither the owning calendar nor the family has a zone on record, so both the window's own
+        // day/month boundaries and the all-day anchor handed to ReminderPingCalculator fall all the
+        // way through to UTC. The endpoint must answer rather than throw on the way.
+        //
+        // It cannot assert WHICH zone was used any more: all this endpoint reads of Compute's answer
+        // is whether it is empty, and the ping count is the same in every zone. Where the anchor
+        // lands is pinned where it is still observable, in ReminderPingCalculatorTests.
+        var (repository, timeZoneService, clock, sut) = CreateSut();
+        clock.SetUtcNow(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
+        timeZoneService.Setup(t => t.GetSendZoneAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+
+        var owner = DefaultOwnerCalendar(ianaTimeZone: null);
+        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { owner });
+
+        var allDayStart = new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var evt = EventWith(allDayStart, Explicit(("popup", 60)), isAllDay: true);
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+
+        var rows = await GetRows(sut);
+
+        rows.Should().ContainSingle();
+        rows[0].EventStart.Should().Be(allDayStart);
+    }
+}

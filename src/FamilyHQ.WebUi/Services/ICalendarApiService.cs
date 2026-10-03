@@ -21,4 +21,17 @@ public interface ICalendarApiService
     Task TriggerSyncAsync(CancellationToken ct = default);
     Task RegisterWebhooksAsync(CancellationToken ct = default);
     Task<ConnectionStatusDto?> GetConnectionStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Every event, across every calendar, that has at least one reminder still due to fire between
+    /// now and the end of next month — one row per event, never one per reminder.
+    /// </summary>
+    Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// One event by id, for a caller holding an id but no event — an event in a month the dashboard
+    /// has never loaded is not in memory to be read. Null on a 404 rather than a throw: an event can
+    /// be deleted on a phone between whatever named the id and the fetch for it, which is ordinary.
+    /// </summary>
+    Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default);
 }

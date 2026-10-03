@@ -578,11 +578,17 @@ public class CalendarSyncService(
     /// <para>
     /// <b>Reminders</b> are compared separately because they are not in the hash at all, so a
     /// reminder added on a phone inside the window arrives carrying the hash the kiosk last stamped.
-    /// I2 (FHQ-189): a kiosk-created event starts with <c>Reminders = null</c> —
-    /// <see cref="CalendarEventService.CreateAsync"/> discards Google's create response except the
-    /// id — and Google's own echo of that create is the FIRST place its reminders (typically
-    /// <c>useDefault:true</c>) ever arrive. Treating <c>existing.Reminders is null</c> as "nothing to
-    /// compare, assume echo" would suppress that echo forever. When the inbound event reports
+    /// I2 (FHQ-189): <c>existing.Reminders</c> can still be <c>null</c> — NOT, as an earlier version
+    /// of this comment claimed, because a kiosk create starts that way. It does not: <see
+    /// cref="CalendarEventService.CreateAsync"/> persists the very object
+    /// <see cref="GoogleCalendarClient.CreateEventAsync"/> returns, and that call already applies
+    /// Google's create response's reminders before returning — for an untouched event the Simulator
+    /// (and real Google) reports <c>useDefault:true</c> immediately, so a fresh kiosk create never
+    /// leaves this row null. The case this guard still exists for is a row reminders tracking has
+    /// never populated at all — chiefly a pre-existing row from before this column was added, the
+    /// same kind of backfill gap AGENTS.md calls out elsewhere in this codebase. Treating
+    /// <c>existing.Reminders is null</c> as "nothing to compare, assume echo" would suppress the
+    /// first inbound reminders report for such a row forever. When the inbound event reports
     /// reminders and we hold none yet, there is something to learn, so this is NOT an echo — the
     /// update is idempotent for every hashed field regardless.
     /// </para>

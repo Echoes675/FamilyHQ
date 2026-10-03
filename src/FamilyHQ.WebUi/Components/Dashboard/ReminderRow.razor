@@ -1,0 +1,56 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+@* One event whose reminders were set on the event itself, read as "[when] · title · [who]". Nothing
+   on the row describes the reminders: the FILTER behind this list is what makes it a reminders view,
+   and the family asked for the bell glyph and the reminder-summary line to go.
+
+   data-event-id lets the E2E suite address a row by what it IS rather than by its position in the
+   list — rows reorder as events start and finish, so a positional selector would silently drift to
+   the wrong row. It alone is enough to identify a row: there is exactly one row per event. *@
+<div class="reminder-row"
+     data-testid="reminder-row"
+     data-event-id="@Event.EventId"
+     @onclick="() => OnOpenDay.InvokeAsync(ReminderRowDisplay.LocalDate(Event.EventStart, Zone))">
+    <span class="reminder-row__time">@ReminderRowDisplay.EventTime(Event.EventStart, Event.EventIsAllDay, Zone, ShowsDate)</span>
+    <span class="reminder-row__title">@Event.EventTitle</span>
+    @* The server substitutes the owning calendar's name as a member when it can resolve one, so an
+       empty Members list means it could not — there is no calendar name anywhere to fall back to,
+       not just none wired to this view. Rendering nothing here is the honest answer; inventing a
+       placeholder ("this calendar") would assert something meaningless to a family reading a wall
+       display, which is worse than admitting the gap — the same reasoning behind both of the
+       standing footnotes below. *@
+    <div class="reminder-row__people">
+        @foreach (var member in Event.Members)
+        {
+            <span @key="member.DisplayName"
+                  class="reminder-member-chip"
+                  style="--chip-color: @(member.Color ?? "var(--theme-accent)")">@member.DisplayName</span>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The event this row renders. Required — there is no meaningful empty row.</summary>
+    [Parameter, EditorRequired] public UpcomingReminderEventViewModel Event { get; set; } = default!;
+
+    /// <summary>
+    /// The household's zone, for converting <see cref="Event"/>'s UTC-stamped instants before display.
+    /// Threaded straight down from <see cref="RemindersView.Zone"/> — required, because there is no
+    /// safe default: formatting the raw UTC value, as this row used to, is the bug this parameter
+    /// exists to close.
+    /// </summary>
+    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = default!;
+
+    /// <summary>
+    /// Whether to lead with the day and date as well as the time. Decided per SECTION by
+    /// <see cref="RemindersViewLogic.ShowsDate"/> and passed in, because a row cannot tell which
+    /// section it was rendered into and should not learn — see that predicate's own remarks.
+    /// </summary>
+    [Parameter] public bool ShowsDate { get; set; }
+
+    /// <summary>
+    /// Raised with the event's own local day when the row is tapped, so the dashboard drills into the
+    /// Day view exactly as the Month and Agenda views' rows do. The whole row is the tap target.
+    /// </summary>
+    [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
+}

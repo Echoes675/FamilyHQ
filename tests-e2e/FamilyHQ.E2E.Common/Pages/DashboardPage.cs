@@ -6,6 +6,23 @@ using Microsoft.Playwright;
 
 namespace FamilyHQ.E2E.Common.Pages;
 
+/// <summary>
+/// The five buckets the Reminders view files its rows into, by each row's EVENT start. A local
+/// mirror of the app's own <c>ReminderSectionKey</c> — the E2E projects never reference
+/// <c>FamilyHQ.WebUi</c>, so this exists purely to give
+/// <see cref="DashboardPage.ReadReminderRowsAsync"/> a type-safe parameter instead of a bare slug
+/// string.
+/// </summary>
+public enum ReminderSectionKey { Today, Tomorrow, ThisWeek, ThisMonth, NextMonth }
+
+/// <summary>
+/// One <c>reminder-row</c> read off the DOM by its event id, never by position — see the remarks on
+/// the Reminders VIEW region below for why. <paramref name="Text"/> is the row's full rendered text
+/// (start, reminder summary, title, member chips), for scenarios that need to read more than the id
+/// carries.
+/// </summary>
+public sealed record ReminderRowSnapshot(Guid EventId, string Text);
+
 public class DashboardPage : BasePage
 {
     private readonly TestConfiguration _config;
@@ -23,6 +40,8 @@ public class DashboardPage : BasePage
     public ILocator MonthTab => Page.GetByTestId("month-tab");
     public ILocator DayTab => Page.GetByTestId("day-tab");
     public ILocator AgendaTab => Page.GetByTestId("agenda-tab");
+    public ILocator RemindersTab => Page.GetByTestId("reminders-tab");
+    public ILocator RemindersViewContainer => Page.GetByTestId("reminders-view");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
 
@@ -634,6 +653,45 @@ public class DashboardPage : BasePage
         // navigation has been processed and the UI has re-rendered.
         var monthHeaderBtn = Page.GetByRole(AriaRole.Button, new() { Name = expectedMonthText });
         await monthHeaderBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    /// <summary>
+    /// Returns the dashboard to the month containing today, clicking Prev until the month header
+    /// says so.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="NavigateToNextMonthAsync"/>, and formatted the same way on
+    /// purpose, so the two helpers and the header they both read agree by construction. A scenario
+    /// needs this when it had to navigate FORWARD to edit a future event and then has to exercise a
+    /// path whose whole point is that the event is OUTSIDE the loaded month — without coming back,
+    /// the month is loaded and the path is never taken.
+    /// <para>
+    /// Bounded rather than a <c>while</c>: a header that never arrives means a page that is not
+    /// rendering, and saying how many clicks were tried is more use than a bare timeout on the last
+    /// one. Six is well past the one click any current caller needs.
+    /// </para>
+    /// </remarks>
+    public async Task NavigateToCurrentMonthAsync()
+    {
+        var expectedMonthText = BrowserClock.Today.ToString("MMMM yyyy"); // e.g. "April 2026"
+        var monthHeaderBtn = Page.GetByRole(AriaRole.Button, new() { Name = expectedMonthText });
+
+        for (var clicks = 0; clicks < 6; clicks++)
+        {
+            if (await monthHeaderBtn.CountAsync() > 0)
+            {
+                await monthHeaderBtn.WaitForAsync(
+                    new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+                return;
+            }
+
+            await PrevMonthBtn.ClickAsync();
+            await WaitForCalendarVisibleAsync();
+        }
+
+        throw new InvalidOperationException(
+            $"The month grid never showed '{expectedMonthText}' after six Prev clicks, so the " +
+            "dashboard could not be returned to the current month.");
     }
 
     /// <summary>
@@ -1927,6 +1985,11 @@ public class DashboardPage : BasePage
     private ILocator ReminderDaysBeforeInput => RemindersSection.GetByTestId("reminder-days-before");
     private ILocator ReminderDaysDecrement => RemindersSection.GetByTestId("reminder-days-decrement");
     private ILocator ReminderAddBtn => RemindersSection.GetByTestId("reminder-add-btn");
+
+    // Scoped INSIDE the Add button on purpose. The form holds a value from the moment the tab opens,
+    // so the reminder it describes is nobody's choice until Add is pressed; this locator resolving
+    // only within the button is itself half of what AssertAddControlOffersAsync asserts.
+    private ILocator ReminderAddPreview => ReminderAddBtn.GetByTestId("reminder-add-preview");
     private ILocator ReminderUnitPill(string unit) => RemindersSection.GetByTestId($"reminder-unit-{unit}");
     private ILocator ReminderMethodPill(string method) => RemindersSection.GetByTestId($"reminder-method-{method}");
     private ILocator AllDayToggle => EventModal.GetByTestId("all-day-toggle");
@@ -1935,6 +1998,14 @@ public class DashboardPage : BasePage
     // whole series, which replaces every occurrence's reminders — including an occurrence whose own
     // were set separately. Google does the same; the prompt says so first.
     private ILocator ScopePromptReminderWarning => Page.GetByTestId("recurrence-scope-reminder-warning");
+
+    // The two things the inheriting panel can say when it has no list to show. They are addressed by
+    // testid rather than by their copy because which of the two appears is the assertion: one says
+    // the calendar has no usual reminders, the other that they could not be read. Telling a family
+    // the first when the second is true is how an event's real reminders get saved away.
+    private ILocator ReminderDefaultNone => RemindersSection.GetByTestId("reminder-default-none");
+    private ILocator ReminderDefaultUnavailable =>
+        RemindersSection.GetByTestId("reminder-default-unavailable");
 
     private ILocator ReminderRow(string method, int minutes) => RemindersSection.Locator(
         $"[data-testid='reminder-item'][data-reminder-method='{method}'][data-reminder-minutes='{minutes}']");
@@ -2046,6 +2117,38 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
+    /// Asserts the event follows its calendar's usual reminders and that the tab states the calendar
+    /// has none of its own — so following them notifies nobody.
+    /// </summary>
+    /// <remarks>
+    /// The second assertion is the half that cannot be dropped. Both messages render in the same
+    /// place for the same reason (there is no list to show), so asserting only that the "none"
+    /// message is present would pass again the moment the two states are collapsed back into one.
+    /// </remarks>
+    public async Task AssertCalendarHasNoUsualRemindersStatedAsync()
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultNone).ToBeVisibleAsync(new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultUnavailable).ToHaveCountAsync(0, new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the event follows its calendar's usual reminders and that the tab states they could
+    /// not be read — Google still applies them, so the tab must not claim the event has none.
+    /// </summary>
+    /// <remarks>The mirror of <see cref="AssertCalendarHasNoUsualRemindersStatedAsync"/>.</remarks>
+    public async Task AssertCalendarUsualRemindersUnreadableStatedAsync()
+    {
+        await ShowRemindersTabAsync();
+        await Assertions.Expect(ReminderUseDefaultToggle)
+            .ToHaveAttributeAsync("aria-pressed", "true", new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultUnavailable).ToBeVisibleAsync(new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderDefaultNone).ToHaveCountAsync(0, new() { Timeout = 5000 });
+    }
+
+    /// <summary>
     /// Asserts the tab states that a TIMED event has no reminders at all. Deliberately timed-only:
     /// Google stores a reminder set for the day itself of an all-day event and never returns it, so no
     /// assertion may claim an all-day event has none.
@@ -2055,6 +2158,25 @@ public class DashboardPage : BasePage
         await ShowRemindersTabAsync();
         await AssertReminderCountAsync(0);
         await Assertions.Expect(ReminderEmptyState).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the add control reads as an action: the reminder the form currently describes is part
+    /// of the Add button's own label, prefixed by "Add", and not a line of prose beside it.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is the whole assertion. The form describes a reminder before anyone has
+    /// touched it, so on a line of its own the description stated that the event had that reminder —
+    /// immediately under the note saying it had none. Inside the button the same words can only be
+    /// read as what pressing it would do.
+    /// </remarks>
+    public async Task AssertAddControlOffersAsync(string timing, string method)
+    {
+        await ShowRemindersTabAsync();
+
+        await Assertions.Expect(ReminderAddPreview).ToContainTextAsync(timing, new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderAddPreview).ToContainTextAsync(method, new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderAddBtn).ToContainTextAsync("Add", new() { Timeout = 5000 });
     }
 
     /// <summary>
@@ -2187,4 +2309,163 @@ public class DashboardPage : BasePage
         _ => throw new ArgumentOutOfRangeException(
             nameof(unit), unit, "Not a unit the reminder form offers (minutes, hours, days, weeks).")
     };
+
+    // ── The Reminders VIEW (the fourth dashboard tab's timeline) ─────────────────────────────────
+    // Distinct from "the Reminders tab" region above, which edits ONE event's own reminders inside
+    // the event modal. This is the standalone timeline of every event whose reminders were set on the
+    // event itself — one row per EVENT, never one per reminder, filed by when the event starts.
+    //
+    // Every row carries data-event-id so it can be addressed BY VALUE, never by position. That one
+    // attribute is the whole identity of a row: there is exactly one row per event, and the view lists
+    // only events whose reminders were set on the event itself, so there is no second kind of row to
+    // tell apart.
+
+    private ILocator RemindersEmptyState => Page.GetByTestId("reminders-empty");
+    private ILocator RemindersAllDayFootnote => Page.GetByTestId("reminders-allday-footnote");
+    private ILocator RemindersInheritedFootnote => Page.GetByTestId("reminders-inherited-footnote");
+    private ILocator AllReminderRows => Page.GetByTestId("reminder-row");
+
+    private static string ReminderSectionSlug(ReminderSectionKey key) => key switch
+    {
+        ReminderSectionKey.Today => "today",
+        ReminderSectionKey.Tomorrow => "tomorrow",
+        ReminderSectionKey.ThisWeek => "this-week",
+        ReminderSectionKey.ThisMonth => "this-month",
+        ReminderSectionKey.NextMonth => "next-month",
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Not a reminders-section key.")
+    };
+
+    private ILocator ReminderSection(ReminderSectionKey key) =>
+        Page.GetByTestId($"reminder-section-{ReminderSectionSlug(key)}");
+
+    /// <summary>
+    /// Switches to the Reminders tab — the fourth dashboard tab — and waits for its own fetch to
+    /// land before returning.
+    /// </summary>
+    /// <remarks>
+    /// The listener is set up BEFORE the click, mirroring <see cref="NavigateAndWaitAsync"/>, so a
+    /// fast response cannot be missed. Waiting for the response alone is not quite enough: a
+    /// NEGATIVE assertion (no row for an event that must never ping) has no element for Playwright's
+    /// own auto-retry to anchor on, so a short settle follows — the same idiom
+    /// <see cref="NavigateAgendaNextMonthAsync"/> uses after its own web-first assertion.
+    /// </remarks>
+    public async Task ShowRemindersViewAsync()
+    {
+        var remindersResponseTask = Page.WaitForResponseAsync(
+            r => r.Url.Contains("api/reminders/upcoming"),
+            new() { Timeout = 30000 });
+
+        await RemindersTab.ClickAsync();
+        await remindersResponseTask;
+        await RemindersViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+        await Page.WaitForTimeoutAsync(1000);
+    }
+
+    /// <summary>
+    /// Reads every row <paramref name="key"/>'s section is currently showing, addressed by its event
+    /// id rather than by position.
+    /// </summary>
+    public async Task<IReadOnlyList<ReminderRowSnapshot>> ReadReminderRowsAsync(ReminderSectionKey key)
+    {
+        var rows = ReminderSection(key).GetByTestId("reminder-row");
+        var count = await rows.CountAsync();
+        var snapshots = new List<ReminderRowSnapshot>(count);
+        for (var i = 0; i < count; i++)
+        {
+            snapshots.Add(await SnapshotAsync(rows.Nth(i)));
+        }
+        return snapshots;
+    }
+
+    private static async Task<ReminderRowSnapshot> SnapshotAsync(ILocator row)
+    {
+        var eventId = await row.GetAttributeAsync("data-event-id")
+            ?? throw new InvalidOperationException("A reminder-row rendered with no data-event-id.");
+        var text = (await row.InnerTextAsync()).Trim();
+
+        return new ReminderRowSnapshot(Guid.Parse(eventId), text);
+    }
+
+    /// <summary>True when <paramref name="key"/>'s section is rendering its collapsed "Nothing" line.</summary>
+    public async Task<bool> ReminderSectionIsEmptyAsync(ReminderSectionKey key) =>
+        await ReminderSection(key).GetByTestId("reminder-section-empty").CountAsync() > 0;
+
+    /// <summary>True when the whole view is rendering its "No reminders coming up" state.</summary>
+    public async Task<bool> RemindersViewIsEntirelyEmptyAsync() =>
+        await RemindersEmptyState.CountAsync() > 0;
+
+    /// <summary>The permanent same-day-all-day-reminders footnote's text.</summary>
+    public async Task<string> ReadAllDayFootnoteAsync() => (await RemindersAllDayFootnote.InnerTextAsync()).Trim();
+
+    /// <summary>
+    /// The permanent footnote's text saying events on their calendar's usual reminders are not listed.
+    /// </summary>
+    public async Task<string> ReadInheritedFootnoteAsync() =>
+        (await RemindersInheritedFootnote.InnerTextAsync()).Trim();
+
+    /// <summary>
+    /// Finds the one row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.
+    /// A row carries no title ATTRIBUTE to match on — only its event id — so the title is used only to
+    /// LOCATE it; callers address the row afterwards (e.g. via <see cref="TapReminderRowAsync"/>) using
+    /// the id the returned snapshot carries.
+    /// </summary>
+    public async Task<ReminderRowSnapshot> FindReminderRowByTitleAsync(string eventTitle)
+    {
+        var row = AllReminderRows.Filter(new() { HasText = eventTitle });
+        await Assertions.Expect(row.First).ToBeVisibleAsync(new() { Timeout = 10000 });
+        return await SnapshotAsync(row.First);
+    }
+
+    /// <summary>
+    /// The leading time column of the row naming <paramref name="eventTitle"/>, read on its own
+    /// rather than out of the row's whole text. That is the point of it: the column renders the
+    /// EVENT's start, and only reading it in isolation can tell a correct row from one that led with
+    /// a reminder's trigger time instead.
+    /// </summary>
+    public async Task<string> ReadReminderRowStartTimeAsync(string eventTitle)
+    {
+        var row = AllReminderRows.Filter(new() { HasText = eventTitle });
+        await Assertions.Expect(row.First).ToBeVisibleAsync(new() { Timeout = 10000 });
+
+        return (await row.First.Locator(".reminder-row__time").InnerTextAsync()).Trim();
+    }
+
+    /// <summary>Every row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.</summary>
+    public Task<int> CountReminderRowsForTitleAsync(string eventTitle) =>
+        AllReminderRows.Filter(new() { HasText = eventTitle }).CountAsync();
+
+    /// <summary>
+    /// Taps the row for <paramref name="eventId"/> and waits for the Day view to render.
+    /// <paramref name="eventId"/> alone is enough to address it: there is exactly one row per event.
+    /// </summary>
+    /// <remarks>
+    /// The Day view, not the event modal: a tap drills into the event's own day, as the Month and
+    /// Agenda views' rows do. For an event outside the loaded month that involves a month fetch
+    /// before the view can paint, which is why this waits rather than returning on the click.
+    /// </remarks>
+    public async Task TapReminderRowAsync(Guid eventId)
+    {
+        var row = Page.Locator($"[data-testid='reminder-row'][data-event-id='{eventId}']");
+        await row.ClickAsync();
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
+
+    /// <summary>
+    /// Asserts the Day view is rendering a tile for <paramref name="eventName"/> on whichever day it
+    /// is currently showing — without navigating anywhere, unlike
+    /// <see cref="AssertEventVisibleInDayViewOnDateAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// The tile is the assertion, not the container: DayView renders only the events filed under its
+    /// own <c>SelectedDate</c>, so a tile for this event can only be here if the view opened on the
+    /// event's day AND that day's month was loaded. A visible container alone would pass for the
+    /// wrong day.
+    /// </remarks>
+    public async Task AssertDayViewShowingEventAsync(string eventName)
+    {
+        await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+
+        var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
+        await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
+    }
 }

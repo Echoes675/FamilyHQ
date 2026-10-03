@@ -41,6 +41,34 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task CreateEvent_CarriesTheOwningCalendarAndItsDefaults()
+    {
+        // A write response answers for the owner exactly as GetEvent does, though it resolves it from
+        // the calendars loaded before the write rather than with a lookup after it — a nullable field
+        // can't tell "not populated on this endpoint" apart from "no owner", so every response that
+        // carries a CalendarEventDto must answer the same way or a future reader trusting a create
+        // response's null would be the one to find out the hard way.
+        var (service, calendarRepository, sut) = CreateSutWithRepo();
+        var defaults = EventReminders.Explicit([new EventReminder("popup", 15)]);
+        var calA = Cal(CalAId, "cal-a@google.com");
+        calA.DefaultReminders = defaults;
+        var newEvent = Event(EventId, "gid-1", CalAId, calA);
+
+        service.Setup(s => s.CreateAsync(It.IsAny<CreateEventRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(newEvent);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
+
+        var request = new CreateEventRequest([CalAId], "Title", FixedStart, FixedEnd, false, null, null);
+        var result = await sut.CreateEvent(request, CancellationToken.None);
+
+        var created = result.Should().BeOfType<CreatedResult>().Subject;
+        var dto = created.Value.Should().BeOfType<CalendarEventDto>().Subject;
+        dto.OwningCalendarId.Should().Be(CalAId);
+        dto.OwningCalendarDefaultReminders.Should().BeSameAs(defaults);
+    }
+
+    [Fact]
     public async Task CreateEvent_InvalidRequest_Returns400()
     {
         var (_, sut) = CreateSut();
@@ -69,6 +97,29 @@ public class EventsControllerTests
         var dto = ok.Value.Should().BeOfType<CalendarEventDto>().Subject;
         dto.Id.Should().Be(EventId);
         dto.Members.Should().ContainSingle(c => c.Id == CalAId);
+    }
+
+    [Fact]
+    public async Task UpdateEvent_CarriesTheOwningCalendarAndItsDefaults()
+    {
+        var (service, calendarRepository, sut) = CreateSutWithRepo();
+        var defaults = EventReminders.ExplicitlyNone;
+        var calA = Cal(CalAId, "cal-a@google.com");
+        calA.DefaultReminders = defaults;
+        var updatedEvent = Event(EventId, "gid-1", CalAId, calA);
+
+        service.Setup(s => s.UpdateAsync(EventId, It.IsAny<UpdateEventRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updatedEvent);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
+
+        var request = new UpdateEventRequest("New Title", FixedStart, FixedEnd, false, null, null);
+        var result = await sut.UpdateEvent(EventId, request, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<CalendarEventDto>().Subject;
+        dto.OwningCalendarId.Should().Be(CalAId);
+        dto.OwningCalendarDefaultReminders.Should().BeSameAs(defaults);
     }
 
     [Fact]
@@ -127,6 +178,33 @@ public class EventsControllerTests
         service.Verify(s => s.UpdateRecurringAsync(
             EventId, It.IsAny<UpdateEventRequest>(), RecurrenceScope.ThisAndFollowing, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringEvent_CarriesTheOwningCalendarAndItsDefaults()
+    {
+        var (service, calendarRepository, sut) = CreateSutWithRepo();
+        var defaults = EventReminders.InheritsCalendarDefault;
+        var calA = Cal(CalAId, "cal-a@google.com");
+        calA.DefaultReminders = defaults;
+        var updatedEvent = Event(EventId, "gid-1", CalAId, calA);
+        updatedEvent.GoogleRecurringEventId = "series-1";
+        updatedEvent.RecurrenceRule = "RRULE:FREQ=DAILY";
+
+        service.Setup(s => s.UpdateRecurringAsync(
+                EventId, It.IsAny<UpdateEventRequest>(), RecurrenceScope.AllInSeries, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updatedEvent);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
+
+        var request = new UpdateEventRequest("New Title", FixedStart, FixedEnd, false, null, null,
+            RecurrenceRule: "RRULE:FREQ=DAILY");
+        var result = await sut.UpdateRecurringEvent(EventId, RecurrenceScope.AllInSeries, request, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<CalendarEventDto>().Subject;
+        dto.OwningCalendarId.Should().Be(CalAId);
+        dto.OwningCalendarDefaultReminders.Should().BeSameAs(defaults);
     }
 
     [Fact]
@@ -256,6 +334,29 @@ public class EventsControllerTests
     }
 
     [Fact]
+    public async Task SetMembers_CarriesTheOwningCalendarAndItsDefaults()
+    {
+        var (service, calendarRepository, sut) = CreateSutWithRepo();
+        var defaults = EventReminders.Explicit([new EventReminder("email", 60)]);
+        var calA = Cal(CalAId, "cal-a@google.com");
+        calA.DefaultReminders = defaults;
+        var updatedEvent = Event(EventId, "gid-1", CalAId, calA);
+
+        service.Setup(s => s.SetMembersAsync(EventId, It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updatedEvent);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
+
+        var request = new SetEventMembersRequest([CalAId]);
+        var result = await sut.SetMembers(EventId, request, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<OkObjectResult>().Subject;
+        var dto = ok.Value.Should().BeOfType<CalendarEventDto>().Subject;
+        dto.OwningCalendarId.Should().Be(CalAId);
+        dto.OwningCalendarDefaultReminders.Should().BeSameAs(defaults);
+    }
+
+    [Fact]
     public async Task SetMembers_EmptyList_Returns400()
     {
         var (_, sut) = CreateSut();
@@ -279,8 +380,26 @@ public class EventsControllerTests
 
     private static (Mock<ICalendarEventService>, EventsController) CreateSut()
     {
-        var service = new Mock<ICalendarEventService>();
-        var logger  = new Mock<ILogger<EventsController>>();
-        return (service, new EventsController(service.Object, logger.Object));
+        var (service, _, sut) = CreateFullSut();
+        return (service, sut);
+    }
+
+    // For tests that also need to stub the owning-calendar load every write path makes before it
+    // writes — see CreateFullSut for why the default is an empty list rather than nothing at all.
+    private static (Mock<ICalendarEventService>, Mock<ICalendarRepository>, EventsController) CreateSutWithRepo() =>
+        CreateFullSut();
+
+    private static (Mock<ICalendarEventService>, Mock<ICalendarRepository>, EventsController) CreateFullSut()
+    {
+        var service            = new Mock<ICalendarEventService>();
+        var calendarRepository = new Mock<ICalendarRepository>();
+        var currentUser        = new Mock<ICurrentUserService>();
+        var logger             = new Mock<ILogger<EventsController>>();
+        // The real repository returns an empty list when it has no calendars, never null, so tests
+        // that don't care about the owner get the same shape rather than Moq's null.
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var sut = new EventsController(service.Object, calendarRepository.Object, currentUser.Object, logger.Object);
+        return (service, calendarRepository, sut);
     }
 }

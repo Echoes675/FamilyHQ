@@ -207,6 +207,17 @@ public class RemindersResponseProjectionTests
     private static (Mock<ICalendarEventService> Service, EventsController SystemUnderTest) CreateEventsSut()
     {
         var service = new Mock<ICalendarEventService>();
-        return (service, new EventsController(service.Object, new Mock<ILogger<EventsController>>().Object));
+        var calendarRepository = new Mock<ICalendarRepository>();
+        // The write paths resolve the owning calendar from the calendars they load before writing;
+        // these tests are about the reminder fields, so the owner is left unresolved. The real
+        // repository answers with an empty list when it has no calendars, never null.
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var controller = new EventsController(
+            service.Object,
+            calendarRepository.Object,
+            new Mock<ICurrentUserService>().Object,
+            new Mock<ILogger<EventsController>>().Object);
+        return (service, controller);
     }
 }
