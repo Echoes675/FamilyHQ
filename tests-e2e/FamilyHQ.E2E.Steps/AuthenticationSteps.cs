@@ -231,15 +231,25 @@ public class AuthenticationSteps
     [Then(@"I do not see the calendar")]
     public async Task ThenIDoNotSeeTheCalendar()
     {
-        // Web-first: the month table is absent when unauthenticated; ToHaveCountAsync auto-retries
+        // Web-first: no view is rendered at all when unauthenticated; ToHaveCountAsync auto-retries
         // against the live DOM rather than counting once (FHQ-41).
-        await Assertions.Expect(_dashboardPage.MonthTable)
+        //
+        // Asserted over every view rather than just the month grid, so it stays the exact negation
+        // of "I see the calendar displayed": which view a signed-in load lands on is the kiosk's own
+        // business, and a count taken on one of them would pass while another was on screen.
+        await Assertions.Expect(_dashboardPage.AnyCalendarView)
             .ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [Then(@"I see the calendar displayed")]
     public async Task ThenISeeTheCalendarDisplayed()
     {
-        await _dashboardPage.MonthTable.WaitForAsync(new() { State = WaitForSelectorState.Visible });
+        // "The calendar" here is the signed-in dashboard as opposed to the login prompt — that is
+        // the distinction every scenario using this step draws, including the two that only ask
+        // whether the back button got them off the settings page. Which of the four views is up is
+        // no part of that claim: a load lands on the kiosk's home view, so naming the month grid
+        // would quietly turn this into an assertion about which view that is.
+        await _dashboardPage.AnyCalendarView.First.WaitForAsync(
+            new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
 }
