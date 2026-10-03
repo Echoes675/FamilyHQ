@@ -130,13 +130,26 @@ public class RemindersController : ControllerBase
         //
         // Checked BEFORE Compute rather than left to fall out of an empty ping list, because an
         // inheriting event on a calendar that HAS defaults does produce pings: it is excluded on
-        // intent, not for want of a notification. The filter also belongs to this endpoint alone —
-        // ReminderPingCalculator is shared, and has to keep all four reminder states resolvable for
-        // the event modal, which still shows an inherited reminder for what it is.
+        // intent, not for want of a notification. The filter also belongs to this endpoint alone.
+        // ReminderPingCalculator's contract is "what will actually ping", and an inheriting event
+        // really does ping, so folding this view's narrower scope into it would change what Compute
+        // means for every later caller rather than adding a view's opinion to it. Inheritance is
+        // also resolved a second time and entirely separately for the event modal, which still
+        // shows an inherited reminder for what it is — ReminderPickerModel resolves it from the
+        // event's own UseDefault and never calls this calculator. Neither resolution may be narrowed
+        // to this one view's scope.
         //
-        // No all-day special case is needed, and adding one would be wrong: Google materialises a
-        // calendar's defaults onto an all-day event rather than letting it inherit, so a birthday or
-        // bin-day event arrives carrying explicit overrides and this filter never sees it.
+        // No all-day special case is needed, and adding one would be wrong — with one qualifier.
+        // An all-day event Google CREATED does not inherit: Google materialises the calendar's
+        // defaults onto it as explicit overrides, so a birthday or bin-day event arrives carrying
+        // reminders of its own and this filter never sees it. An all-day event CAN still reach the
+        // filter, because the kiosk itself sends the revert-to-default body on one: flipping the
+        // modal's All-day toggle discards the event's own reminders and asks for the calendar's
+        // instead, which goes out as a write whenever the event was not already inheriting. What
+        // Google returns for that body has never been observed — the preprod smoke suite records it
+        // (RM4) rather than asserting it. If it comes back inheriting, the row is excluded, which is
+        // the right answer for an event that is inheriting; so the uniform filter holds either way
+        // and there is still nothing to special-case.
         if (evt.Reminders is { UseDefault: true }) return null;
 
         // Reminders==null (never synced) and ExplicitlyNone are handled inside Compute — nothing here
