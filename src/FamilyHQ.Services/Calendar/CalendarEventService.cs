@@ -1,3 +1,4 @@
+using System.Globalization;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Exceptions;
 using FamilyHQ.Core.Interfaces;
@@ -164,6 +165,11 @@ public class CalendarEventService(
             calendarEvent.Title, calendarEvent.Start, calendarEvent.End,
             calendarEvent.IsAllDay, calendarEvent.Description, request.Reminders);
 
+        // Read before the write, because the client replaces the event's reminders with Google's
+        // answer to it — afterwards there is no longer anything on the event that says what the
+        // family's calendars held when the save arrived.
+        var remindersBefore = DescribeReminderState(calendarEvent.Reminders);
+
         await googleCalendarClient.PatchEventFieldsAsync(
             ownerCalendar.GoogleCalendarId, calendarEvent, hash, ct, request.Reminders);
 
@@ -176,6 +182,20 @@ public class CalendarEventService(
         await calendarRepository.SaveChangesAsync(ct);
 
         logger.LogInformation("Event {EventId} updated.", eventId);
+
+        if (request.Reminders is not null)
+        {
+            // Only when the save says something about reminders. Saying nothing is the common case and
+            // the one the golden rule defaults to, so logging it would bury the decision in noise.
+            //
+            // This line is the only record that the decision was made at all. Google answers a write
+            // that replaced an inherited reminder with none exactly as it answers one that never
+            // mentioned reminders, so after the fact the two are indistinguishable without it.
+            logger.LogInformation(
+                "Event {EventId} reminders written as {RemindersWritten}; previously {RemindersBefore}.",
+                eventId, DescribeReminderState(request.Reminders), remindersBefore);
+        }
+
         return calendarEvent;
     }
 
@@ -1588,6 +1608,36 @@ public class CalendarEventService(
         target.Location = request.Location;
         target.Description = normalisedDescription;
     }
+
+    /// <summary>
+    /// Which of the reminder states a value is in, in one word, for the audit line on the update
+    /// path. The four have to stay distinguishable because collapsing any two of them writes the
+    /// wrong thing back to Google, and the state is the thing a save decides.
+    /// </summary>
+    /// <remarks>
+    /// The offsets and delivery methods themselves are deliberately absent. The count is enough to
+    /// tell an explicit set from an empty one, and a reminder's wording is the family's own data
+    /// rather than something a log line needs.
+    /// </remarks>
+    private static string DescribeReminderState(EventReminders? reminders) => reminders switch
+    {
+        // Not an answer — no sync has reported this event's reminders yet.
+        null => "never-synced",
+        { UseDefault: true } => "inherits-default",
+        // `Overrides: null` is matched explicitly rather than left to the arms below. A property
+        // pattern does not throw on a null sub-property, it fails to match, so without this arm the
+        // switch is non-exhaustive for that shape and would throw SwitchExpressionException.
+        //
+        // Nothing reaches here with a null Overrides today: `EventContentHash.Canonicalise` orders
+        // the same list earlier in this method and throws first, before the event is patched to
+        // Google. The arm is insurance, not a live path — but the insurance is worth carrying,
+        // because this line sits AFTER the write and its only job is to observe one. If the earlier
+        // throw ever moves or is made tolerant, a non-exhaustive switch here would start failing
+        // requests whose work had already succeeded, and a retry would duplicate the event.
+        { Overrides: null or { Count: 0 } } => "explicitly-none",
+        var explicitReminders =>
+            $"explicit-with-{explicitReminders.Overrides.Count.ToString(CultureInfo.InvariantCulture)}"
+    };
 
     /// <param name="remindersSent">
     /// The reminders this write is sending, or null when it sends none. Deliberately a parameter

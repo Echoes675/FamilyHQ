@@ -334,6 +334,24 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     }
 
     /// <summary>
+    /// Takes an event off its calendar's own reminders without putting one in their place, and saves —
+    /// the state Google records as <c>useDefault: false</c> with no overrides.
+    /// </summary>
+    /// <remarks>
+    /// Switching the inheritance toggle off copies the calendar's own reminders in as editable rows, as
+    /// the Google Calendar app pre-fills them, so they are taken away again before the save. The Add
+    /// button is deliberately never pressed: the form describes a reminder from the moment the tab
+    /// opens, and committing that would be the kiosk choosing one on the family's behalf.
+    /// </remarks>
+    public async Task ClearOwnRemindersAsync(string titleFragment, DateOnly date)
+    {
+        await OpenEventAsync(titleFragment, date);
+        await SetOwnRemindersAsync([]);
+        await SaveAndAwaitWriteAsync(
+            "PUT", $"take '{titleFragment}' off its calendar's reminders without adding one");
+    }
+
+    /// <summary>
     /// Switches an existing event to all day and saves, touching nothing else.
     /// <para>
     /// This is the one path that writes reminders without the Reminders tab ever being opened: Google

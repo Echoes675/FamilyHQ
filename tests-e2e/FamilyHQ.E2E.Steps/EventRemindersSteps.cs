@@ -147,6 +147,17 @@ public class EventRemindersSteps
         await _dashboardPage.RemoveReminderAsync(MinutesFor(amount, unit));
     }
 
+    // Switching inheritance off copies the calendar's usual reminders in as editable entries, so
+    // taking those away is what reaches the state this scenario is about: an event carrying none of
+    // its own, with an Add form nobody has pressed.
+    [When(@"I take the event ""([^""]*)"" off its calendar's reminders without adding one")]
+    public async Task WhenITakeTheEventOffItsCalendarsRemindersWithoutAddingOne(string title)
+    {
+        await _dashboardPage.OpenEventForEditingAsync(title);
+        await _dashboardPage.SetReminderInheritanceAsync(follow: false);
+        await _dashboardPage.RemoveEveryReminderAsync();
+    }
+
     [When(@"I switch the event to all day")]
     public async Task WhenISwitchTheEventToAllDay()
     {
@@ -182,6 +193,26 @@ public class EventRemindersSteps
         await _dashboardPage.OpenEventForEditingAsync(title);
         await _dashboardPage.ShowRemindersTabAsync();
         await _dashboardPage.AssertReminderPresentAsync(MinutesFor(amount, unit));
+    }
+
+    [Then(@"the Reminders tab states the event has no reminders")]
+    public async Task ThenTheRemindersTabStatesTheEventHasNoReminders()
+    {
+        await _dashboardPage.AssertNoRemindersStatedAsync();
+    }
+
+    [Then(@"the Add control offers ""([^""]*)"" by ""([^""]*)"" rather than stating it")]
+    public async Task ThenTheAddControlOffersRatherThanStatingIt(string timing, string method)
+    {
+        await _dashboardPage.AssertAddControlOffersAsync(timing, method);
+    }
+
+    [Then(@"the event ""([^""]*)"" still has no reminders after it is saved and opened again")]
+    public async Task ThenTheEventStillHasNoRemindersAfterItIsSavedAndOpenedAgain(string title)
+    {
+        await _dashboardPage.SaveOpenEventAsync();
+        await _dashboardPage.OpenEventForEditingAsync(title);
+        await _dashboardPage.AssertNoRemindersStatedAsync();
     }
 
     [Then(@"the Reminders tab is labelled ""([^""]*)""")]

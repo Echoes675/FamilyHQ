@@ -214,15 +214,19 @@
                 </div>
 
                 <div class="reminder-add-row">
-                    <span class="reminder-note" data-testid="reminder-add-preview">
-                        @ReminderDescription.For(Model.SelectedReminder, Model.IsAllDay)
-                    </span>
+                    @* The description belongs to the Add button and not to a line of its own. The form
+                       holds a value from the moment it appears — nobody has to touch it for the timed
+                       form to read "30 minutes before · Notification" — so standing alone in the same
+                       .reminder-note voice as the empty state directly above, it asserted that the
+                       event had that reminder while the line above said it had none. As the button's
+                       own label the same words can only be read as what pressing it would do. *@
                     <button type="button"
                             class="btn btn-secondary reminder-add-btn"
                             data-testid="reminder-add-btn"
                             disabled="@Model.IsFull"
                             @onclick="AddAsync">
                         Add
+                        <span data-testid="reminder-add-preview">@ReminderDescription.For(Model.SelectedReminder, Model.IsAllDay)</span>
                     </button>
                 </div>
 
@@ -568,8 +572,12 @@
         flex-wrap: wrap;
     }
 
+    /* Grows across the row now that it carries the whole phrase rather than the word "Add". The gap
+       is load-bearing: .btn is a flex container, and a whitespace-only run between two flex items is
+       not rendered, so "Add" and the description would otherwise meet with nothing between them. */
     .reminder-add-btn {
-        flex: 0 0 auto;
+        flex: 1 1 auto;
+        gap: 6px;
         min-width: 96px;
         min-height: 48px;
     }

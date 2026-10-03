@@ -243,6 +243,82 @@ public sealed class RemindersSteps(ScenarioContext scenarioContext, ITestOutputH
             + "would still be alerted by the reminders they had just given up");
     }
 
+    // ── RM7: inheritance taken away, with nothing put in its place ──────────────
+
+    /// <summary>
+    /// Creates the event with the Reminders tab never opened, so the create says nothing about
+    /// reminders and Google applies the owning calendar's own — the state almost every event on the
+    /// family's calendars is in. The precondition is then confirmed against Google rather than
+    /// assumed, because the scenario's whole subject is the move <i>out</i> of that state.
+    /// </summary>
+    [Given(@"the kiosk has created an event that follows its calendar's reminders")]
+    public async Task GivenTheKioskHasCreatedAnEventThatFollowsItsCalendarsReminders()
+    {
+        var state = State;
+        var member = state.Environment.Configuration.MemberCalendarNames.First();
+
+        var draft = new SmokeEventDraft(
+            Title: state.Correlation.Title("Inherited reminders"),
+            Description: state.Correlation.Description("Reminders left to the calendar"),
+            CalendarNames: [member],
+            Date: state.ReserveFirstDay(SmokeScenarioDays.SingleDay),
+            StartTime: SmokeEventShape.StartTime,
+            EndTime: SmokeEventShape.EndTime,
+            Reminders: null);
+
+        await state.RequireDashboard().CreateEventAsync(draft);
+
+        state.Draft = draft;
+        state.MemberNames = [member];
+        state.EventDate = draft.Date;
+        state.ExpectedTitle = draft.Title;
+
+        var found = await SmokeLookup.WaitForGoogleAsync(
+            state,
+            draft.Date,
+            candidates => candidates.Count == 1 && candidates[0].Event.Reminders?.UseDefault == true,
+            "Google never showed the event the kiosk created as following its calendar's own reminders. "
+            + "This scenario is about taking an event OUT of that state, so it stops here rather than "
+            + "reporting the outcome of a move that never started from where it was supposed to");
+
+        output.WriteLine($"Google holds {Describe(found.Single().Event.Reminders)} before the kiosk edit.");
+    }
+
+    [When(@"I take that event off its calendar's reminders on the kiosk without adding one")]
+    public async Task WhenITakeThatEventOffItsCalendarsRemindersOnTheKioskWithoutAddingOne()
+    {
+        var state = State;
+        await state.RequireDashboard().ClearOwnRemindersAsync(state.ExpectedTitle!, state.EventDate);
+    }
+
+    [Then(@"Google holds that event as carrying no reminders of its own")]
+    public async Task ThenGoogleHoldsThatEventAsCarryingNoRemindersOfItsOwn()
+    {
+        var state = State;
+
+        var found = await SmokeLookup.WaitForGoogleAsync(
+            state,
+            state.EventDate,
+            // `is { UseDefault: false }`, not `?.UseDefault != true`: the latter is also satisfied by
+            // Reminders being absent altogether, which is not the state this scenario is waiting for
+            // and which the assertion below then dereferences. Requiring the state outright means an
+            // event Google reports without reminders times out with the message below rather than
+            // failing on a null.
+            candidates => candidates.Count == 1 && candidates[0].Event.Reminders is { UseDefault: false },
+            "Google never stopped showing this event as following its calendar's own reminders after the "
+            + "kiosk took it off them. An event left inheriting keeps alerting the family at times they "
+            + "have just given up, and the kiosk shows them a state Google does not hold");
+
+        var stored = found.Single().Event;
+        output.WriteLine($"Google holds {Describe(stored.Reminders)} after the kiosk took the event off them.");
+
+        (stored.Reminders!.Overrides ?? []).Should().BeEmpty(
+            "nothing was added in place of the calendar's reminders, so nothing may arrive in Google. A "
+            + "reminder here would be one the kiosk chose on the family's behalf — the Add form describes "
+            + "one from the moment the tab opens, and committing that value is exactly what must not "
+            + "happen");
+    }
+
     // ── RM4: a recording, not an assertion ──────────────────────────────────────
 
     [When(@"I switch that event to all day on the kiosk")]

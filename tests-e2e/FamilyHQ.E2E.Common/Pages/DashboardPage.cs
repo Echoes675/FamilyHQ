@@ -1946,6 +1946,11 @@ public class DashboardPage : BasePage
     private ILocator ReminderDaysBeforeInput => RemindersSection.GetByTestId("reminder-days-before");
     private ILocator ReminderDaysDecrement => RemindersSection.GetByTestId("reminder-days-decrement");
     private ILocator ReminderAddBtn => RemindersSection.GetByTestId("reminder-add-btn");
+
+    // Scoped INSIDE the Add button on purpose. The form holds a value from the moment the tab opens,
+    // so the reminder it describes is nobody's choice until Add is pressed; this locator resolving
+    // only within the button is itself half of what AssertAddControlOffersAsync asserts.
+    private ILocator ReminderAddPreview => ReminderAddBtn.GetByTestId("reminder-add-preview");
     private ILocator ReminderUnitPill(string unit) => RemindersSection.GetByTestId($"reminder-unit-{unit}");
     private ILocator ReminderMethodPill(string method) => RemindersSection.GetByTestId($"reminder-method-{method}");
     private ILocator AllDayToggle => EventModal.GetByTestId("all-day-toggle");
@@ -2074,6 +2079,25 @@ public class DashboardPage : BasePage
         await ShowRemindersTabAsync();
         await AssertReminderCountAsync(0);
         await Assertions.Expect(ReminderEmptyState).ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Asserts the add control reads as an action: the reminder the form currently describes is part
+    /// of the Add button's own label, prefixed by "Add", and not a line of prose beside it.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is the whole assertion. The form describes a reminder before anyone has
+    /// touched it, so on a line of its own the description stated that the event had that reminder —
+    /// immediately under the note saying it had none. Inside the button the same words can only be
+    /// read as what pressing it would do.
+    /// </remarks>
+    public async Task AssertAddControlOffersAsync(string timing, string method)
+    {
+        await ShowRemindersTabAsync();
+
+        await Assertions.Expect(ReminderAddPreview).ToContainTextAsync(timing, new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderAddPreview).ToContainTextAsync(method, new() { Timeout = 5000 });
+        await Assertions.Expect(ReminderAddBtn).ToContainTextAsync("Add", new() { Timeout = 5000 });
     }
 
     /// <summary>
