@@ -235,6 +235,33 @@ Scenario: New scenario description
   Then I see the event "New Event" displayed on the calendar
 ```
 
+#### Which view a scenario starts on
+
+A page load lands on the **Reminders timeline**, not the month grid — that is the kiosk's home view.
+Two shared steps put a scenario back on the grid, which is where everything written before that
+change assumed it starts:
+
+- `I view the dashboard` — navigates and then selects the Month tab.
+- `I login as the user "…"` — ends on the Month tab, so a Background that only logs in still leaves
+  the grid (and its **Add Event** button, which the Reminders view does not have) on screen.
+
+Both go through `DashboardPage.ShowCalendarGridAsync()`. A step that navigates to `/` itself must
+call it too if what follows reads the grid or its Add Event button — `SyncResilienceSteps` has two
+such places.
+
+A scenario **about** the landing view must not come through either of those: use
+`When the kiosk loads the dashboard` (`DashboardPage.LoadKioskHomeViewAsync()`), which taps nothing
+and waits for the upcoming-reminders response as well as the events one.
+
+Waits for "the dashboard is up" use `DashboardPage.AnyCalendarView` — any one of the four view
+containers. Do not reintroduce a wait on `.month-table` alone for that purpose: it turns "the
+dashboard loaded" into a claim about which view the kiosk opens on.
+
+An idle kiosk returns to the home view after 15 minutes, the same threshold that pulls a stale date
+back to today, so **any** scenario that forces idle and runs the idle check ends up on the Reminders
+timeline unless a modal is open. A `Then` that reads another view's header after an idle check is
+asserting against a view that is no longer on screen.
+
 ### Adding New Step Definitions
 
 When a new step doesn't match existing step definitions, add a new method in the appropriate Steps class:
@@ -429,8 +456,11 @@ clearest case. That half is asserted against real Google in the preprod smoke su
 
 The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
 one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
-Reminders tab above (which edits one event's reminders). Covers: the tab existing alongside Month
-without becoming the default; a row under Today leading with its event's start time and nothing else;
+Reminders tab above (which edits one event's reminders). Covers: the month grid still being reachable
+from the timeline and vice versa (the scenario titled "a fourth tab" — its wording predates the
+timeline becoming the first tab and the landing view, which `KioskHomeView.feature` covers; what it
+asserts, that the two views do not displace each other, is unchanged); a row under Today leading with
+its event's start time and nothing else;
 a row in a section covering several days leading with the day and date as well; an event following
 its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
 inheriting from a calendar with no defaults both never appearing; an event whose last reminder has
@@ -534,6 +564,25 @@ The scenario instead proves the general rule (Tomorrow is matched before This we
 which also covers the boundary on the roughly one run in seven that happens to land on it. The
 deterministic edge itself is pinned with a controlled `DateOnly` in
 `ReminderBucketingTests.File_OnTheLastDayOfAWeek_TomorrowIsStillTomorrowAndNotNextMonth`.
+
+### Kiosk home view — `KioskHomeView.feature` (4 scenarios)
+
+The view a page load lands on, the tab order, and the return an idle kiosk makes on its own. Covers:
+the tabs reading **Reminders · Month View · Agenda · Day View** left to right; a load opening on the
+timeline with a seeded row already filed under Today; a kiosk left on the Month view coming back to
+the timeline after 16 forced minutes of idle; and an open create-event modal keeping it where it is.
+
+**The row, not the panel, is the landing assertion.** An empty timeline is also what a view that
+never fetched looks like — `RemindersView` renders "No reminders coming up" before the first fetch
+resolves — so a scenario asserting only that the panel appeared would pass on a landing that picked
+the view and skipped `EnterRemindersViewAsync`, which is the exact failure the feature risks. There
+is no backdoor that seeds a reminder (the Simulator's event model carries no overrides), so the
+reminder is set through the modal, which is why the scenario needs a login and the grid first.
+
+**The tick running is not asserted here, and cannot be.** It fires once a minute; nothing a scenario
+can watch inside its own runtime distinguishes a started loop from a stopped one. What covers it is
+that the landing path and a tab tap share one entry point (`EnterRemindersViewAsync`), plus
+`ReminderTickLoopTests` at the unit level.
 
 ### Test Categories
 
