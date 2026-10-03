@@ -1,0 +1,100 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+<div class="reminders-view" data-testid="reminders-view">
+    @{
+        var sections = Sections;
+    }
+    @if (RemindersViewLogic.IsEntirelyEmpty(sections))
+    {
+        <p class="reminders-view__empty" data-testid="reminders-empty">No reminders coming up</p>
+    }
+    else
+    {
+        <div class="reminders-view__columns">
+            @foreach (var bucket in sections)
+            {
+                var slug = RemindersViewLogic.SectionSlug(bucket.Key);
+                <div @key="bucket.Key" class="reminders-section glass-surface reminders-section--@slug"
+                     data-testid="reminder-section-@slug">
+                    <h3 class="reminders-section__heading">@bucket.Heading</h3>
+                    @if (bucket.Rows.Count == 0)
+                    {
+                        <p class="reminders-section__empty" data-testid="reminder-section-empty">Nothing</p>
+                    }
+                    else
+                    {
+                        var expanded = _expanded.Contains(bucket.Key);
+                        <div class="reminders-section__rows">
+                            @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
+                            {
+                                @* EventId alone keys this row: unlike the per-ping row this replaced,
+                                   there is exactly one row per event. *@
+                                <ReminderRow @key="row.EventId"
+                                             Event="row"
+                                             Zone="Zone"
+                                             OnOpenEvent="OnOpenEvent" />
+                            }
+                        </div>
+                        @if (!expanded && bucket.Rows.Count > RemindersViewLogic.PreviewRows)
+                        {
+                            <button type="button"
+                                    class="btn btn-secondary reminders-section__show-all"
+                                    data-testid="reminder-section-show-all"
+                                    @onclick="() => Expand(bucket.Key)">
+                                Show all @bucket.Rows.Count
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @* Not conditional, and not dismissible. Google stores a same-day all-day reminder and shows it in
+       its own apps, but its API returns no override for it, so those pings are missing from this view
+       and always will be — and they are plausibly the most common all-day reminder there is. A timeline
+       that looks complete and is not is worse than one that admits the gap. *@
+    <p class="reminders-footnote" data-testid="reminders-allday-footnote">
+        All-day reminders set for the day itself aren't shown — Google doesn't share them.
+    </p>
+    @* The second standing gap, and permanent for the same reason as the first: this view lists only
+       reminders somebody set on an event, so an event following its calendar's usual ones is left out
+       even though its phone will ping (RemindersController.RowFor). The family chose that exclusion
+       knowing it under-reports, on the condition that the view says so — a timeline that looks
+       complete and is not is the exact failure this feature exists to prevent. Not clutter to tidy
+       away, and not conditional: with nothing inherited on screen there is nothing to tell the family
+       the line is about, which is precisely when they would read the list as the whole truth. *@
+    <p class="reminders-footnote" data-testid="reminders-inherited-footnote">
+        Events that just use their calendar's usual reminders aren't listed here.
+    </p>
+</div>
+
+@code {
+    /// <summary>
+    /// The flat list of event rows to file and render — one per event whose reminders were set on the
+    /// event itself, never one per reminder. Empty renders the no-reminders state.
+    /// </summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();
+
+    /// <summary>The kiosk's current local date — what "Today" and "Tomorrow" are measured against.</summary>
+    [Parameter] public DateOnly Today { get; set; }
+
+    /// <summary>The household's week-start day, passed straight through to <see cref="ReminderBucketing"/>.</summary>
+    [Parameter] public DayOfWeek WeekStart { get; set; }
+
+    /// <summary>The zone a row's local day (its event's start) is read in.</summary>
+    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
+
+    /// <summary>Raised with an event's id when its row is tapped.</summary>
+    [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
+
+    // Which sections the family has asked to see in full. Local, UI-only state — expanding never
+    // raises OnOpenEvent or re-fetches Rows, it only changes which rows already in memory are shown.
+    private readonly HashSet<ReminderSectionKey> _expanded = [];
+
+    private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
+        RemindersViewLogic.Sections(Rows, Today, WeekStart, Zone);
+
+    private void Expand(ReminderSectionKey key) => _expanded.Add(key);
+}

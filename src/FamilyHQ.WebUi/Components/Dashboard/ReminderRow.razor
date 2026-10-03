@@ -1,0 +1,55 @@
+@namespace FamilyHQ.WebUi.Components.Dashboard
+
+@* One event whose reminders were set on the event itself. data-event-id lets the E2E suite address a
+   row by what it IS rather than by its position in the list — rows reorder as events start and
+   finish, so a positional selector would silently drift to the wrong row. It alone is enough to
+   identify a row: unlike the per-ping row this replaces, there is exactly one row per event, never
+   several sharing an id. *@
+<div class="reminder-row"
+     data-testid="reminder-row"
+     data-event-id="@Event.EventId"
+     @onclick="() => OnOpenEvent.InvokeAsync(Event.EventId)">
+    <span class="reminder-row__time">@ReminderRowDisplay.EventTime(Event.EventStart, Event.EventIsAllDay, Zone)</span>
+    @* No glyph at all once every reminder has fired: there is no method left to picture, and a
+       stand-in icon would assert a delivery that is not coming. *@
+    @if (Event.NextReminderMethod is not null)
+    {
+        <span class="reminder-row__icon" aria-hidden="true">@ReminderRowDisplay.MethodIcon(Event.NextReminderMethod)</span>
+    }
+    <div class="reminder-row__body">
+        <span class="reminder-row__title">@Event.EventTitle</span>
+        <span class="reminder-row__detail">
+            @ReminderRowDisplay.ReminderSummary(Event.ReminderCount, Event.NextReminderMinutes, Event.EventIsAllDay)
+        </span>
+    </div>
+    @* The server substitutes the owning calendar's name as a member when it can resolve one, so an
+       empty Members list means it could not — there is no calendar name anywhere to fall back to,
+       not just none wired to this view. Rendering nothing here is the honest answer; inventing a
+       placeholder ("this calendar") would assert something meaningless to a family reading a wall
+       display, which is worse than admitting the gap — the same reasoning behind both of the
+       standing footnotes below. *@
+    <div class="reminder-row__people">
+        @foreach (var member in Event.Members)
+        {
+            <span @key="member.DisplayName"
+                  class="reminder-member-chip"
+                  style="--chip-color: @(member.Color ?? "var(--theme-accent)")">@member.DisplayName</span>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The event this row renders. Required — there is no meaningful empty row.</summary>
+    [Parameter, EditorRequired] public UpcomingReminderEventViewModel Event { get; set; } = default!;
+
+    /// <summary>
+    /// The household's zone, for converting <see cref="Event"/>'s UTC-stamped instants before display.
+    /// Threaded straight down from <see cref="RemindersView.Zone"/> — required, because there is no
+    /// safe default: formatting the raw UTC value, as this row used to, is the bug this parameter
+    /// exists to close.
+    /// </summary>
+    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = default!;
+
+    /// <summary>Raised with the event's id when the row is tapped. The whole row is the tap target.</summary>
+    [Parameter] public EventCallback<Guid> OnOpenEvent { get; set; }
+}

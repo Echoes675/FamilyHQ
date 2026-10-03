@@ -29,4 +29,12 @@ public record CalendarEventDto(
     // Nothing is normalised on the way out. A delivery method the kiosk's form cannot offer, or an
     // offset it would never choose, can still have been set from a phone; Google is the authority on
     // its own data, and the kiosk's validation applies only to values the kiosk itself creates.
-    EventReminders? Reminders = null);
+    EventReminders? Reminders = null,
+    // The calendar this event actually lives on, as the server stored it. The client used to infer
+    // this from the member list by re-implementing the server's routing rule, which agreed only
+    // because exactly one calendar is ever shared. A value that is read cannot drift from the value
+    // it mirrors.
+    Guid? OwningCalendarId = null,
+    // That calendar's own default reminders, so the reminders tab can describe what inheriting does
+    // without a second request.
+    EventReminders? OwningCalendarDefaultReminders = null);

@@ -8,6 +8,9 @@
     <button data-testid="day-tab"
             class="view-tab @(CurrentView == DashboardView.Day ? "active" : "")"
             @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Day)">Day View</button>
+    <button data-testid="reminders-tab"
+            class="view-tab @(CurrentView == DashboardView.Reminders ? "active" : "")"
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">Reminders</button>
 </div>
 
 @code {

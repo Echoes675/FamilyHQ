@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.WebUi.ViewModels;
@@ -73,7 +74,14 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
                         allCalendars,
                         evtDto.IsRecurring,
                         evtDto.RecurrenceRule,
-                        evtDto.Reminders));
+                        evtDto.Reminders,
+                        // Carried straight through so the modal can read the server-decided owner
+                        // instead of re-predicting it (EventModalLogic.OwningCalendarDefaults) — the
+                        // grid tap is the majority way an existing event is opened, so dropping these
+                        // here would leave that path guessing forever regardless of what the
+                        // reminders-timeline fetch-by-id path does.
+                        evtDto.OwningCalendarId,
+                        evtDto.OwningCalendarDefaultReminders));
                 }
             }
 
@@ -178,7 +186,52 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             allCalendars,
             dto.IsRecurring,
             dto.RecurrenceRule,
-            dto.Reminders);
+            dto.Reminders,
+            // Shared by create/update/recurring-update/set-members — every one of those responses
+            // carries the server's current owning-calendar answer, and dropping it here would make
+            // the modal re-predict it right after a save that may have just changed it (e.g. a
+            // member-count edit that moved the event onto the shared calendar).
+            dto.OwningCalendarId,
+            dto.OwningCalendarDefaultReminders);
+    }
+
+    public async Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
+    {
+        var response = await httpClient.GetAsync("api/reminders/upcoming", ct);
+        await EnsureSuccessAsync(response, ct);
+
+        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderEventDto>>(cancellationToken: ct)
+                   ?? new List<UpcomingReminderEventDto>();
+
+        return dtos
+            .Select(d => new UpcomingReminderEventViewModel(
+                d.EventId,
+                d.EventTitle,
+                d.EventStart,
+                d.EventIsAllDay,
+                d.ReminderCount,
+                d.NextReminderAt,
+                d.NextReminderMinutes,
+                d.NextReminderMethod,
+                d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
+            .ToList();
+    }
+
+    public async Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default)
+    {
+        var response = await httpClient.GetAsync($"api/events/{eventId}", ct);
+
+        // A row's event can be deleted on a phone between the reminders-list fetch and the tap that
+        // opens it — ordinary, not a hard failure, so this is the one GET that does not run through
+        // EnsureSuccessAsync's throw-and-show-dialog treatment for a 404. Every other status still
+        // throws, exactly like every other method here.
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, ct);
+
+        var dto = await response.Content.ReadFromJsonAsync<CalendarEventDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for GetEventAsync.");
+
+        return MapToViewModel(dto);
     }
 
     public async Task TriggerSyncAsync(CancellationToken ct = default)

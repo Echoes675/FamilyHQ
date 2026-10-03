@@ -1342,6 +1342,168 @@ body:not([data-theme]) .brand-logo__img--morning {
 .settings-theme-grid .theme-tile--night .theme-tile__name   { color: #8BB3E8; }
 .settings-theme-grid .theme-tile--night .theme-tile__time   { color: #E2EAF4; }
 
+/* ── Reminders View ───────────────────────────────────────────────────── */
+.reminders-view {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.reminders-view__columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+/* Explicit placement, not DOM order, is what lets the single-column collapse below just clear it
+   instead of fighting a second rule for ordering. */
+.reminders-section--today      { grid-column: 1; grid-row: 1; }
+.reminders-section--tomorrow   { grid-column: 1; grid-row: 2; }
+.reminders-section--this-week  { grid-column: 1; grid-row: 3; }
+.reminders-section--this-month { grid-column: 2; grid-row: 1; }
+.reminders-section--next-month { grid-column: 2; grid-row: 2; }
+
+.reminders-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+}
+
+.reminders-section__heading {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--theme-text);
+}
+
+.reminders-section__empty {
+    margin: 0;
+    color: var(--theme-text-muted);
+    font-size: 0.9rem;
+}
+
+.reminders-section__rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reminders-section__show-all {
+    align-self: flex-start;
+}
+
+.reminders-view__empty {
+    margin: 0;
+    padding: 24px;
+    text-align: center;
+    color: var(--theme-text-muted);
+}
+
+.reminders-footnote {
+    /* Permanent, not a dismissible alert — see RemindersView.razor for why these lines exist at all. */
+    margin: 0;
+    padding-top: 8px;
+    border-top: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+    color: var(--theme-text-muted);
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+/* Each gap the view admits to gets its own line, but only the first is ruled off from the sections
+   above it: repeating the divider between them would read as a second, unrelated footer rather than
+   as one standing note about what this timeline does not show. */
+.reminders-footnote + .reminders-footnote {
+    padding-top: 2px;
+    border-top: none;
+}
+
+.reminder-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--theme-glass-divider, var(--theme-glass-border));
+    cursor: pointer;
+    transition: background-color var(--theme-transition-duration, 15s) ease-in-out,
+                border-color var(--theme-transition-duration, 15s) ease-in-out;
+}
+
+.reminder-row__time {
+    flex: 0 0 auto;
+    min-width: 44px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--theme-text);
+}
+
+.reminder-row__icon {
+    flex: 0 0 auto;
+    font-size: 1rem;
+}
+
+.reminder-row__body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.reminder-row__title {
+    color: var(--theme-text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reminder-row__detail {
+    color: var(--theme-text-muted);
+    font-size: 0.8rem;
+}
+
+.reminder-row__people {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    max-width: 140px;
+}
+
+.reminder-member-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--theme-on-accent);
+    background-color: var(--chip-color, var(--theme-accent));
+    white-space: nowrap;
+}
+
+/* Below this, two columns would be too narrow to read comfortably — collapse to one, in the same
+   top-to-bottom order the sections already render in (Today, Tomorrow, This week, This month, Next
+   month), so nothing needs reordering, only re-placing. */
+@media (max-width: 699px) {
+    .reminders-view__columns {
+        grid-template-columns: 1fr;
+    }
+
+    .reminders-section--today,
+    .reminders-section--tomorrow,
+    .reminders-section--this-week,
+    .reminders-section--this-month,
+    .reminders-section--next-month {
+        grid-column: 1;
+        grid-row: auto;
+    }
+}
+
 /* ── Calendar settings list ─────────────────────────────────────────── */
 .calendar-settings-list {
     list-style: none;

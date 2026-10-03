@@ -221,5 +221,36 @@
             }
         ],
         "Events": []
+    },
+    "RemindersViewUser": {
+        "Calendars": [
+            {
+                "Id": "template_reminders_appointments",
+                "Summary": "Appointments",
+                "BackgroundColor": "#00acc1"
+            },
+            {
+                "Id": "template_reminders_chores",
+                "Summary": "Chores",
+                "BackgroundColor": "#8bc34a"
+            },
+            {
+                "Id": "template_reminders_work",
+                "Summary": "Work Calendar",
+                "BackgroundColor": "#ea4335"
+            },
+            {
+                "Id": "template_reminders_personal",
+                "Summary": "Personal Calendar",
+                "BackgroundColor": "#34a853"
+            },
+            {
+                "Id": "template_reminders_shared",
+                "Summary": "Family Events",
+                "BackgroundColor": "#4285f4",
+                "IsShared": true
+            }
+        ],
+        "Events": []
     }
 }

@@ -207,6 +207,11 @@ public class RemindersResponseProjectionTests
     private static (Mock<ICalendarEventService> Service, EventsController SystemUnderTest) CreateEventsSut()
     {
         var service = new Mock<ICalendarEventService>();
-        return (service, new EventsController(service.Object, new Mock<ILogger<EventsController>>().Object));
+        var controller = new EventsController(
+            service.Object,
+            new Mock<ICalendarRepository>().Object,
+            new Mock<ICurrentUserService>().Object,
+            new Mock<ILogger<EventsController>>().Object);
+        return (service, controller);
     }
 }

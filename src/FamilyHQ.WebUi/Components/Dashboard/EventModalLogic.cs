@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Models;
+using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -234,5 +235,56 @@ public static class EventModalLogic
         var start = startDay.Date + startTimeOfDay;
         var end = inclusiveEndDay.Date + endTimeOfDay;
         return (start, end > start ? end : start + FallbackTimedDuration);
+    }
+
+    /// <summary>
+    /// The default reminders of the calendar this event will live on.
+    /// <para>
+    /// The branch is on whether the event has a stored owner at all
+    /// (<paramref name="ownerCalendarId"/>.HasValue) — never on whether
+    /// <paramref name="storedOwningCalendarDefaults"/> happens to be non-null. An <b>existing</b>
+    /// event already has an owner and the server says which it is, so its defaults are read exactly
+    /// as stored, <i>including when that is <c>null</c></i> — a calendar a defaults backfill has not
+    /// reached yet is a real "no defaults" answer, not a missing one, and must not fall through to a
+    /// client-side guess that can only agree with the server by coincidence. Only a <b>new</b> event
+    /// — which has no owner yet because its member chips are still being chosen — has nothing stored
+    /// to read, and there the member-routing rule is the only answer available.
+    /// </para>
+    /// </summary>
+    public static EventReminders? OwningCalendarDefaults(
+        Guid? ownerCalendarId,
+        EventReminders? storedOwningCalendarDefaults,
+        IReadOnlyCollection<Guid> selectedCalendarIds,
+        IReadOnlyList<CalendarSummaryViewModel> calendars) =>
+        ownerCalendarId.HasValue
+            ? storedOwningCalendarDefaults
+            : PredictForSelection(selectedCalendarIds, calendars);
+
+    /// <summary>
+    /// Reminders belong to one Google calendar, and an event lands on the single chosen member's
+    /// calendar or, when several members are chosen, on the shared one — the same routing the server
+    /// applies when it creates the event. Null when no calendar-list sync has reported the chosen
+    /// calendar's defaults, which the tab states rather than showing an empty list as though it were
+    /// the calendar's answer.
+    /// </summary>
+    /// <remarks>
+    /// Public (not just <see cref="OwningCalendarDefaults"/>'s private helper) because the modal also
+    /// calls this directly for a live preview while a member change is in flight — see
+    /// <c>EventModal.OnSelectedCalendarsChanged</c>. That preview has to predict from whatever is
+    /// currently selected rather than trust an existing event's stored owner, because the member
+    /// change it is reacting to can itself move the event onto a different calendar than the one it
+    /// opened on.
+    /// </remarks>
+    public static EventReminders? PredictForSelection(
+        IReadOnlyCollection<Guid> selectedCalendarIds, IReadOnlyList<CalendarSummaryViewModel> calendars)
+    {
+        CalendarSummaryViewModel? owner = selectedCalendarIds.Count switch
+        {
+            1 => calendars.FirstOrDefault(c => c.Id == selectedCalendarIds.First()),
+            > 1 => calendars.FirstOrDefault(c => c.IsShared),
+            _ => null
+        };
+
+        return owner?.DefaultReminders;
     }
 }
