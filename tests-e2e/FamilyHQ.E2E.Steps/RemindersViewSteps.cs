@@ -10,15 +10,15 @@ using Reqnroll;
 namespace FamilyHQ.E2E.Steps;
 
 /// <summary>
-/// Drives the Reminders VIEW — the fourth dashboard tab's standalone timeline of events that still
-/// have a reminder due — as distinct from the event modal's own Reminders tab, which
-/// <see cref="EventRemindersSteps"/> already covers.
+/// Drives the Reminders VIEW — the fourth dashboard tab's standalone timeline of events whose
+/// reminders were set on the event itself — as distinct from the event modal's own Reminders tab,
+/// which <see cref="EventRemindersSteps"/> already covers.
 /// </summary>
 /// <remarks>
-/// Every assertion here addresses a row by its value (event id, plus the default flag where that is
-/// what is being checked), never by position, for the same reason the modal's Reminders tab rows do:
-/// this view sorts by EVENT START, which depends on seeding order rather than on anything Google
-/// guarantees, so a row's position on screen is not a stable identifier a scenario can key off.
+/// Every assertion here addresses a row by its event id, never by position, for the same reason the
+/// modal's Reminders tab rows do: this view sorts by EVENT START, which depends on seeding order
+/// rather than on anything Google guarantees, so a row's position on screen is not a stable
+/// identifier a scenario can key off.
 /// </remarks>
 [Binding]
 public class RemindersViewSteps
@@ -164,21 +164,6 @@ public class RemindersViewSteps
             $"the row for '{title}' should lead with when the EVENT starts, not when a reminder fires.");
     }
 
-    [Then(@"the ""([^""]*)"" section has a default-tagged row for ""([^""]*)""")]
-    public async Task ThenTheSectionHasADefaultTaggedRowFor(string sectionName, string title)
-    {
-        var key = ParseSection(sectionName);
-        var rows = await _dashboardPage.ReadReminderRowsAsync(key);
-        var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
-
-        var match = rows.SingleOrDefault(r => r.EventId == target.EventId)
-            ?? throw new InvalidOperationException(
-                $"'{title}' has no row filed under '{sectionName}' to check the default tag on.");
-
-        match.IsDefault.Should().BeTrue(
-            $"'{title}' follows the calendar's usual reminders, so its row should carry the default tag.");
-    }
-
     [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" naming (\d+) reminders?")]
     public async Task ThenTheSectionHasARowForNamingReminders(string sectionName, string title, int count)
     {
@@ -310,6 +295,19 @@ public class RemindersViewSteps
             "All-day reminders set for the day itself aren't shown — Google doesn't share them.",
             "the footnote is permanent and not dismissible, so its wording should never depend on " +
             "whether the view has anything else to show.");
+    }
+
+    [Then(@"the inherited-reminders footnote is shown")]
+    public async Task ThenTheInheritedRemindersFootnoteIsShown()
+    {
+        var text = await _dashboardPage.ReadInheritedFootnoteAsync();
+
+        // Asserted on the exact wording rather than just on the element being there: the family
+        // agreed to the exclusion on the condition that the view admits it, so a line reworded into
+        // something vaguer is the same failure as the line going missing.
+        text.Should().Be(
+            "Events that just use their calendar's usual reminders aren't listed here.",
+            "the view lists only reminders set on an event, and is permanently required to say so.");
     }
 
     // ── Tapping a row ─────────────────────────────────────────────────────────

@@ -16,12 +16,12 @@ namespace FamilyHQ.E2E.Common.Pages;
 public enum ReminderSectionKey { Today, Tomorrow, ThisWeek, ThisMonth, NextMonth }
 
 /// <summary>
-/// One <c>reminder-row</c> read off the DOM by its value attributes, never by position — see the
-/// remarks on the Reminders VIEW region below for why. <paramref name="Text"/> is the row's full
-/// rendered text (start, reminder summary, title, member chips), for scenarios that need to read more
-/// than the two attributes carry.
+/// One <c>reminder-row</c> read off the DOM by its event id, never by position — see the remarks on
+/// the Reminders VIEW region below for why. <paramref name="Text"/> is the row's full rendered text
+/// (start, reminder summary, title, member chips), for scenarios that need to read more than the id
+/// carries.
 /// </summary>
-public sealed record ReminderRowSnapshot(Guid EventId, bool IsDefault, string Text);
+public sealed record ReminderRowSnapshot(Guid EventId, string Text);
 
 public class DashboardPage : BasePage
 {
@@ -2209,15 +2209,17 @@ public class DashboardPage : BasePage
 
     // ── The Reminders VIEW (the fourth dashboard tab's timeline) ─────────────────────────────────
     // Distinct from "the Reminders tab" region above, which edits ONE event's own reminders inside
-    // the event modal. This is the standalone timeline of every event that HAS reminders — one row per
-    // EVENT, never one per reminder, filed by when the event itself starts.
+    // the event modal. This is the standalone timeline of every event whose reminders were set on the
+    // event itself — one row per EVENT, never one per reminder, filed by when the event starts.
     //
-    // Every row carries data-event-id and data-is-default so it can be addressed BY VALUE, never by
-    // position — data-event-id alone identifies it (one row per event), and the default flag is an
-    // attribute rather than rendered text so a scenario can assert the tag without string-matching.
+    // Every row carries data-event-id so it can be addressed BY VALUE, never by position. That one
+    // attribute is the whole identity of a row: there is exactly one row per event, and the view lists
+    // only events whose reminders were set on the event itself, so there is no second kind of row to
+    // tell apart.
 
     private ILocator RemindersEmptyState => Page.GetByTestId("reminders-empty");
     private ILocator RemindersAllDayFootnote => Page.GetByTestId("reminders-allday-footnote");
+    private ILocator RemindersInheritedFootnote => Page.GetByTestId("reminders-inherited-footnote");
     private ILocator AllReminderRows => Page.GetByTestId("reminder-row");
 
     private static string ReminderSectionSlug(ReminderSectionKey key) => key switch
@@ -2257,8 +2259,8 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Reads every row <paramref name="key"/>'s section is currently showing, addressed by value —
-    /// event id and default flag — rather than position.
+    /// Reads every row <paramref name="key"/>'s section is currently showing, addressed by its event
+    /// id rather than by position.
     /// </summary>
     public async Task<IReadOnlyList<ReminderRowSnapshot>> ReadReminderRowsAsync(ReminderSectionKey key)
     {
@@ -2276,10 +2278,9 @@ public class DashboardPage : BasePage
     {
         var eventId = await row.GetAttributeAsync("data-event-id")
             ?? throw new InvalidOperationException("A reminder-row rendered with no data-event-id.");
-        var isDefault = await row.GetAttributeAsync("data-is-default") == "true";
         var text = (await row.InnerTextAsync()).Trim();
 
-        return new ReminderRowSnapshot(Guid.Parse(eventId), isDefault, text);
+        return new ReminderRowSnapshot(Guid.Parse(eventId), text);
     }
 
     /// <summary>True when <paramref name="key"/>'s section is rendering its collapsed "Nothing" line.</summary>
@@ -2294,10 +2295,16 @@ public class DashboardPage : BasePage
     public async Task<string> ReadAllDayFootnoteAsync() => (await RemindersAllDayFootnote.InnerTextAsync()).Trim();
 
     /// <summary>
+    /// The permanent footnote's text saying events on their calendar's usual reminders are not listed.
+    /// </summary>
+    public async Task<string> ReadInheritedFootnoteAsync() =>
+        (await RemindersInheritedFootnote.InnerTextAsync()).Trim();
+
+    /// <summary>
     /// Finds the one row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.
-    /// A row carries no title ATTRIBUTE to match on — only its id and default flag — so the title is
-    /// used only to LOCATE it; callers address the row afterwards (e.g. via
-    /// <see cref="TapReminderRowAsync"/>) using the value attributes the returned snapshot carries.
+    /// A row carries no title ATTRIBUTE to match on — only its event id — so the title is used only to
+    /// LOCATE it; callers address the row afterwards (e.g. via <see cref="TapReminderRowAsync"/>) using
+    /// the id the returned snapshot carries.
     /// </summary>
     public async Task<ReminderRowSnapshot> FindReminderRowByTitleAsync(string eventTitle)
     {

@@ -4,14 +4,23 @@ Feature: Reminders view
   I want to see what will ping our phones and when
   So that nothing we rely on being told about passes unnoticed
 
-  Every row is one EVENT that HAS reminders, filed by when the EVENT happens — never one row per
-  reminder, and never filed by when any one reminder's own trigger instant falls. An event with
-  several reminders due at very different lead times still appears exactly once, in the section
-  containing its own start, and nowhere else. A row appears if the event will ping at all: an event
-  inheriting from a calendar with no defaults does not ping, and neither does one whose reminders
-  were removed, so neither appears. A reminder having already fired is NOT such a reason — on the
-  day of an event its reminders have usually all gone off, which is exactly when the family needs
-  the row most, so it stays put and says "all sent" instead.
+  Every row is one EVENT whose reminders were set ON THE EVENT, filed by when the EVENT happens —
+  never one row per reminder, and never filed by when any one reminder's own trigger instant falls.
+  An event with several reminders due at very different lead times still appears exactly once, in the
+  section containing its own start, and nowhere else.
+
+  Which events appear is narrower than "will this ping". An event that merely follows its calendar's
+  usual reminders is left out although its phone really will go off, because the subject of this view
+  is reminders somebody deliberately set; the family chose that, knowing it under-reports, on the
+  condition that the view says so in a permanent footnote. An event whose reminders were removed, and
+  one inheriting from a calendar with no defaults, do not appear either. All-day events are NOT
+  caught by the inherited exclusion and must keep appearing: Google materialises a calendar's
+  defaults onto an all-day event instead of letting it inherit, so a birthday or bin-day event
+  arrives carrying reminders of its own.
+
+  A reminder having already fired is not a reason to drop a row — on the day of an event its
+  reminders have usually all gone off, which is exactly when the family needs the row most, so it
+  stays put and says "all sent" instead.
 
   No Background: scenarios need different seeding orders (a backdoor-seeded event has to exist
   BEFORE the login that triggers the first sync; a calendar's defaults have to be set AFTER any
@@ -64,25 +73,42 @@ Feature: Reminders view
     And I show the reminders view
     Then the "Today" section has a row for "Eye Test" saying its reminders have all been sent
 
+  # The pin for the whole exclusion, and the one case that used to produce a row: the calendar HAS
+  # usual reminders, so "Checkup" really will ping the family's phones — it is absent because nobody
+  # set that reminder on the event.
+  #
+  # "Swim Lesson" is a control, not decoration. Without it the Then would pass just as well if the
+  # sync never ran, the tab never rendered or the whole timeline came back empty — the scenario would
+  # stop being able to fail for the reason it exists for. One event with a reminder of its own must
+  # be listed in the same view that leaves the inheriting one out. Seeded at the same 65 minutes as
+  # "Checkup" deliberately: a scenario's widest seeding offset is what decides how close to local
+  # midnight it can still run, so matching the offset adds a control without costing any of that
+  # margin.
+  #
   # The explicit two-step flip (own reminder first, then explicitly ask for the calendar's usual
-  # ones) is used here rather than a bare untouched create — not because a bare create would fail
-  # to reach the default state (CreateAsync persists Google's own create response, which already
-  # comes back useDefault:true for an untouched event; see CalendarSyncService.cs's remarks), but
-  # because the flip reaches the state through a write this scenario itself makes and can reason
-  # about directly, the same transition EventReminders.feature's own "Dog Groomer" row exercises.
-  # Relying on what a bare create happens to persist would make this scenario's result depend on an
-  # implementation detail of the create path rather than on the state it actually asks for.
-  Scenario: An inherited reminder appears and is tagged as the calendar's default
+  # ones) is used rather than a bare untouched create — not because a bare create would fail to reach
+  # the default state (CreateAsync persists Google's own create response, which already comes back
+  # useDefault:true for an untouched event; see CalendarSyncService.cs's remarks), but because the
+  # flip reaches the state through a write this scenario itself makes and can reason about directly,
+  # the same transition EventReminders.feature's own "Dog Groomer" row exercises. Relying on what a
+  # bare create happens to persist would make this scenario's result depend on an implementation
+  # detail of the create path rather than on the state it actually asks for.
+  Scenario: An event following its calendar's usual reminders never appears
     Given I have a user like "RemindersViewUser"
     And the "Appointments" calendar is the active calendar
     And the user has a timed event "Checkup" starting in 65 minutes in "Appointments"
+    And the user has a timed event "Swim Lesson" starting in 65 minutes in "Appointments"
     And the active calendar's usual reminders in Google are 45 minutes
     And I login as the user "RemindersViewUser"
     And I view the dashboard
-    When I change the event "Checkup" to reminders of its own
+    When I open the event "Swim Lesson" for editing
+    And I give the event a reminder 30 minutes before
+    And I save the event
+    And I change the event "Checkup" to reminders of its own
     And I change the event "Checkup" to the calendar's usual reminders
     And I show the reminders view
-    Then the "Today" section has a default-tagged row for "Checkup"
+    Then the "Today" section has a row for "Swim Lesson"
+    And no row names "Checkup" anywhere in the reminders view
 
   Scenario: An event whose reminders were removed never appears
     Given I have a user like "RemindersViewUser"
@@ -186,6 +212,7 @@ Feature: Reminders view
     When I show the reminders view
     Then the reminders view says there is nothing coming up
     And the all-day footnote is shown
+    And the inherited-reminders footnote is shown
 
   Scenario: The view always states that same-day all-day reminders cannot be shown
     Given I have a user like "RemindersViewUser"
@@ -195,6 +222,22 @@ Feature: Reminders view
     When I change the event "Checkup" to reminders of its own
     And I show the reminders view
     Then the all-day footnote is shown
+
+  # The other half of the requirement the exclusion came with, and permanent for the same reason as
+  # the all-day note: a timeline that looks complete and is not is the exact failure this view exists
+  # to prevent. Asserted with a row on screen as well as on the empty view, because "nothing is
+  # hidden right now" is precisely when the line looks like clutter worth tidying away.
+  Scenario: The view always states that events on their calendar's usual reminders are left out
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Checkup" starting in 65 minutes in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    When I open the event "Checkup" for editing
+    And I give the event a reminder 30 minutes before
+    And I save the event
+    And I show the reminders view
+    Then the "Today" section has a row for "Checkup"
+    And the inherited-reminders footnote is shown
 
   # Seeded "next month", like the Tomorrow scenario above — always in the future regardless of time
   # of day, and also the case this task exists to cover: the event is far outside the month the
