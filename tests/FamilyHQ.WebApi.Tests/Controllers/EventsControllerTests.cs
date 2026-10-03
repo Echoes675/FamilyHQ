@@ -43,7 +43,8 @@ public class EventsControllerTests
     [Fact]
     public async Task CreateEvent_CarriesTheOwningCalendarAndItsDefaults()
     {
-        // A write response goes through the same owner resolution as GetEvent — a nullable field
+        // A write response answers for the owner exactly as GetEvent does, though it resolves it from
+        // the calendars loaded before the write rather than with a lookup after it — a nullable field
         // can't tell "not populated on this endpoint" apart from "no owner", so every response that
         // carries a CalendarEventDto must answer the same way or a future reader trusting a create
         // response's null would be the one to find out the hard way.
@@ -55,8 +56,8 @@ public class EventsControllerTests
 
         service.Setup(s => s.CreateAsync(It.IsAny<CreateEventRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(newEvent);
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
 
         var request = new CreateEventRequest([CalAId], "Title", FixedStart, FixedEnd, false, null, null);
         var result = await sut.CreateEvent(request, CancellationToken.None);
@@ -109,8 +110,8 @@ public class EventsControllerTests
 
         service.Setup(s => s.UpdateAsync(EventId, It.IsAny<UpdateEventRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(updatedEvent);
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
 
         var request = new UpdateEventRequest("New Title", FixedStart, FixedEnd, false, null, null);
         var result = await sut.UpdateEvent(EventId, request, CancellationToken.None);
@@ -193,8 +194,8 @@ public class EventsControllerTests
         service.Setup(s => s.UpdateRecurringAsync(
                 EventId, It.IsAny<UpdateEventRequest>(), RecurrenceScope.AllInSeries, It.IsAny<CancellationToken>()))
             .ReturnsAsync(updatedEvent);
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
 
         var request = new UpdateEventRequest("New Title", FixedStart, FixedEnd, false, null, null,
             RecurrenceRule: "RRULE:FREQ=DAILY");
@@ -343,8 +344,8 @@ public class EventsControllerTests
 
         service.Setup(s => s.SetMembersAsync(EventId, It.IsAny<IReadOnlyList<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(updatedEvent);
-        calendarRepository.Setup(r => r.GetCalendarByIdAsync(CalAId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(calA);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([calA]);
 
         var request = new SetEventMembersRequest([CalAId]);
         var result = await sut.SetMembers(EventId, request, CancellationToken.None);
@@ -383,7 +384,8 @@ public class EventsControllerTests
         return (service, sut);
     }
 
-    // For tests that also need to stub the owning-calendar lookup every write response now makes.
+    // For tests that also need to stub the owning-calendar load every write path makes before it
+    // writes — see CreateFullSut for why the default is an empty list rather than nothing at all.
     private static (Mock<ICalendarEventService>, Mock<ICalendarRepository>, EventsController) CreateSutWithRepo() =>
         CreateFullSut();
 
@@ -393,6 +395,10 @@ public class EventsControllerTests
         var calendarRepository = new Mock<ICalendarRepository>();
         var currentUser        = new Mock<ICurrentUserService>();
         var logger             = new Mock<ILogger<EventsController>>();
+        // The real repository returns an empty list when it has no calendars, never null, so tests
+        // that don't care about the owner get the same shape rather than Moq's null.
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         var sut = new EventsController(service.Object, calendarRepository.Object, currentUser.Object, logger.Object);
         return (service, calendarRepository, sut);
     }

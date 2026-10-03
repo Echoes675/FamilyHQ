@@ -47,6 +47,10 @@ public class EventsController : ControllerBase
         var evt = await _calendarRepository.GetEventAsync(eventId, userId, ct);
         if (evt is null) return NotFound();
 
+        // Resolves the owner with a single-row lookup, unlike the write actions below, which load the
+        // calendars before they write. The difference is deliberate: nothing here has been changed yet,
+        // so a failing lookup costs only the error, and fetching every calendar to answer for one event
+        // would be the more expensive way round. See MapToDtoAsync.
         return Ok(await MapToDtoAsync(evt, ct));
     }
 
@@ -58,8 +62,11 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
+        // Loaded before the write so the response needs no I/O once the event exists in Google.
+        var calendars = await _calendarRepository.GetCalendarsAsync(ct);
+
         var created = await _service.CreateAsync(request, ct);
-        return Created($"/api/events/{created.Id}", await MapToDtoAsync(created, ct));
+        return Created($"/api/events/{created.Id}", MapToDto(created, calendars));
     }
 
     [HttpPut("{eventId:guid}")]
@@ -70,8 +77,11 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
+        // Loaded before the write so the response needs no I/O once the event has changed in Google.
+        var calendars = await _calendarRepository.GetCalendarsAsync(ct);
+
         var updated = await _service.UpdateAsync(eventId, request, ct);
-        return Ok(await MapToDtoAsync(updated, ct));
+        return Ok(MapToDto(updated, calendars));
     }
 
     [HttpDelete("{eventId:guid}")]
@@ -95,8 +105,11 @@ public class EventsController : ControllerBase
         if (!validation.IsValid)
             return BadRequest(validation.Errors);
 
+        // Loaded before the write so the response needs no I/O once the series has changed in Google.
+        var calendars = await _calendarRepository.GetCalendarsAsync(ct);
+
         var updated = await _service.UpdateRecurringAsync(eventId, request, scope, ct);
-        return Ok(await MapToDtoAsync(updated, ct));
+        return Ok(MapToDto(updated, calendars));
     }
 
     /// <summary>Deletes a recurring series at the given <see cref="RecurrenceScope"/> (FHQ-18).</summary>
@@ -114,20 +127,25 @@ public class EventsController : ControllerBase
         if (request.MemberCalendarInfoIds == null || request.MemberCalendarInfoIds.Count == 0)
             return BadRequest("At least one member is required.");
 
+        // Loaded before the write so the response needs no I/O once the members have changed in Google.
+        var calendars = await _calendarRepository.GetCalendarsAsync(ct);
+
         var updated = await _service.SetMembersAsync(eventId, request.MemberCalendarInfoIds, ct);
-        return Ok(await MapToDtoAsync(updated, ct));
+        return Ok(MapToDto(updated, calendars));
     }
 
     /// <summary>
-    /// Resolves the event's owning calendar and maps. Every response that carries a
-    /// <see cref="CalendarEventDto"/> goes through this — not just <see cref="GetEvent"/> — so the two
-    /// owning-calendar fields mean the same thing everywhere: "the server's current answer", never
-    /// "populated on this endpoint but silently null on that one". A nullable field can't tell a
+    /// Resolves the event's owning calendar with a single-row lookup and maps. Used by
+    /// <see cref="GetEvent"/> only; the write actions resolve the owner from a list loaded before the
+    /// write, through the <see cref="MapToDto(CalendarEvent, IReadOnlyList{CalendarInfo})"/> overload.
+    /// Both routes populate the two owning-calendar fields, so those fields mean the same thing on
+    /// every response that carries a <see cref="CalendarEventDto"/>: "the server's current answer",
+    /// never "populated on this endpoint but silently null on that one". A nullable field can't tell a
     /// caller "not populated here" apart from "no owner", so leaving any response unresolved would be
     /// a trap for whichever future reader is the first to trust a write response's null.
     /// <para>
-    /// <see cref="CalendarEvent"/> has no navigation property to its owner, only the FK, so this is
-    /// one extra single-row lookup — noise on a path that already makes a Google round-trip.
+    /// <see cref="CalendarEvent"/> has no navigation property to its owner, only the FK, so the owner
+    /// costs a lookup either way.
     /// </para>
     /// </summary>
     private async Task<CalendarEventDto> MapToDtoAsync(CalendarEvent e, CancellationToken ct)
@@ -135,6 +153,18 @@ public class EventsController : ControllerBase
         var owner = await _calendarRepository.GetCalendarByIdAsync(e.OwnerCalendarInfoId, ct);
         return MapToDto(e, owner);
     }
+
+    /// <summary>
+    /// Finds the event's owning calendar among calendars already in hand and maps — no I/O. The write
+    /// actions load the calendars before they call the service and map through this afterwards, so
+    /// that nothing between a successful write and its response can fail: an event written to Google
+    /// and reported as a failed save invites a retry, and a retried create leaves the family a second
+    /// event in the Google Calendar app. The round-trip count per request is unchanged — the lookup
+    /// moves rather than multiplying — and it mirrors how <c>CalendarEventService</c> already resolves
+    /// the owner internally, from all the calendars it loads before writing.
+    /// </summary>
+    private static CalendarEventDto MapToDto(CalendarEvent e, IReadOnlyList<CalendarInfo> calendars) =>
+        MapToDto(e, calendars.FirstOrDefault(c => c.Id == e.OwnerCalendarInfoId));
 
     private static CalendarEventDto MapToDto(CalendarEvent e, CalendarInfo? owner) => new(
         e.Id,
