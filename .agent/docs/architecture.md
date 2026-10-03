@@ -59,11 +59,30 @@
   Validation (≤ 5 overrides, 0–40320 minutes, `popup`/`email`) lives in `EventRemindersValidator` in
   `FamilyHQ.Core` and runs **only when the request carries reminders**; values read from Google never
   pass through it.
+- **The Reminders tab's unadded Add value is committed on save, and only when the form was touched.**
+  `ReminderPickerModel.CommitPendingFormReminder`, called once by `EventModal.SaveEvent` before
+  anything reads `HasChanged`. The form describes a reminder from the instant it appears, so a family
+  member who configured one and saved without pressing Add used to get an event with no reminders and
+  no indication of it. The commit goes through `TryAdd`, so `HasChanged`/`ToEventReminders` remain the
+  only gate on the wire. It fires only when **all** of: the form's own controls have moved
+  (`IsFormTouched`, sticky — moved and moved back still counts); the event is not inheriting; the list
+  is empty, which is what would make the save silent; and the form's value is not one `Remove` took
+  away in this visit. Untouched, switching inheritance off and saving still yields explicitly-none,
+  which is how a family asks for silence — that is why an unconditional commit was rejected.
 - **After a reminder write, what Google returned is what is stored.** Google accepts almost any value
   with a `200` and then rewrites it: a negative `minutes` clamps to `0`, above 40320 clamps down,
   duplicates collapse, the array comes back reordered, and an unrecognised `method` is dropped
   entirely. The client maps the response through the same `MapReminders` the read path uses; a response
   that mentions no reminders leaves the stored value alone, because saying nothing is not saying none.
+  **An all-in-series master patch has to apply that answer itself** —
+  `CalendarEventService.ApplySeriesRemindersAsync`, from both branches of `PatchSeriesMasterAsync`.
+  The master is a transient event built for the write, so Google's answer lands nowhere unless it is
+  copied onto `seriesRows`. `ReconcileWindowAsync` afterwards covers rows **inside the stored sync
+  window** only, and that window is the last *full* sync's — incremental syncs neither move it nor
+  confine the rows they add to it — so a long-lived calendar holds rows beyond it, including possibly
+  the occurrence just edited. It runs **before** the reconcile deliberately: the reconcile's
+  per-instance answer then still wins, which matters because an exception instance can carry
+  reminders the master's do not describe.
 - **A "this and following" split carries the original series' reminders onto the forward series**, for
   the same reason it carries the anchor zone: the forward half is a continuation, not a fresh choice.
   Without it Google applies the calendar's defaults and a phone-set reminder disappears from the tail.
@@ -154,7 +173,7 @@ Two recurring write paths need the series master's DTSTART: the AllInSeries edit
 - **No amount of care in deriving the wall clock helps.** The ambiguity is in Google's reading of the pair, not in FamilyHQ's writing of it. Omitting both keys is the whole fix: `events.patch` merges, so an absent key leaves the resource's value untouched — which is the only way to express "this write says nothing about when the series happens". A `"start": null` would not do; Google treats a present key as an instruction.
 - **The timing-unchanged path never reads the master.** The master's origin is an input to exactly one thing — a start derived from it — so an edit that sends no start has no use for it. Fetching it anyway would put a Google call and its transient failures in front of every rename for a value that is then discarded, and it would be the shape of the defect: reading Google's anchor in order to hand it back. It follows that a rename succeeds on a series whose master cannot be read at all.
 - **No zone is sent either**, because the zone is only expressible as `start.timeZone`. That is strictly stronger than getting the zone right (see the FHQ-170 section): there is nothing to re-anchor. The construction still states the series' own stored zone rather than `null`, so the day this path is ever given a start to send it sends it anchored correctly instead of falling through to the family's configured zone.
-- **Reminders are unaffected** — they are a field of their own — so a reminder-only edit still lands in full through this path.
+- **Reminders are unaffected** — they are a field of their own — so a reminder-only edit still lands in full through this path. It also applies Google's answer to the series' local rows; see the reminders bullet above.
 - **Existing production data.** Nothing to migrate and nothing to backfill: this changes only which keys a write sends, so every series already on the account is protected from the next timing-unchanged edit onwards. It is **not** retrospective — a series whose DTSTART an earlier rename already moved stays moved, because Google is the system of record and the instant it held beforehand is not recoverable from here. Such a series has to be corrected in the Google Calendar app, or by an all-in-series time change setting the intended time deliberately.
 - **Where it is proved.** `tests/FamilyHQ.Services.Tests/Calendar/SeriesRenameAnchorPreservationTests.cs` composes the real `CalendarEventService` and the real `GoogleCalendarClient` over a mocked `HttpMessageHandler` that models Google's re-resolution, and asserts the master's anchor **instant** is unmoved by a rename. It runs two zones whose clocks go back on different dates to different offsets, computed from NodaTime's bundled tz database against a named zone, so no host offset can satisfy both — a one-zone version would pass on a British machine in BST and fail in CI. The Simulator does not model this, so there is no honest E2E twin.
 
