@@ -45,10 +45,11 @@ public class CalendarSyncService(
         // serialising the two — so the row this prune would judge unseen is one a concurrent sync
         // has just inserted, for a calendar Google does list. Removing it takes every event that
         // calendar owns and its SyncState with it (see RemoveCalendarAsync), and what a later sync
-        // brings back is a new row with the defaults: the visibility, shared designation and
-        // display order the old one carried are gone. The two failure modes are not symmetrical,
-        // which is the whole argument for the ordering — a calendar this early read misses is one
-        // the next sync prunes anyway if Google really has stopped listing it.
+        // brings back is a new row: visibility and shared designation fall back to their defaults
+        // and the display order is reassigned to the end, so the ones the family chose are gone
+        // either way. The two failure modes are not symmetrical, which is the whole argument for
+        // the ordering — a calendar this early read misses is one the next sync prunes anyway if
+        // Google really has stopped listing it.
         var calendarsBeforeFetch = await calendarRepository.GetCalendarsAsync(ct);
 
         List<CalendarInfo> googleCalendars;
