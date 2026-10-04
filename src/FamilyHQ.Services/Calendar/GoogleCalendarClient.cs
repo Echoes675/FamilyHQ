@@ -60,9 +60,15 @@ public class GoogleCalendarClient : IGoogleCalendarClient
 
     /// <summary>
     /// The most events a windowed fetch can return before <see cref="MaxSyncPages"/> truncates it.
-    /// Public because a caller that treats an event's ABSENCE from such a fetch as meaning Google no
-    /// longer holds it has to know the point at which the fetch stops being a complete statement of
-    /// the window; at or above this count it is not one, and absence proves nothing.
+    /// <para>
+    /// It is not a completeness test, and nothing reads it. A count at or above this number was only
+    /// ever an upper bound — Google may answer a page with fewer events than the
+    /// <see cref="EventsPageSize"/> asked for — so the prune that once compared against it reads
+    /// <see cref="GoogleEventFetch.IsComplete"/> instead, which this client sets from the page cap
+    /// it actually took. The constant stays as the stated consequence of
+    /// <see cref="MaxSyncPages"/> × <see cref="EventsPageSize"/>; retiring it is a separate change
+    /// from retiring its one use.
+    /// </para>
     /// </summary>
     public const int MaxWindowFetchEvents = MaxSyncPages * EventsPageSize;
 
