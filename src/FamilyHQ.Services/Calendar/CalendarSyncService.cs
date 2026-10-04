@@ -372,10 +372,10 @@ public class CalendarSyncService(
                     {
                         // Named identities, not a bare count: this line is the evidence a later
                         // investigation of a wrongly-pruned event has to work from, so it must say
-                        // WHICH rows went. GoogleEventId is safe to log (unlike GoogleCalendarId,
-                        // which a primary calendar's id IS the account's email address — see
-                        // PiiInLogsGuardTests); the calendar is named by its own CalendarInfoId for
-                        // the same reason.
+                        // WHICH rows went. GoogleEventId is safe to log; a calendar's Google id is
+                        // not, because for a PRIMARY calendar it IS the account's email address, so
+                        // the calendar is named by its own CalendarInfoId instead — see
+                        // PiiInLogsGuardTests.
                         logger.LogInformation(
                             "Full sync of calendar {CalendarInfoId} tombstoned {RemovedCount} local event row(s) no longer present in Google; ids (up to {CapLimit} shown): {GoogleEventIds}",
                             calendar.Id,
