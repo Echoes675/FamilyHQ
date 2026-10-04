@@ -217,6 +217,14 @@ public class CalendarSyncService(
     public async Task<SyncResult> SyncAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, CancellationToken ct = default)
         => new SyncResult(await SyncCoreAsync(calendarInfoId, startDate, endDate, isRetry: false, ct));
 
+    // Bounds how many GoogleEventIds the tombstone diff (and the reconcile prune in
+    // CalendarEventService, which logs the same shape) writes into one log line. A calendar
+    // genuinely cleared out in Google can orphan far more rows than are worth one Seq record, so the
+    // id list is capped while {RemovedCount} always carries the TRUE total — a large prune still
+    // reads as large rather than as the cap. 50 is arbitrary but generous: a GoogleEventId is at most
+    // a few dozen characters, so 50 of them comfortably fit one readable line.
+    private const int MaxPrunedEventIdsLogged = 50;
+
     private async Task<int> SyncCoreAsync(Guid calendarInfoId, DateTimeOffset startDate, DateTimeOffset endDate, bool isRetry, CancellationToken ct)
     {
         var calendar = await calendarRepository.GetCalendarByIdAsync(calendarInfoId, ct);
@@ -361,7 +369,21 @@ public class CalendarSyncService(
                         await calendarRepository.DeleteEventAsync(obsoleteEvt.Id, ct);
 
                     if (obsoleteList.Count > 0)
+                    {
+                        // Named identities, not a bare count: this line is the evidence a later
+                        // investigation of a wrongly-pruned event has to work from, so it must say
+                        // WHICH rows went. GoogleEventId is safe to log (unlike GoogleCalendarId,
+                        // which a primary calendar's id IS the account's email address — see
+                        // PiiInLogsGuardTests); the calendar is named by its own CalendarInfoId for
+                        // the same reason.
+                        logger.LogInformation(
+                            "Full sync of calendar {CalendarInfoId} tombstoned {RemovedCount} local event row(s) no longer present in Google; ids (up to {CapLimit} shown): {GoogleEventIds}",
+                            calendar.Id,
+                            obsoleteList.Count,
+                            MaxPrunedEventIdsLogged,
+                            string.Join(", ", obsoleteList.Take(MaxPrunedEventIdsLogged).Select(e => e.GoogleEventId)));
                         changeCount += await calendarRepository.SaveChangesAsync(ct);
+                    }
                 }
             }
 

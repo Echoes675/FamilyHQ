@@ -5,6 +5,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace FamilyHQ.Services.Tests.Calendar;
@@ -86,6 +87,47 @@ public class CalendarEventServiceReconcilePruneTests
         // slot the series used to occupy.
         f.StoredGoogleEventIds.Should().BeEquivalentTo([InstanceId(NewSlot), InstanceId(NewSlot.AddDays(7))]);
         f.DeletedRowIds.Should().BeEquivalentTo([EditedRowId, SecondRowId]);
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeriesAnchorMoves_LogsTheRemovedGoogleEventIds()
+    {
+        // The prune's log line is the only record of WHICH rows went — a later reader correlating a
+        // missing event against it needs the identities, not just a count that was already there.
+        var f = new Fixture();
+        var edited = ArrangeAnchorMovedSeries(f, isComplete: true);
+
+        await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
+
+        f.InformationMessages.Should().Contain(m =>
+            m.Contains(InstanceId(OldSlot)) && m.Contains(InstanceId(OldSlot.AddDays(7))));
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_PruneBeyondTheCap_StillReportsTheTrueTotal()
+    {
+        // A bulk prune (a calendar genuinely cleared out in Google) must still read as large rather
+        // than as the cap: the id list is bounded, but the reported total must not be.
+        var f = new Fixture();
+        var edited = ArrangeAnchorMovedSeries(f, isComplete: true); // 2 orphans: edited + second row.
+
+        // Inflate the prune well past any sane per-line cap, entirely with rows the window fetch
+        // never named, without changing anything about what triggers the prune itself.
+        const int extraOrphans = 55;
+        for (var i = 0; i < extraOrphans; i++)
+            f.StoreUnrelated(Guid.NewGuid(), $"orphan-{i}", OldSlot.AddMinutes(i));
+
+        await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
+
+        const int expectedTotal = 2 + extraOrphans;
+        var message = f.InformationMessages.Should().ContainSingle(m =>
+                m.Contains("local event row(s) that the window"))
+            .Subject;
+
+        message.Should().Contain($"removed {expectedTotal} local event row(s)");
+
+        var shownIds = message.Split("shown): ")[1].Split(", ");
+        shownIds.Should().HaveCount(50, "the cap bounds the ids in one line without hiding the true total");
     }
 
     // ── What the fetch proves nothing about ───────────────────────────────────
@@ -416,6 +458,10 @@ public class CalendarEventServiceReconcilePruneTests
         }
 
         public IReadOnlyList<string> StoredGoogleEventIds => _stored.Select(e => e.GoogleEventId).ToList();
+
+        /// <summary>The fully-formatted text of every record logged at Information level.</summary>
+        public IReadOnlyList<string> InformationMessages =>
+            Logger.Records.Where(r => r.Level == LogLevel.Information).Select(r => r.Message).ToList();
 
         /// <summary>A stored instance of the series this edit touches.</summary>
         public CalendarEvent StoreInstance(Guid id, string googleEventId, DateTimeOffset start)

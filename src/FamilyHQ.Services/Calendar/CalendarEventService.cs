@@ -1615,6 +1615,12 @@ public class CalendarEventService(
         return persisted;
     }
 
+    // Bounds how many GoogleEventIds this prune writes into one log line — see the identical cap on
+    // CalendarSyncService.SyncCoreAsync's tombstone diff, which logs the same shape for the same
+    // reason. {OrphanCount} below always carries the TRUE total regardless of this cap, so a
+    // legitimate bulk prune still reads as large rather than as the cap.
+    private const int MaxPrunedEventIdsLogged = 50;
+
     /// <summary>
     /// Removes the owner calendar's locally-stored rows that the window fetch did not list, so a
     /// write that changes a series' slot identity does not leave the old occurrences on the kiosk
@@ -1757,10 +1763,18 @@ public class CalendarEventService(
         if (removed.Count == 0)
             return;
 
+        // Named identities, not a bare count: a later reader correlating a missing event against
+        // this line needs to see WHICH rows went, so a genuine orphan can be told apart from an event
+        // the family created minutes ago. GoogleEventId is safe to log; the calendar is named by its
+        // own CalendarInfoId, never its Google id or DisplayName, neither of which may reach Seq (a
+        // primary calendar's Google id IS the account's email address — see PiiInLogsGuardTests).
         logger.LogInformation(
             "Reconcile of calendar {CalendarInfoId} removed {OrphanCount} local event row(s) that the window " +
-            "fetch no longer lists.",
-            owner.Id, removed.Count);
+            "fetch no longer lists; ids (up to {CapLimit} shown): {GoogleEventIds}",
+            owner.Id,
+            removed.Count,
+            MaxPrunedEventIdsLogged,
+            string.Join(", ", removed.Take(MaxPrunedEventIdsLogged).Select(e => e.GoogleEventId)));
 
         // The rows this prune removes are exactly the ones a concurrent sync of the same window is
         // tombstoning, so the race this helper handles is the likely case here, not the remote one.
