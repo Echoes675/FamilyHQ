@@ -299,6 +299,29 @@ internal static class SourceScan
         return code.Length;
     }
 
+    /// <summary>
+    /// Index of the <c>}</c> closing the <c>{</c> at <paramref name="open"/>, or end of input — the
+    /// brace twin of <see cref="MatchingParenthesis"/>, for a guard that needs to know whether a
+    /// call site falls INSIDE a particular block rather than merely after it.
+    /// <para>
+    /// Depends on the braces being balanced, so pass masked source: a brace in a comment or a string
+    /// literal would otherwise shift the match. Razor markup braces before <paramref name="open"/>
+    /// are harmless — counting starts there — but a Razor expression block inside the span is not
+    /// masked by this class and would be counted as code.
+    /// </para>
+    /// </summary>
+    public static int MatchingBrace(string code, int open)
+    {
+        var depth = 0;
+        for (var i = open; i < code.Length; i++)
+        {
+            if (code[i] == '{') depth++;
+            else if (code[i] == '}' && --depth == 0) return i;
+        }
+
+        return code.Length;
+    }
+
     public static int LineNumberAt(string text, int index)
     {
         var line = 1;

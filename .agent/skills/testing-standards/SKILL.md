@@ -25,7 +25,9 @@ description: A set of rules and best practices that guide on how to write, struc
 -- **Accepted exception (architecture tests only):** `tests/FamilyHQ.Core.Tests/UnitTestPurityGuardTests.cs`
    reads the `tests/**/*.cs` sources from disk; `tests/FamilyHQ.Core.Tests/PiiInLogsGuardTests.cs`
    (FHQ-166) and `tests/FamilyHQ.Core.Tests/OutboundZoneGuardTests.cs` (FHQ-170) read the `src/**/*.cs`
-   sources. In every case the subject *is* the source text, so there is
+   sources; `tests/FamilyHQ.Core.Tests/ClockOverrideBridgeGuardTests.cs` reads the `src/**` sources
+   and the WebUi's shipped `wwwroot/appsettings.json`, whose *value* is the invariant (the dev clock
+   bridge must ship off). In every case the subject *is* the source text, so there is
    nothing to substitute; they touch no product state, database or network, and they are deterministic.
    This is not precedent for file I/O in a behavioural unit test — a test that reads a file to obtain data
    *about the system under test* is still a violation.

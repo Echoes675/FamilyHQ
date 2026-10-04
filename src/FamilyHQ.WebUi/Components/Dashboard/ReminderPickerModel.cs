@@ -28,6 +28,12 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 /// it is false the request carries no reminders key and Google's copy is untouched, which is what
 /// stops an ordinary title edit from rewriting what somebody set on a phone.
 /// </para>
+/// <para>
+/// The add form is the one piece of state a save reads rather than ignores:
+/// <see cref="CommitPendingFormReminder"/> commits the reminder it describes when — and only when —
+/// the family configured one and never pressed Add. <see cref="IsFormTouched"/> is what makes that
+/// safe, because the form holds a value before anybody touches it.
+/// </para>
 /// </remarks>
 public sealed class ReminderPickerModel
 {
@@ -62,6 +68,13 @@ public sealed class ReminderPickerModel
     private int _daysBefore = MinimumDaysBefore;
     private int _amount = DefaultAmount;
     private ReminderUnit _unit = ReminderUnit.Minutes;
+    private TimeOnly _timeOfDay = DefaultTimeOfDay;
+    private string _method = EventRemindersValidator.PopupMethod;
+    private bool _isFormTouched;
+
+    // Reminders the family took away with Remove during this visit. Kept so the save cannot hand one
+    // of them back — see CommitPendingFormReminder.
+    private readonly HashSet<EventReminder> _withdrawn = [];
 
     private ReminderPickerModel(EventReminders opened, IReadOnlyList<EventReminder>? calendarDefault, bool isAllDay)
     {
@@ -177,11 +190,15 @@ public sealed class ReminderPickerModel
     public int DaysBefore
     {
         get => _daysBefore;
-        set => _daysBefore = Math.Clamp(value, MinimumDaysBefore, MaximumDaysBefore);
+        set => Set(ref _daysBefore, Math.Clamp(value, MinimumDaysBefore, MaximumDaysBefore));
     }
 
     /// <summary>The local time of day an all-day reminder fires on its chosen day.</summary>
-    public TimeOnly TimeOfDay { get; set; } = DefaultTimeOfDay;
+    public TimeOnly TimeOfDay
+    {
+        get => _timeOfDay;
+        set => Set(ref _timeOfDay, value);
+    }
 
     /// <summary>
     /// How many <see cref="Unit"/>s before a timed event starts, clamped to what that unit can
@@ -191,7 +208,7 @@ public sealed class ReminderPickerModel
     public int Amount
     {
         get => _amount;
-        set => _amount = Math.Clamp(value, EventRemindersValidator.MinMinutes, MaximumAmount(_unit));
+        set => Set(ref _amount, Math.Clamp(value, EventRemindersValidator.MinMinutes, MaximumAmount(_unit)));
     }
 
     /// <summary>
@@ -203,7 +220,7 @@ public sealed class ReminderPickerModel
         get => _unit;
         set
         {
-            _unit = value;
+            Set(ref _unit, value);
             Amount = _amount;
         }
     }
@@ -212,7 +229,39 @@ public sealed class ReminderPickerModel
     /// How the reminder is delivered. A string because that is what Google stores and what a phone
     /// may have set; the form offers only the two values Google itself accepts on a write.
     /// </summary>
-    public string Method { get; set; } = EventRemindersValidator.PopupMethod;
+    public string Method
+    {
+        get => _method;
+        set => Set(ref _method, value);
+    }
+
+    /// <summary>
+    /// Whether the family has moved the add form away from the values it opened with — the amount
+    /// and unit (or, on an all-day event, the day and time), or the delivery method.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the whole safety property behind <see cref="CommitPendingFormReminder"/>. The form
+    /// holds a value from the moment it appears, so committing it unconditionally would invent a
+    /// reminder for a family who switched inheritance off <i>wanting</i> silence — which is a
+    /// legitimate, supported state (<see cref="ReminderPickerState.ExplicitlyNone"/>).
+    /// </para>
+    /// <para>
+    /// <b>Sticky, deliberately: a control moved and then moved back still counts as touched.</b>
+    /// Both answers are defensible, and this one is chosen because the alternative recreates the
+    /// defect it exists to fix. Somebody who dials 45 and settles on 30 has engaged with the form
+    /// and is configuring a reminder, not asking for silence; reading them as untouched would
+    /// discard the reminder the screen is visibly offering. Somebody who wants silence does not
+    /// touch the form at all, and that case is still untouched.
+    /// </para>
+    /// <para>
+    /// Set on an <i>effective</i> change only. Assigning a control the value it already holds is not
+    /// a change — a <c>change</c> event can fire on a blur that altered nothing — and neither is an
+    /// input the clamps rejected, because a value that never reached the form is not a choice the
+    /// family made.
+    /// </para>
+    /// </remarks>
+    public bool IsFormTouched => _isFormTouched;
 
     /// <summary>
     /// Restores inheritance, discarding the edited list. Switching back off re-copies the calendar's
@@ -287,7 +336,64 @@ public sealed class ReminderPickerModel
     public bool TryAddSelectedReminder() => TryAdd(SelectedReminder);
 
     /// <summary>Removes a reminder, returning whether it was there.</summary>
-    public bool Remove(EventReminder reminder) => _overrides.Remove(reminder);
+    public bool Remove(EventReminder reminder)
+    {
+        if (!_overrides.Remove(reminder))
+        {
+            return false;
+        }
+
+        // Remembered so no later save can put this one back — see CommitPendingFormReminder.
+        _withdrawn.Add(reminder);
+        return true;
+    }
+
+    /// <summary>
+    /// Commits the reminder the add form describes as the event's own, for the family who configured
+    /// one and saved without pressing Add. Returns whether anything was committed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What this exists to prevent is unasked-for silence.</b> A save that would leave an event
+    /// with no reminders at all, made by somebody who had configured one on the form, is the one
+    /// case where the form's pending value is the better answer: the family believe they set a
+    /// reminder, nothing arrives, and nothing told them. That is the whole of the condition below,
+    /// and it is why a non-empty list is left alone — there the list is the event's reminders, the
+    /// family can read it, and the form stays the offer its Add button says it is.
+    /// </para>
+    /// <para>
+    /// The save path calls this once, before it reads <see cref="HasChanged"/>. It commits through
+    /// <see cref="TryAdd"/> like any other reminder, so the result is an ordinary list change and
+    /// <see cref="HasChanged"/>/<see cref="ToEventReminders"/> decide what is sent exactly as before
+    /// — there is no second route to the wire.
+    /// </para>
+    /// <para>
+    /// Four conditions, and each rules out a silence the family did ask for:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>The form is <see cref="IsFormTouched"/>. Untouched, nobody configured
+    /// anything — the form holds a value before it is touched — so switching inheritance off and
+    /// saving still yields the explicitly-none state, which is how the family ask for
+    /// silence.</description></item>
+    /// <item><description>The event is not inheriting. While it is, the form is not even on screen,
+    /// and Google answers a body carrying both an inherited and an own reminder with
+    /// <c>400 cannotUseDefaultRemindersAndSpecifyOverride</c>.</description></item>
+    /// <item><description>The list is empty, which is what makes the save silent. A list with
+    /// something in it is the event's reminders, the family can read it, and nothing is being
+    /// lost.</description></item>
+    /// <item><description>The form's value is not one <see cref="Remove"/> took away in this visit.
+    /// Adding a reminder and then removing it is as explicit as the tab gets about not wanting it,
+    /// and handing it straight back on save would undo exactly that. Removing a <i>different</i>
+    /// one and then configuring this value is a replacement, not a silencing, so it still
+    /// commits.</description></item>
+    /// </list>
+    /// </remarks>
+    public bool CommitPendingFormReminder() =>
+        _isFormTouched
+        && !FollowsCalendarDefault
+        && _overrides.Count == 0
+        && !_withdrawn.Contains(SelectedReminder)
+        && TryAddSelectedReminder();
 
     /// <summary>
     /// The offset Google stores for "<paramref name="daysBefore"/> days before at
@@ -332,6 +438,20 @@ public sealed class ReminderPickerModel
         ? EventReminders.InheritsCalendarDefault
         // An empty list yields the explicitly-none shape, which is the state the family asked for.
         : EventReminders.Explicit(_overrides);
+
+    // One place where a form control's value lands, so no control can be added later that moves the
+    // pending reminder without marking the form touched. See IsFormTouched for why an assignment
+    // that changes nothing is not a touch.
+    private void Set<T>(ref T field, T value)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return;
+        }
+
+        field = value;
+        _isFormTouched = true;
+    }
 
     private int SelectedMinutes() => IsAllDay
         ? ToMinutesBeforeMidnight(DaysBefore, TimeOfDay)

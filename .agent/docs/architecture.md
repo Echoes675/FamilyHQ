@@ -59,11 +59,30 @@
   Validation (≤ 5 overrides, 0–40320 minutes, `popup`/`email`) lives in `EventRemindersValidator` in
   `FamilyHQ.Core` and runs **only when the request carries reminders**; values read from Google never
   pass through it.
+- **The Reminders tab's unadded Add value is committed on save, and only when the form was touched.**
+  `ReminderPickerModel.CommitPendingFormReminder`, called once by `EventModal.SaveEvent` before
+  anything reads `HasChanged`. The form describes a reminder from the instant it appears, so a family
+  member who configured one and saved without pressing Add used to get an event with no reminders and
+  no indication of it. The commit goes through `TryAdd`, so `HasChanged`/`ToEventReminders` remain the
+  only gate on the wire. It fires only when **all** of: the form's own controls have moved
+  (`IsFormTouched`, sticky — moved and moved back still counts); the event is not inheriting; the list
+  is empty, which is what would make the save silent; and the form's value is not one `Remove` took
+  away in this visit. Untouched, switching inheritance off and saving still yields explicitly-none,
+  which is how a family asks for silence — that is why an unconditional commit was rejected.
 - **After a reminder write, what Google returned is what is stored.** Google accepts almost any value
   with a `200` and then rewrites it: a negative `minutes` clamps to `0`, above 40320 clamps down,
   duplicates collapse, the array comes back reordered, and an unrecognised `method` is dropped
   entirely. The client maps the response through the same `MapReminders` the read path uses; a response
   that mentions no reminders leaves the stored value alone, because saying nothing is not saying none.
+  **An all-in-series master patch has to apply that answer itself** —
+  `CalendarEventService.ApplySeriesRemindersAsync`, from both branches of `PatchSeriesMasterAsync`.
+  The master is a transient event built for the write, so Google's answer lands nowhere unless it is
+  copied onto `seriesRows`. `ReconcileWindowAsync` afterwards covers rows **inside the stored sync
+  window** only, and that window is the last *full* sync's — incremental syncs neither move it nor
+  confine the rows they add to it — so a long-lived calendar holds rows beyond it, including possibly
+  the occurrence just edited. It runs **before** the reconcile deliberately: the reconcile's
+  per-instance answer then still wins, which matters because an exception instance can carry
+  reminders the master's do not describe.
 - **A "this and following" split carries the original series' reminders onto the forward series**, for
   the same reason it carries the anchor zone: the forward half is a continuation, not a fresh choice.
   Without it Google applies the calendar's defaults and a phone-set reminder disappears from the tail.
@@ -154,7 +173,7 @@ Two recurring write paths need the series master's DTSTART: the AllInSeries edit
 - **No amount of care in deriving the wall clock helps.** The ambiguity is in Google's reading of the pair, not in FamilyHQ's writing of it. Omitting both keys is the whole fix: `events.patch` merges, so an absent key leaves the resource's value untouched — which is the only way to express "this write says nothing about when the series happens". A `"start": null` would not do; Google treats a present key as an instruction.
 - **The timing-unchanged path never reads the master.** The master's origin is an input to exactly one thing — a start derived from it — so an edit that sends no start has no use for it. Fetching it anyway would put a Google call and its transient failures in front of every rename for a value that is then discarded, and it would be the shape of the defect: reading Google's anchor in order to hand it back. It follows that a rename succeeds on a series whose master cannot be read at all.
 - **No zone is sent either**, because the zone is only expressible as `start.timeZone`. That is strictly stronger than getting the zone right (see the FHQ-170 section): there is nothing to re-anchor. The construction still states the series' own stored zone rather than `null`, so the day this path is ever given a start to send it sends it anchored correctly instead of falling through to the family's configured zone.
-- **Reminders are unaffected** — they are a field of their own — so a reminder-only edit still lands in full through this path.
+- **Reminders are unaffected** — they are a field of their own — so a reminder-only edit still lands in full through this path. It also applies Google's answer to the series' local rows; see the reminders bullet above.
 - **Existing production data.** Nothing to migrate and nothing to backfill: this changes only which keys a write sends, so every series already on the account is protected from the next timing-unchanged edit onwards. It is **not** retrospective — a series whose DTSTART an earlier rename already moved stays moved, because Google is the system of record and the instant it held beforehand is not recoverable from here. Such a series has to be corrected in the Google Calendar app, or by an all-in-series time change setting the intended time deliberately.
 - **Where it is proved.** `tests/FamilyHQ.Services.Tests/Calendar/SeriesRenameAnchorPreservationTests.cs` composes the real `CalendarEventService` and the real `GoogleCalendarClient` over a mocked `HttpMessageHandler` that models Google's re-resolution, and asserts the master's anchor **instant** is unmoved by a rename. It runs two zones whose clocks go back on different dates to different offsets, computed from NodaTime's bundled tz database against a named zone, so no host offset can satisfy both — a one-zone version would pass on a British machine in BST and fail in CI. The Simulator does not model this, so there is no honest E2E twin.
 
@@ -189,6 +208,20 @@ Two recurring write paths need the series master's DTSTART: the AllInSeries edit
 - **`GetEvent` deliberately differs** and keeps its single-row `GetCalendarByIdAsync` after the event load. It is a read, so a failing lookup costs only the error, and fetching every calendar to answer for one event is the more expensive way round. The inconsistency is intentional, and commented at both sites, so that a later tidy-up does not unify them and put the I/O back.
 - **Both routes still resolve the owner**, so `OwningCalendarId` and `OwningCalendarDefaultReminders` mean the same thing on every response that carries a `CalendarEventDto`. Tolerating a null owner on the write paths would have been the wrong fix: a nullable field cannot tell a caller "not populated here" from "no owner".
 - **Where it is proved.** `tests/FamilyHQ.WebApi.Tests/Controllers/EventsControllerWriteOrderingTests.cs` records the order of the calendar load and the write for each of the four actions, with the repository mock strict so that *any* repository call after the write fails the test rather than only the one method that used to be called there.
+
+## Google write paths — the post-write reconcile removes what Google no longer has
+
+**Rule: `CalendarEventService.ReconcileWindowAsync` deletes a stored row when, and only when, the row's `Start` falls inside the window it has just fetched in full and the fetch did not name the row's `GoogleEventId`.**
+
+The upsert loop only adds and updates, and the tombstone branch needs Google to name an id, so before this nothing removed a row Google had simply stopped returning. That is safe while instance ids are stable and stops being safe when a series' slot identity changes: an exception's id is `{masterId}_{originalStartStamp}`, so an all-in-series timing change renames every instance and strands every row carrying an old id. The family then sees two tiles on one slot, and cannot delete the stale one from the kiosk — Google no longer holds the event that row names — until a full sync tombstones it.
+
+- **Why absence is evidence here.** The reconcile fetches `[SyncState.SyncWindowStart, SyncWindowEnd]` with **no sync token**, so the answer is a statement of the whole window rather than a delta. This is the only place in the write paths where that holds.
+- **Why only rows starting inside the window.** Google's `timeMin`/`timeMax` select on overlap — `end > timeMin` and `start < timeMax`. A row whose `Start` is at or after the window start and whose `End` is after it satisfies both, so Google would have had to list it. A row starting *before* the window qualifies only on the strength of its stored `End`, which is the one value a stale row may have wrong, so those rows are left alone even though some are orphans too. The upper bound is the window end **truncated to the second**, because that is what the client puts on the wire (`yyyy-MM-ddTHH:mm:ssZ`) while the stored window end carries the fraction of a second the full sync wrote it at.
+- **Two answers are refused rather than acted on.** An empty fetch (`GetEventsAsync` returns an empty list without failing when a page body does not deserialise) and a fetch at or above `GoogleCalendarClient.MaxWindowFetchEvents` — `MaxSyncPages × EventsPageSize`, the point past which the client stops paging and returns what it has. The count test is an upper bound, not proof of completeness, so it only ever refuses a prune. `CalendarSyncService`'s own full-sync tombstone diff shares that page-cap exposure and has no such guard; a calendar whose window really held 5 000 events would need the truncation surfaced out of the client for both.
+- **A series master row is excluded explicitly.** `singleEvents=true` expands series into instances and never returns the master resource, so a row whose `GoogleEventId` is a bare series id is missing for that reason alone. Such a row exists during the recurrence-on reconcile: the event is promoted in place, so the pre-promotion single row's id *is* the new master id. `ToggleRecurrenceOnAsync` removes it itself afterwards, having established that the expansion replaced it.
+- **Candidates come from `GetEventsByOwnerCalendarAsync`**, the same calendar-and-range-scoped query the full sync's tombstone diff uses, so both places that act on Google's silence start from the same set. Its predicate is overlap, which is wider than the prune may act on, so the narrowing is applied in the service — it is the condition that authorises a delete, and stating it there is what lets a unit test exercise its boundaries.
+- **The removal is committed through `CommitRowRemovalAsync`.** The rows this prune deletes are exactly the ones a concurrent sync of the same window is tombstoning, so the delete race is the likely case here, not the remote one. The condemned rows are re-read through the tracking path first, because the candidate query is `AsNoTracking` and detaching an untracked copy would leave the real `Deleted` entry in the change tracker.
+- **Where it is proved.** `tests/FamilyHQ.Services.Tests/Calendar/CalendarEventServiceReconcilePruneTests.cs`. Each negative case puts a row the fetch did not mention somewhere the fetch proves nothing about and asserts it survives a reconcile that prunes a real orphan in the same breath, so none of them can pass against a service that prunes nothing.
 
 ## Which calendar an event lands on — one rule, two readers
 
@@ -338,6 +371,12 @@ Runtime feature flags are exposed to Blazor WASM via a `FeatureFlags` POCO, regi
 The Settings page has a fifth tab, **Weather Override**, rendered only when `FeatureFlags.WeatherOverrideEnabled` is true. The flag is sourced from the WebUi's `appsettings.json` key `FeatureWeatherOverride`, which is injected into the published bundle at container startup by `docker/webui/docker-entrypoint.sh` based on the `FEATURE_WEATHER_OVERRIDE_ENABLED` environment variable. Dev and staging set this to `true`; preprod and production set it to `false`. Local `dotnet run` inherits `true` from `wwwroot/appsettings.Development.json`.
 
 When the tab's "Override active" pill is on, a developer can tap any `WeatherCondition` and optionally toggle the Windy modifier to immediately force the full-screen weather animation (`WeatherOverlay`) to that condition. The override is purely client-side transient state held in a scoped `IWeatherOverrideService` and is never persisted — refreshing the browser reverts to the real weather pipeline. The `WeatherStrip`, backend API, user `WeatherSetting`, and real weather data flow are untouched.
+
+### Clock Override (dev/staging only)
+
+`FeatureClockOverride` is wired identically — `appsettings.json` key, flipped at container startup from `FEATURE_CLOCK_OVERRIDE_ENABLED` — and reaches `KioskTimeProvider.OverrideEnabled` via `FeatureFlags.ClockOverrideEnabled`. When it is on, `Index` attaches `window.familyHqKiosk` (`wwwroot/js/idle.js` `attachDevBridge`), which lets a caller shift the displayed date by whole days and force an immediate idle evaluation. That is what makes the day-rollover and kiosk-home-view E2E scenarios run in milliseconds instead of waiting out a real fifteen minutes; it is also why the bridge must never exist on a kiosk on a wall.
+
+**The `environment:` block in each compose file is not the gate.** Every `docker-compose.*.yml` also passes `env_file: .env`, which forwards the whole file into the container — so a `FEATURE_CLOCK_OVERRIDE_ENABLED=true` line in any environment's env file takes effect whether or not that compose file lists the variable. Containment is: the shipped `appsettings.json` says `false`, the entrypoint flips it only on an exact `"true"`, and no production env file sets it. `tests/FamilyHQ.Core.Tests/ClockOverrideBridgeGuardTests.cs` guards the repository's half of that (ships off, read with no fallback, one guarded call site); the deployed env files are a deployment control and no test can reach them.
 
 ## Deployment tier & the preprod smoke endpoints (FHQ-139)
 
