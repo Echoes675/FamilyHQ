@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -53,6 +54,18 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     }
 
     public const int MaxSyncPages = 20;
+
+    /// <summary>The <c>maxResults</c> asked for on every <c>events.list</c> page.</summary>
+    public const int EventsPageSize = 250;
+
+    /// <summary>
+    /// The most events a windowed fetch can return before <see cref="MaxSyncPages"/> truncates it.
+    /// Public because a caller that treats an event's ABSENCE from such a fetch as meaning Google no
+    /// longer holds it has to know the point at which the fetch stops being a complete statement of
+    /// the window; at or above this count it is not one, and absence proves nothing.
+    /// </summary>
+    public const int MaxWindowFetchEvents = MaxSyncPages * EventsPageSize;
+
     private const string EventsListFields =
         "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status,reminders)";
 
@@ -228,7 +241,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             var query = new List<string>
             {
                 "singleEvents=true",
-                "maxResults=250",
+                "maxResults=" + EventsPageSize.ToString(CultureInfo.InvariantCulture),
                 "fields=" + Uri.EscapeDataString(EventsListFields)
             };
 
