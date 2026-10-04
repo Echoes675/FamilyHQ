@@ -178,7 +178,7 @@ public class CalendarMigrationService(
             throw new InvalidOperationException(
                 $"Cannot reconcile migrated series: calendar {target.Id} has no stored sync window.");
 
-        var (fetched, _) = await googleCalendarClient.GetEventsAsync(
+        var fetch = await googleCalendarClient.GetEventsAsync(
             target.GoogleCalendarId, windowStart, windowEnd, null, ct);
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
@@ -189,7 +189,7 @@ public class CalendarMigrationService(
         var knownMemberNames = allCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
         var allCalendarNames = allCalendars.Select(c => c.DisplayName).ToList();
 
-        foreach (var fetchedEvent in fetched.Where(e => e.GoogleRecurringEventId == newSeriesId))
+        foreach (var fetchedEvent in fetch.Events.Where(e => e.GoogleRecurringEventId == newSeriesId))
         {
             var parsedNames = memberTagParser.ParseMembers(fetchedEvent.Description, knownMemberNames, allCalendarNames);
             var members = allCalendars

@@ -36,7 +36,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((mockEvents, "new_sync_token"));
+            .ReturnsAsync(new GoogleEventFetch(mockEvents, "new_sync_token", IsComplete: true));
 
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
@@ -83,7 +83,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((mockEvents, "next_token"));
+            .ReturnsAsync(new GoogleEventFetch(mockEvents, "next_token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((CalendarEvent?)null);
 
@@ -110,7 +110,7 @@ public class CalendarSyncServiceTests
         var googleCalendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleCalendar }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo>()); // No local calendars
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
@@ -119,7 +119,7 @@ public class CalendarSyncServiceTests
             .ReturnsAsync((SyncState?)null);
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -152,7 +152,7 @@ public class CalendarSyncServiceTests
         var localCalendar  = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Tests" };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleCalendar }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { localCalendar });
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
@@ -161,7 +161,7 @@ public class CalendarSyncServiceTests
             .ReturnsAsync((SyncState?)null);
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -204,7 +204,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleCalendar }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { localCalendar });
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
@@ -212,7 +212,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -250,7 +250,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { workCal, personalCal });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { workCal, personalCal }, IsComplete: true));
 
         // Simulate repository state: both calendars already persisted (returned both passes)
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
@@ -261,7 +261,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -294,7 +294,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { soloCal });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { soloCal }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { soloCal });
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(soloCal.Id, It.IsAny<CancellationToken>()))
@@ -302,7 +302,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(soloCal.Id, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(soloCal.GoogleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(soloCal.Id, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -337,7 +337,7 @@ public class CalendarSyncServiceTests
         };
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { workCal, familyCal }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { workCal, familyCal });
         calendarRepository.Setup(r => r.GetCalendarByIdAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -346,7 +346,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(It.IsAny<Guid>(), startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -381,7 +381,7 @@ public class CalendarSyncServiceTests
 
         var newEvent = new CalendarEvent { GoogleEventId = "evt-1", Title = "New Event" };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { newEvent }, "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { newEvent }, "sync-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-1", It.IsAny<CancellationToken>()))
@@ -423,7 +423,7 @@ public class CalendarSyncServiceTests
             .ReturnsAsync(new List<CalendarInfo> { calendar });
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-existing", Title = "New Title" } }, "token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-existing", Title = "New Title" } }, "token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-existing", It.IsAny<CancellationToken>()))
@@ -467,10 +467,10 @@ public class CalendarSyncServiceTests
             .ReturnsAsync(existing);
 
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "tok", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>
             {
                 new() { GoogleEventId = "evt-zone", Title = "New", IanaTimeZone = fetchedZone }
-            }, "tok2"));
+            }, "tok2", IsComplete: true));
 
         await systemUnderTest.SyncAsync(calendarId, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddDays(30));
 
@@ -515,7 +515,7 @@ public class CalendarSyncServiceTests
             Description   = "[members: Work Calendar, Personal Calendar]"
         };
         client.Setup(c => c.GetEventsAsync(familyGoogleId, null, null, "tok", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { fetched }, "tok2", IsComplete: true));
 
         // The event already carries the correct membership from an earlier (un-corrupted) sync.
         var existing = new CalendarEvent
@@ -579,7 +579,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendar });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental-token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-orphan", Title = "CANCELLED_TOMBSTONE" } }, "new-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-orphan", Title = "CANCELLED_TOMBSTONE" } }, "new-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-orphan", It.IsAny<CancellationToken>()))
             .ReturnsAsync(trackedEvent);
 
@@ -616,7 +616,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendar });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token")); // Empty result from Google
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true)); // Empty result from Google
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent> { obsoleteEvent }); // Local has a stale event
 
@@ -748,7 +748,7 @@ public class CalendarSyncServiceTests
         var bad   = new CalendarEvent { GoogleEventId = "evt-bad", Title = "Bad" };
         var goodB = new CalendarEvent { GoogleEventId = "evt-b", Title = "B" };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { goodA, bad, goodB }, "next-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { goodA, bad, goodB }, "next-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -795,7 +795,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync((SyncState?)null);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendar });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-x", Title = "X" } }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-x", Title = "X" } }, "tok", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-x", It.IsAny<CancellationToken>()))
@@ -827,7 +827,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync((SyncState?)null);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendar });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-y", Title = "Y" } }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new CalendarEvent { GoogleEventId = "evt-y", Title = "Y" } }, "tok", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-y", It.IsAny<CancellationToken>()))
@@ -871,7 +871,7 @@ public class CalendarSyncServiceTests
         var bad   = new CalendarEvent { GoogleEventId = "evt-bad", Title = new string('X', 600) };
         var goodB = new CalendarEvent { GoogleEventId = "evt-b", Title = "B" };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { goodA, bad, goodB }, "next-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { goodA, bad, goodB }, "next-token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -930,7 +930,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendarInfo });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent>(), "next_token"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "next_token", IsComplete: true));
         calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(99); // syncState bookkeeping save returns rows, but must NOT be counted
 
@@ -953,7 +953,7 @@ public class CalendarSyncServiceTests
         calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>())).ReturnsAsync(syncState);
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<CalendarInfo> { calendarInfo });
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "old_token", It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "evt-new", Title = "New" } }, "next_token"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new() { GoogleEventId = "evt-new", Title = "New" } }, "next_token", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((CalendarEvent?)null);
         calendarRepository.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
@@ -984,7 +984,7 @@ public class CalendarSyncServiceTests
 
         // Both calendars exist in Google and locally (no add/remove from Pass 1)
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { calA, calB });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { calA, calB }, IsComplete: true));
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calA, calB });
 
@@ -999,9 +999,9 @@ public class CalendarSyncServiceTests
 
         // Each calendar returns one new event
         client.Setup(c => c.GetEventsAsync(googleCalAId, null, null, "old_token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "a-evt-1", Title = "A Event" } }, "a-next"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new() { GoogleEventId = "a-evt-1", Title = "A Event" } }, "a-next", IsComplete: true));
         client.Setup(c => c.GetEventsAsync(googleCalBId, null, null, "old_token", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new() { GoogleEventId = "b-evt-1", Title = "B Event" } }, "b-next"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new() { GoogleEventId = "b-evt-1", Title = "B Event" } }, "b-next", IsComplete: true));
 
         // No existing local events for either calendar
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1044,7 +1044,7 @@ public class CalendarSyncServiceTests
 
         // Second call (full sync after token cleared) → success
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "fresh-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "fresh-token", IsComplete: true));
 
         calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { calendarInfo });
@@ -1104,7 +1104,7 @@ public class CalendarSyncServiceTests
             End           = start.AddDays(31).AddHours(1)
         };
         client.Setup(c => c.GetEventsAsync("work@g", start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { googleEvt }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { googleEvt }, "tok", IsComplete: true));
 
         // Act
         await sut.SyncAsync(workId, start, end);
@@ -1154,7 +1154,7 @@ public class CalendarSyncServiceTests
             Description   = "Dinner with Family Calendar"
         };
         client.Setup(c => c.GetEventsAsync("work@g", null, null, "tok", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { fetched }, "tok2", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-dup", It.IsAny<CancellationToken>()))
             .ReturnsAsync((CalendarEvent?)null);
 
@@ -1227,7 +1227,7 @@ public class CalendarSyncServiceTests
             Description   = "Dinner with Family Calendar"
         };
         client.Setup(c => c.GetEventsAsync("work@g", null, null, "tok", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { fetched }, "tok2", IsComplete: true));
         calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync("evt-dup-ci", It.IsAny<CancellationToken>()))
             .ReturnsAsync((CalendarEvent?)null);
 
@@ -1251,6 +1251,85 @@ public class CalendarSyncServiceTests
             It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Duplicate calendar display name")),
             It.IsAny<Exception?>(),
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+    }
+
+    // ── An incomplete fetch must not advance the sync token ───────────────────
+    //
+    // Persisting Google's nextSyncToken declares the local rows in step with Google up to that
+    // point, so the next sync asks only for what changed since — and Google never re-sends an
+    // unchanged event. Storing it after an incomplete fetch therefore makes whatever that fetch
+    // missed missing PERMANENTLY, until a 410 happens to force a full sync. It is the mirror of the
+    // prune hazard and the worse half of it: refusing to prune keeps a row that should go, whereas
+    // advancing the token loses an event that is really there.
+    //
+    // A Theory rather than two Facts, deliberately: Google supplies the SAME token on both rows, so
+    // neither half can drift into arranging no token for the other to pass against.
+
+    [Theory]
+    [InlineData(true, "next-token")]
+    [InlineData(false, null)]
+    public async Task SyncAsync_StoresTheSyncTokenGoogleSuppliedOnlyWhenTheFetchWasComplete(
+        bool isComplete, string? expectedStoredToken)
+    {
+        // Arrange
+        var (client, calendarRepository, _, _, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-token");
+        var calendarId       = Guid.Parse("d1111111-1111-1111-1111-111111111111");
+        var googleCalendarId = "token@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
+        var calendar = new CalendarInfo
+        {
+            Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Alice"
+        };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        // No stored state, so this is a full sync and the state is ADDED rather than saved.
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(
+                calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        SyncState? stored = null;
+        calendarRepository.Setup(r => r.AddSyncStateAsync(It.IsAny<SyncState>(), It.IsAny<CancellationToken>()))
+            .Callback((SyncState s, CancellationToken _) => stored = s);
+
+        // Google answers with a token either way — the only difference between the two rows is
+        // whether the client could say the answer was whole.
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventFetch(
+                new List<CalendarEvent> { new() { GoogleEventId = "evt-1", Title = "A" } },
+                "next-token",
+                isComplete));
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert
+        stored.Should().NotBeNull("the sync persists its state either way — only the token differs");
+        stored!.SyncToken.Should().Be(expectedStoredToken, isComplete
+            ? "a complete fetch has earned the token, so the next sync can ask for deltas"
+            : "a null token makes the next sync a full one, which is the only thing that brings back "
+              + "an event this fetch missed — Google never re-sends an unchanged event");
+
+        // RemindersSyncedAt rides the same condition: it records that the one reminder-backfill
+        // sync completed, and a partial fetch read no reminders for the events it did not return.
+        // Leaving it null costs no extra full sync, because the token above is already null.
+        if (isComplete)
+            stored.RemindersSyncedAt.Should().NotBeNull("a complete fetch did backfill every event's reminders");
+        else
+            stored.RemindersSyncedAt.Should().BeNull("an incomplete fetch has not finished the backfill");
+
+        // LastSyncedAt is stamped either way: a sync did run, and its only reader asks when rather
+        // than how completely.
+        stored.LastSyncedAt.Should().NotBeNull();
     }
 
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,

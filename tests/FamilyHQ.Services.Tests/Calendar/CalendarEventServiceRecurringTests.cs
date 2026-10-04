@@ -2743,7 +2743,7 @@ public class CalendarEventServiceRecurringTests
         // The reconcile re-fetches the owner calendar's window from Google; arrange the returned instances.
         public void ArrangeReconcileWindow(IReadOnlyList<CalendarEvent> instances) =>
             Google.Setup(g => g.GetEventsAsync(GoogleCalId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-                .ReturnsAsync((instances, (string?)null));
+                .ReturnsAsync(new GoogleEventFetch(instances, (string?)null, IsComplete: true));
 
         /// <summary>
         /// Arranges both master-patch calls to behave as the real client does on a write that carries

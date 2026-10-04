@@ -1514,14 +1514,14 @@ public class CalendarEventService(
         var storedBeforeFetch = await calendarRepository.GetEventsByOwnerCalendarAsync(
             owner.Id, windowStart, windowEnd, ct);
 
-        var (fetched, _) = await googleCalendarClient.GetEventsAsync(
+        var fetch = await googleCalendarClient.GetEventsAsync(
             owner.GoogleCalendarId, windowStart, windowEnd, null, ct);
 
         // Materialise once: the sequence is read by the upsert loop below and again by the prune,
         // and the loop writes OwnerCalendarInfoId, RecurrenceRule and Members onto the instances it
         // inserts — a lazy sequence would re-execute and lose those writes (CalendarSyncService
         // materialises its own fetch for the same reason).
-        var fetchedEvents = fetched as IReadOnlyList<CalendarEvent> ?? fetched.ToList();
+        var fetchedEvents = fetch.Events as IReadOnlyList<CalendarEvent> ?? fetch.Events.ToList();
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         // FHQ-47 (Gap 2): mirror CalendarSyncService — the free-form fallback resolves against
@@ -1610,7 +1610,7 @@ public class CalendarEventService(
         // takes a prune with it, and the two concurrency retries — re-resolve the inserts, re-delete
         // the removals — are never tangled in one change set.
         await PruneRowsAbsentFromWindowFetchAsync(
-            owner, windowStart, windowEnd, storedBeforeFetch, fetchedEvents, seriesRules, ct);
+            owner, windowStart, windowEnd, storedBeforeFetch, fetchedEvents, fetch.IsComplete, seriesRules, ct);
 
         return persisted;
     }
@@ -1624,6 +1624,11 @@ public class CalendarEventService(
     /// The owner calendar's stored rows for this window, <b>read before the fetch</b>. The ordering
     /// is part of the guard, not an accident of the caller: a row stored after the fetch was taken
     /// is missing from it for that reason alone.
+    /// </param>
+    /// <param name="fetchIsComplete">
+    /// <see cref="GoogleEventFetch.IsComplete"/> from the fetch <paramref name="fetchedEvents"/> came
+    /// from. False means the client did not read everything Google offered, so absence from the
+    /// fetch is not evidence of anything and no row may be removed.
     /// </param>
     /// <remarks>
     /// The upsert loop only adds and updates, and the tombstone branch needs Google to name the id,
@@ -1639,38 +1644,44 @@ public class CalendarEventService(
         DateTimeOffset windowEnd,
         IReadOnlyList<CalendarEvent> candidates,
         IReadOnlyList<CalendarEvent> fetchedEvents,
+        bool fetchIsComplete,
         IReadOnlyDictionary<string, string> seriesRules,
         CancellationToken ct)
     {
         // Absence is only evidence when the fetch that produced it was a complete statement of the
-        // window. There are two ways it is not, and both forbid the prune rather than narrowing it.
+        // window. Two answers forbid the prune rather than narrowing it, and they are refused for
+        // different reasons — see the second one before making them consistent.
         //
-        // An empty answer says nothing. GoogleCalendarClient.GetEventsAsync returns an empty list
-        // without failing when a page carries no deserialisable body, which is indistinguishable
-        // here from a window Google has genuinely emptied — and this reconcile has just written into
-        // that window. Refusing to prune costs an orphan the next full sync removes; acting on it
-        // would clear the calendar's whole window.
-        if (fetchedEvents.Count == 0)
+        // A short answer is worse than none, because it looks complete. GetEventsAsync says so
+        // itself now: false means it holds fewer events than Google offered and cannot say which
+        // ones are missing, so every row it failed to name is unjudgeable. The causes — a page cap
+        // taken with a token still outstanding, an unreadable page body, an item whose start, end or
+        // all-day originalStartTime did not resolve — are enumerated on GoogleEventFetch.IsComplete
+        // and deliberately not re-listed here, because what this guard depends on is the meaning.
+        if (!fetchIsComplete)
         {
-            logger.LogInformation(
-                "Reconcile of calendar {CalendarInfoId} fetched no events for the window, which is no statement " +
-                "of what Google holds, so no local row was removed.",
-                owner.Id);
+            logger.LogWarning(
+                "Reconcile of calendar {CalendarInfoId} fetched {EventCount} events but reported the fetch " +
+                "incomplete, so it is no statement of what Google holds and no local row was removed.",
+                owner.Id, fetchedEvents.Count);
             return;
         }
 
-        // A truncated answer is worse than none, because it looks complete. That same method stops
-        // after MaxSyncPages pages and returns what it has with a warning, so a window holding more
-        // than MaxWindowFetchEvents events can come back partial. The page cap itself is not visible
-        // from here, and this count test is an upper bound rather than proof of completeness —
-        // Google may send a page shorter than the maxResults the client asks for — so it is only
-        // ever used to REFUSE a prune, never to authorise one.
-        if (fetchedEvents.Count >= GoogleCalendarClient.MaxWindowFetchEvents)
+        // An empty answer is refused even when it is complete, which is where this prune parts
+        // company with the full sync's tombstone diff — that one acts on an empty-and-complete
+        // fetch, and must, or an emptied window would never be reconciled by any code path. The
+        // difference is that this fetch is a read-back: every caller of ReconcileWindowAsync has
+        // just patched or created on this calendar through Google, and Google's read need not yet
+        // reflect a write it has only just accepted. So an empty answer is at least as likely to be
+        // that lag as a genuinely emptied window, and acting on it would delete the rows this very
+        // write just put there. Refusing costs an orphan the next full sync removes.
+        if (fetchedEvents.Count == 0)
         {
-            logger.LogWarning(
-                "Reconcile of calendar {CalendarInfoId} fetched {EventCount} events, at or above the window " +
-                "fetch's {FetchBudget}-event budget, so the fetch may be truncated and no local row was removed.",
-                owner.Id, fetchedEvents.Count, GoogleCalendarClient.MaxWindowFetchEvents);
+            logger.LogInformation(
+                "Reconcile of calendar {CalendarInfoId} fetched no events for the window, immediately after " +
+                "writing to that calendar, which may be Google not yet reflecting the write, so no local row " +
+                "was removed.",
+                owner.Id);
             return;
         }
 
