@@ -1652,11 +1652,12 @@ public class CalendarEventService(
         // window. Two answers forbid the prune rather than narrowing it, and they are refused for
         // different reasons — see the second one before making them consistent.
         //
-        // A truncated answer is worse than none, because it looks complete. GetEventsAsync says so
-        // itself now: IsComplete is false when it took its page cap with a page token still
-        // outstanding, or passed over a page whose body did not deserialise. Either way it holds
-        // fewer events than Google offered and cannot say which ones are missing, so every row it
-        // failed to name is unjudgeable.
+        // A short answer is worse than none, because it looks complete. GetEventsAsync says so
+        // itself now: false means it holds fewer events than Google offered and cannot say which
+        // ones are missing, so every row it failed to name is unjudgeable. The causes — a page cap
+        // taken with a token still outstanding, an unreadable page body, an item whose start, end or
+        // all-day originalStartTime did not resolve — are enumerated on GoogleEventFetch.IsComplete
+        // and deliberately not re-listed here, because what this guard depends on is the meaning.
         if (!fetchIsComplete)
         {
             logger.LogWarning(

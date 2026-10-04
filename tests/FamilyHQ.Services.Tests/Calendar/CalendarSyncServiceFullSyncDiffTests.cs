@@ -104,10 +104,11 @@ public class CalendarSyncServiceFullSyncDiffTests
     {
         var f = new Fixture();
 
-        // GetEventsAsync took its page cap with a token still outstanding, or passed over a page
-        // whose body did not deserialise. It therefore holds fewer events than Google has and
-        // cannot say which are missing, so a row it failed to name may be a live event — and this
-        // diff is the only writer that would delete it on the strength of that silence.
+        // The fetch holds fewer events than Google has and cannot say which are missing (the
+        // causes are on GoogleEventFetch.IsComplete; the client's own tests cover each). So a row it
+        // failed to name may be a live event — and this diff is the only writer that would delete it
+        // on the strength of that silence. The arrangement says IsComplete: false rather than
+        // reproducing a cause, because what the diff may do about it is all that is under test.
         ArrangeOneRowGone(f, isComplete: false);
 
         await f.Sut.SyncAsync(CalendarId, WindowStart, WindowEnd);

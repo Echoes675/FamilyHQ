@@ -26,7 +26,10 @@ namespace FamilyHQ.Core.Models;
 ///   </description></item>
 /// </list>
 /// <para>
-/// True means neither happened: every page Google offered was read and parsed.
+/// True means neither happened: every page Google offered was read and parsed, and every entry on
+/// those pages became a <see cref="CalendarInfo"/>. There is deliberately no item-level cause here,
+/// unlike <see cref="GoogleEventFetch.IsComplete"/>: the calendar-list mapping filters nothing, so
+/// a page that parsed yields every calendar it named.
 /// </para>
 /// </param>
 public sealed record GoogleCalendarFetch(

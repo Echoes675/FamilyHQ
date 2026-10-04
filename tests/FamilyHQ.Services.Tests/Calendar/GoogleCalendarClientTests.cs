@@ -2089,6 +2089,137 @@ public class GoogleCalendarClientTests
     }
 
     [Fact]
+    public async Task GetEventsAsync_WhenTheBodyCarriesNoItemsArray_ReportsTheFetchIncomplete()
+    {
+        // The second unreadable shape, and the one that used to THROW. GoogleApiEventList.Items is a
+        // non-nullable positional parameter with no default, so a 200 whose body has no `items` key
+        // deserialises to a non-null record holding null there: `if (result != null)` was taken and
+        // `foreach (var item in result.Items)` raised a NullReferenceException out of the method.
+        // GetCalendarsAsync already checked the PROPERTY rather than the record; this is the events
+        // path brought into line with it.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("""{"nextSyncToken":"sync-token"}""")
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Should().BeEmpty();
+        result.IsComplete.Should().BeFalse(
+            "a body with no items array is a page that yielded nothing, not a window Google has emptied");
+    }
+
+    // The two ITEM-level shortfalls. These are the causes that would otherwise be invisible: the
+    // page read perfectly, so the only thing distinguishing the answer from a complete one is
+    // IsComplete. Each keeps a good item alongside the bad one, so "incomplete" cannot be confused
+    // with "nothing came back".
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAnItemsStartDoesNotResolve_ReportsTheFetchIncompleteAndOmitsOnlyThatItem()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "sync-token",
+                    items = new object[]
+                    {
+                        new { id = "good-event", status = "confirmed", summary = "Fine",
+                              start = new { dateTime = "2026-03-01T10:00:00Z" },
+                              end = new { dateTime = "2026-03-01T11:00:00Z" } },
+                        // An all-day date that is not an RFC 3339 full-date, so GoogleAllDayDate
+                        // cannot resolve it and the item is skipped rather than coerced.
+                        new { id = "unresolvable-start", status = "confirmed", summary = "Dropped",
+                              start = new { date = "01/03/2026" },
+                              end = new { date = "2026-03-02" } }
+                    }
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["good-event"],
+            "the unusable item is skipped so one bad event cannot stop the calendar syncing");
+        result.IsComplete.Should().BeFalse(
+            "Google named an event this answer does not, so absence from it is not evidence of deletion — "
+            + "a prune reading this as complete would delete that event's row, and every later fetch "
+            + "drops the same item again so it would never come back");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAnAllDayExceptionsOriginalStartTimeDoesNotResolve_ReportsTheFetchIncompleteAndOmitsOnlyThatItem()
+    {
+        // Reachable on its own, which is why it is a separate case: start and end both resolve here,
+        // so the earlier skip does not fire. Only an exception instance carries originalStartTime,
+        // and only an all-day one carries it as a `date`.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "sync-token",
+                    items = new object[]
+                    {
+                        // A well-formed all-day exception, to prove the mapping itself is fine and
+                        // that only the malformed sibling is lost.
+                        new { id = "series_20260301", status = "confirmed", summary = "Fine",
+                              start = new { date = "2026-03-01" },
+                              end = new { date = "2026-03-02" },
+                              recurringEventId = "series",
+                              originalStartTime = new { date = "2026-03-01" } },
+                        new { id = "series_20260308", status = "confirmed", summary = "Dropped",
+                              start = new { date = "2026-03-08" },
+                              end = new { date = "2026-03-09" },
+                              recurringEventId = "series",
+                              originalStartTime = new { date = "08/03/2026" } }
+                    }
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(30));
+
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["series_20260301"]);
+        result.IsComplete.Should().BeFalse(
+            "an exception instance whose original slot cannot be resolved is dropped, so this answer "
+            + "omits an occurrence Google still holds");
+    }
+
+    [Fact]
     public async Task GetEventsAsync_WhenPaginationExceedsCap_ReportsTheFetchIncomplete()
     {
         var (http, tokenStore, systemUnderTest) = CreateSut();

@@ -322,12 +322,13 @@ public class CalendarSyncService(
             if (isFullSync)
             {
                 // Absence is only evidence when the fetch that produced it read everything Google
-                // offered. GetEventsAsync reports that itself: IsComplete is false when it took its
-                // page cap with a page token still outstanding, or passed over a page whose body did
-                // not deserialise. Either way it holds fewer events than Google has and cannot say
-                // which ones are missing, so a row it failed to name may be a live event on the
-                // family's calendar — and deleting one loses it until a later full sync, since an
-                // incremental sync never re-sends an unchanged event.
+                // offered. GetEventsAsync reports that itself: false means it holds fewer events
+                // than Google has and cannot say which ones are missing, so a row it failed to name
+                // may be a live event on the family's calendar — and deleting one loses it until a
+                // later full sync, since an incremental sync never re-sends an unchanged event. The
+                // causes are enumerated on GoogleEventFetch.IsComplete and deliberately not
+                // re-listed here; one of them is a single unusable ITEM on a page that read fine,
+                // which is why a non-empty, unsuspicious-looking answer can still be short.
                 //
                 // An EMPTY answer is deliberately not refused here, unlike in
                 // CalendarEventService.PruneRowsAbsentFromWindowFetchAsync. That prune reads back a

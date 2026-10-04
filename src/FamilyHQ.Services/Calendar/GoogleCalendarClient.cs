@@ -335,7 +335,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             await ThrowIfFailedAsync(response, "GetEvents", ct);
 
             var result = await response.Content.ReadFromJsonAsync<GoogleApiEventList>(cancellationToken: ct);
-            if (result != null)
+            if (result?.Items is not null)
             {
                 foreach (var item in result.Items)
                 {
@@ -354,13 +354,32 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                     // an item with no resolvable start already is. Throwing would abandon the whole
                     // page — and because the retry re-fetches the same page, one bad item would stop
                     // that calendar syncing indefinitely rather than costing one event.
+                    //
+                    // But a skipped item is an event Google DOES hold that this answer does not
+                    // name, which is the one thing IsComplete exists to rule out: the prunes read it
+                    // to decide whether absence from Events is evidence of deletion, and on a
+                    // complete answer they would delete this event's local row — permanently, since
+                    // every later fetch skips the same item again and an incremental sync never
+                    // re-sends an unchanged event. So each skip below marks the fetch incomplete.
+                    // The `continue` stays; only the silence goes.
                     var startParam = ResolveBoundary(item.Start, item.Id, "start");
                     var endParam = ResolveBoundary(item.End, item.Id, "end");
 
-                    if (startParam == null || endParam == null) continue;
+                    if (startParam == null || endParam == null)
+                    {
+                        isComplete = false;
+                        continue;
+                    }
 
+                    // Only an exception instance carries originalStartTime, and only an ALL-DAY one
+                    // carries it as a `date`, so this skip is reachable on its own: start and end
+                    // have already resolved by the time it is tested.
                     var originalStart = ResolveBoundary(item.OriginalStartTime, item.Id, "originalStartTime");
-                    if (item.OriginalStartTime?.Date != null && originalStart == null) continue;
+                    if (item.OriginalStartTime?.Date != null && originalStart == null)
+                    {
+                        isComplete = false;
+                        continue;
+                    }
 
                     events.Add(new CalendarEvent
                     {
@@ -390,12 +409,34 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
             else
             {
-                // A 200 whose body does not deserialise into an event list is passed over rather
-                // than thrown on, so this page's events — however many there were — are simply not
-                // in the answer. Nothing else here records that, which is what makes the result
-                // dangerous rather than merely short: when it is the FIRST page the fetch comes
-                // back empty and otherwise looks like a window Google has genuinely emptied.
+                // Two bad shapes land here, and the null check is on the PROPERTY for the second of
+                // them — exactly as in GetCalendarsAsync, which this mirrors. A body that yields no
+                // object at all gives `result is null`; a 200 whose body carries no `items` key
+                // gives a non-null record holding null there, because GoogleApiEventList.Items is a
+                // non-nullable positional parameter with no default, so System.Text.Json passes
+                // `default`. That second shape used to reach `foreach (var item in result.Items)`
+                // and throw a NullReferenceException out of this method.
+                //
+                // Either way this page's events — however many there were — are simply not in the
+                // answer, and the page is passed over rather than thrown on. Recording it is what
+                // makes the result merely short rather than dangerous: when it is the FIRST page the
+                // fetch comes back empty and would otherwise look like a window Google has
+                // genuinely emptied.
                 isComplete = false;
+
+                // A Google PRIMARY calendar's id IS the account's email address, so it never goes to
+                // Seq verbatim; this client has no FamilyHQ-side calendar row to name instead, so it
+                // logs the redactor's stable token.
+                //
+                // Deliberately NOT "returning what we have": unlike GetCalendarsAsync this branch
+                // does not break, so the loop continues. pageToken is unchanged here, which means a
+                // mid-pagination failure re-requests the same page until the page cap stops it —
+                // pre-existing behaviour, separately ticketed, and left alone.
+                _logger.LogWarning(
+                    "GetEventsAsync could not read an event list from page {PageNumber} for calendar " +
+                    "{CalendarIdToken}; that page is skipped and the fetch is reported incomplete " +
+                    "({EventCount} events collected so far).",
+                    pageCount + 1, _piiRedactor.Redact(googleCalendarId), events.Count);
             }
 
             pageCount++;

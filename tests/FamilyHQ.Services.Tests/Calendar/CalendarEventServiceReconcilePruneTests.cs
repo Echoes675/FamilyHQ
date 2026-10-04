@@ -218,10 +218,11 @@ public class CalendarEventServiceReconcilePruneTests
     {
         var f = new Fixture();
 
-        // GetEventsAsync took its page cap with a token still outstanding, or passed over a page
-        // whose body did not deserialise. It therefore holds fewer events than Google offered and
-        // cannot say which are missing, so no row it failed to name is judgeable — including the
-        // renamed ones this edit really did orphan.
+        // The fetch holds fewer events than Google offered and cannot say which are missing (the
+        // causes are on GoogleEventFetch.IsComplete; the client's own tests cover each). So no row
+        // it failed to name is judgeable — including the renamed ones this edit really did orphan.
+        // What the prune may do about it is all that is under test here, so the arrangement says
+        // IsComplete: false rather than reproducing a cause.
         var edited = ArrangeAnchorMovedSeries(f, isComplete: false);
 
         await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
