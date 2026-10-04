@@ -83,7 +83,7 @@ public class CalendarLoggingRedactionTests
         repo.Setup(r => r.GetEventsByOwnerCalendarAsync(OwnerCalendarId, start, end, It.IsAny<CancellationToken>()))
             .ReturnsAsync([]);
         client.Setup(c => c.GetEventsAsync(PrimaryCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "token", IsComplete: true));
 
         await sut.SyncAsync(OwnerCalendarId, start, end);
 
@@ -114,7 +114,7 @@ public class CalendarLoggingRedactionTests
         client.Setup(c => c.GetEventsAsync(PrimaryCalendarId, null, null, "stale", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new SyncTokenExpiredException());
         client.Setup(c => c.GetEventsAsync(PrimaryCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "fresh"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "fresh", IsComplete: true));
 
         await sut.SyncAsync(OwnerCalendarId, start, end);
 
@@ -144,10 +144,10 @@ public class CalendarLoggingRedactionTests
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
         client.Setup(c => c.GetEventsAsync(PrimaryCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>
             {
                 new() { GoogleEventId = "evt-1", Title = "Instance", GoogleRecurringEventId = "series-1" }
-            }, "token"));
+            }, "token", IsComplete: true));
         client.Setup(c => c.GetSeriesMasterAsync(PrimaryCalendarId, "series-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync((SeriesMaster?)null);
 

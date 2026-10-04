@@ -30,7 +30,7 @@ public class GoogleCalendarClientRemindersTests
                 Content = new StringContent($$"""{"items": {{itemsJson}}}""")
             });
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", null, null, "token", CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", null, null, "token", CancellationToken.None);
         return events.ToList();
     }
 
@@ -142,7 +142,7 @@ public class GoogleCalendarClientRemindersTests
             });
 
         var result = await sut.GetCalendarsAsync(CancellationToken.None);
-        return result.ToList();
+        return result.Calendars.ToList();
     }
 
     [Fact]

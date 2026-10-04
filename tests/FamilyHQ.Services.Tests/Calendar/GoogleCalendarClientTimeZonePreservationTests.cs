@@ -254,7 +254,7 @@ public class GoogleCalendarClientTimeZonePreservationTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(() => new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new StringContent(json) });
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Start.AddDays(-1), Start.AddDays(1), ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Start.AddDays(-1), Start.AddDays(1), ct: CancellationToken.None);
 
         var byId = events.ToDictionary(e => e.GoogleEventId);
         byId["evt-1"].IanaTimeZone.Should().Be(EventZone);
@@ -309,7 +309,7 @@ public class GoogleCalendarClientTimeZonePreservationTests
 
         var calendars = await sut.GetCalendarsAsync(CancellationToken.None);
 
-        calendars.Should().ContainSingle().Which.IanaTimeZone.Should().Be(EventZone);
+        calendars.Calendars.Should().ContainSingle().Which.IanaTimeZone.Should().Be(EventZone);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

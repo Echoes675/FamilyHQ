@@ -92,7 +92,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEvent }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEvent }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-1", "matching-hash"))
                      .Returns(true);
@@ -157,7 +157,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEvent }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEvent }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-2", "unknown-hash"))
                      .Returns(false);
@@ -206,7 +206,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEvent }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEvent }, "next-tok", IsComplete: true));
 
         calendarRepo.Setup(r => r.GetEventByGoogleEventIdAsync("google-evt-3", It.IsAny<CancellationToken>()))
                     .ReturnsAsync((CalendarEvent?)null);
@@ -273,7 +273,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundException }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundException }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten(
                          "google-evt-4_20261007T180000Z", "hash-of-the-single-occurrence-write"))
@@ -331,7 +331,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEvent }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEvent }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-5", "kiosk-hash")).Returns(true);
 
@@ -380,7 +380,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEvent }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEvent }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-8", "kiosk-hash")).Returns(true);
 
@@ -435,7 +435,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEcho }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEcho }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-6", "kiosk-hash")).Returns(true);
 
@@ -482,7 +482,7 @@ public class CalendarSyncServiceEchoGuardTests
                    It.IsAny<DateTimeOffset?>(),
                    It.IsAny<string?>(),
                    It.IsAny<CancellationToken>()))
-              .ReturnsAsync((new List<CalendarEvent> { inboundEcho }, "next-tok"));
+              .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { inboundEcho }, "next-tok", IsComplete: true));
 
         outboundCache.Setup(c => c.WasRecentlyWritten("google-evt-7", "kiosk-hash")).Returns(true);
 

@@ -55,7 +55,7 @@ public class CalendarSyncService(
         List<CalendarInfo> googleCalendars;
         try
         {
-            googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+            googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).Calendars.ToList();
         }
         catch (GoogleReauthRequiredException ex)
         {
@@ -232,7 +232,7 @@ public class CalendarSyncService(
                 ? await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct)
                 : [];
 
-            var (fetchedEvents, nextSyncToken) = await googleCalendarClient.GetEventsAsync(
+            var fetch = await googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
@@ -244,7 +244,7 @@ public class CalendarSyncService(
             // Materialise once: the sequence is enumerated several times below (pass-2 resolution,
             // tombstone diff, the persistence loop, the final count) and the loop mutates each
             // instance's RecurrenceRule — a lazy sequence would re-execute and lose those writes.
-            var events = fetchedEvents as IReadOnlyList<CalendarEvent> ?? fetchedEvents.ToList();
+            var events = fetch.Events as IReadOnlyList<CalendarEvent> ?? fetch.Events.ToList();
 
             var allLocalCalendars = await calendarRepository.GetCalendarsAsync(ct);
             // FHQ-46: two candidate sets for member resolution (see IMemberTagParser.ParseMembers).
@@ -452,7 +452,7 @@ public class CalendarSyncService(
                 }
             }
 
-            syncState.SyncToken    = nextSyncToken;
+            syncState.SyncToken    = fetch.NextSyncToken;
             syncState.LastSyncedAt = DateTimeOffset.UtcNow;
             // Stamp only after the fetch succeeded, so a failed backfill is retried next sync
             // rather than being silently skipped forever.

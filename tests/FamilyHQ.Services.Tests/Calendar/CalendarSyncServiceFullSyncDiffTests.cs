@@ -235,14 +235,14 @@ public class CalendarSyncServiceFullSyncDiffTests
             Google.Setup(g => g.GetEventsAsync(
                     GoogleCalId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
                 .Callback(() => _afterFetch?.Invoke())
-                .ReturnsAsync((events, "next-token"));
+                .ReturnsAsync(new GoogleEventFetch(events, "next-token", IsComplete: true));
 
         /// <summary>A token fetch, which carries no time range — Google rejects the combination.</summary>
         public void ArrangeIncrementalFetch(string syncToken, IReadOnlyList<CalendarEvent> events) =>
             Google.Setup(g => g.GetEventsAsync(
                     GoogleCalId, null, null, syncToken, It.IsAny<CancellationToken>()))
                 .Callback(() => _afterFetch?.Invoke())
-                .ReturnsAsync((events, "next-token"));
+                .ReturnsAsync(new GoogleEventFetch(events, "next-token", IsComplete: true));
 
         /// <summary>Runs when the fetch is answered, to model a concurrent writer's timing.</summary>
         public void OnFetched(Action action) => _afterFetch = action;

@@ -1514,14 +1514,14 @@ public class CalendarEventService(
         var storedBeforeFetch = await calendarRepository.GetEventsByOwnerCalendarAsync(
             owner.Id, windowStart, windowEnd, ct);
 
-        var (fetched, _) = await googleCalendarClient.GetEventsAsync(
+        var fetch = await googleCalendarClient.GetEventsAsync(
             owner.GoogleCalendarId, windowStart, windowEnd, null, ct);
 
         // Materialise once: the sequence is read by the upsert loop below and again by the prune,
         // and the loop writes OwnerCalendarInfoId, RecurrenceRule and Members onto the instances it
         // inserts — a lazy sequence would re-execute and lose those writes (CalendarSyncService
         // materialises its own fetch for the same reason).
-        var fetchedEvents = fetched as IReadOnlyList<CalendarEvent> ?? fetched.ToList();
+        var fetchedEvents = fetch.Events as IReadOnlyList<CalendarEvent> ?? fetch.Events.ToList();
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         // FHQ-47 (Gap 2): mirror CalendarSyncService — the free-form fallback resolves against

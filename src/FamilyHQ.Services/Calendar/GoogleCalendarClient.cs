@@ -66,6 +66,20 @@ public class GoogleCalendarClient : IGoogleCalendarClient
     /// </summary>
     public const int MaxWindowFetchEvents = MaxSyncPages * EventsPageSize;
 
+    /// <summary>
+    /// The most <c>calendarList</c> pages a single <see cref="GetCalendarsAsync"/> call will follow.
+    /// Deliberately the same number as <see cref="MaxSyncPages"/> so the two paginated reads stop
+    /// the same way and report the same thing when they do.
+    /// <para>
+    /// Unlike the events cap this is a runaway stop, not a budget anyone is expected to reach: the
+    /// request asks for no <c>maxResults</c>, so Google's own calendarList page size applies, and
+    /// twenty of those pages is orders of magnitude more calendars than an account can accumulate.
+    /// Hitting it means a page token that never clears, which is a reason to stop collecting and
+    /// say the answer is partial — not a reason to keep calling.
+    /// </para>
+    /// </summary>
+    public const int MaxCalendarListPages = 20;
+
     private const string EventsListFields =
         "nextPageToken,nextSyncToken,items(id,iCalUID,summary,description,location,start,end,attendees,organizer,extendedProperties,recurringEventId,originalStartTime,status,reminders)";
 
@@ -198,33 +212,77 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         return request;
     }
 
-    public async Task<IEnumerable<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
+    public async Task<GoogleCalendarFetch> GetCalendarsAsync(CancellationToken ct = default)
     {
-        var endpoint = $"{_options.CalendarApiBaseUrl}/users/me/calendarList";
-        using var request = await BuildAuthorizedRequestAsync(HttpMethod.Get, endpoint, ct);
-        var response = await _httpClient.SendAsync(request, ct);
-        await ThrowIfFailedAsync(response, "GetCalendars", ct);
+        var calendars = new List<CalendarInfo>();
+        string? pageToken = null;
+        var pageCount = 0;
+        var isComplete = true;
 
-        var result = await response.Content.ReadFromJsonAsync<GoogleApiCalendarList>(cancellationToken: ct);
-        return result?.Items.Select(item => new CalendarInfo
+        do
         {
-            GoogleCalendarId = item.Id,
-            DisplayName = item.SummaryOverride ?? item.Summary ?? string.Empty,
-            Color = item.BackgroundColor,
-            // FHQ-164: the calendar's default zone, carried so the series-zone ladder's last
-            // Google-supplied rung costs no extra call at split time.
-            IanaTimeZone = item.TimeZone,
-            // FHQ-189: the calendar's default reminders. Google sends a bare array here, not a
-            // `reminders` object, so there is no useDefault to read — an explicit list is what it is.
-            DefaultReminders = item.DefaultReminders is null
-                ? null
-                : EventReminders.Explicit(item.DefaultReminders
-                    .Where(o => o.Method is not null && o.Minutes.HasValue)
-                    .Select(o => new EventReminder(o.Method!, o.Minutes!.Value)))
-        }) ?? Array.Empty<CalendarInfo>();
+            var endpoint = $"{_options.CalendarApiBaseUrl}/users/me/calendarList";
+            if (!string.IsNullOrEmpty(pageToken))
+                endpoint += $"?pageToken={Uri.EscapeDataString(pageToken)}";
+
+            using var request = await BuildAuthorizedRequestAsync(HttpMethod.Get, endpoint, ct);
+            var response = await _httpClient.SendAsync(request, ct);
+            await ThrowIfFailedAsync(response, "GetCalendars", ct);
+
+            var result = await response.Content.ReadFromJsonAsync<GoogleApiCalendarList>(cancellationToken: ct);
+
+            // Items is a non-nullable positional parameter with no default, so a 200 whose body
+            // carries no `items` key deserialises to a record holding null there — the null check
+            // is on the property, not just the record. Either way this page yielded no calendars,
+            // which is indistinguishable from an account that holds none, so the fetch says it is
+            // incomplete and stops rather than returning an empty list that reads as a complete
+            // answer. The caller decides what to do with that; the one thing it must not be given
+            // is silence.
+            if (result?.Items is null)
+            {
+                isComplete = false;
+                _logger.LogWarning(
+                    "GetCalendarsAsync could not read the calendar list from page {PageNumber}; " +
+                    "returning the {CalendarCount} calendars collected so far as an incomplete answer.",
+                    pageCount + 1, calendars.Count);
+                break;
+            }
+
+            calendars.AddRange(result.Items.Select(item => new CalendarInfo
+            {
+                GoogleCalendarId = item.Id,
+                DisplayName = item.SummaryOverride ?? item.Summary ?? string.Empty,
+                Color = item.BackgroundColor,
+                // FHQ-164: the calendar's default zone, carried so the series-zone ladder's last
+                // Google-supplied rung costs no extra call at split time.
+                IanaTimeZone = item.TimeZone,
+                // FHQ-189: the calendar's default reminders. Google sends a bare array here, not a
+                // `reminders` object, so there is no useDefault to read — an explicit list is what it is.
+                DefaultReminders = item.DefaultReminders is null
+                    ? null
+                    : EventReminders.Explicit(item.DefaultReminders
+                        .Where(o => o.Method is not null && o.Minutes.HasValue)
+                        .Select(o => new EventReminder(o.Method!, o.Minutes!.Value)))
+            }));
+
+            pageToken = result.NextPageToken;
+
+            pageCount++;
+            if (pageCount >= MaxCalendarListPages && !string.IsNullOrEmpty(pageToken))
+            {
+                isComplete = false;
+                _logger.LogWarning(
+                    "GetCalendarsAsync reached the {MaxPages}-page calendarList cap. Returning the " +
+                    "{CalendarCount} calendars collected so far as an incomplete answer.",
+                    MaxCalendarListPages, calendars.Count);
+                break;
+            }
+        } while (!string.IsNullOrEmpty(pageToken));
+
+        return new GoogleCalendarFetch(calendars, isComplete);
     }
 
-    public async Task<(IEnumerable<CalendarEvent> Events, string? NextSyncToken)> GetEventsAsync(
+    public async Task<GoogleEventFetch> GetEventsAsync(
         string googleCalendarId,
         DateTimeOffset? syncWindowStart,
         DateTimeOffset? syncWindowEnd,
@@ -235,6 +293,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
         string? nextSyncToken = null;
         string? pageToken = null;
         var pageCount = 0;
+        var isComplete = true;
 
         do
         {
@@ -323,10 +382,23 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 pageToken = result.NextPageToken;
                 nextSyncToken = result.NextSyncToken;
             }
+            else
+            {
+                // A 200 whose body does not deserialise into an event list is passed over rather
+                // than thrown on, so this page's events — however many there were — are simply not
+                // in the answer. Nothing else here records that, which is what makes the result
+                // dangerous rather than merely short: when it is the FIRST page the fetch comes
+                // back empty and otherwise looks like a window Google has genuinely emptied.
+                isComplete = false;
+            }
 
             pageCount++;
             if (pageCount >= MaxSyncPages && !string.IsNullOrEmpty(pageToken))
             {
+                // Truncated: Google still has a page to give and this call will not ask for it, so
+                // the answer is not a complete statement of the window.
+                isComplete = false;
+
                 // FHQ-166: a Google PRIMARY calendar's id IS the account's email address, so it
                 // never goes to Seq verbatim. This client is the one place with no FamilyHQ-side
                 // calendar row to name instead, so it logs the redactor's stable token.
@@ -337,7 +409,7 @@ public class GoogleCalendarClient : IGoogleCalendarClient
             }
         } while (!string.IsNullOrEmpty(pageToken));
 
-        return (events, nextSyncToken);
+        return new GoogleEventFetch(events, nextSyncToken, isComplete);
     }
 
     public async Task<CalendarEvent> CreateEventAsync(

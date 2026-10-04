@@ -177,7 +177,7 @@ public class CalendarSyncServiceCalendarPruneTests
             Google.Setup(g => g.GetEventsAsync(
                     It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(),
                     It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((new List<CalendarEvent>(), "next-token"));
+                .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "next-token", IsComplete: true));
 
             Sut = new CalendarSyncService(
                 Google.Object,
@@ -207,7 +207,7 @@ public class CalendarSyncServiceCalendarPruneTests
         public void ArrangeGoogleCalendars(params CalendarInfo[] calendars) =>
             Google.Setup(g => g.GetCalendarsAsync(It.IsAny<CancellationToken>()))
                 .Callback(() => _afterCalendarsFetched?.Invoke())
-                .ReturnsAsync(calendars);
+                .ReturnsAsync(new GoogleCalendarFetch(calendars, IsComplete: true));
 
         /// <summary>
         /// Runs when the calendar list is answered, to model a concurrent sync's insert landing

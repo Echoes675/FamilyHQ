@@ -433,7 +433,7 @@ public class CalendarEventServiceReconcilePruneTests
         public void ArrangeWindowFetch(IReadOnlyList<CalendarEvent> instances) =>
             Google.Setup(g => g.GetEventsAsync(GoogleCalId, WindowStart, _windowEnd, null, It.IsAny<CancellationToken>()))
                 .Callback(() => _afterWindowFetch?.Invoke())
-                .ReturnsAsync((instances, (string?)null));
+                .ReturnsAsync(new GoogleEventFetch(instances, (string?)null, IsComplete: true));
 
         /// <summary>Runs when the window fetch is taken, to model a concurrent writer's timing.</summary>
         public void OnWindowFetched(Action action) => _afterWindowFetch = action;

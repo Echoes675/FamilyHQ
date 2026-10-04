@@ -35,8 +35,9 @@ public sealed class GoogleResilienceOptions
     /// = 145s (~2.4 min) — deliberately tuned below the sync worker's 5-minute
     /// OrphanRecoveryThreshold, with headroom because each attempt may also spend up to
     /// <see cref="AuthTimeout"/> refreshing the access token inside the same call.
-    /// Note: paginated operations (GetEventsAsync, up to 20 pages) get this budget PER PAGE
-    /// within one attempt, so a slow-but-succeeding paged fetch is not bounded by this figure;
+    /// Note: paginated operations (GetEventsAsync and GetCalendarsAsync, up to 20 pages each) get
+    /// this budget PER PAGE within one attempt, so a slow-but-succeeding paged fetch is not
+    /// bounded by this figure;
     /// that is safe because orphan recovery never preempts the live single-consumer worker.
     /// </summary>
     public TimeSpan CalendarTimeout { get; set; } = TimeSpan.FromSeconds(45);
