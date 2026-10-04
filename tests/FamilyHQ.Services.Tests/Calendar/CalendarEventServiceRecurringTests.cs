@@ -2650,6 +2650,16 @@ public class CalendarEventServiceRecurringTests
             Repo.Setup(r => r.GetEventsBySeriesIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync([]);
 
+            // The reconcile's prune reads the owner calendar's stored rows for the fetched window to
+            // find the ones Google no longer lists. Nothing stored by default, so these tests keep
+            // their subject — the Google call shapes, the upsert and the echo-guard hashes — and the
+            // prune has nothing to act on. A test about the prune itself has to model the stored rows
+            // AND a complete fetch, because absence from an incomplete fetch is what the prune reads
+            // as "Google no longer has this"; CalendarEventServiceReconcilePruneTests does both.
+            Repo.Setup(r => r.GetEventsByOwnerCalendarAsync(
+                    It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+
             Google.Setup(g => g.PatchEventFieldsAsync(It.IsAny<string>(), It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? _) => e);
 

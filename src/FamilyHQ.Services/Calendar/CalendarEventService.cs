@@ -1503,8 +1503,25 @@ public class CalendarEventService(
             throw new InvalidOperationException(
                 $"Cannot reconcile recurring write: calendar {owner.Id} has no stored sync window.");
 
+        // The prune's candidate rows, read BEFORE the fetch rather than after it. Only a row that
+        // was already stored when the fetch was taken can be judged by that fetch: a row a
+        // concurrent sync inserts afterwards — a brand-new event created on a phone — is missing
+        // from it for that reason alone, and deleting such a row would lose a real event that no
+        // incremental sync brings back, since an unchanged event is never re-sent. That sync runs
+        // concurrently with this write by design; see SaveReconciledWithConcurrencyRetryAsync.
+        // Reading early costs nothing (the prune needs the query either way) and the rows this read
+        // misses are only ever orphans the next full sync removes.
+        var storedBeforeFetch = await calendarRepository.GetEventsByOwnerCalendarAsync(
+            owner.Id, windowStart, windowEnd, ct);
+
         var (fetched, _) = await googleCalendarClient.GetEventsAsync(
             owner.GoogleCalendarId, windowStart, windowEnd, null, ct);
+
+        // Materialise once: the sequence is read by the upsert loop below and again by the prune,
+        // and the loop writes OwnerCalendarInfoId, RecurrenceRule and Members onto the instances it
+        // inserts — a lazy sequence would re-execute and lose those writes (CalendarSyncService
+        // materialises its own fetch for the same reason).
+        var fetchedEvents = fetched as IReadOnlyList<CalendarEvent> ?? fetched.ToList();
 
         var allCalendars = await calendarRepository.GetCalendarsAsync(ct);
         // FHQ-47 (Gap 2): mirror CalendarSyncService — the free-form fallback resolves against
@@ -1514,7 +1531,7 @@ public class CalendarEventService(
         var knownMemberNames = allCalendars.Where(c => !c.IsShared).Select(c => c.DisplayName).ToList();
         var allCalendarNames = allCalendars.Select(c => c.DisplayName).ToList();
 
-        foreach (var fetchedEvent in fetched)
+        foreach (var fetchedEvent in fetchedEvents)
         {
             if (fetchedEvent.Title == "CANCELLED_TOMBSTONE")
             {
@@ -1588,7 +1605,155 @@ public class CalendarEventService(
         }
 
         await SaveReconciledWithConcurrencyRetryAsync(inserted, ct);
+
+        // The deletes themselves come after the upserts are committed, so a failed upsert save never
+        // takes a prune with it, and the two concurrency retries — re-resolve the inserts, re-delete
+        // the removals — are never tangled in one change set.
+        await PruneRowsAbsentFromWindowFetchAsync(
+            owner, windowStart, windowEnd, storedBeforeFetch, fetchedEvents, seriesRules, ct);
+
         return persisted;
+    }
+
+    /// <summary>
+    /// Removes the owner calendar's locally-stored rows that the window fetch did not list, so a
+    /// write that changes a series' slot identity does not leave the old occurrences on the kiosk
+    /// beside the new ones.
+    /// </summary>
+    /// <param name="candidates">
+    /// The owner calendar's stored rows for this window, <b>read before the fetch</b>. The ordering
+    /// is part of the guard, not an accident of the caller: a row stored after the fetch was taken
+    /// is missing from it for that reason alone.
+    /// </param>
+    /// <remarks>
+    /// The upsert loop only adds and updates, and the tombstone branch needs Google to name the id,
+    /// so nothing else in this service removes a row Google has simply stopped returning. That is
+    /// safe while instance ids are stable and stops being safe when the series' anchor moves: an
+    /// exception's id is <c>{masterId}_{originalStartStamp}</c>, so a timing change at
+    /// <c>AllInSeries</c> — which <c>PatchSeriesMasterAsync</c> permits — renames every instance and
+    /// orphans every row carrying an old id.
+    /// </remarks>
+    private async Task PruneRowsAbsentFromWindowFetchAsync(
+        CalendarInfo owner,
+        DateTimeOffset windowStart,
+        DateTimeOffset windowEnd,
+        IReadOnlyList<CalendarEvent> candidates,
+        IReadOnlyList<CalendarEvent> fetchedEvents,
+        IReadOnlyDictionary<string, string> seriesRules,
+        CancellationToken ct)
+    {
+        // Absence is only evidence when the fetch that produced it was a complete statement of the
+        // window. There are two ways it is not, and both forbid the prune rather than narrowing it.
+        //
+        // An empty answer says nothing. GoogleCalendarClient.GetEventsAsync returns an empty list
+        // without failing when a page carries no deserialisable body, which is indistinguishable
+        // here from a window Google has genuinely emptied — and this reconcile has just written into
+        // that window. Refusing to prune costs an orphan the next full sync removes; acting on it
+        // would clear the calendar's whole window.
+        if (fetchedEvents.Count == 0)
+        {
+            logger.LogInformation(
+                "Reconcile of calendar {CalendarInfoId} fetched no events for the window, which is no statement " +
+                "of what Google holds, so no local row was removed.",
+                owner.Id);
+            return;
+        }
+
+        // A truncated answer is worse than none, because it looks complete. That same method stops
+        // after MaxSyncPages pages and returns what it has with a warning, so a window holding more
+        // than MaxWindowFetchEvents events can come back partial. The page cap itself is not visible
+        // from here, and this count test is an upper bound rather than proof of completeness —
+        // Google may send a page shorter than the maxResults the client asks for — so it is only
+        // ever used to REFUSE a prune, never to authorise one.
+        if (fetchedEvents.Count >= GoogleCalendarClient.MaxWindowFetchEvents)
+        {
+            logger.LogWarning(
+                "Reconcile of calendar {CalendarInfoId} fetched {EventCount} events, at or above the window " +
+                "fetch's {FetchBudget}-event budget, so the fetch may be truncated and no local row was removed.",
+                owner.Id, fetchedEvents.Count, GoogleCalendarClient.MaxWindowFetchEvents);
+            return;
+        }
+
+        var fetchedIds = fetchedEvents.Select(e => e.GoogleEventId).ToHashSet(StringComparer.Ordinal);
+
+        // singleEvents=true expands a series into its instances and never returns the series MASTER
+        // resource, so a stored row whose GoogleEventId is a bare series id is missing from the
+        // fetch for that reason alone — Google still holds it. Such a row does exist here: on the
+        // recurrence-on path the event is promoted in place, so the pre-promotion single row's
+        // GoogleEventId IS the new master id, and that row is still stored while this reconcile
+        // runs. ToggleRecurrenceOnAsync removes it itself, straight after, having established that
+        // the expansion replaced it; this prune has no such knowledge and must not act on silence
+        // it caused itself. The series ids are the ones this operation wrote plus the ones the
+        // fetched instances name.
+        var seriesIds = fetchedEvents
+            .Select(e => e.GoogleRecurringEventId)
+            .Concat(seriesRules.Keys)
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Select(id => id!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        // The candidates were read through the query the full sync's own tombstone diff uses, so both
+        // of the places that act on Google's silence start from the same set: this calendar's rows,
+        // bounded by the same window. That query's predicate is OVERLAP (Start < end && End > start),
+        // which is wider than this prune may act on, so the narrowing below is applied here rather
+        // than pushed into SQL — it is the condition that authorises a delete, and stating it in the
+        // service is what lets a unit test exercise its boundaries.
+        //
+        // The upper bound Google actually applied. The client formats timeMin/timeMax as whole
+        // seconds ("yyyy-MM-dd'T'HH:mm:ss'Z'"), and the stored window end is the wall-clock instant
+        // of the full sync that wrote it, so its fraction of a second is real and is discarded on
+        // the wire. A row starting inside that discarded fraction was never covered by the fetch.
+        var fetchedUpperBound = windowEnd.AddTicks(-(windowEnd.UtcTicks % TimeSpan.TicksPerSecond));
+
+        var orphans = candidates
+            // Google's timeMin/timeMax select on overlap: end > timeMin and start < timeMax. A row
+            // whose Start is at or after windowStart and whose End is after windowStart satisfies
+            // both, so if Google still held it the fetch would have listed it. Nothing weaker is
+            // sound. A row starting BEFORE the window is returned only on the strength of its End,
+            // which is the one value a stale row may have wrong, so those rows are left alone even
+            // though some of them are orphans too — the next full sync is what removes those.
+            .Where(row => row.Start >= windowStart && row.Start < fetchedUpperBound && row.End > windowStart)
+            // Restated although the candidate query is already scoped to this calendar: this is the
+            // line that authorises a delete, and a row on another calendar must never be touched.
+            .Where(row => row.OwnerCalendarInfoId == owner.Id)
+            .Where(row => !fetchedIds.Contains(row.GoogleEventId) && !seriesIds.Contains(row.GoogleEventId))
+            .ToList();
+
+        if (orphans.Count == 0)
+            return;
+
+        // Re-read each condemned row through the tracking path, because the candidate query is
+        // AsNoTracking: CommitRowRemovalAsync detaches the instances it is handed, and detaching an
+        // untracked copy would leave the real Deleted entry in the change tracker and poison the
+        // retry it exists to perform. A row another writer has already removed is simply gone.
+        //
+        // The USER-SCOPED overload, on a path that deletes: the owner calendar was resolved from an
+        // event this user is allowed to read, so a row it owns is this user's by construction — but
+        // the scoped read is the one that still returns null if that ever stops holding, and a null
+        // here means the row is left alone.
+        var userId = currentUserService.UserId ?? string.Empty;
+        var removed = new List<CalendarEvent>(orphans.Count);
+        foreach (var orphan in orphans)
+        {
+            var stored = await calendarRepository.GetEventAsync(orphan.Id, userId, ct);
+            if (stored is null)
+                continue;
+
+            await calendarRepository.DeleteEventAsync(stored.Id, ct);
+            removed.Add(stored);
+        }
+
+        if (removed.Count == 0)
+            return;
+
+        logger.LogInformation(
+            "Reconcile of calendar {CalendarInfoId} removed {OrphanCount} local event row(s) that the window " +
+            "fetch no longer lists.",
+            owner.Id, removed.Count);
+
+        // The rows this prune removes are exactly the ones a concurrent sync of the same window is
+        // tombstoning, so the race this helper handles is the likely case here, not the remote one.
+        await CommitRowRemovalAsync(removed, ct);
     }
 
     // The reconcile decides insert-vs-update with a check-then-insert (GetEventByGoogleEventIdAsync →
