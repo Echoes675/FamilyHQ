@@ -22,10 +22,23 @@ namespace FamilyHQ.Services.Tests.Calendar;
 /// </para>
 /// <para>
 /// Every test here is about a DELETION of a family's local row, so the negative cases carry the
-/// weight: each one puts a row the fetch did not mention somewhere the fetch proves nothing about,
-/// and asserts it survives a reconcile that does prune in the same breath. A test that only
-/// asserted "nothing was deleted" would pass against a service with no prune at all, so each
-/// negative case also pins the orphan that MUST go.
+/// weight, and a test that only asserted "nothing was deleted" would pass against a service with no
+/// prune at all. There are two kinds of negative case, and they answer that differently.
+/// </para>
+/// <para>
+/// The ROW-level ones — a row outside the window, on another calendar, stored after the fetch, or a
+/// bare series id — put the row somewhere the fetch proves nothing about and assert it survives a
+/// reconcile that prunes a real orphan in the same breath.
+/// </para>
+/// <para>
+/// The two WHOLE-FETCH refusals cannot do that, because they refuse the fetch outright and so prune
+/// nothing at all by design. Their proof is a paired test on the identical arrangement that differs
+/// only in the thing under test and does prune:
+/// <c>…WhenTheWindowFetchReportsItselfIncomplete_RemovesNothing</c> is paired with
+/// <c>…AnchorMoves_RemovesTheRenamedRowsAndKeepsTheNewOnes</c> through the shared
+/// <c>ArrangeAnchorMovedSeries</c> helper, and the complete-but-empty case is paired with
+/// <c>CalendarSyncServiceFullSyncDiffTests</c>' empty-fetch case, where the same answer DOES
+/// tombstone — the asymmetry between the two sites being deliberate.
 /// </para>
 /// </remarks>
 public class CalendarEventServiceReconcilePruneTests
@@ -60,14 +73,12 @@ public class CalendarEventServiceReconcilePruneTests
     public async Task UpdateRecurringAsync_AllInSeriesAnchorMoves_RemovesTheRenamedRowsAndKeepsTheNewOnes()
     {
         var f = new Fixture();
-        var edited = f.StoreInstance(EditedRowId, InstanceId(OldSlot), OldSlot);
-        f.StoreInstance(SecondRowId, InstanceId(OldSlot.AddDays(7)), OldSlot.AddDays(7));
 
-        // Google renames every instance when the anchor moves: same series, new stamps.
-        f.ArrangeWindowFetch([
-            f.FetchedInstance(InstanceId(NewSlot), NewSlot),
-            f.FetchedInstance(InstanceId(NewSlot.AddDays(7)), NewSlot.AddDays(7))
-        ]);
+        // Google renames every instance when the anchor moves: same series, new stamps. This
+        // arrangement is shared with the completeness case below (ArrangeAnchorMovedSeries), which
+        // changes nothing but the fetch's IsComplete — so this test is also the proof that the two
+        // rows it refuses to remove there are genuinely there to be removed.
+        var edited = ArrangeAnchorMovedSeries(f, isComplete: true);
 
         await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
 
@@ -203,15 +214,40 @@ public class CalendarEventServiceReconcilePruneTests
     // ── When the fetch is no statement of the window ──────────────────────────
 
     [Fact]
-    public async Task UpdateRecurringAsync_AllInSeries_WhenTheWindowFetchComesBackEmpty_RemovesNothing()
+    public async Task UpdateRecurringAsync_AllInSeries_WhenTheWindowFetchReportsItselfIncomplete_RemovesNothing()
+    {
+        var f = new Fixture();
+
+        // The fetch holds fewer events than Google offered and cannot say which are missing (the
+        // causes are on GoogleEventFetch.IsComplete; the client's own tests cover each). So no row
+        // it failed to name is judgeable — including the renamed ones this edit really did orphan.
+        // What the prune may do about it is all that is under test here, so the arrangement says
+        // IsComplete: false rather than reproducing a cause.
+        var edited = ArrangeAnchorMovedSeries(f, isComplete: false);
+
+        await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
+
+        f.DeletedRowIds.Should().BeEmpty();
+        f.StoredGoogleEventIds.Should().Contain([InstanceId(OldSlot), InstanceId(OldSlot.AddDays(7))]);
+        // Its control is the anchor-moves case at the top of this file, which is this same
+        // arrangement with IsComplete: true and removes both rows. That pair is what makes the
+        // assertion above the guard's doing rather than an absent prune's.
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_WhenTheWindowFetchComesBackCompleteButEmpty_RemovesNothing()
     {
         var f = new Fixture();
         var edited = f.StoreInstance(EditedRowId, InstanceId(OldSlot), OldSlot);
         f.StoreInstance(SecondRowId, InstanceId(OldSlot.AddDays(7)), OldSlot.AddDays(7));
 
-        // An empty answer is indistinguishable from a page whose body did not deserialise, and this
-        // reconcile has just written into the window it is asking about.
-        f.ArrangeWindowFetch([]);
+        // Complete, so the client did read every page Google offered — and still refused, which is
+        // where this prune deliberately differs from the full sync's tombstone diff (see
+        // CalendarSyncServiceFullSyncDiffTests, where the same answer DOES tombstone). The fetch is
+        // taken immediately after this operation wrote to Google, and Google's read need not yet
+        // reflect a write it has only just accepted, so an empty answer is at least as likely to be
+        // that lag as an emptied window — and acting on it would delete the rows this write made.
+        f.ArrangeWindowFetch([], isComplete: true);
 
         await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
 
@@ -219,22 +255,22 @@ public class CalendarEventServiceReconcilePruneTests
         f.StoredGoogleEventIds.Should().HaveCount(2);
     }
 
-    [Fact]
-    public async Task UpdateRecurringAsync_AllInSeries_WhenTheWindowFetchFillsThePageBudget_RemovesNothing()
+    /// <summary>
+    /// The anchor-moved arrangement, shared by the completeness pair above so neither half can
+    /// drift from the other: two stored instances, and a fetch naming only the renamed ones.
+    /// Returns the row the edit is applied to.
+    /// </summary>
+    private static CalendarEvent ArrangeAnchorMovedSeries(Fixture f, bool isComplete)
     {
-        var f = new Fixture();
         var edited = f.StoreInstance(EditedRowId, InstanceId(OldSlot), OldSlot);
-
-        // At the page budget the fetch may have been truncated — GetEventsAsync stops after
-        // MaxSyncPages pages and returns what it has — so absence from it proves nothing.
-        var atBudget = Enumerable.Range(0, GoogleCalendarClient.MaxWindowFetchEvents)
-            .Select(i => f.FetchedInstance($"bulk-{i}", NewSlot))
-            .ToList();
-        f.ArrangeWindowFetch(atBudget);
-
-        await f.Sut.UpdateRecurringAsync(edited.Id, MoveTo(NewSlot), RecurrenceScope.AllInSeries);
-
-        f.DeletedRowIds.Should().NotContain(EditedRowId);
+        f.StoreInstance(SecondRowId, InstanceId(OldSlot.AddDays(7)), OldSlot.AddDays(7));
+        f.ArrangeWindowFetch(
+            [
+                f.FetchedInstance(InstanceId(NewSlot), NewSlot),
+                f.FetchedInstance(InstanceId(NewSlot.AddDays(7)), NewSlot.AddDays(7))
+            ],
+            isComplete);
+        return edited;
     }
 
     // ── The tombstone path, unchanged ─────────────────────────────────────────
@@ -430,10 +466,15 @@ public class CalendarEventServiceReconcilePruneTests
             GoogleRecurringEventId = SeriesId
         };
 
-        public void ArrangeWindowFetch(IReadOnlyList<CalendarEvent> instances) =>
+        /// <param name="isComplete">
+        /// What the client reports about the fetch. True on every case that is not about
+        /// completeness, because that is what GetEventsAsync returns when it reads every page
+        /// Google offers — which is the normal answer and the only one that authorises a prune.
+        /// </param>
+        public void ArrangeWindowFetch(IReadOnlyList<CalendarEvent> instances, bool isComplete = true) =>
             Google.Setup(g => g.GetEventsAsync(GoogleCalId, WindowStart, _windowEnd, null, It.IsAny<CancellationToken>()))
                 .Callback(() => _afterWindowFetch?.Invoke())
-                .ReturnsAsync((instances, (string?)null));
+                .ReturnsAsync(new GoogleEventFetch(instances, (string?)null, isComplete));
 
         /// <summary>Runs when the window fetch is taken, to model a concurrent writer's timing.</summary>
         public void OnWindowFetched(Action action) => _afterWindowFetch = action;

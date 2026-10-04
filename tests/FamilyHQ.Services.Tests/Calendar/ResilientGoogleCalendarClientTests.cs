@@ -156,11 +156,11 @@ public class ResilientGoogleCalendarClientTests
         var (sut, inner, _) = CreateSut();
         inner.SetupSequence(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(HttpTimeout())
-            .ReturnsAsync(Array.Empty<CalendarInfo>());
+            .ReturnsAsync(new GoogleCalendarFetch(Array.Empty<CalendarInfo>(), IsComplete: true));
 
         var result = await sut.GetCalendarsAsync();
 
-        result.Should().BeEmpty();
+        result.Calendars.Should().BeEmpty();
         inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
@@ -210,13 +210,13 @@ public class ResilientGoogleCalendarClientTests
         var (sut, inner, time) = CreateSut(cap: TimeSpan.FromSeconds(5));
         inner.SetupSequence(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(Api(HttpStatusCode.TooManyRequests, TimeSpan.FromSeconds(2)))
-            .ReturnsAsync(Array.Empty<CalendarInfo>());
+            .ReturnsAsync(new GoogleCalendarFetch(Array.Empty<CalendarInfo>(), IsComplete: true));
 
         var task = sut.GetCalendarsAsync();               // first call throws, then sleeps 2s on the fake clock
         await time.AdvanceOnNextTimerAsync(TimeSpan.FromSeconds(2)); // release the delay, once it is armed
         var result = await task;
 
-        result.Should().BeEmpty();
+        result.Calendars.Should().BeEmpty();
         inner.Verify(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 }

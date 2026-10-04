@@ -35,22 +35,76 @@ public class CalendarSyncService(
 
         int changeCount = 0;
 
+        // The prune's candidate calendars, read BEFORE the fetch rather than after it — the same
+        // ordering, for the same reason, as CalendarEventService.ReconcileWindowAsync and the
+        // tombstone diff in SyncCoreAsync below. Only a calendar that was already stored when the
+        // fetch was taken can be judged by that fetch: a calendar inserted afterwards is missing
+        // from it for that reason alone. Pass 1 below is the only caller of AddCalendarAsync, and
+        // two of these passes can run at once — SyncController.TriggerSync runs SyncAllAsync inline
+        // on the HTTP request while CalendarSyncWorker runs it from the job queue, with nothing
+        // serialising the two — so the row this prune would judge unseen is one a concurrent sync
+        // has just inserted, for a calendar Google does list. Removing it takes every event that
+        // calendar owns and its SyncState with it (see RemoveCalendarAsync), and what a later sync
+        // brings back is a new row: visibility and shared designation fall back to their defaults
+        // and the display order is reassigned to the end, so the ones the family chose are gone
+        // either way. The two failure modes are not symmetrical, which is the whole argument for
+        // the ordering — a calendar this early read misses is one the next sync prunes anyway if
+        // Google really has stopped listing it.
+        var calendarsBeforeFetch = await calendarRepository.GetCalendarsAsync(ct);
+
+        GoogleCalendarFetch calendarFetch;
         List<CalendarInfo> googleCalendars;
         try
         {
-            googleCalendars = (await googleCalendarClient.GetCalendarsAsync(ct)).ToList();
+            calendarFetch = await googleCalendarClient.GetCalendarsAsync(ct);
+            googleCalendars = calendarFetch.Calendars.ToList();
         }
         catch (GoogleReauthRequiredException ex)
         {
             await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
             throw;
         }
+        // Deliberately a SECOND read, after the fetch, and NOT the pre-fetch snapshot above: pass 1
+        // decides whether to call AddCalendarAsync, and the unique index on
+        // (GoogleCalendarId, UserId) rejects an insert for a calendar a concurrent sync has already
+        // added — failing the whole account's sync. Pass 1 needs the latest view precisely because
+        // the prune needs the earlier one. Do not collapse these two reads into one.
         var localCalendars  = await calendarRepository.GetCalendarsAsync(ct);
 
-        // Remove obsolete local calendars
-        var obsolete = localCalendars
-            .Where(local => !googleCalendars.Any(g => g.GoogleCalendarId == local.GoogleCalendarId))
-            .ToList();
+        // Remove obsolete local calendars — but only against an answer that could have named them.
+        // RemoveCalendarAsync takes every event the calendar owns and its SyncState with it, so two
+        // answers are refused outright rather than acted on partially.
+        List<CalendarInfo> obsolete = [];
+        if (!calendarFetch.IsComplete)
+        {
+            // GetCalendarsAsync reports this itself: false when it took its calendarList page cap
+            // with a page token still outstanding, or when a page's body yielded no readable
+            // `items`. Either way it holds fewer calendars than Google listed and cannot say which
+            // ones are missing, so no local calendar is judgeable against it.
+            logger.LogWarning(
+                "Full sync fetched {CalendarCount} Google calendar(s) but reported the fetch incomplete, so it " +
+                "is no statement of what Google holds and none of the {CandidateCount} local calendar(s) was removed.",
+                googleCalendars.Count, calendarsBeforeFetch.Count);
+        }
+        else if (googleCalendars.Count == 0)
+        {
+            // A complete answer naming NO calendars is refused too, which is this guard's one
+            // departure from acting on what Google says. Every Google account has a primary calendar
+            // and the API lists it in calendarList, so an account with none is a state this
+            // application cannot legitimately reach — whereas acting on it removes every calendar
+            // the family has, every event on them, and their SyncState, leaving the kiosk blank. The
+            // cost of refusing is an orphaned calendar row surviving a case that should not occur.
+            logger.LogWarning(
+                "Full sync fetched a complete but empty Google calendar list, which an account holding a primary " +
+                "calendar cannot produce, so none of the {CandidateCount} local calendar(s) was removed.",
+                calendarsBeforeFetch.Count);
+        }
+        else
+        {
+            obsolete = calendarsBeforeFetch
+                .Where(local => !googleCalendars.Any(g => g.GoogleCalendarId == local.GoogleCalendarId))
+                .ToList();
+        }
 
         foreach (var cal in obsolete)
         {
@@ -137,8 +191,13 @@ public class CalendarSyncService(
         // would return AsNoTracking duplicates and `_context.Calendars.Update(...)`
         // would collide with the already-tracked instance.  MarkCalendarAsSharedAsync
         // mutates the tracked entity in place to avoid that conflict.
+        //
+        // calendarIdsToSync can be EMPTY while local calendars survive, which is new: the prune
+        // above refuses to act on a calendar list that named nothing, so the local rows stay while
+        // this sync has processed no calendar to designate. First() on the empty list would throw
+        // InvalidOperationException out of the whole sync; there is simply nothing to designate.
         var calendarsAfterSync = (await calendarRepository.GetCalendarsAsync(ct)).ToList();
-        if (calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
+        if (calendarIdsToSync.Count > 0 && calendarsAfterSync.Count > 1 && !calendarsAfterSync.Any(c => c.IsShared))
         {
             var firstCalendarId = calendarIdsToSync.First();
             await calendarRepository.MarkCalendarAsSharedAsync(firstCalendarId, ct);
@@ -178,9 +237,14 @@ public class CalendarSyncService(
         // FHQ-189: a calendar that has never been synced WITH reminders in the field mask is forced
         // through one full sync, even though its token is still valid. Incremental sync never
         // re-sends an unchanged event, so the events already in production would otherwise never
-        // gain their reminders. Stamped below once the sync succeeds, so this happens exactly once
-        // per calendar. This is the same code path a Google 410 already exercises.
+        // gain their reminders. Stamped below once a COMPLETE fetch succeeds, so for virtually every
+        // calendar this happens exactly once — the exception being one that never manages a complete
+        // fetch, which repeats it each run and is correct to. This is the same code path a Google 410
+        // already exercises.
         bool needsReminderBackfill = syncState.RemindersSyncedAt is null;
+        // Either unset forces a full sync, and an incomplete fetch clears the token below, so this is
+        // also how a fetch that came back short gets re-read in full rather than deltas-only from a
+        // baseline with a hole in it.
         bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken) || needsReminderBackfill;
 
         if (needsReminderBackfill)
@@ -196,7 +260,21 @@ public class CalendarSyncService(
 
         try
         {
-            var (fetchedEvents, nextSyncToken) = await googleCalendarClient.GetEventsAsync(
+            // The tombstone diff's candidate rows, read BEFORE the fetch rather than after it — the
+            // same ordering, for the same reason, as CalendarEventService.ReconcileWindowAsync. Only a
+            // row that was already stored when the fetch was taken can be judged by that fetch: a row
+            // stored afterwards — a kiosk write, or an event created on a phone that another sync of
+            // this calendar has just ingested — is missing from it for that reason alone, and deleting
+            // such a row would lose a real event that no incremental sync brings back, since an
+            // unchanged event is never re-sent. Reading early costs nothing (the diff needs the query
+            // either way) and the rows this read misses are only ever orphans the next full sync
+            // removes. Conditional because an incremental sync runs no diff: the common path must not
+            // pay for a query it has no use for.
+            IReadOnlyList<CalendarEvent> storedBeforeFetch = isFullSync
+                ? await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct)
+                : [];
+
+            var fetch = await googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
                 isFullSync ? endDate : null,
@@ -208,7 +286,7 @@ public class CalendarSyncService(
             // Materialise once: the sequence is enumerated several times below (pass-2 resolution,
             // tombstone diff, the persistence loop, the final count) and the loop mutates each
             // instance's RecurrenceRule — a lazy sequence would re-execute and lose those writes.
-            var events = fetchedEvents as IReadOnlyList<CalendarEvent> ?? fetchedEvents.ToList();
+            var events = fetch.Events as IReadOnlyList<CalendarEvent> ?? fetch.Events.ToList();
 
             var allLocalCalendars = await calendarRepository.GetCalendarsAsync(ct);
             // FHQ-46: two candidate sets for member resolution (see IMemberTagParser.ParseMembers).
@@ -248,16 +326,43 @@ public class CalendarSyncService(
 
             if (isFullSync)
             {
-                // Tombstone events no longer present in Google
-                var existingEvents   = await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct);
-                var fetchedGoogleIds = events.Select(e => e.GoogleEventId).ToHashSet();
-                var obsoleteList     = existingEvents.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId)).ToList();
+                // Absence is only evidence when the fetch that produced it read everything Google
+                // offered. GetEventsAsync reports that itself: false means it holds fewer events
+                // than Google has and cannot say which ones are missing, so a row it failed to name
+                // may be a live event on the family's calendar — and deleting one loses it until a
+                // later full sync, since an incremental sync never re-sends an unchanged event. The
+                // causes are enumerated on GoogleEventFetch.IsComplete and deliberately not
+                // re-listed here; one of them is a single unusable ITEM on a page that read fine,
+                // which is why a non-empty, unsuspicious-looking answer can still be short.
+                //
+                // An EMPTY answer is deliberately not refused here, unlike in
+                // CalendarEventService.PruneRowsAbsentFromWindowFetchAsync. That prune reads back a
+                // window its own operation has just written to, so an empty answer there may be
+                // Google not yet reflecting that write. This sync makes no Google write of its own,
+                // so it is not reading anything back and empty-and-complete is a statement about the
+                // window rather than about us. Refusing it would leave no code path that ever
+                // removes the orphans of an emptied window — this diff is the one that clears them.
+                if (!fetch.IsComplete)
+                {
+                    logger.LogWarning(
+                        "Full sync of calendar {CalendarInfoId} fetched {EventCount} events but reported the " +
+                        "fetch incomplete, so it is no statement of what Google holds and no local row was " +
+                        "tombstoned.",
+                        calendar.Id, events.Count);
+                }
+                else
+                {
+                    // Tombstone events no longer present in Google. The candidates are the rows read
+                    // before the fetch above; do NOT re-read them here (see the comment on that read).
+                    var fetchedGoogleIds = events.Select(e => e.GoogleEventId).ToHashSet();
+                    var obsoleteList     = storedBeforeFetch.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId)).ToList();
 
-                foreach (var obsoleteEvt in obsoleteList)
-                    await calendarRepository.DeleteEventAsync(obsoleteEvt.Id, ct);
+                    foreach (var obsoleteEvt in obsoleteList)
+                        await calendarRepository.DeleteEventAsync(obsoleteEvt.Id, ct);
 
-                if (obsoleteList.Count > 0)
-                    changeCount += await calendarRepository.SaveChangesAsync(ct);
+                    if (obsoleteList.Count > 0)
+                        changeCount += await calendarRepository.SaveChangesAsync(ct);
+                }
             }
 
             foreach (var evt in events)
@@ -416,11 +521,43 @@ public class CalendarSyncService(
                 }
             }
 
-            syncState.SyncToken    = nextSyncToken;
+            // Persisting a sync token is the strongest statement this service makes: it tells the
+            // next sync "the local rows match Google up to here, so send only what changed since".
+            // An incomplete fetch has not earned it. Taking the token anyway makes the next sync
+            // incremental from a baseline known to have a hole in it, and Google never re-sends an
+            // unchanged event — so whatever this fetch missed stays missing until a 410 happens to
+            // force a full sync. The prunes refusing to DELETE on an incomplete fetch is only half
+            // the job; discarding the token is the half that gets the missing events back.
+            //
+            // Null is not a new recovery mechanism: it is the state the SyncTokenExpiredException
+            // handler below already leaves behind, and isFullSync at the top reads it the same way.
+            //
+            // The shape that actually arrives here with a token worth discarding is an item-level
+            // skip, where the listing ran to its final page and that page carried a token. The other
+            // two causes come with a null token anyway — an unreadable page stops the loop, and the
+            // page cap only trips while a nextPageToken is outstanding, which is precisely when
+            // Google omits nextSyncToken. Testing IsComplete rather than the cause means this does
+            // not depend on that exclusivity holding.
+            syncState.SyncToken    = fetch.IsComplete ? fetch.NextSyncToken : null;
+            // Unconditional: a sync did run, and this field's only reader is the diagnostics
+            // connection-status DTO, which is asking when rather than how completely.
             syncState.LastSyncedAt = DateTimeOffset.UtcNow;
-            // Stamp only after the fetch succeeded, so a failed backfill is retried next sync
-            // rather than being silently skipped forever.
-            syncState.RemindersSyncedAt ??= DateTimeOffset.UtcNow;
+            if (fetch.IsComplete)
+            {
+                // Stamp only after a COMPLETE fetch, so a backfill that failed or came back partial
+                // is retried next sync rather than being silently skipped forever. A partial fetch
+                // read no reminders for the events it did not return, so stamping here would claim
+                // work that was not done — and would leave this field saying "backfilled" while the
+                // token above says "not in sync", which is a contradiction a later reader has to
+                // resolve.
+                //
+                // It costs no extra full syncs: the token is nulled on exactly this condition and
+                // isFullSync is true when EITHER is unset, so the full sync is already forced. The
+                // one visible cost is that a calendar which never manages a complete fetch keeps
+                // logging the "no reminder data; forcing one full sync" line every run — which is a
+                // true statement about that calendar.
+                syncState.RemindersSyncedAt ??= DateTimeOffset.UtcNow;
+            }
             if (isFullSync)
             {
                 syncState.SyncWindowStart = startDate;

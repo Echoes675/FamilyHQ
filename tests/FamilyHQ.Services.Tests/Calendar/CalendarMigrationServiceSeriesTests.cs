@@ -60,7 +60,7 @@ public class CalendarMigrationServiceSeriesTests
         var new1 = NewInstance("new-1", WindowStart.AddDays(7)); new1.ContentHash = MasterEchoedHash;
         var new2 = NewInstance("new-2", WindowStart.AddDays(14)); new2.ContentHash = MasterEchoedHash;
         google.Setup(g => g.GetEventsAsync(SharedGoogleCal, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { new1, new2 }, (string?)null));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { new1, new2 }, (string?)null, IsComplete: true));
 
         var migrated = await sut.EnsureCorrectCalendarForSeriesAsync(SeriesId, [Alice, Bob]);
 
@@ -112,7 +112,7 @@ public class CalendarMigrationServiceSeriesTests
         var newInst = NewInstance("new-1", WindowStart.AddDays(7));
         newInst.Description = "Body\n[members: Alice, Bob]";
         google.Setup(g => g.GetEventsAsync(SharedGoogleCal, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { newInst }, (string?)null));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { newInst }, (string?)null, IsComplete: true));
 
         // Migrate the series to the shared calendar (Alice + transiently-shared Bob → multi-member).
         var migrated = await sut.EnsureCorrectCalendarForSeriesAsync(SeriesId, [Alice, transientlySharedBob]);
@@ -156,7 +156,7 @@ public class CalendarMigrationServiceSeriesTests
                 return e;
             });
         google.Setup(g => g.GetEventsAsync(SharedGoogleCal, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { NewInstance("new-1", WindowStart.AddDays(7)) }, (string?)null));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { NewInstance("new-1", WindowStart.AddDays(7)) }, (string?)null, IsComplete: true));
 
         await sut.EnsureCorrectCalendarForSeriesAsync(SeriesId, [Alice, Bob]);
 
