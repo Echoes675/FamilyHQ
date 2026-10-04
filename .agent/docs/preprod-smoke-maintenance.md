@@ -870,8 +870,8 @@ Two causes, in the order worth checking:
    `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs`, because a UI change is usually answered
    there first and [does not reach this suite](#principles-you-must-not-quietly-relax) on its own.
 2. **The `data-testid` attributes are missing from the deployed build.** Check the ones listed
-   [above](#data-testid-attributes-this-suite-relies-on) are present. They arrived with FHQ-141, so a
-   preprod that predates this branch cannot satisfy them.
+   [above](#data-testid-attributes-this-suite-relies-on) are present. They arrived with the suite
+   itself, so a preprod running an image older than the testid being looked for cannot satisfy it.
 
 ### How the suite gets to the month grid
 
