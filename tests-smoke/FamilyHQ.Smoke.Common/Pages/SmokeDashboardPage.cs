@@ -69,8 +69,15 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
     private ILocator ScopePromptConfirm => Page.GetByTestId("recurrence-scope-ok");
 
     /// <summary>
-    /// Opens the dashboard and waits for the calendar's first events response, so a scenario never
-    /// asserts against an empty grid that is merely still loading.
+    /// Opens the dashboard, waits for the calendar's first events response so a scenario never asserts
+    /// against an empty grid that is merely still loading, and leaves it on the month grid.
+    /// <para>
+    /// The kiosk lands on the Reminders timeline, which is not where the scenarios that follow this
+    /// start: the timeline renders no Add Event button — that control exists only inside the month and
+    /// day views — so a create flow called straight after this would have nothing to click. Selecting
+    /// the grid here states the starting view that every scenario used to inherit from the landing view
+    /// itself.
+    /// </para>
     /// </summary>
     public async Task OpenAsync()
     {
@@ -81,6 +88,7 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
         await NavigateAsync();
         await eventsResponse;
         await WaitForCalendarVisibleAsync();
+        await ShowMonthGridAsync();
     }
 
     public Task WaitForWeatherStripAsync(int timeoutMs) =>
@@ -495,13 +503,49 @@ public sealed class SmokeDashboardPage(IPage page, SmokeConfiguration configurat
         Page.Locator("[data-testid='day-event-block'], [data-testid='event-capsule']")
             .Filter(new LocatorFilterOptions { HasText = titleFragment });
 
+    private ILocator MonthGrid => Page.Locator(".month-table");
+
+    /// <summary>
+    /// Any one of the dashboard's four views. This is what "the dashboard has finished loading" means
+    /// — the signed-in dashboard rather than the login prompt — and it deliberately says nothing about
+    /// <i>which</i> view, because that depends on where the app lands and on which tab a flow has
+    /// since tapped.
+    /// <para>
+    /// The Reminders timeline belongs in the list because it is what a page load lands on: without it
+    /// every wait straight after a navigation would sit out its whole timeout for a month, day or
+    /// agenda container that is not rendered until a tab is tapped.
+    /// </para>
+    /// <para>
+    /// <c>.First</c> is safe across the four selectors because the dashboard renders exactly one of
+    /// these containers at a time — they are the branches of a single decision on the selected view —
+    /// so there is never a second, hidden match for it to settle on and wait out.
+    /// </para>
+    /// </summary>
+    private ILocator AnyDashboardView => Page.Locator(
+        ".month-table, .day-view-container, .agenda-view-container, [data-testid='reminders-view']");
+
     private Task WaitForCalendarVisibleAsync() =>
-        Page.Locator(".month-table, .day-view-container, .agenda-view-container").First
+        AnyDashboardView.First
             .WaitForAsync(new LocatorWaitForOptions
             {
                 State = WaitForSelectorState.Visible,
                 Timeout = TileRenderTimeoutMs
             });
+
+    /// <summary>
+    /// Puts the dashboard on the month grid, waiting for the grid itself rather than for the tap — so
+    /// a tab that was tapped before the view could render fails here, where the cause is named, instead
+    /// of later as a control that is missing for no apparent reason.
+    /// </summary>
+    private async Task ShowMonthGridAsync()
+    {
+        await Page.GetByTestId("month-tab").ClickAsync();
+        await MonthGrid.WaitForAsync(new LocatorWaitForOptions
+        {
+            State = WaitForSelectorState.Visible,
+            Timeout = TileRenderTimeoutMs
+        });
+    }
 
     private async Task OpenEventAsync(string titleFragment, DateOnly date)
     {

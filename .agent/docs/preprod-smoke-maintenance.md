@@ -301,6 +301,17 @@ Two more that are not on the ticket's list but follow from it:
 - **No project reference to any `tests-e2e` project.** The duplicated page object and base page are the
   price, and it is the right price: the two suites answer different questions of different environments
   and must be free to drift. Coupling them would make every preprod quirk an E2E maintenance event.
+  **The price is paid in both directions, and this is the half that gets forgotten: this suite does not
+  inherit the E2E suite's fixes.** A change to the kiosk's UI that was answered in
+  `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs` has not been answered here — and nothing
+  before preprod would say so: no branch build even *compiles* `tests-smoke/` (the build's test stage
+  runs `tests/*/*.csproj` only) and no deploy before preprod runs it. The first thing that notices is a
+  preprod run, with a release behind it. Whenever a UI change
+  touches a selector, a `data-testid` or **what the dashboard shows on load**, grep `tests-smoke/` for
+  the same thing and fix both page objects in the same change. Grep for the selector itself, not for a
+  class name the two suites happen to spell differently: this suite addresses the view tabs by
+  `data-testid`, so a search for `.view-tab` comes back empty and reads as "the smoke suite does not
+  drive tabs", which is false.
 - **Nothing in a test log that identifies a person.** A Google *primary* calendar's summary is the
   account's email address, so the preflight message that lists preprod's calendar names filters out any
   name containing `@`. The primary calendar is never an expected test calendar, so no diagnostic value
@@ -485,10 +496,13 @@ predates this branch:
 `weather-strip`, `weather-strip-current`, `weather-strip-temp`, `weather-strip-condition`,
 `event-capsule`, `day-event-block`.
 
-Everything else it uses (`add-event-btn`, `event-save-btn`, `day-tab`, `day-picker-*`,
-`event-modal-tab-*`, `all-day-toggle`, `recurrence-*`, `recurrence-scope-*`) already existed for E2E. The
-full-coverage pass added no new ones: the all-day toggle, the recurrence interval stepper, the frequency
-pills and the three scope pills were all already addressable.
+Everything else it uses (`add-event-btn`, `event-save-btn`, `day-tab`, `month-tab`, `reminders-view`,
+`day-picker-*`, `event-modal-tab-*`, `all-day-toggle`, `recurrence-*`, `recurrence-scope-*`) already
+existed for E2E. The full-coverage pass added no new ones: the all-day toggle, the recurrence interval
+stepper, the frequency pills and the three scope pills were all already addressable.
+
+`month-tab` and `reminders-view` are what the suite reaches the month grid through — see
+[how the suite gets to the month grid](#how-the-suite-gets-to-the-month-grid).
 
 `Reminders.feature` added none either. It uses the Reminders tab's own attributes, which arrived with the
 tab: `reminders-section`, `reminder-use-default-toggle`, `reminder-item` (with its
@@ -845,9 +859,48 @@ somehow agrees.
 
 ### "Preflight passes but every kiosk scenario times out on a locator"
 
-Check whether the `data-testid` attributes listed [above](#data-testid-attributes-this-suite-relies-on)
-are present in the deployed build. They arrived with FHQ-141, so a preprod that predates this branch
-cannot satisfy them.
+Preflight drives no browser, so a 7/7 preflight over a wholly red scenarios stage says nothing about
+the UI — it is the signature of this failure, not evidence against it.
+
+Two causes, in the order worth checking:
+
+1. **The dashboard no longer shows what the page object waits for.** Every kiosk scenario goes through
+   the same `Given`, so one wrong assumption in `SmokeDashboardPage` fails all of them identically.
+   Compare the suite's waits against what the dashboard actually renders now — and against
+   `tests-e2e/FamilyHQ.E2E.Common/Pages/DashboardPage.cs`, because a UI change is usually answered
+   there first and [does not reach this suite](#principles-you-must-not-quietly-relax) on its own.
+2. **The `data-testid` attributes are missing from the deployed build.** Check the ones listed
+   [above](#data-testid-attributes-this-suite-relies-on) are present. They arrived with FHQ-141, so a
+   preprod that predates this branch cannot satisfy them.
+
+### How the suite gets to the month grid
+
+The kiosk **lands on the Reminders timeline** — it is the leftmost tab and the view a page load and an
+idle return both arrive at. Nothing in this suite is about that view, and two things follow for
+`SmokeDashboardPage`:
+
+- **The ready-wait must tolerate it.** `WaitForCalendarVisibleAsync` means "the signed-in dashboard has
+  finished loading" and names all four view containers, the Reminders one included. Without it every
+  wait after a navigation sits out its whole timeout for a month, day or agenda container that is not
+  rendered until a tab is tapped. It stays deliberately silent about *which* view is up: its other
+  callers are mid-scenario settles after a modal closes, and the view behind the modal is whichever one
+  the flow had already selected.
+- **`OpenAsync` then selects the month grid**, by `month-tab`, waiting for `.month-table` rather than
+  for the tap. That is explicit setup, not a workaround: the grid is where every scenario has always
+  started, and it used to be inherited from the landing view. It is also load-bearing — the **Add Event
+  button renders only inside the month and day views**, so a create flow on the Reminders timeline has
+  nothing to click.
+
+One interaction to keep in mind: the kiosk also returns itself to the timeline after **15 minutes**
+without a touch, and a scenario waiting on Google is idle as far as the browser is concerned. Nothing
+here comes close to that today — the longest single wait is the five-minute push wait — and any flow
+that navigates by tab is unaffected whichever view it starts from. A *create* flow reached after that
+much idling would find no Add Event button, so if those waits are ever lengthened, this is the thing
+that breaks.
+
+If a scenario ever needs a different starting view, it says so through a step and the page object.
+**Never change a `.feature` file to accommodate the landing view** — a scenario describes an outcome,
+and where the kiosk happens to open is not one.
 
 ---
 
@@ -894,6 +947,10 @@ cannot satisfy them.
 - **A change to the calendar model** (placement, membership, the `[members:]` tag) — KG1, KG1b and GK2
   encode the current model.
 - **A change to a `data-testid`** the suite uses. Keep the list above accurate.
+- **A change to which view the dashboard shows on load, or to a selector the page object waits on.**
+  This suite holds its own page object and inherits nothing from the E2E one, and no dev-branch gate
+  runs it — so the fix has to be made here, in the same change, or a preprod run discovers it with a
+  release behind it. See [how the suite gets to the month grid](#how-the-suite-gets-to-the-month-grid).
 - **The preprod calendar set changes.** Update `Jenkinsfile.deploy-preprod`'s `environment {}` block (and
   your local run command), not a step definition.
 
