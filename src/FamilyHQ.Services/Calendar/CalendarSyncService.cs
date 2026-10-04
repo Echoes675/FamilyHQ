@@ -196,6 +196,20 @@ public class CalendarSyncService(
 
         try
         {
+            // The tombstone diff's candidate rows, read BEFORE the fetch rather than after it — the
+            // same ordering, for the same reason, as CalendarEventService.ReconcileWindowAsync. Only a
+            // row that was already stored when the fetch was taken can be judged by that fetch: a row
+            // stored afterwards — a kiosk write, or an event created on a phone that another sync of
+            // this calendar has just ingested — is missing from it for that reason alone, and deleting
+            // such a row would lose a real event that no incremental sync brings back, since an
+            // unchanged event is never re-sent. Reading early costs nothing (the diff needs the query
+            // either way) and the rows this read misses are only ever orphans the next full sync
+            // removes. Conditional because an incremental sync runs no diff: the common path must not
+            // pay for a query it has no use for.
+            IReadOnlyList<CalendarEvent> storedBeforeFetch = isFullSync
+                ? await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct)
+                : [];
+
             var (fetchedEvents, nextSyncToken) = await googleCalendarClient.GetEventsAsync(
                 calendar.GoogleCalendarId,
                 isFullSync ? startDate : null,
@@ -248,10 +262,10 @@ public class CalendarSyncService(
 
             if (isFullSync)
             {
-                // Tombstone events no longer present in Google
-                var existingEvents   = await calendarRepository.GetEventsByOwnerCalendarAsync(calendarInfoId, startDate, endDate, ct);
+                // Tombstone events no longer present in Google. The candidates are the rows read
+                // before the fetch above; do NOT re-read them here (see the comment on that read).
                 var fetchedGoogleIds = events.Select(e => e.GoogleEventId).ToHashSet();
-                var obsoleteList     = existingEvents.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId)).ToList();
+                var obsoleteList     = storedBeforeFetch.Where(e => !fetchedGoogleIds.Contains(e.GoogleEventId)).ToList();
 
                 foreach (var obsoleteEvt in obsoleteList)
                     await calendarRepository.DeleteEventAsync(obsoleteEvt.Id, ct);
