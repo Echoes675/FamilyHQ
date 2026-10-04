@@ -29,10 +29,10 @@ public sealed class ResilientGoogleCalendarClient(
     private readonly GoogleResilienceOptions _options = options.Value;
 
     // ---- Full-policy (idempotent) operations ----
-    public Task<IEnumerable<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default)
+    public Task<GoogleCalendarFetch> GetCalendarsAsync(CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "GetCalendars", c => inner.GetCalendarsAsync(c), ct);
 
-    public Task<(IEnumerable<CalendarEvent> Events, string? NextSyncToken)> GetEventsAsync(
+    public Task<GoogleEventFetch> GetEventsAsync(
         string googleCalendarId, DateTimeOffset? syncWindowStart, DateTimeOffset? syncWindowEnd, string? syncToken = null, CancellationToken ct = default)
         => WithRetryAsync(RetryPolicy.Full, "GetEvents", c => inner.GetEventsAsync(googleCalendarId, syncWindowStart, syncWindowEnd, syncToken, c), ct);
 

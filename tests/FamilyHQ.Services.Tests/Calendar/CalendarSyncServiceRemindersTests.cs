@@ -223,7 +223,7 @@ public class CalendarSyncServiceRemindersTests
         var (client, repo, sut) = CreateSut(new Mock<IOutboundWriteHashCache>());
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleCalendar }, IsComplete: true));
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { localCalendar });
         repo.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
@@ -231,7 +231,7 @@ public class CalendarSyncServiceRemindersTests
         repo.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(googleCalendarId, startDate, endDate, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         repo.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, startDate, endDate, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
 
@@ -278,7 +278,7 @@ public class CalendarSyncServiceRemindersTests
             .ReturnsAsync(existing);
 
         client.Setup(c => c.GetEventsAsync(GoogleCalendarId, null, null, "tok", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { fetched }, "tok2"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { fetched }, "tok2", IsComplete: true));
 
         var capture = new RepoCapture();
         repo.Setup(r => r.UpdateEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
@@ -322,7 +322,7 @@ public class CalendarSyncServiceRemindersTests
                 It.IsAny<DateTimeOffset?>(),
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "next-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "next-token", IsComplete: true));
 
         var start = DateTimeOffset.UtcNow.AddDays(-30);
         var end   = DateTimeOffset.UtcNow.AddDays(30);

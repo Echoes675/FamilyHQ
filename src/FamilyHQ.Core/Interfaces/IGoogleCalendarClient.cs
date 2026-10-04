@@ -11,12 +11,22 @@ namespace FamilyHQ.Core.Interfaces;
 /// </remarks>
 public interface IGoogleCalendarClient
 {
-    Task<IEnumerable<CalendarInfo>> GetCalendarsAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Returns the account's calendars, and whether the answer is a complete statement of what
+    /// Google holds — see <see cref="GoogleCalendarFetch.IsComplete"/> before reading a calendar's
+    /// absence from the result as a deletion.
+    /// </summary>
+    Task<GoogleCalendarFetch> GetCalendarsAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Returns events from the given calendar. Extended properties (content-hash) are included.
+    /// <para>
+    /// The result also states whether it is a complete statement of what Google holds for that
+    /// calendar and window — see <see cref="GoogleEventFetch.IsComplete"/> before reading an event's
+    /// absence from the result as a deletion.
+    /// </para>
     /// </summary>
-    Task<(IEnumerable<CalendarEvent> Events, string? NextSyncToken)> GetEventsAsync(
+    Task<GoogleEventFetch> GetEventsAsync(
         string googleCalendarId,
         DateTimeOffset? syncWindowStart,
         DateTimeOffset? syncWindowEnd,

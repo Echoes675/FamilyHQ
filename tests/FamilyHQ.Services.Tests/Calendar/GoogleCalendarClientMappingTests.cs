@@ -117,7 +117,7 @@ public class GoogleCalendarClientMappingTests
         SetupEventsResponse(http, json);
 
         // Act
-        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+        var (events, _, _) = await sut.GetEventsAsync("cal@google.com",
             new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
             ct: CancellationToken.None);
@@ -149,7 +149,7 @@ public class GoogleCalendarClientMappingTests
         SetupEventsResponse(http, json);
 
         // Act
-        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+        var (events, _, _) = await sut.GetEventsAsync("cal@google.com",
             new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
             ct: CancellationToken.None);
@@ -181,7 +181,7 @@ public class GoogleCalendarClientMappingTests
         SetupEventsResponse(http, json);
 
         // Act
-        var (events, _) = await sut.GetEventsAsync("cal@google.com",
+        var (events, _, _) = await sut.GetEventsAsync("cal@google.com",
             new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 3, 31, 0, 0, 0, TimeSpan.Zero),
             ct: CancellationToken.None);

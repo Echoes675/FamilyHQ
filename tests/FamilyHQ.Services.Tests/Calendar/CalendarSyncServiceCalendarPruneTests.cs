@@ -2,6 +2,7 @@ using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
+using FamilyHQ.Services.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -10,9 +11,9 @@ using Xunit;
 namespace FamilyHQ.Services.Tests.Calendar;
 
 /// <summary>
-/// The obsolete-calendar prune, and the instant its verdict is taken from: a calendar counts as
-/// absent from Google only against a calendar-list fetch that was answered after the local row was
-/// already stored.
+/// The obsolete-calendar prune, and what it requires of the calendar-list fetch before it will act:
+/// the fetch must have been answered after the local row was already stored, it must report itself
+/// complete, and it must have named at least one calendar.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -31,10 +32,24 @@ namespace FamilyHQ.Services.Tests.Calendar;
 /// </para>
 /// <para>
 /// The race case below also pins the calendar that MUST still go, because an assertion that merely
-/// said "nothing was removed" would pass against a prune that removes nothing at all. The last
-/// case pins the other half of the fix: pass 1 keeps its own post-fetch snapshot, so a calendar a
-/// concurrent sync inserted is not handed to <c>AddCalendarAsync</c> a second time — the unique
-/// index on (GoogleCalendarId, UserId) would reject the insert and fail the whole account's sync.
+/// said "nothing was removed" would pass against a prune that removes nothing at all. The
+/// whole-fetch refusals cannot pin one, since they refuse the fetch outright: the incomplete case's
+/// proof is the paired test on the identical arrangement (<c>ArrangeOneCalendarGone</c>) that
+/// differs only in <c>IsComplete</c> and does remove, and the empty case additionally asserts the
+/// log line that states why nothing went.
+/// </para>
+/// <para>
+/// A complete-but-EMPTY calendar list is refused, unlike the empty-but-complete EVENT fetch the
+/// full sync's tombstone diff acts on. The reason is specific to this entity: every Google account
+/// has a primary calendar and the API lists it, so an account that holds none is unreachable —
+/// whereas acting on it would take every calendar, every event on them and their
+/// <c>SyncState</c>.
+/// </para>
+/// <para>
+/// One case pins the other half of the earlier read-ordering fix: pass 1 keeps its own post-fetch
+/// snapshot, so a calendar a concurrent sync inserted is not handed to <c>AddCalendarAsync</c> a
+/// second time — the unique index on (GoogleCalendarId, UserId) would reject the insert and fail the
+/// whole account's sync.
 /// </para>
 /// </remarks>
 public class CalendarSyncServiceCalendarPruneTests
@@ -80,17 +95,80 @@ public class CalendarSyncServiceCalendarPruneTests
     public async Task SyncAllAsync_CalendarStoredBeforeTheFetchAndAbsentFromIt_IsRemoved()
     {
         var f = new Fixture();
-        f.StoreCalendar(KeptCalendarId, KeptGoogleId, "Kept");
-        f.StoreCalendar(ObsoleteCalendarId, ObsoleteGoogleId, "Gone");
 
         // An answer that names one of the two stored calendars: the other was deleted or unshared
-        // in the Google Calendar app, and its absence is a real statement about it.
-        f.ArrangeGoogleCalendars(Fixture.GoogleCalendar(KeptCalendarId, KeptGoogleId, "Kept"));
+        // in the Google Calendar app, and its absence is a real statement about it. This arrangement
+        // is shared with the incomplete case below, which changes nothing but IsComplete — so this
+        // test is also the proof that the calendar it refuses to remove there is there to remove.
+        ArrangeOneCalendarGone(f, isComplete: true);
 
         await f.Sut.SyncAllAsync(WindowStart, WindowEnd);
 
         f.RemovedCalendarIds.Should().Contain(ObsoleteCalendarId);
         f.StoredGoogleCalendarIds.Should().BeEquivalentTo([KeptGoogleId]);
+    }
+
+    // ── When the calendar list is no statement of the account ─────────────────
+
+    [Fact]
+    public async Task SyncAllAsync_WhenTheCalendarListReportsItselfIncomplete_RemovesNothing()
+    {
+        var f = new Fixture();
+
+        // GetCalendarsAsync took its calendarList page cap with a page token still outstanding, or
+        // a page's body yielded no readable `items`. Either way it holds fewer calendars than Google
+        // listed and cannot say which are missing, so no local calendar is judgeable against it.
+        ArrangeOneCalendarGone(f, isComplete: false);
+
+        await f.Sut.SyncAllAsync(WindowStart, WindowEnd);
+
+        f.RemovedCalendarIds.Should().BeEmpty();
+        f.StoredGoogleCalendarIds.Should().BeEquivalentTo([KeptGoogleId, ObsoleteGoogleId]);
+        f.Logger.Records.Should().ContainSingle(r =>
+            r.Level == LogLevel.Warning && r.Message.Contains("reported the fetch incomplete"));
+        // Its control is SyncAllAsync_CalendarStoredBeforeTheFetchAndAbsentFromIt_IsRemoved, which
+        // is this arrangement with IsComplete: true and does remove the obsolete calendar.
+    }
+
+    [Fact]
+    public async Task SyncAllAsync_WhenTheCalendarListIsCompleteButEmpty_RemovesNothing()
+    {
+        var f = new Fixture();
+        f.StoreCalendar(KeptCalendarId, KeptGoogleId, "Kept");
+        f.StoreCalendar(ObsoleteCalendarId, ObsoleteGoogleId, "Gone");
+
+        // A complete answer naming NO calendars. Every Google account has a primary calendar and the
+        // API lists it in calendarList, so this is a state the application cannot legitimately
+        // reach — while acting on it removes every calendar the family has, every event on them and
+        // their SyncState, leaving the kiosk blank. This is the one place the prune declines to act
+        // on what a complete answer says, and it is a deliberate departure from the full sync's
+        // event-level diff, which DOES tombstone on an empty-and-complete fetch.
+        f.ArrangeGoogleCalendarFetch(isComplete: true);
+
+        await f.Sut.SyncAllAsync(WindowStart, WindowEnd);
+
+        f.RemovedCalendarIds.Should().BeEmpty();
+        f.StoredGoogleCalendarIds.Should().BeEquivalentTo([KeptGoogleId, ObsoleteGoogleId]);
+
+        // Stated, not silent: a reader of Seq must be able to see why a sync removed nothing.
+        f.Logger.Records.Should().ContainSingle(r =>
+            r.Level == LogLevel.Warning && r.Message.Contains("complete but empty Google calendar list"));
+
+        // And the sync still finished. Refusing the prune leaves the local calendars in place while
+        // this run has synced none of them, so the first-login auto-designation below has no
+        // calendar to pick — it must skip rather than throw out of the whole sync.
+        f.Repo.Verify(r => r.MarkCalendarAsSharedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// The arrangement shared by the completeness pair above so neither half can drift from the
+    /// other: two stored calendars, and a fetch naming only one of them.
+    /// </summary>
+    private static void ArrangeOneCalendarGone(Fixture f, bool isComplete)
+    {
+        f.StoreCalendar(KeptCalendarId, KeptGoogleId, "Kept");
+        f.StoreCalendar(ObsoleteCalendarId, ObsoleteGoogleId, "Gone");
+        f.ArrangeGoogleCalendarFetch(isComplete, Fixture.GoogleCalendar(KeptCalendarId, KeptGoogleId, "Kept"));
     }
 
     [Fact]
@@ -126,6 +204,9 @@ public class CalendarSyncServiceCalendarPruneTests
     {
         public readonly Mock<IGoogleCalendarClient> Google = new();
         public readonly Mock<ICalendarRepository> Repo = new();
+        // A real recording logger rather than a mock: the empty-list refusal is a stated decision,
+        // and the statement is part of what this suite proves.
+        public readonly RecordingLogger<CalendarSyncService> Logger = new();
         public readonly CalendarSyncService Sut;
 
         public readonly List<Guid> RemovedCalendarIds = [];
@@ -177,13 +258,13 @@ public class CalendarSyncServiceCalendarPruneTests
             Google.Setup(g => g.GetEventsAsync(
                     It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset?>(),
                     It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((new List<CalendarEvent>(), "next-token"));
+                .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "next-token", IsComplete: true));
 
             Sut = new CalendarSyncService(
                 Google.Object,
                 Repo.Object,
                 tagParser.Object,
-                new Mock<ILogger<CalendarSyncService>>().Object,
+                Logger,
                 new Mock<ITokenStore>().Object,
                 currentUser.Object,
                 new Mock<ISyncFailureRepository>().Object,
@@ -204,10 +285,17 @@ public class CalendarSyncServiceCalendarPruneTests
         public static CalendarInfo GoogleCalendar(Guid id, string googleCalendarId, string displayName) =>
             new() { Id = id, GoogleCalendarId = googleCalendarId, DisplayName = displayName };
 
+        /// <summary>
+        /// A COMPLETE calendar list, which is what GetCalendarsAsync returns when it reads every
+        /// page Google offers — the normal answer, and the only one that authorises the prune.
+        /// </summary>
         public void ArrangeGoogleCalendars(params CalendarInfo[] calendars) =>
+            ArrangeGoogleCalendarFetch(isComplete: true, calendars);
+
+        public void ArrangeGoogleCalendarFetch(bool isComplete, params CalendarInfo[] calendars) =>
             Google.Setup(g => g.GetCalendarsAsync(It.IsAny<CancellationToken>()))
                 .Callback(() => _afterCalendarsFetched?.Invoke())
-                .ReturnsAsync(calendars);
+                .ReturnsAsync(new GoogleCalendarFetch(calendars, isComplete));
 
         /// <summary>
         /// Runs when the calendar list is answered, to model a concurrent sync's insert landing

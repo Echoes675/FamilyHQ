@@ -72,10 +72,11 @@ public class GoogleCalendarClientTests
         var result = await systemUnderTest.GetCalendarsAsync();
 
         // Assert
-        result.Should().HaveCount(1);
-        result.First().GoogleCalendarId.Should().Be("cal1");
-        result.First().DisplayName.Should().Be("My Cal");
-        result.First().Color.Should().Be("#ff0000");
+        result.Calendars.Should().HaveCount(1);
+        result.IsComplete.Should().BeTrue("a single page with no nextPageToken is the whole answer");
+        result.Calendars.First().GoogleCalendarId.Should().Be("cal1");
+        result.Calendars.First().DisplayName.Should().Be("My Cal");
+        result.Calendars.First().Color.Should().Be("#ff0000");
     }
 
     [Fact]
@@ -1969,6 +1970,501 @@ public class GoogleCalendarClientTests
         // Assert
         capturedRequest!.RequestUri!.ToString().Should().Contain("maxResults=250");
     }
+
+    // ── Fetch completeness ────────────────────────────────────────────────────
+    //
+    // Both fetches can come back short of what Google holds without failing, and a caller that
+    // reads an absence as a deletion needs to be able to tell. These cases pin the value of
+    // IsComplete at each of the ways that happens, and — just as importantly — at the shapes that
+    // are NOT a shortfall, because an answer wrongly marked incomplete would stop a legitimate
+    // prune just as silently.
+
+    [Fact]
+    public async Task GetEventsAsync_WhenEveryPageWasRead_ReportsTheFetchComplete()
+    {
+        // Arrange
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var eventsCallCount = 0;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                eventsCallCount++;
+                var isLastPage = eventsCallCount >= 2;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = isLastPage ? null : "page-2",
+                        nextSyncToken = isLastPage ? "final-sync-token" : null,
+                        items = new[]
+                        {
+                            new { id = $"event-{eventsCallCount}", status = "confirmed", summary = "Event",
+                                  start = new { dateTime = "2026-03-01T10:00:00Z" }, end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                        }
+                    }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // Act
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        // Assert
+        result.Events.Should().HaveCount(2);
+        result.IsComplete.Should().BeTrue(
+            "Google offered two pages and both were read, so nothing is missing from this answer");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenTheWindowIsGenuinelyEmpty_ReportsTheFetchComplete()
+    {
+        // The case that must NOT be marked incomplete. An empty window is a real answer about
+        // Google's state, and it is the only thing that authorises a caller to tombstone the rows
+        // it holds for that window — so "empty" and "could not be read" have to differ here.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "sync-token",
+                    items = Array.Empty<object>()
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Should().BeEmpty();
+        result.IsComplete.Should().BeTrue(
+            "an empty items array was read successfully — Google holds nothing in this window");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAPageBodyDoesNotDeserialise_ReportsTheFetchIncomplete()
+    {
+        // The dangerous shape, and the reason IsComplete exists: a 200 whose body yields no event
+        // list is skipped rather than thrown on, so this fetch returns the SAME empty collection as
+        // the genuinely-empty window above while proving nothing about what Google holds.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("null")
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Should().BeEmpty("a skipped page contributes nothing");
+        result.IsComplete.Should().BeFalse(
+            "the page was not read, so this empty answer is not evidence that the window is empty");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenTheBodyCarriesNoItemsArray_ReportsTheFetchIncomplete()
+    {
+        // The second unreadable shape, and the one that used to THROW. GoogleApiEventList.Items is a
+        // non-nullable positional parameter with no default, so a 200 whose body has no `items` key
+        // deserialises to a non-null record holding null there: `if (result != null)` was taken and
+        // `foreach (var item in result.Items)` raised a NullReferenceException out of the method.
+        // GetCalendarsAsync already checked the PROPERTY rather than the record; this is the events
+        // path brought into line with it.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("""{"nextSyncToken":"sync-token"}""")
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Should().BeEmpty();
+        result.IsComplete.Should().BeFalse(
+            "a body with no items array is a page that yielded nothing, not a window Google has emptied");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAMidListingPageIsUnreadable_StopsRatherThanRequestingThatPageAgain()
+    {
+        // pageToken is only ever assigned from a page that READ, so a page that does not deserialise
+        // leaves it pointing at itself. Without a break the do/while re-requests the same page until
+        // the page cap — up to MaxSyncPages calls that can only fail the same way. GetCalendarsAsync
+        // already stopped; this pins the events path doing the same.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var requestedPageTokens = new List<string?>();
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                var uri = req.RequestUri!.ToString();
+                var isSecondPage = uri.Contains("pageToken=page-2");
+                requestedPageTokens.Add(isSecondPage ? "page-2" : null);
+
+                // Page 1 reads and offers a second page; page 2's body yields no event list.
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = isSecondPage
+                        ? new StringContent("null")
+                        : new StringContent(JsonSerializer.Serialize(new
+                        {
+                            nextPageToken = "page-2",
+                            items = new[]
+                            {
+                                new { id = "page-1-event", status = "confirmed", summary = "Event",
+                                      start = new { dateTime = "2026-03-01T10:00:00Z" },
+                                      end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                            }
+                        }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        requestedPageTokens.Should().Equal([null, "page-2"],
+            "the unreadable page is requested once and the loop then stops — re-requesting it would "
+            + "cost up to MaxSyncPages identical failures and buy nothing a full sync will not do better");
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["page-1-event"],
+            "the page that did read still contributes its events");
+        result.IsComplete.Should().BeFalse();
+        result.NextSyncToken.Should().BeNull(
+            "no page carried one, so the caller stores null and its next sync is a full one");
+    }
+
+    // The two ITEM-level shortfalls. These are the causes that would otherwise be invisible: the
+    // page read perfectly, so the only thing distinguishing the answer from a complete one is
+    // IsComplete. Each keeps a good item alongside the bad one, so "incomplete" cannot be confused
+    // with "nothing came back".
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAnItemsStartDoesNotResolve_ReportsTheFetchIncompleteAndOmitsOnlyThatItem()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "sync-token",
+                    items = new object[]
+                    {
+                        new { id = "good-event", status = "confirmed", summary = "Fine",
+                              start = new { dateTime = "2026-03-01T10:00:00Z" },
+                              end = new { dateTime = "2026-03-01T11:00:00Z" } },
+                        // An all-day date that is not an RFC 3339 full-date, so GoogleAllDayDate
+                        // cannot resolve it and the item is skipped rather than coerced.
+                        new { id = "unresolvable-start", status = "confirmed", summary = "Dropped",
+                              start = new { date = "01/03/2026" },
+                              end = new { date = "2026-03-02" } }
+                    }
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["good-event"],
+            "the unusable item is skipped so one bad event cannot stop the calendar syncing");
+        result.IsComplete.Should().BeFalse(
+            "Google named an event this answer does not, so absence from it is not evidence of deletion — "
+            + "a prune reading this as complete would delete that event's row, and every later fetch "
+            + "drops the same item again so it would never come back");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenAnAllDayExceptionsOriginalStartTimeDoesNotResolve_ReportsTheFetchIncompleteAndOmitsOnlyThatItem()
+    {
+        // Reachable on its own, which is why it is a separate case: start and end both resolve here,
+        // so the earlier skip does not fire. Only an exception instance carries originalStartTime,
+        // and only an all-day one carries it as a `date`.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    nextSyncToken = "sync-token",
+                    items = new object[]
+                    {
+                        // A well-formed all-day exception, to prove the mapping itself is fine and
+                        // that only the malformed sibling is lost.
+                        new { id = "series_20260301", status = "confirmed", summary = "Fine",
+                              start = new { date = "2026-03-01" },
+                              end = new { date = "2026-03-02" },
+                              recurringEventId = "series",
+                              originalStartTime = new { date = "2026-03-01" } },
+                        new { id = "series_20260308", status = "confirmed", summary = "Dropped",
+                              start = new { date = "2026-03-08" },
+                              end = new { date = "2026-03-09" },
+                              recurringEventId = "series",
+                              originalStartTime = new { date = "08/03/2026" } }
+                    }
+                }))
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(30));
+
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["series_20260301"]);
+        result.IsComplete.Should().BeFalse(
+            "an exception instance whose original slot cannot be resolved is dropped, so this answer "
+            + "omits an occurrence Google still holds");
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenPaginationExceedsCap_ReportsTheFetchIncomplete()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var eventsCallCount = 0;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                eventsCallCount++;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = "always-more",
+                        items = new[]
+                        {
+                            new { id = $"event-{eventsCallCount}", status = "confirmed", summary = "Event",
+                                  start = new { dateTime = "2026-03-01T10:00:00Z" }, end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                        }
+                    }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        result.Events.Should().HaveCount(GoogleCalendarClient.MaxSyncPages);
+        result.IsComplete.Should().BeFalse(
+            "the cap was reached with a page token still outstanding, so Google has more to give");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenTheListIsPaged_FollowsNextPageTokenAndReturnsEveryPage()
+    {
+        // Arrange
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var requestedUris = new List<string>();
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                requestedUris.Add(req.RequestUri!.ToString());
+                var isSecondPage = requestedUris.Count >= 2;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = isSecondPage ? null : "page-2-token",
+                        items = new[]
+                        {
+                            new { id = isSecondPage ? "cal-on-page-2" : "cal-on-page-1", summary = "A Calendar" }
+                        }
+                    }))
+                });
+            });
+
+        // Act
+        var result = await systemUnderTest.GetCalendarsAsync();
+
+        // Assert
+        result.Calendars.Select(c => c.GoogleCalendarId)
+            .Should().Equal(new[] { "cal-on-page-1", "cal-on-page-2" },
+                "a calendar past the first page is one the obsolete-calendar prune would otherwise remove");
+        result.IsComplete.Should().BeTrue("both pages were read and the second offered no further token");
+        requestedUris.Should().HaveCount(2);
+        requestedUris[1].Should().Contain("pageToken=page-2-token");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenTheBodyIsWhollyNull_ReportsTheFetchIncomplete()
+    {
+        // Before this fetch could report completeness, this shape produced an empty list that was
+        // indistinguishable from "the account has no calendars" — and the obsolete-calendar prune
+        // reads that as authority to remove every calendar the family has.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("null")
+            });
+
+        var result = await systemUnderTest.GetCalendarsAsync();
+
+        result.Calendars.Should().BeEmpty();
+        result.IsComplete.Should().BeFalse(
+            "nothing was read, so this empty list is not a statement that the account holds no calendars");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenTheBodyCarriesNoItemsArray_ReportsTheFetchIncomplete()
+    {
+        // GoogleApiCalendarList.Items is a non-nullable positional parameter with no default, so a
+        // body lacking `items` leaves it null. This pins that the null check is on the PROPERTY and
+        // not merely on the record: reading the property straight through threw a
+        // NullReferenceException out of the whole sync instead.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent("{}")
+            });
+
+        var result = await systemUnderTest.GetCalendarsAsync();
+
+        result.Calendars.Should().BeEmpty();
+        result.IsComplete.Should().BeFalse("no items array was read, so the answer states nothing");
+    }
+
+    [Fact]
+    public async Task GetCalendarsAsync_WhenPaginationExceedsCap_ReportsTheFetchIncomplete()
+    {
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var calendarListCallCount = 0;
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("users/me/calendarList")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) =>
+            {
+                calendarListCallCount++;
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        nextPageToken = "always-more",
+                        items = new[] { new { id = $"cal-{calendarListCallCount}", summary = "A Calendar" } }
+                    }))
+                });
+            });
+
+        var result = await systemUnderTest.GetCalendarsAsync();
+
+        calendarListCallCount.Should().Be(GoogleCalendarClient.MaxCalendarListPages,
+            "the loop must stop rather than follow a token that never clears");
+        result.Calendars.Should().HaveCount(GoogleCalendarClient.MaxCalendarListPages);
+        result.IsComplete.Should().BeFalse(
+            "the cap was reached with a page token still outstanding, so Google has more to give");
+    }
+
+    /// <summary>
+    /// Answers the token-refresh leg of every request, which each test needs and none is about.
+    /// </summary>
+    private static void StubTokenRefresh(Mock<HttpMessageHandler> http) =>
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("auth.test.com")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((_, _) => Task.FromResult(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(new { access_token = "tok", expires_in = 3600, token_type = "Bearer" }))
+            }));
 
     private static (Mock<HttpMessageHandler> HttpMock, Mock<ITokenStore> TokenMock, GoogleCalendarClient systemUnderTest) CreateSut(
         string? timeZoneZone = null)

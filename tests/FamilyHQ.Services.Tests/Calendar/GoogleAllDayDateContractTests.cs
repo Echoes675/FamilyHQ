@@ -49,7 +49,7 @@ public class GoogleAllDayDateContractTests
         var (http, sut, _) = CreateSut();
         ArrangeList(http, AllDayItem("evt-allday", InboundStartDate, InboundEndDate));
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
 
         var evt = events.Should().ContainSingle().Subject;
         evt.IsAllDay.Should().BeTrue();
@@ -70,7 +70,7 @@ public class GoogleAllDayDateContractTests
         item["originalStartTime"] = new { date = InboundStartDate };
         ArrangeList(http, item);
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
 
         var originalStart = events.Should().ContainSingle().Subject.OriginalStartTime;
         originalStart!.Value.Offset.Should().Be(TimeSpan.Zero);
@@ -119,7 +119,7 @@ public class GoogleAllDayDateContractTests
             AllDayItem("evt-bad", "15/06/2026", InboundEndDate),
             AllDayItem("evt-good", InboundStartDate, InboundEndDate));
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
 
         events.Should().ContainSingle().Which.GoogleEventId.Should().Be("evt-good");
     }
@@ -153,7 +153,7 @@ public class GoogleAllDayDateContractTests
         item["originalStartTime"] = new { date = "15/06/2026" };
         ArrangeList(http, item);
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
 
         events.Should().BeEmpty();
     }
@@ -194,7 +194,7 @@ public class GoogleAllDayDateContractTests
             ["end"] = new { dateTime = "2026-06-15T10:30:00+01:00", timeZone = "Europe/Dublin" }
         });
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
 
         var evt = events.Should().ContainSingle().Subject;
         evt.IsAllDay.Should().BeFalse();
@@ -215,7 +215,7 @@ public class GoogleAllDayDateContractTests
         var (http, sut, _) = CreateSut();
         ArrangeList(http, AllDayItem("evt-allday", InboundStartDate, InboundEndDate));
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
         var synced = events.Single();
 
         // Exactly what CalendarEventConfiguration applies on the way to the database:
@@ -246,7 +246,7 @@ public class GoogleAllDayDateContractTests
         var (http, sut, _) = CreateSut();
         ArrangeList(http, AllDayItem("evt-allday", InboundStartDate, InboundEndDate));
 
-        var (events, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
+        var (events, _, _) = await sut.GetEventsAsync("cal-1", Window.Start, Window.End, ct: CancellationToken.None);
         var synced = events.Single();
 
         var persisted = new CalendarEvent

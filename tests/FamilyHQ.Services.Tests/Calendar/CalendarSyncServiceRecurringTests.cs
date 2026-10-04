@@ -44,7 +44,7 @@ public class CalendarSyncServiceRecurringTests
             })
             .ToList();
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((instances.Cast<CalendarEvent>().ToList(), "tok"));
+            .ReturnsAsync(new GoogleEventFetch(instances.Cast<CalendarEvent>().ToList(), "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
@@ -78,7 +78,7 @@ public class CalendarSyncServiceRecurringTests
 
         var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { instance }, "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string> { [SeriesId] = "RRULE:FREQ=WEEKLY;BYDAY=MO" });
@@ -109,7 +109,7 @@ public class CalendarSyncServiceRecurringTests
 
         var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { instance }, "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
@@ -141,7 +141,7 @@ public class CalendarSyncServiceRecurringTests
 
         var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { instance }, "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
@@ -174,7 +174,7 @@ public class CalendarSyncServiceRecurringTests
 
         var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { instance }, "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
@@ -207,7 +207,7 @@ public class CalendarSyncServiceRecurringTests
         // exactly as GoogleCalendarClient maps a status=="cancelled" item.
         var cancelled = new CalendarEvent { GoogleEventId = "inst-gone", Title = "CANCELLED_TOMBSTONE", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { cancelled }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { cancelled }, "tok", IsComplete: true));
 
         var trackedRow = new CalendarEvent { Id = localRowId, GoogleEventId = "inst-gone", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         repo.Setup(r => r.GetEventByGoogleEventIdAsync("inst-gone", It.IsAny<CancellationToken>()))
@@ -246,7 +246,7 @@ public class CalendarSyncServiceRecurringTests
             ContentHash            = "hash-abc"
         };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { echoed }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { echoed }, "tok", IsComplete: true));
 
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
@@ -278,7 +278,7 @@ public class CalendarSyncServiceRecurringTests
 
         var incoming = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, null, null, "incremental", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { incoming }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { incoming }, "tok", IsComplete: true));
 
         // Existing tracked row with a known RRULE from an earlier sync.
         var existingRow = new CalendarEvent
@@ -347,7 +347,7 @@ public class CalendarSyncServiceRecurringTests
 
         var instance = new CalendarEvent { GoogleEventId = "inst-0", Title = "Weekly", GoogleRecurringEventId = SeriesId };
         client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent> { instance }, "tok"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent> { instance }, "tok", IsComplete: true));
         repo.Setup(r => r.GetStoredRecurrenceRulesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string>());
 

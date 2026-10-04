@@ -191,7 +191,7 @@ public class CalendarSyncServiceRenameTests
         repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(savedRowCount);
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleCalendar });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleCalendar }, IsComplete: true));
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { localCalendar });
         repo.Setup(r => r.GetCalendarByIdAsync(MemberCalendarId, It.IsAny<CancellationToken>()))
@@ -200,7 +200,7 @@ public class CalendarSyncServiceRenameTests
             .ReturnsAsync((SyncState?)null);
         client.Setup(c => c.GetEventsAsync(
                 MemberGoogleCalendarId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "sync-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
         repo.Setup(r => r.GetEventsByOwnerCalendarAsync(
                 MemberCalendarId, WindowStart, WindowEnd, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarEvent>());
@@ -244,7 +244,7 @@ public class CalendarSyncServiceRenameTests
         var (client, repo, _, sut) = CreateSut(logger: null, tagParser: new MemberTagParser());
 
         client.Setup(c => c.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { googleMember, googleShared });
+            .ReturnsAsync(new GoogleCalendarFetch(new List<CalendarInfo> { googleMember, googleShared }, IsComplete: true));
         // The same instances are returned on every read, so the refresh's in-place mutation is
         // visible to pass 2 exactly as a committed row would be.
         repo.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
@@ -266,10 +266,10 @@ public class CalendarSyncServiceRenameTests
         // cannot mask what the tag resolved to.
         client.Setup(c => c.GetEventsAsync(
                 MemberGoogleCalendarId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>(), "member-token"));
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "member-token", IsComplete: true));
         client.Setup(c => c.GetEventsAsync(
                 SharedGoogleCalendarId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((new List<CalendarEvent>
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>
             {
                 new()
                 {
@@ -279,7 +279,7 @@ public class CalendarSyncServiceRenameTests
                     Start         = WindowStart.AddDays(3),
                     End           = WindowStart.AddDays(3).AddHours(1)
                 }
-            }, "shared-token"));
+            }, "shared-token", IsComplete: true));
 
         CalendarEvent? added = null;
         repo.Setup(r => r.AddEventAsync(It.IsAny<CalendarEvent>(), It.IsAny<CancellationToken>()))
