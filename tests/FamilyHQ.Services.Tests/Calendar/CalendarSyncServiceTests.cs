@@ -1253,6 +1253,85 @@ public class CalendarSyncServiceTests
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
     }
 
+    // ── An incomplete fetch must not advance the sync token ───────────────────
+    //
+    // Persisting Google's nextSyncToken declares the local rows in step with Google up to that
+    // point, so the next sync asks only for what changed since — and Google never re-sends an
+    // unchanged event. Storing it after an incomplete fetch therefore makes whatever that fetch
+    // missed missing PERMANENTLY, until a 410 happens to force a full sync. It is the mirror of the
+    // prune hazard and the worse half of it: refusing to prune keeps a row that should go, whereas
+    // advancing the token loses an event that is really there.
+    //
+    // A Theory rather than two Facts, deliberately: Google supplies the SAME token on both rows, so
+    // neither half can drift into arranging no token for the other to pass against.
+
+    [Theory]
+    [InlineData(true, "next-token")]
+    [InlineData(false, null)]
+    public async Task SyncAsync_StoresTheSyncTokenGoogleSuppliedOnlyWhenTheFetchWasComplete(
+        bool isComplete, string? expectedStoredToken)
+    {
+        // Arrange
+        var (client, calendarRepository, _, _, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-token");
+        var calendarId       = Guid.Parse("d1111111-1111-1111-1111-111111111111");
+        var googleCalendarId = "token@google.com";
+        var start            = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+        var end              = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
+        var calendar = new CalendarInfo
+        {
+            Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "Alice"
+        };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        // No stored state, so this is a full sync and the state is ADDED rather than saved.
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null);
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(
+                calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent>());
+        calendarRepository.Setup(r => r.GetEventByGoogleEventIdAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CalendarEvent?)null);
+
+        SyncState? stored = null;
+        calendarRepository.Setup(r => r.AddSyncStateAsync(It.IsAny<SyncState>(), It.IsAny<CancellationToken>()))
+            .Callback((SyncState s, CancellationToken _) => stored = s);
+
+        // Google answers with a token either way — the only difference between the two rows is
+        // whether the client could say the answer was whole.
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventFetch(
+                new List<CalendarEvent> { new() { GoogleEventId = "evt-1", Title = "A" } },
+                "next-token",
+                isComplete));
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert
+        stored.Should().NotBeNull("the sync persists its state either way — only the token differs");
+        stored!.SyncToken.Should().Be(expectedStoredToken, isComplete
+            ? "a complete fetch has earned the token, so the next sync can ask for deltas"
+            : "a null token makes the next sync a full one, which is the only thing that brings back "
+              + "an event this fetch missed — Google never re-sends an unchanged event");
+
+        // RemindersSyncedAt rides the same condition: it records that the one reminder-backfill
+        // sync completed, and a partial fetch read no reminders for the events it did not return.
+        // Leaving it null costs no extra full sync, because the token above is already null.
+        if (isComplete)
+            stored.RemindersSyncedAt.Should().NotBeNull("a complete fetch did backfill every event's reminders");
+        else
+            stored.RemindersSyncedAt.Should().BeNull("an incomplete fetch has not finished the backfill");
+
+        // LastSyncedAt is stamped either way: a sync did run, and its only reader asks when rather
+        // than how completely.
+        stored.LastSyncedAt.Should().NotBeNull();
+    }
+
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()
     {

@@ -110,7 +110,21 @@
   intended consequence of the name no longer existing, not a separate defect.
 - **SyncState.RemindersSyncedAt** (FHQ-189): when this calendar was first synced with `reminders` in
   the field mask. Null forces exactly one full sync, because incremental sync never re-sends an
-  unchanged event and the events already in production would otherwise never gain reminders.
+  unchanged event and the events already in production would otherwise never gain reminders. Stamped
+  only after a **complete** fetch (`GoogleEventFetch.IsComplete`), alongside the sync token below: a
+  partial fetch read no reminders for the events it did not return, so stamping would claim work that
+  was not done.
+- **SyncState.SyncToken** — and the rule that an incomplete fetch must not advance it. Storing
+  Google's `nextSyncToken` declares the local rows in step with Google up to that point, so the next
+  fetch asks only for changes since it, and Google never re-sends an unchanged event. Storing it
+  after a fetch that `IsComplete == false` therefore turns a gap into a **permanent** one, until a
+  410 happens to force a full sync. `SyncCoreAsync` stores null instead, which is the same state the
+  `SyncTokenExpiredException` handler leaves behind and makes the next sync a full one. This is the
+  mirror of the prune rule above and the more damaging half of it: refusing to prune keeps a row that
+  should go, whereas advancing the token loses an event that is really there. In practice the shape
+  that reaches this with a token to discard is an **item-level** skip, since a listing that finished
+  is the only one whose final page carried a token — but the test is `IsComplete`, not the cause, so
+  it does not depend on that.
 - **DayTheme**: Stores the 4 time-of-day period boundaries (MorningStart, DaytimeStart, EveningStart, NightStart as TimeOnly) for a given Date, **per kiosk** — unique on (UserId, Date) since FHQ-177. Calculated once per day per kiosk by DayThemeSchedulerService from sunrise/sunset at that kiosk's **saved LocationSetting**. A kiosk with no saved location gets no row and keeps its default theme: the boundaries used to come from a server-side IP lookup, which geolocates the hosting VPS rather than the family, so guessing is choosing a known-wrong answer.
 - **LocationSetting**: Stores the user's configured location (PlaceName, Latitude, Longitude). One row per UserId; when absent, the API falls back to IP-based geolocation.
 - **DisplaySetting**: Stores user display preferences (SurfaceMultiplier as `double` 0–1.0, OpaqueSurfaces as `bool`, TransitionDurationSecs as `int`, ThemeSelection as `string`). One row per UserId. ThemeSelection is `"auto"` (time-of-day transitions) or a period name (`"morning"`, `"daytime"`, `"evening"`, `"night"`).

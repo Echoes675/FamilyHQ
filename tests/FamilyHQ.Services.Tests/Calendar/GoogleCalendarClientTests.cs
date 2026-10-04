@@ -2121,6 +2121,62 @@ public class GoogleCalendarClientTests
             "a body with no items array is a page that yielded nothing, not a window Google has emptied");
     }
 
+    [Fact]
+    public async Task GetEventsAsync_WhenAMidListingPageIsUnreadable_StopsRatherThanRequestingThatPageAgain()
+    {
+        // pageToken is only ever assigned from a page that READ, so a page that does not deserialise
+        // leaves it pointing at itself. Without a break the do/while re-requests the same page until
+        // the page cap — up to MaxSyncPages calls that can only fail the same way. GetCalendarsAsync
+        // already stopped; this pins the events path doing the same.
+        var (http, tokenStore, systemUnderTest) = CreateSut();
+        tokenStore.Setup(s => s.GetRefreshTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync("valid-refresh-token");
+        StubTokenRefresh(http);
+
+        var requestedPageTokens = new List<string?>();
+        http.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(req => req.RequestUri!.ToString().Contains("/events")),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                var uri = req.RequestUri!.ToString();
+                var isSecondPage = uri.Contains("pageToken=page-2");
+                requestedPageTokens.Add(isSecondPage ? "page-2" : null);
+
+                // Page 1 reads and offers a second page; page 2's body yields no event list.
+                return Task.FromResult(new HttpResponseMessage
+                {
+                    StatusCode = HttpStatusCode.OK,
+                    Content = isSecondPage
+                        ? new StringContent("null")
+                        : new StringContent(JsonSerializer.Serialize(new
+                        {
+                            nextPageToken = "page-2",
+                            items = new[]
+                            {
+                                new { id = "page-1-event", status = "confirmed", summary = "Event",
+                                      start = new { dateTime = "2026-03-01T10:00:00Z" },
+                                      end = new { dateTime = "2026-03-01T11:00:00Z" } }
+                            }
+                        }))
+                });
+            });
+
+        var now = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var result = await systemUnderTest.GetEventsAsync("cal1", now.AddDays(-1), now.AddDays(1));
+
+        requestedPageTokens.Should().Equal([null, "page-2"],
+            "the unreadable page is requested once and the loop then stops — re-requesting it would "
+            + "cost up to MaxSyncPages identical failures and buy nothing a full sync will not do better");
+        result.Events.Select(e => e.GoogleEventId).Should().BeEquivalentTo(["page-1-event"],
+            "the page that did read still contributes its events");
+        result.IsComplete.Should().BeFalse();
+        result.NextSyncToken.Should().BeNull(
+            "no page carried one, so the caller stores null and its next sync is a full one");
+    }
+
     // The two ITEM-level shortfalls. These are the causes that would otherwise be invisible: the
     // page read perfectly, so the only thing distinguishing the answer from a complete one is
     // IsComplete. Each keeps a good item alongside the bad one, so "incomplete" cannot be confused

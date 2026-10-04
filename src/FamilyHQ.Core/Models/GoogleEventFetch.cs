@@ -15,12 +15,25 @@ namespace FamilyHQ.Core.Models;
 /// keeping the last non-null one, so this is the last page's answer and not "the last answer there
 /// was". In practice Google sends the token only on the final page of a listing, so the two readings
 /// coincide; the distinction is stated because the code makes the first one, not the second.
+/// <para>
+/// <b>Do not persist this when <see cref="IsComplete"/> is false</b>, whatever value it carries —
+/// see that member for why.
+/// </para>
 /// </param>
 /// <param name="IsComplete">
 /// <b>False means this result is NOT a complete statement of what Google holds, so absence from
 /// <see cref="Events"/> is not evidence that Google has deleted anything.</b> A caller that turns
 /// absence into a delete — a tombstone diff, a prune — must refuse to act when this is false; one
 /// that only upserts what it was given can ignore it.
+/// <para>
+/// <b>It also forbids advancing the sync token.</b> Persisting <see cref="NextSyncToken"/> declares
+/// the local rows in step with Google up to that point, so the next fetch asks only for changes
+/// since — and Google never re-sends an unchanged event. Storing it after an incomplete fetch turns
+/// a gap into a permanent one, which is the mirror of the deletion hazard above and the more
+/// damaging half: refusing to prune keeps a row that should go, whereas advancing the token loses an
+/// event that is really there. <c>CalendarSyncService.SyncCoreAsync</c> therefore stores null when
+/// this is false, which makes its next sync a full one.
+/// </para>
 /// <para>
 /// Three things make it false, and all of them can happen without the call failing:
 /// </para>

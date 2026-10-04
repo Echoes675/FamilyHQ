@@ -427,16 +427,17 @@ public class GoogleCalendarClient : IGoogleCalendarClient
                 // A Google PRIMARY calendar's id IS the account's email address, so it never goes to
                 // Seq verbatim; this client has no FamilyHQ-side calendar row to name instead, so it
                 // logs the redactor's stable token.
-                //
-                // Deliberately NOT "returning what we have": unlike GetCalendarsAsync this branch
-                // does not break, so the loop continues. pageToken is unchanged here, which means a
-                // mid-pagination failure re-requests the same page until the page cap stops it —
-                // pre-existing behaviour, separately ticketed, and left alone.
                 _logger.LogWarning(
                     "GetEventsAsync could not read an event list from page {PageNumber} for calendar " +
-                    "{CalendarIdToken}; that page is skipped and the fetch is reported incomplete " +
-                    "({EventCount} events collected so far).",
+                    "{CalendarIdToken}; returning the {EventCount} events collected so far as an incomplete answer.",
                     pageCount + 1, _piiRedactor.Redact(googleCalendarId), events.Count);
+
+                // Stop, rather than loop. pageToken is only ever assigned from a page that read, so
+                // continuing would re-request THIS page until the page cap — up to MaxSyncPages
+                // calls that can only fail the same way. Nothing is gained by pressing on past the
+                // gap either: the page's events are already lost, IsComplete already says so, and
+                // the caller's response is a full sync, which re-reads everything anyway.
+                break;
             }
 
             pageCount++;

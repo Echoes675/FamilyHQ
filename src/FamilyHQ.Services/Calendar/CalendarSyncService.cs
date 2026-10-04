@@ -237,9 +237,14 @@ public class CalendarSyncService(
         // FHQ-189: a calendar that has never been synced WITH reminders in the field mask is forced
         // through one full sync, even though its token is still valid. Incremental sync never
         // re-sends an unchanged event, so the events already in production would otherwise never
-        // gain their reminders. Stamped below once the sync succeeds, so this happens exactly once
-        // per calendar. This is the same code path a Google 410 already exercises.
+        // gain their reminders. Stamped below once a COMPLETE fetch succeeds, so for virtually every
+        // calendar this happens exactly once — the exception being one that never manages a complete
+        // fetch, which repeats it each run and is correct to. This is the same code path a Google 410
+        // already exercises.
         bool needsReminderBackfill = syncState.RemindersSyncedAt is null;
+        // Either unset forces a full sync, and an incomplete fetch clears the token below, so this is
+        // also how a fetch that came back short gets re-read in full rather than deltas-only from a
+        // baseline with a hole in it.
         bool isFullSync = string.IsNullOrEmpty(syncState.SyncToken) || needsReminderBackfill;
 
         if (needsReminderBackfill)
@@ -516,11 +521,43 @@ public class CalendarSyncService(
                 }
             }
 
-            syncState.SyncToken    = fetch.NextSyncToken;
+            // Persisting a sync token is the strongest statement this service makes: it tells the
+            // next sync "the local rows match Google up to here, so send only what changed since".
+            // An incomplete fetch has not earned it. Taking the token anyway makes the next sync
+            // incremental from a baseline known to have a hole in it, and Google never re-sends an
+            // unchanged event — so whatever this fetch missed stays missing until a 410 happens to
+            // force a full sync. The prunes refusing to DELETE on an incomplete fetch is only half
+            // the job; discarding the token is the half that gets the missing events back.
+            //
+            // Null is not a new recovery mechanism: it is the state the SyncTokenExpiredException
+            // handler below already leaves behind, and isFullSync at the top reads it the same way.
+            //
+            // The shape that actually arrives here with a token worth discarding is an item-level
+            // skip, where the listing ran to its final page and that page carried a token. The other
+            // two causes come with a null token anyway — an unreadable page stops the loop, and the
+            // page cap only trips while a nextPageToken is outstanding, which is precisely when
+            // Google omits nextSyncToken. Testing IsComplete rather than the cause means this does
+            // not depend on that exclusivity holding.
+            syncState.SyncToken    = fetch.IsComplete ? fetch.NextSyncToken : null;
+            // Unconditional: a sync did run, and this field's only reader is the diagnostics
+            // connection-status DTO, which is asking when rather than how completely.
             syncState.LastSyncedAt = DateTimeOffset.UtcNow;
-            // Stamp only after the fetch succeeded, so a failed backfill is retried next sync
-            // rather than being silently skipped forever.
-            syncState.RemindersSyncedAt ??= DateTimeOffset.UtcNow;
+            if (fetch.IsComplete)
+            {
+                // Stamp only after a COMPLETE fetch, so a backfill that failed or came back partial
+                // is retried next sync rather than being silently skipped forever. A partial fetch
+                // read no reminders for the events it did not return, so stamping here would claim
+                // work that was not done — and would leave this field saying "backfilled" while the
+                // token above says "not in sync", which is a contradiction a later reader has to
+                // resolve.
+                //
+                // It costs no extra full syncs: the token is nulled on exactly this condition and
+                // isFullSync is true when EITHER is unset, so the full sync is already forced. The
+                // one visible cost is that a calendar which never manages a complete fetch keeps
+                // logging the "no reminder data; forcing one full sync" line every run — which is a
+                // true statement about that calendar.
+                syncState.RemindersSyncedAt ??= DateTimeOffset.UtcNow;
+            }
             if (isFullSync)
             {
                 syncState.SyncWindowStart = startDate;
