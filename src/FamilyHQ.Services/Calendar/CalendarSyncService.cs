@@ -35,6 +35,22 @@ public class CalendarSyncService(
 
         int changeCount = 0;
 
+        // The prune's candidate calendars, read BEFORE the fetch rather than after it — the same
+        // ordering, for the same reason, as CalendarEventService.ReconcileWindowAsync and the
+        // tombstone diff in SyncCoreAsync below. Only a calendar that was already stored when the
+        // fetch was taken can be judged by that fetch: a calendar inserted afterwards is missing
+        // from it for that reason alone. Pass 1 below is the only caller of AddCalendarAsync, and
+        // two of these passes can run at once — SyncController.TriggerSync runs SyncAllAsync inline
+        // on the HTTP request while CalendarSyncWorker runs it from the job queue, with nothing
+        // serialising the two — so the row this prune would judge unseen is one a concurrent sync
+        // has just inserted, for a calendar Google does list. Removing it takes every event that
+        // calendar owns and its SyncState with it (see RemoveCalendarAsync), and what a later sync
+        // brings back is a new row with the defaults: the visibility, shared designation and
+        // display order the old one carried are gone. The two failure modes are not symmetrical,
+        // which is the whole argument for the ordering — a calendar this early read misses is one
+        // the next sync prunes anyway if Google really has stopped listing it.
+        var calendarsBeforeFetch = await calendarRepository.GetCalendarsAsync(ct);
+
         List<CalendarInfo> googleCalendars;
         try
         {
@@ -45,10 +61,15 @@ public class CalendarSyncService(
             await MarkUserNeedsReauthAsync(capturedUserId, ex, ct);
             throw;
         }
+        // Deliberately a SECOND read, after the fetch, and NOT the pre-fetch snapshot above: pass 1
+        // decides whether to call AddCalendarAsync, and the unique index on
+        // (GoogleCalendarId, UserId) rejects an insert for a calendar a concurrent sync has already
+        // added — failing the whole account's sync. Pass 1 needs the latest view precisely because
+        // the prune needs the earlier one. Do not collapse these two reads into one.
         var localCalendars  = await calendarRepository.GetCalendarsAsync(ct);
 
         // Remove obsolete local calendars
-        var obsolete = localCalendars
+        var obsolete = calendarsBeforeFetch
             .Where(local => !googleCalendars.Any(g => g.GoogleCalendarId == local.GoogleCalendarId))
             .ToList();
 
