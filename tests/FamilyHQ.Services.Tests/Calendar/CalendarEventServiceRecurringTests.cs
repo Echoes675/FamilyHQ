@@ -2419,6 +2419,186 @@ public class CalendarEventServiceRecurringTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // ── An all-in-series reminder edit has to reach the local occurrences ─────────────────────
+    //
+    // The master patch is sent on an event built for the write and then discarded, so Google's answer
+    // to it — which is what Google actually stored — used to land nowhere. The reconcile that follows
+    // re-fetches the owner's window and does carry reminders per instance, which covers most of it;
+    // what it cannot cover is a row OUTSIDE that window, and the window is the one the last FULL sync
+    // stored while incremental syncs keep adding rows regardless of it. The occurrence the family
+    // just edited is in seriesRows whatever the window says, and left stale the modal re-opens on
+    // reminders Google no longer holds — where switching the inheritance toggle destroys a reminder
+    // that had been set successfully.
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ReminderEdit_GivesEveryLocalOccurrenceWhatGoogleStored()
+    {
+        var f = new Fixture();
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        edited.Reminders = EventReminders.InheritsCalendarDefault;
+        f.ArrangeEvent(edited);
+
+        // A row the reconcile's window cannot reach: the window is the last full sync's, and nothing
+        // confines the rows an incremental sync adds to it.
+        var outsideTheWindow = f.RecurringInstance(Guid.NewGuid(), "inst-old", WindowStart.AddDays(-30));
+        outsideTheWindow.Reminders = EventReminders.InheritsCalendarDefault;
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([outsideTheWindow, edited]);
+
+        var googleStores = EventReminders.Explicit([new EventReminder("popup", 120)]);
+        f.ArrangeMasterPatchStoring(googleStores);
+        f.ArrangeExistingRow(edited);
+        f.ArrangeReconcileWindow([GoogleInstanceSayingNothingAboutReminders(f, "inst-2")]);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId, ReqWithReminders(googleStores), RecurrenceScope.AllInSeries);
+
+        edited.Reminders!.SameAs(googleStores).Should().BeTrue(
+            "the occurrence the family edited is the one the modal re-opens on");
+        outsideTheWindow.Reminders!.SameAs(googleStores).Should().BeTrue(
+            "a row the reconcile's window does not reach has nothing else to learn from");
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ReminderEditAlongsideATimingChange_DoesTheSame()
+    {
+        // The sibling branch of the same method: a timing change sends start and end, and builds its
+        // own throwaway master to carry them. Same shape, so the same hole.
+        var f = new Fixture();
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        edited.Reminders = EventReminders.InheritsCalendarDefault;
+        f.ArrangeEvent(edited);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([edited]);
+
+        var googleStores = EventReminders.Explicit([new EventReminder("popup", 120)]);
+        f.ArrangeMasterPatchStoring(googleStores);
+        f.ArrangeExistingRow(edited);
+        f.ArrangeReconcileWindow([GoogleInstanceSayingNothingAboutReminders(f, "inst-2")]);
+
+        var retimed = new UpdateEventRequest(
+            "Weekly", InstanceStart.AddHours(1), InstanceStart.AddHours(2), false, "Loc", "Body",
+            null, false, googleStores);
+
+        await f.Sut.UpdateRecurringAsync(EventId, retimed, RecurrenceScope.AllInSeries);
+
+        f.Google.Verify(g => g.PatchEventFieldsAsync(GoogleCalId, It.IsAny<CalendarEvent>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()), Times.Once,
+            "a timing change takes the branch that sends start and end");
+        edited.Reminders!.SameAs(googleStores).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ReminderEdit_RowsHoldWhatGoogleStored_NotWhatWasAskedFor()
+    {
+        // Google answers almost any reminder with a 200 and then rewrites it — a negative offset
+        // becomes 0, anything past the ceiling is clamped, a method it does not know is dropped. The
+        // rows have to end up holding its answer, or the kiosk shows a reminder nobody will receive.
+        var f = new Fixture();
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(edited);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([edited]);
+
+        var asked = EventReminders.Explicit([new EventReminder("popup", -540)]);
+        var googleStores = EventReminders.Explicit([new EventReminder("popup", 0)]);
+        f.ArrangeMasterPatchStoring(googleStores);
+        f.ArrangeExistingRow(edited);
+        f.ArrangeReconcileWindow([GoogleInstanceSayingNothingAboutReminders(f, "inst-2")]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, ReqWithReminders(asked), RecurrenceScope.AllInSeries);
+
+        edited.Reminders!.SameAs(googleStores).Should().BeTrue();
+        edited.Reminders!.SameAs(asked).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_EditThatSaysNothingAboutReminders_LeavesTheRowsAlone()
+    {
+        // The golden rule's default, from the other side: a rename must not restate the series'
+        // reminders, so there is nothing read back and nothing to apply.
+        var f = new Fixture();
+        var stored = EventReminders.Explicit([new EventReminder("email", 1440)]);
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        edited.Reminders = stored;
+        f.ArrangeEvent(edited);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([edited]);
+
+        f.ArrangeMasterPatchStoring(EventReminders.ExplicitlyNone);
+        f.ArrangeExistingRow(edited);
+        f.ArrangeReconcileWindow([GoogleInstanceSayingNothingAboutReminders(f, "inst-2")]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, Req("Renamed", InstanceStart, "Body"), RecurrenceScope.AllInSeries);
+
+        edited.Reminders!.SameAs(stored).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ReminderEdit_LetsGooglesOwnAnswerForAnInstanceWin()
+    {
+        // The precedence, and why this runs before the reconcile rather than after it. An exception
+        // instance can carry reminders of its own that the master's do not describe, and Google
+        // reports them per instance — so for a row the reconcile fetches, the fetch is the better
+        // answer and must not be overwritten by the master's.
+        var f = new Fixture();
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(edited);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([edited]);
+
+        f.ArrangeMasterPatchStoring(EventReminders.Explicit([new EventReminder("popup", 120)]));
+        f.ArrangeExistingRow(edited);
+
+        var instancesOwn = EventReminders.Explicit([new EventReminder("email", 15)]);
+        var fetched = f.GoogleInstanceNoRule("inst-2", InstanceStart, isException: true);
+        fetched.Reminders = instancesOwn;
+        f.ArrangeReconcileWindow([fetched]);
+
+        await f.Sut.UpdateRecurringAsync(
+            EventId,
+            ReqWithReminders(EventReminders.Explicit([new EventReminder("popup", 120)])),
+            RecurrenceScope.AllInSeries);
+
+        edited.Reminders!.SameAs(instancesOwn).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateRecurringAsync_AllInSeries_ReminderEdit_StillRecordsTheOutboundHash()
+    {
+        // Updating the rows directly does not replace the echo guard. The hash is what makes Google's
+        // echo of THIS write recognisable, and dropping it would only turn our own write into an
+        // inbound change the sync re-applies — while leaving the hash in place loses nothing, because
+        // the rows already hold what the echo would teach.
+        var f = new Fixture();
+        var edited = f.RecurringInstance(EventId, "inst-2", InstanceStart);
+        f.ArrangeEvent(edited);
+        f.Repo.Setup(r => r.GetEventsBySeriesIdAsync(SeriesId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([edited]);
+
+        var googleStores = EventReminders.Explicit([new EventReminder("popup", 120)]);
+        f.ArrangeMasterPatchStoring(googleStores);
+        f.ArrangeExistingRow(edited);
+        f.ArrangeReconcileWindow([GoogleInstanceSayingNothingAboutReminders(f, "inst-2")]);
+
+        await f.Sut.UpdateRecurringAsync(EventId, ReqWithReminders(googleStores), RecurrenceScope.AllInSeries);
+
+        f.Cache.Verify(c => c.Record(SeriesId, It.IsAny<string>()), Times.Once);
+    }
+
+    // The reconcile's fetch saying nothing about an instance's reminders is the case the master's
+    // answer has to cover: a null from the client means "Google said nothing about them", which the
+    // reconcile correctly reads as leaving the stored value alone.
+    private static CalendarEvent GoogleInstanceSayingNothingAboutReminders(Fixture f, string googleEventId)
+    {
+        var fetched = f.GoogleInstanceNoRule(googleEventId, InstanceStart);
+        fetched.Reminders = null;
+        return fetched;
+    }
+
+    private static UpdateEventRequest ReqWithReminders(EventReminders reminders) =>
+        new("Weekly", InstanceStart, InstanceStart.AddHours(1), false, "Loc", "Body", null, false, reminders);
+
     private static UpdateEventRequest Req(string title, DateTimeOffset start, string? description, bool isAllDay = false) =>
         new(title, start, start.AddHours(1), isAllDay, "Loc", description);
 
@@ -2554,5 +2734,30 @@ public class CalendarEventServiceRecurringTests
         public void ArrangeReconcileWindow(IReadOnlyList<CalendarEvent> instances) =>
             Google.Setup(g => g.GetEventsAsync(GoogleCalId, WindowStart, WindowEnd, null, It.IsAny<CancellationToken>()))
                 .ReturnsAsync((instances, (string?)null));
+
+        /// <summary>
+        /// Arranges both master-patch calls to behave as the real client does on a write that carries
+        /// reminders: read the response back and put GOOGLE's account of what it stored onto the
+        /// event it was handed. <paramref name="googleStores"/> is that account; a write carrying no
+        /// reminders reads nothing back, exactly as the client's response handling is skipped then.
+        /// </summary>
+        public void ArrangeMasterPatchStoring(EventReminders googleStores)
+        {
+            Google.Setup(g => g.PatchEventFieldsPreservingTimesAsync(
+                    GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()))
+                .Returns((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? reminders) =>
+                {
+                    if (reminders is not null) e.Reminders = googleStores;
+                    return Task.CompletedTask;
+                });
+
+            Google.Setup(g => g.PatchEventFieldsAsync(
+                    GoogleCalId, It.IsAny<CalendarEvent>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<EventReminders?>()))
+                .ReturnsAsync((string _, CalendarEvent e, string _, CancellationToken _, EventReminders? reminders) =>
+                {
+                    if (reminders is not null) e.Reminders = googleStores;
+                    return e;
+                });
+        }
     }
 }

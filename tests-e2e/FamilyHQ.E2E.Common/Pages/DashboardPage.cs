@@ -2113,6 +2113,26 @@ public class DashboardPage : BasePage
     /// </summary>
     public async Task AddTimedReminderAsync(int amount, string unit, string method = PopupMethod)
     {
+        await ConfigureTimedReminderAsync(amount, unit, method);
+
+        await ReminderAddBtn.ClickAsync();
+        await Assertions.Expect(ReminderRow(method, amount * UnitMinutes(unit)))
+            .ToBeVisibleAsync(new() { Timeout = 5000 });
+    }
+
+    /// <summary>
+    /// Moves the Add form's controls to describe a reminder <paramref name="amount"/>
+    /// <paramref name="unit"/> before the event starts, delivered by <paramref name="method"/>, and
+    /// stops there — Add is never pressed, so nothing is committed to the list.
+    /// </summary>
+    /// <remarks>
+    /// This is the state a family reported a reminder going missing from: the form describes a
+    /// reminder they configured, the list above it is empty, and Save was the next thing they
+    /// touched. Reused by <see cref="AddTimedReminderAsync"/> so the two cannot drift — a scenario
+    /// about forgetting Add has to drive the same controls as one that presses it.
+    /// </remarks>
+    public async Task ConfigureTimedReminderAsync(int amount, string unit, string method = PopupMethod)
+    {
         await ShowRemindersTabAsync();
 
         await SelectPillAsync(ReminderUnitPill(unit));
@@ -2124,10 +2144,6 @@ public class DashboardPage : BasePage
         await ReminderAmountInput.FillAsync(typed);
         await ReminderAmountInput.PressAsync("Tab");
         await Assertions.Expect(ReminderAmountInput).ToHaveValueAsync(typed, new() { Timeout = 5000 });
-
-        await ReminderAddBtn.ClickAsync();
-        await Assertions.Expect(ReminderRow(method, amount * UnitMinutes(unit)))
-            .ToBeVisibleAsync(new() { Timeout = 5000 });
     }
 
     /// <summary>Removes the event's reminder with the given method and offset.</summary>

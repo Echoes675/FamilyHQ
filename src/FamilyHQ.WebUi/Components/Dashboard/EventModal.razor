@@ -686,6 +686,16 @@
         // Remember the members actually being saved so a deferred scope-confirm can reuse them.
         _pendingMemberIds = effectiveMemberIds.ToList();
 
+        // A reminder the family configured on the Reminders tab and never pressed Add on is the
+        // reminder they believe they set, so the save commits it rather than discarding it. The
+        // model refuses unless the form was actually touched — otherwise this would invent one for
+        // anybody who switched inheritance off wanting silence, which is a state they can ask for.
+        //
+        // Before the scope prompt reads HasChanged below, and before RemindersToWrite: the commit is
+        // an ordinary list change, so both then see it and the series warning tells the truth about
+        // what the save is going to write.
+        _reminderPicker.CommitPendingFormReminder();
+
         var action = EventModalLogic.DecideSave(
             isNewEvent: !_isEditingEvent,
             wasRecurring: _wasRecurring,
