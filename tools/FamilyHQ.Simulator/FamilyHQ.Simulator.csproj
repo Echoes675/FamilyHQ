@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FamilyHQ.Core\FamilyHQ.Core.csproj" />
+    <ProjectReference Include="..\..\src\FamilyHQ.Time\FamilyHQ.Time.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -9,11 +10,13 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <!-- FHQ-161: the Simulator must expand a recurring master anchored to its start.timeZone, as
-         Google does. NodaTime's bundled tzdb is the project's standard zone source (the CI/test
-         runtime is globalization-invariant, so TimeZoneInfo is not available). Already pinned
-         centrally in Directory.Packages.props for FamilyHQ.Services / FamilyHQ.Data; the Simulator
-         is a tools/ test double and is never referenced by the deployed WebUi/WebApi. -->
+    <!-- The Simulator expands a recurring master anchored to its start.timeZone, as Google does, and
+         NodaTime's bundled tzdb is this repository's zone source (the CI/test runtime is
+         globalization-invariant, so TimeZoneInfo is not available). No NodaTime type is named
+         directly in this project any more — the one shared adapter it registers lives in
+         FamilyHQ.Time, which brings the package in transitively. The explicit reference is kept so
+         that the Simulator's dependency on a tz database stays visible in its own project file; the
+         version is pinned centrally in Directory.Packages.props either way. -->
     <PackageReference Include="NodaTime" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Serilog.AspNetCore" />

@@ -7,6 +7,25 @@
 - src/FamilyHQ.Data/: EF Core context and all provider-agnostic repositories (pure EF Core, no Npgsql). Includes the shared model convention that fails the build if CalendarSyncJob lacks a concurrency token (FHQ-146).
 - src/FamilyHQ.Data.PostgreSQL/: PostgreSQL-specific only — NpgsqlModelCustomizer (xmin token), migrations, UniqueConstraintExceptionInterceptor, DI wiring, design-time factory.
 - src/FamilyHQ.Core/: Shared Models, DTOs, and FluentValidation logic.
+- src/FamilyHQ.Time/: the one NodaTime-backed implementation of Core's `IRecurrenceTimeZone` / `IRecurrenceTimeZoneFactory`, referenced by FamilyHQ.Services and the Simulator. It exists as a separate library because Core must stay free of a tz-database package — FamilyHQ.WebUi references Core, and a tzdb there would ship in the payload the Pi downloads. Add nothing to it that is not the zone adapter; its reason to exist is being small enough that widening the adapter to `public` costs nothing.
+
+## Adding a project — the wiring that is not automatic
+
+A new project is not picked up by convention anywhere except the CI unit-test stage. Each of these
+has to be done by hand, and missing the Docker ones fails the image build while `dotnet build`
+stays green:
+
+- **`FamilyHQ.slnx`** — add the project under the `/src/`, `/tests/`, `/tools/` … folder it belongs to.
+- **Every Dockerfile whose image's reference closure now includes it.** All three Dockerfiles
+  enumerate each `.csproj` individually and `COPY` them *before* `dotnet restore`, so a project
+  absent from that list fails the restore inside the image even though the sources are copied in the
+  next stage.
+- **The build stage's source `COPY` lines, for the images that do not copy all of `src/`.**
+  `docker/webapi/Dockerfile` copies `src/ src/` wholesale and needs nothing further;
+  `docker/simulator/Dockerfile` and `docker/webui/Dockerfile` copy only the project folders they
+  reference, so each needs its own line too.
+- **Nothing in `Jenkinsfile.build`** for a test project: the unit-test stage loops over
+  `tests/*/*.csproj`.
 
 ## Deployment Context
 - **Kiosk device**: Raspberry Pi 3B+ running Chromium in kiosk mode (`--kiosk --touch-events=enabled`).
@@ -18,6 +37,7 @@
 ## Dependency Rules
 - Directional Flow: Dependencies must flow inward.
 -- WebUi and WebApi -> Services -> Data -> Core.
+-- Services and the Simulator also reference FamilyHQ.Time -> Core. Nothing references FamilyHQ.Time but those two, and WebUi must never reference it: it carries NodaTime's tz database.
 -- Forbidden: Never add references from Core or Services back to the Web projects.
 - Shared Logic: All DTOs, Enums, and Constants used by both Client and Server must reside in FamilyHQ.Core.
 

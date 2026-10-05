@@ -1986,7 +1986,7 @@ public class EventsControllerTests
         var controller = new EventsController(
             db, logger, new FamilyHQ.Simulator.State.SyncFailureModeStore(),
             writeCounts ?? new FamilyHQ.Simulator.State.OutboundWriteCountStore(),
-            new FamilyHQ.Simulator.Services.NodaTimeRecurrenceTimeZoneFactory());
+            new FamilyHQ.Time.NodaTimeRecurrenceTimeZoneFactory());
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";
