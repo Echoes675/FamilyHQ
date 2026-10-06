@@ -4,6 +4,7 @@
     <Project Path="src/FamilyHQ.Data.PostgreSQL/FamilyHQ.Data.PostgreSQL.csproj" />
     <Project Path="src/FamilyHQ.Data/FamilyHQ.Data.csproj" />
     <Project Path="src/FamilyHQ.Services/FamilyHQ.Services.csproj" />
+    <Project Path="src/FamilyHQ.Time/FamilyHQ.Time.csproj" />
     <Project Path="src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj" />
     <Project Path="src/FamilyHQ.WebUi/FamilyHQ.WebUi.csproj" />
   </Folder>
@@ -24,6 +25,7 @@
     <Project Path="tests/FamilyHQ.WebUi.Tests/FamilyHQ.WebUi.Tests.csproj" />
     <Project Path="tests/FamilyHQ.Core.Tests/FamilyHQ.Core.Tests.csproj" />
     <Project Path="tests/FamilyHQ.Services.Tests/FamilyHQ.Services.Tests.csproj" />
+    <Project Path="tests/FamilyHQ.Time.Tests/FamilyHQ.Time.Tests.csproj" />
     <Project Path="tests/FamilyHQ.WebApi.Tests/FamilyHQ.WebApi.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

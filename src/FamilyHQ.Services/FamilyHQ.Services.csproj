@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FamilyHQ.Data\FamilyHQ.Data.csproj" />
+    <ProjectReference Include="..\FamilyHQ.Time\FamilyHQ.Time.csproj" />
   </ItemGroup>
 
   <ItemGroup>

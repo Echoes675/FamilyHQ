@@ -8,6 +8,7 @@ COPY global.json Directory.Build.props Directory.Packages.props ./
 # a missing import fails `dotnet publish` with MSB4019.
 COPY build/ build/
 COPY src/FamilyHQ.Core/FamilyHQ.Core.csproj src/FamilyHQ.Core/
+COPY src/FamilyHQ.Time/FamilyHQ.Time.csproj src/FamilyHQ.Time/
 COPY tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj tools/FamilyHQ.Simulator/
 
 RUN dotnet restore tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj
@@ -16,7 +17,10 @@ RUN dotnet restore tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj
 FROM restore AS build
 ARG VERSION=
 ENV MINVER_VERSION_OVERRIDE=$VERSION
+# This stage copies only the projects the Simulator references, not all of src/ — so a new project
+# in its reference closure needs a line here as well as a .csproj line in the restore stage above.
 COPY src/FamilyHQ.Core/ src/FamilyHQ.Core/
+COPY src/FamilyHQ.Time/ src/FamilyHQ.Time/
 COPY tools/FamilyHQ.Simulator/ tools/FamilyHQ.Simulator/
 
 RUN dotnet publish tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj -c Release -o /app/publish

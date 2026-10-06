@@ -541,7 +541,7 @@ public class EventsControllerRemindersTests
             new Mock<ILogger<EventsController>>().Object,
             new FamilyHQ.Simulator.State.SyncFailureModeStore(),
             new FamilyHQ.Simulator.State.OutboundWriteCountStore(),
-            new FamilyHQ.Simulator.Services.NodaTimeRecurrenceTimeZoneFactory());
+            new FamilyHQ.Time.NodaTimeRecurrenceTimeZoneFactory());
         var httpContext = new DefaultHttpContext();
         if (userId != null)
             httpContext.Request.Headers.Authorization = $"Bearer simulated_{userId}_abc123nonce";
