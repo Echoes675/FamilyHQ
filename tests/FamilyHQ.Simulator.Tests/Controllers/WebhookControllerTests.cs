@@ -82,11 +82,13 @@ public class WebhookControllerTests
         return new WebhookController(configuration, CreateDb(), factory.Object);
     }
 
+    // PushWebhook touches _db only inside its calendarId-not-null branch, and every test above calls
+    // it with no argument — so this context needs no provider. Leaving one off is strictly better
+    // than InMemory, not merely purer: if the controller ever starts querying unconditionally, this
+    // throws loudly instead of handing back empty rows and passing on a lie.
     private static SimContext CreateDb()
     {
-        var options = new DbContextOptionsBuilder<SimContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
+        var options = new DbContextOptionsBuilder<SimContext>().Options;
         return new SimContext(options);
     }
 }
