@@ -1,10 +1,17 @@
 @* Tab order is the family's: the Reminders timeline comes first because it is what the kiosk opens
    on and what an idle one returns to, so the leftmost tab and the landing view agree. *@
 <div class="view-tabs mb-4">
+    @* Each tab's words sit in an element of their own rather than loose inside the button, because
+       the Reminders button holds more than its label: the badge below is inside it too, so the
+       button's own text is the label PLUS a bell and a number whenever something falls today. The
+       tab strip is read back as a list of labels (the family's tab ORDER is a requirement), and
+       that reading has to mean "the labels" rather than "whatever each button happens to contain" —
+       otherwise the order assertion starts failing on a day when something is due. No CSS of its
+       own: .view-tab is already a flex row, so the span is simply its first flex item. *@
     <button data-testid="reminders-tab"
             class="view-tab @(CurrentView == DashboardView.Reminders ? "active" : "")"
             @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">
-        Reminders
+        <span class="view-tab__label">Reminders</span>
         @* The list below has no "Today" panel to glance at any more — each row names its own day
            instead — so the tab strip is what tells the family something falls today, from
            whichever tab they are on. Nothing is rendered at all when the count is zero: an empty
@@ -21,13 +28,13 @@
     </button>
     <button data-testid="month-tab"
             class="view-tab @(CurrentView == DashboardView.Month ? "active" : "")"
-            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Month)">Month View</button>
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Month)"><span class="view-tab__label">Month View</span></button>
     <button data-testid="agenda-tab"
             class="view-tab @(CurrentView == DashboardView.MonthAgenda ? "active" : "")"
-            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.MonthAgenda)">Agenda</button>
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.MonthAgenda)"><span class="view-tab__label">Agenda</span></button>
     <button data-testid="day-tab"
             class="view-tab @(CurrentView == DashboardView.Day ? "active" : "")"
-            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Day)">Day View</button>
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Day)"><span class="view-tab__label">Day View</span></button>
 </div>
 
 @code {
