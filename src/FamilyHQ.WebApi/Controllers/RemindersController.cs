@@ -53,7 +53,7 @@ public class RemindersController : ControllerBase
         var start = LocalMidnight(localToday, familyZone);
 
         // "End of next month" expressed as the exclusive start of the month after that — the far edge
-        // of both the query window and the five sections the client buckets rows into.
+        // of both the query window and the two month panels the client files rows into.
         var startOfMonthAfterNext = new DateTime(localToday.Year, localToday.Month, 1).AddMonths(2);
         var displayEnd = LocalMidnight(startOfMonthAfterNext, familyZone);
 
@@ -99,8 +99,9 @@ public class RemindersController : ControllerBase
     /// <remarks>
     /// Having already fired is NOT an exclusion. A row is filed by the event's start, so it has to
     /// survive its own reminders: by the time an event begins, its reminders have usually all gone
-    /// off, and dropping the row then would empty the Today section exactly when the family most
-    /// needs it. "Every ping has fired" is the ordinary state of a row on the day of its event, and
+    /// off, and dropping the row then would strip today's events off the timeline exactly when the
+    /// family most needs them — the rows naming today are the ones a wall display is glanced at for.
+    /// "Every ping has fired" is the ordinary state of a row on the day of its event, and
     /// nothing here reads the clock at all — whether a row exists has never depended on when the
     /// request arrived, and now there is no "next reminder" to describe either.
     /// </remarks>

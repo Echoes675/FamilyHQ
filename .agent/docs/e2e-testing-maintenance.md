@@ -479,8 +479,10 @@ for the near rows is now said **on the rows** — every row leads with its own d
 Covers: the month grid still being reachable from the timeline and vice versa (which tab comes
 first, and which view a load lands on, belong to `KioskHomeView.feature` instead); a row leading
 with its event's own day and start time and nothing else; a row further out than tomorrow leading
-with the day and date; tomorrow's row reading "Tomorrow" whichever panel it is filed in; an event
-following its calendar's usual reminders never appearing; an explicitly-removed reminder and an
+with the day and date; tomorrow's row reading "Tomorrow" whichever panel it is filed in; an idle
+kiosk re-reading that same row as "Today" once the day rolls over under it (tagged `@day-rollover`
+and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); an
+event following its calendar's usual reminders never appearing; an explicitly-removed reminder and an
 event inheriting from a calendar with no defaults both never appearing; an event whose last reminder
 has already fired keeping its row; an event with widely-spaced reminders (one soon, one over two
 weeks out) appearing exactly once, under its own start and in neither other place; a shared event's
@@ -576,12 +578,19 @@ while the scenario still asserts Today. `GivenTheUserHasATimedEventStartingInMin
 refuses that outright rather than letting the run fail as a missing row, so a failure there is a
 statement about the clock, not about the view.
 
-**The default view must stay Month.** `RemindersView.feature` never asserts this itself — the
-~180 scenarios elsewhere that assume Month loads on login are the ones that would catch a regression
-— but every scenario here still switches to the Reminders tab explicitly rather than relying on it
-ever being the landing view, and one scenario asserts Month is what is showing before the tab is
-touched at all. If adding this tab ever changes what an existing scenario sees, that is a sign the
-tab was wired up wrongly, not a reason to amend the older scenario.
+**No scenario here may depend on the landing view, because the landing view is Reminders.** The app
+opens on the timeline and puts its tab first (see `KioskHomeView.feature`). What keeps the ~180
+scenarios elsewhere independent of that is not the landing view staying put — it moved — but the
+fact that they ask for the grid explicitly: `I view the dashboard` loads the page and then calls
+`DashboardPage.ShowCalendarGridAsync()`, so a scenario about the month grid begins on the month grid
+as deliberate setup rather than as a side effect of a page load. Every scenario in this file likewise
+switches to the Reminders tab explicitly instead of assuming it is already showing.
+
+A scenario **about** the landing view must not come through that step, which would hide the very
+thing it asserts. It uses the navigate-only step (`the kiosk loads the dashboard` →
+`DashboardPage.LoadKioskHomeViewAsync()`), which leaves the dashboard on whatever view the app chose.
+If a change to the landing view ever changes what an existing scenario sees, that scenario was
+inheriting its starting view instead of asking for it — fix the step, not the assertion.
 
 **Seeding order matters, and this feature file has no `Background` because of it.** A backdoor-seeded
 event (`the user has a timed event "…" at "…" on "…" in "…"`) has to exist *before* the login that
@@ -598,10 +607,19 @@ whichever panel it is filed in" cannot force the server's real clock onto a mont
 unlike the client-only kiosk day-rollover hook, nothing in this stack can move the WebApi's
 `TimeProvider`. The scenario instead proves the rule that makes the month-end case work (the label
 comes from the row's own date, never from the panel), and takes the edge itself for free on the one
-run in thirty that lands on it. The deterministic edge is pinned with a controlled `DateOnly` in
-`ReminderBucketingTests.File_OnTheLastDayOfAMonth_TomorrowLandsInNextMonthAndIsStillKept`. The
-week boundary that used to be here is gone with the This week panel: no bucket is week-aligned any
-more.
+run in thirty that lands on it. The deterministic edge is pinned with controlled `DateOnly` values at
+the unit level, in **two halves that are not interchangeable**:
+
+- the **label** by
+  `ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext`
+  and its 31 December twin — a correct panel holding a row that reads `Wed 1 Apr` is the same
+  failure to the family as a missing row;
+- the **panel** by
+  `ReminderBucketingTests.File_OnTheLastDayOfAMonth_TomorrowLandsInNextMonthAndIsStillKept`, which
+  asserts only where the row lands and never calls `EventTime` at all.
+
+Cite the right one when touching either. The week boundary that used to be here is gone with the
+This week panel: no bucket is week-aligned any more.
 
 **The Reminders tab's badge is asserted from another tab, and its absence as a missing element.**
 The count has to be right while the family is in front of a different view, so the badge scenario

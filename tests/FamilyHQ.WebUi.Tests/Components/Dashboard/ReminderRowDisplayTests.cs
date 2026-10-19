@@ -9,12 +9,19 @@ namespace FamilyHQ.WebUi.Tests.Components.Dashboard;
 // pinned the wrong reading under a UTC CI and the E2E asserted only the shape of a time.
 public class ReminderRowDisplayTests
 {
-    // Dublin, not a fixed offset built in this file: it is the zone the rest of the suite already
-    // uses for the same DST transition (ReminderBucketingTests, ReminderPingCalculatorTests), and it
-    // resolves in this suite without a tz-database dependency concern — see those files. Every
-    // fixture below is a summer date, when Dublin is UTC+1, so every assertion genuinely exercises
-    // the conversion: a value formatted in raw UTC would read exactly one hour early and these
-    // fixtures would catch it rather than passing either way.
+    // Dublin, not a fixed offset built in this file: a real zone is the only kind that changes
+    // offset partway through a day, which is the behaviour the transition fixture below is here for.
+    // Looking it up by IANA id is established in this suite (ReminderBucketingTests,
+    // ReminderPingCalculatorTests do the same) and resolves even though CI runs
+    // globalization-invariant.
+    //
+    // Most fixtures below are summer dates, when Dublin is UTC+1, so the assertion genuinely
+    // exercises the conversion: a value formatted in raw UTC reads exactly one hour early and fails
+    // rather than passing either way. Two are not, each for its own reason. A year rollover is
+    // necessarily in winter, when Dublin IS UTC+0 and the conversion is a no-op, so what that
+    // fixture pins is the date arithmetic alone. And the 29 March fixture straddles a transition:
+    // the offset changes BETWEEN its two instants, which is the one thing no fixed offset can
+    // imitate, whichever one is chosen.
     private static readonly TimeZoneInfo Dublin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
 
     [Fact]
@@ -33,6 +40,56 @@ public class ReminderRowDisplayTests
                 new DateTimeOffset(2026, 6, 16, 20, 30, 0, TimeSpan.Zero), isAllDay: false, Dublin,
                 today: new DateOnly(2026, 6, 15))
             .Should().Be("Tomorrow · 21:30");
+
+    [Fact]
+    public void EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext() =>
+        // The month-end case, deterministically. "Tomorrow" is read off the row's own date against
+        // today, never off the panel holding it — and on a month's last day those two disagree:
+        // ReminderBucketing files this row under "Next month" while the label still has to say
+        // "Tomorrow". A label computed by comparing day numbers within a month instead of comparing
+        // whole dates passes every other fixture in this file and reads "Wed 1 Apr" here, on the one
+        // day of the month the family can least afford to lose tomorrow's row to a bare date.
+        ReminderRowDisplay.EventTime(
+                new DateTimeOffset(2026, 4, 1, 8, 0, 0, TimeSpan.Zero), isAllDay: false, Dublin,
+                today: new DateOnly(2026, 3, 31))
+            .Should().Be("Tomorrow · 09:00");
+
+    [Fact]
+    public void EventTime_OnTheLastDayOfAYear_StillReadsTomorrowForTheFirstOfTheNext() =>
+        // The same boundary one level up, and not covered by the fixture above: 31 December to 1
+        // January rolls the YEAR, so a label reasoning in day-of-year (90 → 91 is fine on 31 March,
+        // 365 → 1 is not) passes that one and fails this one. Dublin is UTC+0 in January, so this
+        // fixture pins the date arithmetic rather than the conversion — the conversion is pinned by
+        // the summer fixtures either side of it.
+        ReminderRowDisplay.EventTime(
+                new DateTimeOffset(2027, 1, 1, 9, 0, 0, TimeSpan.Zero), isAllDay: false, Dublin,
+                today: new DateOnly(2026, 12, 31))
+            .Should().Be("Tomorrow · 09:00");
+
+    [Fact]
+    public void EventTime_ForTwoInstantsOnADaylightSavingTransitionDay_ReadsEachInTheOffsetThenInForce()
+    {
+        // 29 March 2026 is the day Irish clocks go forward: Dublin is UTC+0 until 01:00Z and UTC+1
+        // from then on, so the offset in force is not a property of the DAY, only of the instant.
+        // Both fixtures read "00:30" and that is the point — the first is 00:30 on the 29th because
+        // the offset was still zero, the second is 00:30 on the 30th because by then it was +1. A
+        // fixed-offset stand-in for the zone cannot produce both: +0 makes the second read
+        // "Today · 23:30" (the UTC day, the bug this view once shipped), +1 makes the first read
+        // "Today · 01:30".
+        //
+        // There is no live defect here — ConvertTime(DateTimeOffset, …) and DateOnly.AddDays are
+        // both transition-safe — but nothing else in this suite sits on a transition at all, and a
+        // boundary with no fixture on it is a boundary the next rewrite is free to get wrong.
+        var beforeTheClocksGoForward = ReminderRowDisplay.EventTime(
+            new DateTimeOffset(2026, 3, 29, 0, 30, 0, TimeSpan.Zero), isAllDay: false, Dublin,
+            today: new DateOnly(2026, 3, 29));
+        var afterTheClocksGoForward = ReminderRowDisplay.EventTime(
+            new DateTimeOffset(2026, 3, 29, 23, 30, 0, TimeSpan.Zero), isAllDay: false, Dublin,
+            today: new DateOnly(2026, 3, 29));
+
+        beforeTheClocksGoForward.Should().Be("Today · 00:30");
+        afterTheClocksGoForward.Should().Be("Tomorrow · 00:30");
+    }
 
     [Fact]
     public void EventTime_ForAnEventFurtherOut_LeadsWithTheDayAndDate() =>

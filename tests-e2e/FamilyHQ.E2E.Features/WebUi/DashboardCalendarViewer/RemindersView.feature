@@ -260,8 +260,12 @@ Feature: Reminders view
   # the rule that makes the month-end case work — a row's day comes from its own local date against
   # today, never from the panel holding it — and on the one run in thirty that lands on a month's
   # last day it takes the edge itself, with no change to the scenario. The deterministic edge is
-  # pinned with a controlled DateOnly in
-  # ReminderBucketingTests.File_OnTheLastDayOfAMonth_TomorrowLandsInNextMonthAndIsStillKept.
+  # pinned with controlled DateOnly values at the unit level, in two halves that are not
+  # interchangeable: the LABEL by
+  # ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext
+  # (and its 31 December twin), the PANEL by
+  # ReminderBucketingTests.File_OnTheLastDayOfAMonth_TomorrowLandsInNextMonthAndIsStillKept, which
+  # asserts where the row lands and never asks what it says.
   #
   # Its reminder is set through the date-aware precondition step rather than the three-step modal
   # chain the "today" scenarios use, and that is not a tidying-up: the month grid stops as soon as a
@@ -297,12 +301,22 @@ Feature: Reminders view
   # left behind in the panel it came from would be a filing bug the label alone would pass.
   #
   # Nothing is tapped after the idle check, and nothing needs to be: the kiosk brings itself back to
-  # the timeline, and that return is what re-anchors the view's "today"
-  # (Index.EnterRemindersViewAsync) and so what refiles the row. The server's clock does not move and
-  # its window returns the same event either way, so a row that did not move means the re-anchor did
-  # not happen. Leaving the timeline first is what makes the return fire at all — an idle check on a
-  # kiosk already at home has nothing to do, which is exactly why this cannot be asserted without
-  # going somewhere else first.
+  # the timeline on its own. The server's clock does not move and its window returns the same event
+  # either way, so what this proves is entirely client-side — that the kiosk re-reads "today" off its
+  # own clock and re-derives every row's label from it, rather than rendering whatever words it
+  # rendered yesterday.
+  #
+  # It does NOT isolate which code path re-anchored. Both the idle return (Index.SwitchToView →
+  # EnterRemindersViewAsync) and the per-minute tick (Index.RefileRemindersForTick) re-read the clock
+  # and re-render, so deleting the return's re-anchor would leave this scenario failing only when the
+  # assertion's wait expires before the next tick — a scenario that fails most runs and passes some
+  # is worth less here than one that fails none, and this repo treats an intermittent failure as a
+  # defect in the test. The deterministic pin for the label arithmetic itself is the unit test
+  # (ReminderRowDisplayTests), which owes nothing to a timer.
+  #
+  # Leaving the timeline first is what makes the return fire at all — an idle check on a kiosk
+  # already at home has nothing to do, which is exactly why this cannot be asserted without going
+  # somewhere else first.
   @day-rollover
   Scenario: An idle kiosk re-reads tomorrow's row as today's once the day rolls over
     Given I have a user like "RemindersViewUser"

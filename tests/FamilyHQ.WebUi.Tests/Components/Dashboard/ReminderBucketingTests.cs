@@ -29,8 +29,12 @@ public class ReminderBucketingTests
     [Fact]
     public void File_AlwaysReturnsBothPanelsInOrder()
     {
-        // The view lays out a fixed two-column shape; an absent panel would move the other one into
-        // its column. An EMPTY panel is the view's business to collapse, not this class's to omit.
+        // Both panels, always, because two readers need them present rather than because the layout
+        // does: app.css places each panel by an explicit grid-column keyed on its slug, so a missing
+        // one leaves the other where it is. RemindersViewLogic.IsEntirelyEmpty can only tell
+        // "nothing at all" from "nothing in one month" by asking both, and the per-panel "Nothing"
+        // line needs a panel to render against. Collapsing an EMPTY panel is the view's business,
+        // not this class's to pre-empt by omitting it.
         var sections = File(new DateOnly(2026, 3, 10));
 
         sections.Select(s => s.Key).Should().Equal(
@@ -89,8 +93,9 @@ public class ReminderBucketingTests
     [Fact]
     public void File_ARowOnTheLastDayOfNextMonth_LandsInNextMonth()
     {
-        // The inclusive far edge of the right panel, and the far edge of the server's window too:
-        // one day later is a row no panel can hold.
+        // The inclusive far edge of the right panel, and the far edge of the server's window too.
+        // One day later is a row no panel can hold, which is asserted from the outside by
+        // File_ARowOnTheFirstDayOfTheMonthAfterNext_IsDropped.
         var sections = File(new DateOnly(2026, 3, 10), At(2026, 4, 30));
 
         Rows(sections, ReminderSectionKey.NextMonth).Should().Equal(At(2026, 4, 30));
@@ -102,9 +107,14 @@ public class ReminderBucketingTests
     {
         // 31 March: tomorrow is 1 April, so the row the family needs to see first is filed into the
         // right-hand panel. That is correct — the panel is a calendar fact — and it is precisely the
-        // day on which a boundary off by one would drop tomorrow's event entirely. The row still
-        // reads "Tomorrow" wherever it is filed; that label is ReminderRowDisplay's business and is
-        // computed from the row's own date, never from the panel holding it.
+        // day on which a boundary off by one would drop tomorrow's event entirely.
+        //
+        // What this pins is the PANEL and nothing else; it never asks what the row says. The other
+        // half of the month-end case — that the row still reads "Tomorrow" once filed over there —
+        // is ReminderRowDisplay's, and is pinned by
+        // ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext.
+        // Both halves are needed: a correct panel with a row reading "Wed 1 Apr" is the same failure
+        // to the family as a missing row.
         var sections = File(new DateOnly(2026, 3, 31), At(2026, 4, 1));
 
         Rows(sections, ReminderSectionKey.NextMonth).Should().Equal(At(2026, 4, 1));
@@ -112,10 +122,22 @@ public class ReminderBucketingTests
     }
 
     [Fact]
+    public void File_ARowOnTheFirstDayOfTheMonthAfterNext_IsDropped()
+    {
+        // The exclusive far edge: one day past the right panel's last day, which is the adjacent
+        // case the fixture above asserts from the inside. Both are needed — the far edge is a span
+        // of months, so widening it (AddMonths(1) → AddMonths(2)) leaves every other fixture here
+        // passing and is caught only by a row sitting immediately outside it.
+        var sections = File(new DateOnly(2026, 3, 10), At(2026, 5, 1));
+
+        sections.SelectMany(s => s.Rows).Should().BeEmpty();
+    }
+
+    [Fact]
     public void File_ARowBeyondNextMonth_IsDropped()
     {
-        // Beyond the window the server returned. Dropping it is correct; rendering it in the last
-        // panel would quietly misfile it.
+        // Well beyond the window the server returned, rather than one day past it. Dropping it is
+        // correct; rendering it in the last panel would quietly misfile it.
         var sections = File(new DateOnly(2026, 3, 10), At(2026, 9, 1));
 
         sections.SelectMany(s => s.Rows).Should().BeEmpty();
@@ -124,9 +146,11 @@ public class ReminderBucketingTests
     [Fact]
     public void File_ARowBeforeToday_IsDroppedRatherThanForcedIntoThisMonth()
     {
-        // The server's window opens at local midnight, so this should not arrive — which is exactly
-        // why it must not be swept into "This month" if it ever does. A past row shown among
-        // upcoming ones is a worse failure than a missing one: the family would act on it.
+        // Not a defensive case for something that cannot happen: the server's window opens at local
+        // midnight in the zone FamilyHQ has STORED, while this filing reads the kiosk's own, and the
+        // two diverge whenever the stored zone was chosen explicitly or came from a saved location
+        // (see ReminderBucketing.File's remarks). A past row shown among upcoming ones is a worse
+        // failure than a missing one: the family would act on it.
         var sections = File(new DateOnly(2026, 3, 10), At(2026, 3, 9));
 
         sections.SelectMany(s => s.Rows).Should().BeEmpty();

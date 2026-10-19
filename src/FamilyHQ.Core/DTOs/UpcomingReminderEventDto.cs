@@ -35,9 +35,10 @@ namespace FamilyHQ.Core.DTOs;
 /// <para>
 /// <b>A row outlives its own reminders.</b> A row is not evidence that a notification is still coming
 /// — it is evidence that the event has reminders. By the time an event starts its reminders have all
-/// usually fired, so excluding a row once nothing is pending would empty the Today section exactly
-/// when the family most needs it, and would drop an 18:00 event with one two-hour reminder off the
-/// kiosk at 16:00. The row therefore stays until <see cref="EventStart"/> leaves the window.
+/// usually fired, so excluding a row once nothing is pending would empty the timeline of today's
+/// events exactly when the family most needs them, and would drop an 18:00 event with one two-hour
+/// reminder off the kiosk at 16:00. The row therefore stays until <see cref="EventStart"/> leaves
+/// the window.
 /// </para>
 /// </remarks>
 /// <param name="EventId">The event this row describes.</param>

@@ -26,8 +26,13 @@ public static class ReminderBucketing
 {
     /// <summary>
     /// Files <paramref name="rows"/> into the two panels — This month then Next month — and always
-    /// returns both: an absent panel would move the other one into its column of the view's fixed
-    /// two-column layout, and collapsing an empty one is the view's job, not this class's.
+    /// returns both, empty or not. Placement does not depend on it (<c>app.css</c> gives each panel
+    /// an explicit <c>grid-column</c>/<c>grid-row</c> keyed on its slug, so a missing panel leaves
+    /// the other where it is), but two readers do: <see cref="RemindersViewLogic.IsEntirelyEmpty"/>
+    /// can only tell "nothing at all" from "nothing in one month" if both panels are present to be
+    /// asked, and the per-panel "Nothing" line needs a panel to render it against. Collapsing an
+    /// empty panel is the view's job; omitting it would be this class deciding the view's layout for
+    /// it, with the two states above collapsed into one on the way.
     /// </summary>
     /// <remarks>
     /// "This month" runs from <paramref name="today"/> inclusive to the end of its month, and "Next
@@ -36,10 +41,19 @@ public static class ReminderBucketing
     /// <para>
     /// A row whose local day satisfies neither panel is dropped rather than forced into the nearer
     /// one, where it would quietly misrepresent the month it names. That catches a row beyond the
-    /// window the server returned, and also a row BEFORE <paramref name="today"/> — the server's
-    /// window opens at local midnight so one should never arrive, which is exactly why it must not be
-    /// swept into "This month" if it ever does. A past row shown among upcoming ones is worse than a
-    /// missing one: the family would act on it.
+    /// window the server returned, and also a row BEFORE <paramref name="today"/>, which is not the
+    /// impossibility it looks like. The server opens its window at local midnight in the zone
+    /// FamilyHQ has STORED for the family (UTC if it has none it can resolve); this method is handed
+    /// a <paramref name="today"/> and a <paramref name="zone"/> read off the KIOSK's own clock. The
+    /// two agree whenever the stored zone was auto-detected, because the kiosk's reported zone is
+    /// what gets stored — but a zone chosen explicitly in settings, or derived from a saved location,
+    /// outranks whatever the kiosk reports, and then they are simply two different zones. A kiosk
+    /// behind the stored zone is a kiosk whose window opened before its own midnight: the last hours
+    /// of the kiosk's yesterday are inside it, so a past row really can arrive.
+    /// </para>
+    /// <para>
+    /// Dropping it is still right, and would be right even if it could not happen: a past row shown
+    /// among upcoming ones is worse than a missing one, because the family would act on it.
     /// </para>
     /// </remarks>
     /// <param name="rows">The rows to file. Never mutated or reordered in place.</param>

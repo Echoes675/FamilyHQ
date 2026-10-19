@@ -38,7 +38,12 @@ public static class ReminderRowDisplay
     /// substituted for the date because those are the two days a family reads first, and they are
     /// read off the row's OWN date against <paramref name="today"/> — never off the panel holding
     /// it. On the last day of a month tomorrow is filed under "Next month", and it must still read
-    /// "Tomorrow" there; that is the day the family can least afford to lose it.
+    /// "Tomorrow" there; that is the day the family can least afford to lose it. Hence the whole-date
+    /// comparison below rather than arithmetic on a day number: the month-end and year-end cases are
+    /// exactly the ones a cheaper comparison gets wrong, and they are pinned by
+    /// <c>ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext</c>
+    /// and its year-end twin. (<c>ReminderBucketingTests</c> covers the PANEL on that date, not this
+    /// label.)
     /// </para>
     /// <para>
     /// A date before <paramref name="today"/> falls back to the dated form. There is deliberately no

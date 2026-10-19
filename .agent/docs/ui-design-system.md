@@ -221,7 +221,13 @@ Bootstrap utility classes have been replaced with custom equivalents in `app.css
 
 **Buttons**: `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`
 
-**View tabs**: `.view-tabs` (container), `.view-tab` (individual tab), `.view-tab.active`
+**View tabs**: `.view-tabs` (container), `.view-tab` (individual tab), `.view-tab.active`,
+`.view-tab__label` (the tab's words, in an element of their own so a tab's label can be read back
+without whatever else the button holds), `.view-tab__badge` (a count beside the label — the
+Reminders tab's "how much falls today"; it is a flex sibling of the label, not an overlay, and is
+**rendered only while the count is above zero**, so there is no zero or empty state to style and
+nothing reserves space for it — an accent-filled pill, deliberately not the modal's quieter tinted
+`.tab-badge` below, because this one has to carry across a room)
 
 **Modals**: `.modal-overlay`, `.modal-container`, `.modal-header`, `.modal-body`, `.modal-footer`
 

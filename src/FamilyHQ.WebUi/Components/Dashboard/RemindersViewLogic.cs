@@ -67,6 +67,17 @@ public static class RemindersViewLogic
     /// about events.
     /// </para>
     /// <para>
+    /// <b>The badge can legitimately exceed the rows on screen, and must not be "fixed" to match
+    /// them.</b> This counts every row falling today; a collapsed panel renders at most
+    /// <see cref="PreviewRows"/> of the whole month. With ten events today the tab reads "10
+    /// reminders today" above six visible rows and a "Show all 10" button. That is the intended
+    /// reading: the badge answers "how much is on today", which is a question about the day, while
+    /// the preview cap is about how much of a month fits on a wall display before the family asks
+    /// for the rest. Capping this to the preview would make the badge under-report the day whenever
+    /// the panel happened to be collapsed — and the panel is collapsed every time the kiosk returns
+    /// home.
+    /// </para>
+    /// <para>
     /// Here rather than in <c>Index.razor</c>'s <c>@code</c> block for the usual reason: there
     /// is no bUnit in this repo, so a count a `.razor` file computes for itself is a count nothing can
     /// assert on — and this one is read while the family is on another tab entirely, where no E2E
