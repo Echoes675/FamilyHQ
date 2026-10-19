@@ -3,7 +3,22 @@
 <div class="view-tabs mb-4">
     <button data-testid="reminders-tab"
             class="view-tab @(CurrentView == DashboardView.Reminders ? "active" : "")"
-            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">Reminders</button>
+            @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Reminders)">
+        Reminders
+        @* The list below has no "Today" panel to glance at any more — each row names its own day
+           instead — so the tab strip is what tells the family something falls today, from
+           whichever tab they are on. Nothing is rendered at all when the count is zero: an empty
+           pill or a "0" left on screen would be a standing claim where silence is the signal. *@
+        @if (TodayReminderCount > 0)
+        {
+            @* The bell is decoration — the span's aria-label carries the whole message — so it is
+               hidden rather than announced as "bell". *@
+            <span class="view-tab__badge" data-testid="reminders-tab-badge" aria-label="@TodayBadgeLabel">
+                <span aria-hidden="true">🔔</span>
+                @TodayReminderCount
+            </span>
+        }
+    </button>
     <button data-testid="month-tab"
             class="view-tab @(CurrentView == DashboardView.Month ? "active" : "")"
             @onclick="() => OnViewChanged.InvokeAsync(DashboardView.Month)">Month View</button>
@@ -18,4 +33,15 @@
 @code {
     [Parameter] public DashboardView CurrentView { get; set; }
     [Parameter] public EventCallback<DashboardView> OnViewChanged { get; set; }
+
+    /// <summary>
+    /// How many events fall on the kiosk's local today. Above zero the Reminders tab carries a bell
+    /// and this number; at zero it carries neither, so the badge never has to say "nothing".
+    /// </summary>
+    [Parameter] public int TodayReminderCount { get; set; }
+
+    // The badge in words. A bell glyph and a bare digit tell a screen reader nothing, and a wall
+    // display is not the only way this page is read.
+    private string TodayBadgeLabel =>
+        TodayReminderCount == 1 ? "1 reminder today" : $"{TodayReminderCount} reminders today";
 }

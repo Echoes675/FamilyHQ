@@ -49,7 +49,7 @@
         }
         <WeatherStrip />
 
-        <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" />
+        <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" TodayReminderCount="RemindersViewLogic.TodayCount(_upcomingReminders, _remindersToday, _remindersZone)" />
 
     }
 
@@ -115,7 +115,6 @@
     {
         <RemindersView Rows="_upcomingReminders"
                        Today="_remindersToday"
-                       WeekStart="_householdWeekStart"
                        Zone="_remindersZone"
                        OnOpenDay="OnRemindersDrillDown" />
     }
@@ -173,34 +172,30 @@
     private IReadOnlyList<CalendarSummaryViewModel> _displayCalendars = Array.Empty<CalendarSummaryViewModel>();
     private ConnectionStatusDto? _connectionStatus;
 
-    // Reminders tab state. Starts empty before the first fetch — RemindersView renders its
-    // "No reminders coming up" state for that, rather than a blank region — and is then kept live by
-    // RefreshUpcomingRemindersAsync (on opening the tab, on EventsUpdated, and on the per-minute tick
-    // below when the month changes).
+    // Reminders state, page-level rather than tab-level. Starts empty before the first fetch —
+    // RemindersView renders its "No reminders coming up" state for that, rather than a blank region —
+    // and is then kept live by RefreshUpcomingRemindersAsync (on load, on entering the tab, on
+    // EventsUpdated, on an event being saved or deleted, and on the per-minute tick below when the
+    // month changes).
+    //
+    // These rows feed two things now, not one: the timeline itself and the Reminders tab's count of
+    // what falls today, which has to be right while the family is looking at another tab entirely.
+    // That is why the fetch is no longer scoped to the tab that renders the rows.
     private IReadOnlyList<UpcomingReminderEventViewModel> _upcomingReminders = Array.Empty<UpcomingReminderEventViewModel>();
     private DateOnly _remindersToday;
     private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
 
-    // The household runs Monday to Sunday. One named member at this composition point, so letting
-    // the family choose their own first day later is a one-line change here rather than a hunt
-    // through the view — ReminderBucketing already takes it as a parameter and is tested both ways.
-    // Deliberately NOT the same day BuildCalendarGrid's month grid starts its rows on (Sunday,
-    // DayOfWeek.Sunday == 0): a grid's row-zero is a layout convention, but a section labelled
-    // "This week" is a claim about the family's actual week, and that claim has to be true.
-    private readonly DayOfWeek _householdWeekStart = DayOfWeek.Monday;
-
     // The tick that keeps the Reminders timeline honest between fetches. Every minute it re-reads
-    // "today" off the clock, which is what keeps a row's SECTION correct across midnight (bucketing
-    // recomputes from _remindersToday on every render) with no timer aimed at midnight itself. It
-    // refetches from the server only on a month change — see RefileRemindersForTick. Started when the
-    // Reminders tab is switched to and stopped when it is switched away from, mirroring DayView's
-    // now-line loop but scoped to this tab rather than the whole page.
+    // "today" off the clock, which is what keeps a row's PANEL and its "Today"/"Tomorrow" label
+    // correct across midnight (both recompute from _remindersToday on every render) with no timer
+    // aimed at midnight itself. It refetches from the server only on a month change — see
+    // RefileRemindersForTick. Started once per authenticated load and stopped only on disposal,
+    // because the count on the Reminders tab has to roll over at midnight whichever tab is showing.
     //
-    // Owned through ReminderTickLoop rather than a bare CancellationTokenSource/Task pair: a tab
-    // switch away and back before a slow fetch resolves is an ordinary interleaving, not a rare one,
-    // and a naive start/stop pair can orphan a loop under it (a stop that races a start which has not
-    // recorded its handles yet no-ops, and the start then resumes and records a loop for a tab the
-    // user already left). ReminderTickLoop makes that structurally impossible — see its own remarks.
+    // Owned through ReminderTickLoop rather than a bare CancellationTokenSource/Task pair: that
+    // guards against a stop racing a start and orphaning a loop. Starting once at load is the
+    // easiest case it handles, and it stays the owner because losing that guarantee is not worth the
+    // lines it would save — see its own remarks.
     private static readonly TimeSpan ReminderTickPeriod = TimeSpan.FromMinutes(1);
     private readonly ReminderTickLoop _reminderTickLoop = new();
 
@@ -244,22 +239,22 @@
 
         await LoadMonthDataAsync();
 
-        // The landing path's entry work, and the only place it can happen: SwitchToView runs on a
-        // tab tap or a drill-down and so never runs on a page load. Initialising _currentView alone
-        // would render the timeline with no rows and no tick — EnterRemindersViewAsync is what
-        // anchors _remindersToday to the clock, fetches the rows and starts the per-minute loop.
+        // Unconditional, whatever view this load lands on: the Reminders tab carries a count of what
+        // falls today, so the rows have to be in memory and the clock has to be ticking before the
+        // family has touched anything. SwitchToView runs on a tab tap or a drill-down and so never
+        // runs on a page load, which makes this the only place a load can do either.
         //
-        // This is the one entry a load makes: OnAfterRenderAsync starts the idle poll and nothing
-        // else, so the loop is never started twice over a load. (EnsureRunningAsync is idempotent
-        // regardless — see ReminderTickLoop's remarks and its CalledAgainWhileRunning test — so a
-        // future second caller would not orphan a loop either.)
+        // This also satisfies the rule the branch here used to guard — that a future change letting
+        // the dashboard remember its last-viewed tab must not silently skip the fetch-on-open rule —
+        // but structurally rather than by remembering to keep the condition right: there is no
+        // landing view this can be wrong for, because it no longer asks what the landing view is.
         //
-        // Still a check on _currentView rather than on HomeView: a future change that lets the
-        // dashboard remember its last-viewed tab must not silently skip the fetch-on-open rule.
-        if (_currentView == DashboardView.Reminders)
-        {
-            await EnterRemindersViewAsync();
-        }
+        // This is the one loop start a load makes: OnAfterRenderAsync starts the idle poll and
+        // nothing else. (EnsureRunningAsync is idempotent regardless — see ReminderTickLoop's
+        // remarks and its CalledAgainWhileRunning test — so a future second caller would not orphan
+        // a loop either.)
+        await RefreshUpcomingRemindersAsync();
+        await StartReminderTickLoopAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -473,13 +468,12 @@
             }
         }
 
+        // Entering the tab still re-anchors and refetches; LEAVING it does nothing, because the tick
+        // loop now runs for the page's lifetime rather than the tab's — the Reminders tab's count of
+        // what falls today has to roll over at midnight whichever view the kiosk is parked on.
         if (view == DashboardView.Reminders && !wasReminders)
         {
             await EnterRemindersViewAsync();
-        }
-        else if (wasReminders && view != DashboardView.Reminders)
-        {
-            await StopReminderTickLoopAsync();
         }
 
         StateHasChanged();
@@ -564,43 +558,34 @@
 
     // EventModal.OnSaved/OnDeleted fire for every tab the modal can be opened from, and
     // LoadMonthDataAsync always runs because Month/Day/Agenda all read the same month grid
-    // regardless of which one is currently showing. The reminders timeline is its own fetch, so it
-    // only refreshes itself when that tab IS the Reminders view — the same "originating view
-    // refreshes itself" convention SwitchToView/EnterRemindersViewAsync already follow.
+    // regardless of which one is currently showing. The reminders refresh is unconditional for the
+    // same reason: the rows are no longer read by one tab. An event edited on the Month view can add
+    // or remove a reminder that falls today, which changes the number the Reminders TAB shows while
+    // the family is standing in front of the Month view — so refreshing only when the Reminders view
+    // is the one showing would leave that number wrong until the next month boundary.
     //
     // No path opens the modal from the Reminders tab today: tapping a row drills into the Day view,
     // and the only OpenForEdit/OpenForCreate callers are wired to the Month, Day and Agenda
-    // components, none of which render while the Reminders view does. The guard is kept rather than
-    // dropped because these two callbacks are shared by every view, so it costs nothing while
-    // unreachable and is what a re-added path would otherwise have to remember to restore. Entering
-    // the tab refetches regardless (EnterRemindersViewAsync), so nothing stale survives a tab
-    // switch either way.
+    // components, none of which render while the Reminders view does. That is why the refresh has to
+    // be unconditional rather than why it can be skipped — every modal save there IS is a save made
+    // from some other view.
     private async Task OnEventModalSaved()
     {
         await LoadMonthDataAsync();
-
-        if (_currentView == DashboardView.Reminders)
-        {
-            await RefreshUpcomingRemindersAsync();
-            StateHasChanged();
-        }
+        await RefreshUpcomingRemindersAsync();
+        StateHasChanged();
     }
 
     // Same reasoning and refresh as OnEventModalSaved.
     private async Task OnEventModalDeleted()
     {
         await LoadMonthDataAsync();
-
-        if (_currentView == DashboardView.Reminders)
-        {
-            await RefreshUpcomingRemindersAsync();
-            StateHasChanged();
-        }
+        await RefreshUpcomingRemindersAsync();
+        StateHasChanged();
     }
 
-    // The one place that enters the Reminders tab — called from SwitchToView and, defensively, from
-    // OnInitializedAsync — so the recompute-fetch-start sequence exists exactly once rather than as
-    // two copies that could quietly drift apart.
+    // The one place that enters the Reminders tab, called from SwitchToView — so the re-anchor and
+    // refetch an entry needs exist once rather than at every caller that can reach the tab.
     private async Task EnterRemindersViewAsync()
     {
         // Re-anchor "today" on every entry, not just once at page load: re-opening the tab after a
@@ -608,18 +593,12 @@
         // that would misplace rows under the wrong heading for up to a minute (until the next tick
         // corrects it) and could trigger a spurious month-change refetch inside that tick besides.
         _remindersToday = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
-        await RefreshUpcomingRemindersAsync();
 
-        // Re-check rather than assume: Blazor dispatches the next UI event while this method is
-        // suspended on the fetch above, so the user may have already switched to another tab by the
-        // time it resumes. Starting the loop unconditionally here would start it for a view that is
-        // no longer showing, and nothing would ever stop it — the matching "leaving Reminders" call
-        // already ran and found nothing to stop. See ReminderTickLoop's own remarks for why starting
-        // it is also safe to call more than once regardless.
-        if (_currentView == DashboardView.Reminders)
-        {
-            await StartReminderTickLoopAsync();
-        }
+        // Refetched on entry as well as on the tick, because an idle kiosk returning to this tab
+        // must refile immediately rather than within the minute: the tick that would correct it is
+        // up to 60 seconds away, and a wall display showing yesterday's arrangement for that long is
+        // the failure this view exists to prevent.
+        await RefreshUpcomingRemindersAsync();
     }
 
     private Task StartReminderTickLoopAsync() => _reminderTickLoop.EnsureRunningAsync(
@@ -635,8 +614,9 @@
     // local can conjure them.
     //
     // Crossing MIDNIGHT inside the same month needs no refetch: the window's far edge is unchanged,
-    // and all that has changed is which SECTION a row's EventStart falls into — which is recomputed
-    // from _remindersToday on every render regardless.
+    // and all that has changed is which PANEL a row's EventStart falls into and whether its row
+    // reads "Today", "Tomorrow" or a date — all of which recompute from _remindersToday on every
+    // render regardless.
     //
     // A reminder firing is not a trigger either, and no longer could be: nothing on a row describes
     // a reminder, so there is nothing for a fired one to make stale. The row is filed by its EVENT's
@@ -644,7 +624,9 @@
     private async Task RefileRemindersForTick()
     {
         var today = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
+        var dayChanged = today != _remindersToday;
         var monthChanged = today.Month != _remindersToday.Month || today.Year != _remindersToday.Year;
+
         _remindersToday = today;
 
         if (monthChanged)
@@ -652,7 +634,19 @@
             await RefreshUpcomingRemindersAsync();
         }
 
-        StateHasChanged();
+        // Rendered only when something on screen would actually differ. Unconditional was right while
+        // this loop ran for the one tab it redrew; page-level it would diff the whole month grid every
+        // minute on a Pi 3B+ for no visible change.
+        //
+        // The day is the WHOLE condition, deliberately, and it is worth saying why rather than
+        // guarding more broadly: a month cannot change without the day changing too, so the refetch
+        // above never happens on its own, and nothing else in a tick touches the rows — every other
+        // path that refreshes them (the SignalR handler, a modal save or delete, entering the tab)
+        // renders for itself. Re-check that if a tick is ever given a second reason to refetch.
+        if (dayChanged)
+        {
+            StateHasChanged();
+        }
     }
 
     private async Task CheckIdleSnapAsync()
@@ -721,8 +715,9 @@
     }
 
     // Returns through SwitchToView — the same path a tab tap takes — rather than assigning
-    // _currentView and re-rendering. That is what re-anchors _remindersToday from the clock, fetches
-    // the rows and starts the per-minute tick, so an idle return needs no refresh of its own.
+    // _currentView and re-rendering. That is what re-anchors _remindersToday from the clock and
+    // refetches the rows, so an idle return needs no refresh of its own. (The per-minute tick needs
+    // no start here: it has been running since the page loaded.)
     //
     // It also resets the timeline's sections to their preview state for free: RemindersView keeps
     // the sections expanded by "Show all" in an instance field, and it is rendered only inside the
