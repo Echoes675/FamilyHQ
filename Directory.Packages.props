@@ -11,10 +11,17 @@
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection" Version="10.0.7" />
     <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.7" />
-    <!-- Pinned above the transitive 10.0.7 pulled in by Microsoft.AspNetCore.DataProtection: NU1903 GHSA-23rf-6693-g89p, GHSA-8q5v-6pqq-x66h, GHSA-cvvh-rhrc-wg4q, GHSA-g8r8-53c2-pm3f, GHSA-mmjf-rqrv-855v.
-         Patched version per the advisories is 10.0.10 (10.0.8 does not clear the audit) (FHQ-146) -->
-    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Core" Version="1.2.9" />
+    <!-- Pinned above the transitive version pulled in by Microsoft.AspNetCore.DataProtection, which
+         the audit rejects. Nine advisories so far, each raising the floor: GHSA-23rf-6693-g89p,
+         GHSA-8q5v-6pqq-x66h, GHSA-cvvh-rhrc-wg4q, GHSA-g8r8-53c2-pm3f and GHSA-mmjf-rqrv-855v took it
+         to 10.0.10; GHSA-7hqp-7c5m-4vq6, GHSA-c399-9853-6jmj and GHSA-r955-8q5j-3h83 (published
+         2026-10-13, all denial of service) take it to 10.0.13. Read the patched version off the
+         advisory rather than guessing a nearby patch — 10.0.8 did not clear the previous batch. -->
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.13" />
+    <!-- Transitive, through System.Security.Cryptography.Xml, and separately vulnerable:
+         GHSA-846f-f764-76mx and GHSA-2fmv-rv2c-59x7. Needs its own pin because lifting the package
+         that depends on it does not lift it. -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.7" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.7" />
@@ -28,7 +35,10 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.7" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.InMemory" Version="10.0.7" />
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.7" />
+    <!-- Lifted off the 10.0.7 band by the SignalR.Common pin below, which asks for Options >= 10.0.13.
+         Not an advisory of its own: a pin that clears an audit is no use if it leaves the graph
+         unresolvable, and the alternative — holding this at 10.0.7 — is the NU1109 downgrade error. -->
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.13" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
     <!-- Google -->
     <PackageVersion Include="Google.Apis.Calendar.v3" Version="1.69.0.3667" />
@@ -45,6 +55,11 @@
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <!-- SignalR -->
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.7" />
+    <!-- Transitive, through the client above, and vulnerable at the version the client asks for:
+         GHSA-334f-vvp4-7g6p (published 2026-10-13, denial of service). Pinned rather than solved by
+         bumping the client, so the rest of the 10.0.7 band stays on one version and this line says
+         which advisory moved it. -->
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Common" Version="10.0.13" />
     <!-- Time zones -->
     <PackageVersion Include="NodaTime" Version="3.2.0" />
     <PackageVersion Include="GeoTimeZone" Version="5.3.0" />
