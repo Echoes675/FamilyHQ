@@ -1,19 +1,19 @@
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
 /// <summary>
-/// Files a flat list of rows into the five sections the reminders timeline lays out in two columns,
-/// by one instant read off each row.
+/// Files a flat list of rows into the two panels the reminders timeline lays out side by side, by one
+/// instant read off each row.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why Tomorrow is its own section.</b> Calendar buckets alone misfile it: on the last day of a
-/// week, tomorrow belongs to next week, and on the last day of a month it belongs to next month — so
-/// a row the family needs to see first would render in the far-right column. Matching Tomorrow
-/// before either calendar bucket is what keeps "soon" meaning soon.
-/// </para>
-/// <para>
-/// <b>The week start is a parameter.</b> It is a household preference, and this class has no
-/// business knowing which one. Pass it in; test both.
+/// <b>Why two calendar months and not a near/far mix.</b> This filed into five sections — Today,
+/// Tomorrow, This week, This month, Next month — and two of them were structurally empty rather than
+/// merely often empty: on a Saturday the week's end IS tomorrow, so no day was left for This week to
+/// claim, and once the current week ran past the month's end the same was true of This month. Over a
+/// year that is 104 days with an empty This week and 51 with an empty This month. Two calendar-month
+/// panels can each always claim at least one day, and the days a family cares about most are named on
+/// the rows themselves (<see cref="ReminderRowDisplay.EventTime"/>) rather than by the panel holding
+/// them — which is what makes a single panel per month enough.
 /// </para>
 /// <para>
 /// <b>Which instant a row is filed by is the caller's decision, not this class's.</b> The timeline
@@ -25,17 +25,36 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 public static class ReminderBucketing
 {
     /// <summary>
-    /// Files <paramref name="rows"/> into the five sections, in match order Today → Tomorrow →
-    /// This week → This month → Next month, and always returns all five — an absent section would
-    /// shuffle the view's fixed two-column layout, and collapsing an empty one is the view's job, not
-    /// this class's.
+    /// Files <paramref name="rows"/> into the two panels — This month then Next month — and always
+    /// returns both, empty or not. Placement does not depend on it (<c>app.css</c> gives each panel
+    /// an explicit <c>grid-column</c>/<c>grid-row</c> keyed on its slug, so a missing panel leaves
+    /// the other where it is), but two readers do: <see cref="RemindersViewLogic.IsEntirelyEmpty"/>
+    /// can only tell "nothing at all" from "nothing in one month" if both panels are present to be
+    /// asked, and the per-panel "Nothing" line needs a panel to render it against. Collapsing an
+    /// empty panel is the view's job; omitting it would be this class deciding the view's layout for
+    /// it, with the two states above collapsed into one on the way.
     /// </summary>
     /// <remarks>
-    /// Sections are strictly non-overlapping: the first one a row's local day satisfies is the one it
-    /// lands in, so <c>ThisWeek</c> begins the day after tomorrow and <c>ThisMonth</c> begins only
-    /// after the week containing <paramref name="today"/> has ended. A row whose local day satisfies
-    /// none of the five — beyond the window the server returned — is dropped rather than forced into
-    /// the last section, where it would quietly misrepresent "next month".
+    /// "This month" runs from <paramref name="today"/> inclusive to the end of its month, and "Next
+    /// month" from the day after to the end of the following month. Including today is the point: a
+    /// panel whose near edge was tomorrow is a panel that cannot hold the rows a family reads first.
+    /// <para>
+    /// A row whose local day satisfies neither panel is dropped rather than forced into the nearer
+    /// one, where it would quietly misrepresent the month it names. That catches a row beyond the
+    /// window the server returned, and also a row BEFORE <paramref name="today"/>, which is not the
+    /// impossibility it looks like. The server opens its window at local midnight in the zone
+    /// FamilyHQ has STORED for the family (UTC if it has none it can resolve); this method is handed
+    /// a <paramref name="today"/> and a <paramref name="zone"/> read off the KIOSK's own clock. The
+    /// two agree whenever the stored zone was auto-detected, because the kiosk's reported zone is
+    /// what gets stored — but a zone chosen explicitly in settings, or derived from a saved location,
+    /// outranks whatever the kiosk reports, and then they are simply two different zones. A kiosk
+    /// behind the stored zone is a kiosk whose window opened before its own midnight: the last hours
+    /// of the kiosk's yesterday are inside it, so a past row really can arrive.
+    /// </para>
+    /// <para>
+    /// Dropping it is still right, and would be right even if it could not happen: a past row shown
+    /// among upcoming ones is worse than a missing one, because the family would act on it.
+    /// </para>
     /// </remarks>
     /// <param name="rows">The rows to file. Never mutated or reordered in place.</param>
     /// <param name="instant">
@@ -43,10 +62,6 @@ public static class ReminderBucketing
     /// dependency, so this class needs nothing about the row beyond the one value it files by.
     /// </param>
     /// <param name="today">The kiosk's current local date.</param>
-    /// <param name="weekStart">
-    /// The first day of the household's week. A parameter, never a constant: which day a week starts
-    /// on is a household preference this class has no business assuming.
-    /// </param>
     /// <param name="zone">
     /// The zone a row's local day is read in. A row's day is its day <i>in this zone</i>, not its
     /// UTC day — the two disagree for several hours around every midnight, and for an extra hour
@@ -56,45 +71,21 @@ public static class ReminderBucketing
         IEnumerable<T> rows,
         Func<T, DateTimeOffset> instant,
         DateOnly today,
-        DayOfWeek weekStart,
         TimeZoneInfo zone)
     {
-        var tomorrow = today.AddDays(1);
-        var weekEnd = EndOfWeek(today, weekStart);
         var thisMonthEnd = EndOfMonth(today);
         var nextMonthEnd = EndOfMonth(today.AddMonths(1));
 
-        // ThisWeek can run past the end of the month (a week spanning two months), in which case
-        // nothing is left for ThisMonth to claim that ThisWeek has not already taken. Starting
-        // ThisMonth after whichever of Tomorrow or the week's end is later is what keeps that true
-        // without ThisMonth and ThisWeek ever needing to agree on who owns a given day.
-        var thisMonthStart = tomorrow > weekEnd ? tomorrow : weekEnd;
-
-        var todayRows = new List<T>();
-        var tomorrowRows = new List<T>();
-        var thisWeekRows = new List<T>();
         var thisMonthRows = new List<T>();
         var nextMonthRows = new List<T>();
 
-        // Sorting up front means each bucket is filled in order already, so no section needs a sort
-        // of its own afterwards.
+        // Sorting up front means each panel is filled in order already, so no panel needs a sort of
+        // its own afterwards.
         foreach (var row in rows.OrderBy(instant))
         {
             var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant(row), zone).DateTime);
 
-            if (localDate == today)
-            {
-                todayRows.Add(row);
-            }
-            else if (localDate == tomorrow)
-            {
-                tomorrowRows.Add(row);
-            }
-            else if (localDate > tomorrow && localDate <= weekEnd)
-            {
-                thisWeekRows.Add(row);
-            }
-            else if (localDate > thisMonthStart && localDate <= thisMonthEnd)
+            if (localDate >= today && localDate <= thisMonthEnd)
             {
                 thisMonthRows.Add(row);
             }
@@ -102,26 +93,14 @@ public static class ReminderBucketing
             {
                 nextMonthRows.Add(row);
             }
-            // Else: outside every section the view can display. Dropped, not misfiled.
+            // Else: outside both panels the view can display. Dropped, not misfiled.
         }
 
         return
         [
-            new ReminderSection<T>(ReminderSectionKey.Today, "Today", todayRows),
-            new ReminderSection<T>(ReminderSectionKey.Tomorrow, "Tomorrow", tomorrowRows),
-            new ReminderSection<T>(ReminderSectionKey.ThisWeek, "This week", thisWeekRows),
             new ReminderSection<T>(ReminderSectionKey.ThisMonth, "This month", thisMonthRows),
             new ReminderSection<T>(ReminderSectionKey.NextMonth, "Next month", nextMonthRows)
         ];
-    }
-
-    // The last day of the week containing `date`, given which day the week starts on. Computed from
-    // the gap back to the most recent `weekStart` day rather than from a fixed DayOfWeek — see the
-    // class remarks on why weekStart has to stay a parameter.
-    private static DateOnly EndOfWeek(DateOnly date, DayOfWeek weekStart)
-    {
-        var daysSinceWeekStart = ((int)date.DayOfWeek - (int)weekStart + 7) % 7;
-        return date.AddDays(6 - daysSinceWeekStart);
     }
 
     private static DateOnly EndOfMonth(DateOnly date) =>

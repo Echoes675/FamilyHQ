@@ -35,24 +35,25 @@ public class RemindersViewSteps
     }
 
     // ── Seeding an event today, relative to "now" ───────────────────────────────────────────────
-    // For the ONE scenario whose subject is the state of "now" itself: a reminder that has already
-    // fired on an event that has not yet happened. No fixed clock time can construct that, because
-    // the suite runs at an arbitrary hour — "now" has to be between the trigger and the start, and
-    // only an offset from now guarantees it.
+    // NO SCENARIO USES THIS TODAY. The one whose subject was the state of "now" itself — a reminder
+    // that has already fired on an event that has not yet happened — reaches that state by putting
+    // the REMINDER in the past instead (48 hours before an event tomorrow), which holds at every
+    // hour of every day. What is kept here is the GUARD: a scenario that genuinely needs "now" to
+    // sit between two instants has no choice but to seed from the clock, and it has to refuse to run
+    // inside its own offset of local midnight rather than failing later as a baffling missing row.
     //
-    // Every other scenario that wants a row under Today uses a FIXED time instead
-    // ("at 09:00 on today"), and should: a row is filed by its event's start date and stays under
-    // Today for the whole of that day — RemindersController's window opens at local midnight, not at
-    // now, and RowFor reads no clock at all. A fixed seed therefore also fails LOUDER than a relative
-    // one if that near edge ever moves back to "now", because a 09:00 event would drop out of the
-    // response while a future one would not.
+    // Every scenario that wants a row dated today uses a FIXED time instead ("at 09:00 on today"),
+    // and should: a row is filed by its event's start DATE and reads "Today" for the whole of that
+    // day — RemindersController's window opens at local midnight, not at now, and RowFor reads no
+    // clock at all. A fixed seed therefore also fails LOUDER than a relative one if that near edge
+    // ever moves back to "now", because a 09:00 event would drop out of the response while a future
+    // one would not.
     //
-    // The start has to land on TODAY's local date, because the row is filed by the EVENT's own start:
-    // once "now" is within `minutes` of local midnight the start rolls into tomorrow and the row is
-    // correctly filed under Tomorrow while the scenario still asserts Today. The seeding offset IS
-    // the width of that window, so it is refused outright rather than left to fail later as a
-    // baffling "no row under Today" — see .agent/skills/fail-fast-standard/SKILL.md. That window is
-    // the unavoidable cost of needing "now" to sit mid-way, and the reason only one scenario pays it.
+    // The start has to land on TODAY's local date, because the row is labelled from the EVENT's own
+    // start: once "now" is within `minutes` of local midnight the start rolls into tomorrow and the
+    // row correctly reads "Tomorrow" while the scenario still asserts "Today". The seeding offset IS
+    // the width of that window, so it is refused outright — see
+    // .agent/skills/fail-fast-standard/SKILL.md.
     [Given(@"the user has a timed event ""([^""]*)"" starting in (\d+) minutes in ""([^""]*)""")]
     public async Task GivenTheUserHasATimedEventStartingInMinutesInCalendar(
         string eventName, int minutes, string calendarName)
@@ -70,7 +71,7 @@ public class RemindersViewSteps
                 $"{startDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}, not today " +
                 $"({BrowserClock.TodayDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}): " +
                 $"this scenario cannot run within {minutes.ToString(CultureInfo.InvariantCulture)} " +
-                "minutes of local midnight, because its row would be filed under Tomorrow.");
+                "minutes of local midnight, because its row would read \"Tomorrow\".");
         }
 
         isolatedTemplate.Events.Add(new SimulatorEventModel
@@ -139,7 +140,14 @@ public class RemindersViewSteps
         await Assertions.Expect(_dashboardPage.RemindersViewContainer).ToBeVisibleAsync(new() { Timeout = 10000 });
     }
 
-    // ── What a section/row shows ─────────────────────────────────────────────
+    // ── What a panel holds, and what a row says ──────────────────────────────
+    //
+    // Two different kinds of assertion, and the difference matters. WHICH PANEL holds a row is a
+    // statement about the row's date against the month, so a scenario can only name a panel for a
+    // date whose panel is the same on every run date: "today", or an event resolved into next
+    // month. What a row SAYS is a statement about its own date against today, and is asserted
+    // without naming a panel at all — on the last day of a month tomorrow is filed under "Next
+    // month" and still reads "Tomorrow", which is the day the family can least afford to lose it.
 
     [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)""")]
     public async Task ThenTheSectionHasARowFor(string sectionName, string title)
@@ -153,53 +161,45 @@ public class RemindersViewSteps
             $"'{title}' should have a row filed under '{sectionName}'.");
     }
 
-    [Then(@"the ""([^""]*)"" section has no row for ""([^""]*)""")]
-    public async Task ThenTheSectionHasNoRowFor(string sectionName, string title)
+    [Then(@"the row for ""([^""]*)"" leads with ""([^""]*)""")]
+    public async Task ThenTheRowForLeadsWith(string title, string expected)
     {
-        var key = ParseSection(sectionName);
-        var rows = await _dashboardPage.ReadReminderRowsAsync(key);
-        var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
-
-        rows.Should().NotContain(
-            r => r.EventId == target.EventId,
-            $"'{title}' must not also be filed under '{sectionName}'.");
-    }
-
-    [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with ""([^""]*)"" and nothing else")]
-    public async Task ThenTheSectionHasARowForLeadingWithAndNothingElse(
-        string sectionName, string title, string expected)
-    {
-        // sectionName is not re-resolved here: FindReminderRowByTitleAsync already searches the
-        // whole view, and ThenTheSectionHasARowFor (above) is what pins WHICH section a row landed
-        // in. This step is about what the row SAYS, not where it is.
+        // No panel is named, deliberately: a row names its own day, read off its own local date
+        // against today, never off the heading above it. Naming a panel here would make the
+        // expectation a function of the run date — tomorrow is filed under "Next month" on the last
+        // day of every month — which is the hazard e2e-testing-maintenance.md records for every
+        // relative date expression.
         //
-        // The leading column is read on its own and compared for EQUALITY, which is what makes this
-        // the "no date" half of the requirement: Today spans one day and its heading already names
-        // it, so repeating the date on every row there is noise. A `Contain` check would pass just
-        // as well on "Tue 10 Mar · 18:00".
+        // EQUALITY on the leading column, not a containment, and that is what the step is for: the
+        // failure it guards is a row that dropped its day and reverted to the bare time, and "09:00"
+        // is contained in "Today · 09:00". The column is read on its own rather than out of the
+        // row's whole text, so no other time rendered inside the row can satisfy it either.
         //
-        // The expected time is stated by the scenario rather than read back from what the seeding
-        // step computed, which the fixed seed is what makes possible. It is the stronger of the two:
-        // a seeding bug that derived the wrong start would previously have produced the same wrong
-        // value on both sides of this assertion and passed.
-        var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
-
-        shown.Should().Be(expected,
-            $"the row for '{title}' should lead with when the EVENT starts, and with nothing else.");
+        // The expected text is written out by the scenario rather than read back from what the
+        // seeding step computed, which is what a fixed seed time buys: a seeding bug that derived
+        // the wrong start would otherwise produce the same wrong value on both sides and pass.
+        await _dashboardPage.AssertReminderRowLeadsWithAsync(title, expected);
     }
 
     [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with the day and date of ""([^""]*)""")]
     public async Task ThenTheSectionHasARowForLeadingWithTheDayAndDateOf(
         string sectionName, string title, string dateExpr)
     {
-        // The other half: a section spanning several days has to say WHICH day each row is, or
-        // several occurrences of one recurring series render as identical rows — the screenshot that
-        // prompted this showed three of them.
+        // The other form the leading column takes: a day further out than tomorrow is named by its
+        // date, because a panel covers a whole calendar month and several occurrences of one
+        // recurring series would otherwise render as identical rows — the screenshot that prompted
+        // this showed three of them.
         //
         // The expected date comes from DateExpressionResolver, the same single source of truth the
         // seeding step resolved the expression through, so this cannot disagree with the seed about
         // what "next month" means. The day NAME is asserted along with the date because the row
         // renders both, and InvariantCulture because that is what the row formats with.
+        //
+        // The panel IS named here, unlike the step above, and both halves are read off the SAME
+        // snapshot, so "which panel holds it" and "what it says" cannot resolve different rows.
+        // Naming one costs this step nothing: a date only appears on a row that is neither today
+        // nor tomorrow, so a scenario asserting one has already had to seed its event into a panel
+        // it knows.
         var expectedDate = DateTime.ParseExact(
             DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
         var expectedPrefix = expectedDate.ToString("ddd d MMM", CultureInfo.InvariantCulture);
@@ -208,30 +208,29 @@ public class RemindersViewSteps
         var rows = await _dashboardPage.ReadReminderRowsAsync(key);
         var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
 
-        rows.Should().Contain(
-            r => r.EventId == target.EventId,
-            $"'{title}' should have a row filed under '{sectionName}' to read a date off.");
+        var match = rows.SingleOrDefault(r => r.EventId == target.EventId)
+            ?? throw new InvalidOperationException(
+                $"'{title}' has no row filed under '{sectionName}' to read a date off.");
 
-        var shown = await _dashboardPage.ReadReminderRowStartTimeAsync(title);
-
-        shown.Should().StartWith(
+        match.When.Should().StartWith(
             expectedPrefix,
             $"a row in '{sectionName}' should lead with the day and date of its event, because the " +
-            "section covers more than one day and its heading cannot say which.");
+            "panel covers a whole month and its heading cannot say which day a row is.");
     }
 
     [Then(@"the row for ""([^""]*)"" appears only in the ""([^""]*)"" section")]
     public async Task ThenTheRowForAppearsOnlyInTheSection(string title, string sectionName)
     {
         // The business rule the family specifically asked for: a row is filed where its EVENT starts,
-        // and nowhere else — not in every section one of its reminders' trigger instants happens to
-        // land in. Checking every section rather than just the expected one is the point: a row that
-        // ALSO appears somewhere else is exactly the scattering bug this view used to have.
+        // and nowhere else — not in every panel one of its reminders' trigger instants happens to
+        // land in. Checking every panel rather than just the expected one is the point: a row that
+        // ALSO appears in the other one is exactly the scattering bug this view used to have, and
+        // with two panels either of them can be the wrong one.
         var expected = ParseSection(sectionName);
         var target = await _dashboardPage.FindReminderRowByTitleAsync(title);
 
-        // Counted across the whole view first, because the per-section read below only sees RENDERED
-        // rows: a collapsed section renders at most RemindersViewLogic.PreviewRows of them, so a
+        // Counted across the whole view first, because the per-panel read below only sees RENDERED
+        // rows: a collapsed panel renders at most RemindersViewLogic.PreviewRows of them, so a
         // duplicate sitting behind "Show all" would read as absent and this step would pass on the
         // very scattering it exists to catch.
         var total = await _dashboardPage.CountReminderRowsForTitleAsync(title);
@@ -245,7 +244,7 @@ public class RemindersViewSteps
             if (key == expected)
             {
                 present.Should().BeTrue(
-                    $"'{title}' should be filed under '{sectionName}', the section containing its start.");
+                    $"'{title}' should be filed under '{sectionName}', the panel containing its start.");
             }
             else
             {
@@ -349,17 +348,48 @@ public class RemindersViewSteps
         await _dashboardPage.AssertDayViewShowingEventAsync(title);
     }
 
+    // ── The Reminders tab's count of what falls today ────────────────────────
+    //
+    // The timeline has no "Today" panel to glance at any more, so the tab strip is what tells the
+    // family something falls today. Its whole requirement is that it is right while they are
+    // standing in front of ANOTHER view, where no part of the reminders list is on screen.
+
+    [Then(@"the Reminders tab shows a bell and reads ""([^""]*)""")]
+    public async Task ThenTheRemindersTabShowsABellAndReads(string announcement)
+    {
+        // The scenario states the whole announcement rather than just a number, because the wording
+        // is itself a requirement: a bell glyph and a bare digit tell a screen reader nothing, and a
+        // wall display is not the only way this page is read. Writing it out here is also the only
+        // thing that pins the singular/plural form — deriving it in the test from the same rule the
+        // component applies would assert that the code agrees with itself.
+        //
+        // The digit is taken from the announcement's first word rather than passed as a second
+        // argument, so the two cannot disagree about which number the scenario meant.
+        var count = announcement.Split(' ')[0];
+
+        await _dashboardPage.AssertRemindersTabBadgeAsync(announcement, count);
+    }
+
+    [Then(@"the Reminders tab shows no bell at all")]
+    public async Task ThenTheRemindersTabShowsNoBellAtAll()
+    {
+        // The absence of the element, not a badge reading zero: silence is the signal, and a pill
+        // left on screen saying "0" is a standing claim that something is being tracked today.
+        //
+        // The caller has to have proved the fetch already landed before reaching this step — the
+        // scenario reads a row off the timeline first - because an assertion about something not
+        // being there passes instantly against a page that has not finished loading.
+        await _dashboardPage.AssertRemindersTabHasNoBadgeAsync();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static ReminderSectionKey ParseSection(string name) => name switch
     {
-        "Today" => ReminderSectionKey.Today,
-        "Tomorrow" => ReminderSectionKey.Tomorrow,
-        "This week" => ReminderSectionKey.ThisWeek,
         "This month" => ReminderSectionKey.ThisMonth,
         "Next month" => ReminderSectionKey.NextMonth,
         _ => throw new ArgumentOutOfRangeException(
             nameof(name), name,
-            "Not a reminders-section heading (\"Today\", \"Tomorrow\", \"This week\", \"This month\", \"Next month\").")
+            "Not a reminders-panel heading (\"This month\", \"Next month\").")
     };
 }

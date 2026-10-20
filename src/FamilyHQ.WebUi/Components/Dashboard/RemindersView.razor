@@ -24,10 +24,6 @@
                     else
                     {
                         var expanded = _expanded.Contains(bucket.Key);
-                        @* Answered once per section rather than per row: every row in a section
-                           shows the date or none of them does, and the row itself is not told which
-                           section it is in. *@
-                        var showsDate = RemindersViewLogic.ShowsDate(bucket.Key);
                         <div class="reminders-section__rows">
                             @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
                             {
@@ -36,7 +32,7 @@
                                 <ReminderRow @key="row.EventId"
                                              Event="row"
                                              Zone="Zone"
-                                             ShowsDate="showsDate"
+                                             Today="Today"
                                              OnOpenDay="OnOpenDay" />
                             }
                         </div>
@@ -82,11 +78,11 @@
     [Parameter, EditorRequired]
     public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();
 
-    /// <summary>The kiosk's current local date — what "Today" and "Tomorrow" are measured against.</summary>
+    /// <summary>
+    /// The kiosk's current local date. Both panels are measured from it, and each row's "Today" /
+    /// "Tomorrow" label is measured against it too.
+    /// </summary>
     [Parameter] public DateOnly Today { get; set; }
-
-    /// <summary>The household's week-start day, passed straight through to <see cref="ReminderBucketing"/>.</summary>
-    [Parameter] public DayOfWeek WeekStart { get; set; }
 
     /// <summary>The zone a row's local day (its event's start) is read in.</summary>
     [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
@@ -99,7 +95,7 @@
     private readonly HashSet<ReminderSectionKey> _expanded = [];
 
     private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
-        RemindersViewLogic.Sections(Rows, Today, WeekStart, Zone);
+        RemindersViewLogic.Sections(Rows, Today, Zone);
 
     private void Expand(ReminderSectionKey key) => _expanded.Add(key);
 }

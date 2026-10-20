@@ -22,10 +22,15 @@ Feature: Kiosk auto-advances to the current day after idle
   not an empty one.
 
   The rollover's strongest assertion is therefore not in this file. It is in RemindersView.feature,
-  where a seeded row has to MOVE from the Tomorrow section to the Today section once the day turns —
-  on the home view, which is the one the kiosk is actually left showing. Look there as well as here
-  when a rollover regresses; its event has to be seeded before the login, which is why it cannot live
-  behind this file's Background.
+  where a seeded row has to RE-READ ITSELF once the day turns — the same row, in the same "This
+  month" panel, changing its leading column from "Tomorrow · 08:00" to "Today · 08:00". There are no
+  Today and Tomorrow sections for it to move between any more; the two panels are calendar months,
+  and the day a row names is on the row. That makes the assertion an equality on what the row says,
+  which a row still reading "Tomorrow" cannot satisfy, and the panel is asserted alongside it to
+  catch a copy left behind on the one date where the rollover does change panel — a month's last day.
+  It runs on the home view, which is the one the kiosk is actually left showing. Look there as well as
+  here when a rollover regresses; its event has to be seeded before the login, which is why it cannot
+  live behind this file's Background.
 
   Background:
     Given I have a user like "KioskRolloverUser"

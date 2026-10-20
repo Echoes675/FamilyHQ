@@ -27,28 +27,38 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 public static class ReminderRowDisplay
 {
     /// <summary>
-    /// The row's leading "when": the event's own start as the family sees it. A timed event reads
-    /// "14:00"; an all-day event reads "all day" rather than its stored midnight boundary read as a
-    /// time, which would tell the family the event "starts 00:00".
+    /// The row's leading "when": the day the event falls on, then its own start as the family sees
+    /// it — "Today · 14:00", "Tomorrow · 21:30", "Sat 4 Oct · 10:00", "Today · all day". A timed
+    /// event reads "14:00"; an all-day event reads "all day" rather than its stored midnight
+    /// boundary read as a time, which would tell the family the event "starts 00:00".
     /// <para>
-    /// With <paramref name="withDate"/> the day and date lead it — "Sat 4 Oct · 10:00",
-    /// "Sat 4 Oct · all day" — which the three further-out sections need and the near two do not:
-    /// This week, This month and Next month each span several days, so three occurrences of one
-    /// recurring series on three different days otherwise render as three identical rows (the
-    /// screenshot that prompted this showed exactly that). Today and Tomorrow span one day each and
-    /// their own heading already names it.
+    /// Every row names its day, because each panel spans a whole calendar month: without it, three
+    /// occurrences of one recurring series on three different days render as three identical rows
+    /// (the screenshot that prompted this showed exactly that). "Today" and "Tomorrow" are
+    /// substituted for the date because those are the two days a family reads first, and they are
+    /// read off the row's OWN date against <paramref name="today"/> — never off the panel holding
+    /// it. On the last day of a month tomorrow is filed under "Next month", and it must still read
+    /// "Tomorrow" there; that is the day the family can least afford to lose it. Hence the whole-date
+    /// comparison below rather than arithmetic on a day number: the month-end and year-end cases are
+    /// exactly the ones a cheaper comparison gets wrong, and they are pinned by
+    /// <c>ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext</c>
+    /// and its year-end twin. (<c>ReminderBucketingTests</c> covers the PANEL on that date, not this
+    /// label.)
+    /// </para>
+    /// <para>
+    /// A date before <paramref name="today"/> falls back to the dated form. There is deliberately no
+    /// "Yesterday": <see cref="ReminderBucketing.File{T}"/> drops a past row, so the label would
+    /// name a row that cannot be rendered — a lie waiting for a window change to expose it, where
+    /// the dated form stays true whatever the date turns out to be.
     /// </para>
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The month is in the format on purpose, and <c>ddd d</c> alone would not do. This week is the
-    /// one section whose span can cross a month boundary: with a Monday-start week and today on
-    /// Monday 28 September, <see cref="ReminderBucketing.File{T}"/> gives it 30 September through 4
-    /// October, so "Wed 30" and "Thu 1" sit in the same pane saying nothing about which month either
-    /// is in. (This month and Next month are each bounded to one calendar month, so neither needs it
-    /// to tell its own rows apart — but a row that reads correctly only once the reader has resolved
-    /// it against the pane heading above is a row that reads wrongly at a glance, which is the only
-    /// way this view is ever read.)
+    /// The month is in the format on purpose, and <c>ddd d</c> alone would not do: "This month" and
+    /// "Next month" sit side by side, so the last row of one and the first row of the other are one
+    /// glance apart, and "Wed 30" beside "Thu 1" says nothing about which month either is in. A row
+    /// that reads correctly only once the reader has resolved it against the panel heading above is
+    /// a row that reads wrongly at a glance, which is the only way this view is ever read.
     /// </para>
     /// <para>
     /// <paramref name="start"/> arrives from Postgres via Npgsql as a <c>timestamptz</c> read back
@@ -65,20 +75,26 @@ public static class ReminderRowDisplay
     /// the same way the Pi does.
     /// </para>
     /// </remarks>
-    public static string EventTime(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone, bool withDate)
+    public static string EventTime(DateTimeOffset start, bool isAllDay, TimeZoneInfo zone, DateOnly today)
     {
         var local = TimeZoneInfo.ConvertTime(start, zone);
         var when = isAllDay ? "all day" : local.ToString("HH:mm", CultureInfo.InvariantCulture);
 
-        return withDate
-            ? $"{local.ToString("ddd d MMM", CultureInfo.InvariantCulture)} · {when}"
-            : when;
+        // The row's own local day, read through the same conversion LocalDate and ReminderBucketing
+        // use, so the label, the panel and the day a tap opens cannot disagree.
+        var localDate = DateOnly.FromDateTime(local.DateTime);
+        var day =
+            localDate == today ? "Today"
+            : localDate == today.AddDays(1) ? "Tomorrow"
+            : local.ToString("ddd d MMM", CultureInfo.InvariantCulture);
+
+        return $"{day} · {when}";
     }
 
     /// <summary>
     /// The row's own day: the date a tap on it drills into. Read through the same conversion
     /// <see cref="EventTime"/> formats and <see cref="ReminderBucketing.File{T}"/> files by, so the
-    /// date the row shows, the section it sits under and the day the tap opens cannot disagree — a
+    /// date the row shows, the panel it sits under and the day the tap opens cannot disagree — a
     /// late-evening event read in UTC instead would drill into the day before the one on the row.
     /// </summary>
     public static DateTime LocalDate(DateTimeOffset start, TimeZoneInfo zone) =>
