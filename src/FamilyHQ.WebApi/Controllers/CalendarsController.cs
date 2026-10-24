@@ -88,9 +88,10 @@ public class CalendarsController : ControllerBase
 
         // A day either side of the rendered range. The query is in INSTANTS while the cells are keyed
         // by local DAY, and those differ at the edges in both directions: a timed event at 23:30 UTC
-        // on the day before the range belongs to the range's first cell in any positive-offset zone,
-        // and one early on the day after belongs to its last in any negative one. +14 continues to
-        // pre-fetch the first two weeks of the next month for scroll-ahead display.
+        // on the day before the rendered range belongs to its first cell in any positive-offset zone,
+        // and one early on the day after the rendered range belongs to its last cell in any negative
+        // one. +14 continues to pre-fetch the first two weeks of the next month for scroll-ahead
+        // display.
         var events = await _calendarRepository.GetEventsAsync(
             start: startDay.AddDays(-1), end: endDay.AddDays(15), ct: ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);

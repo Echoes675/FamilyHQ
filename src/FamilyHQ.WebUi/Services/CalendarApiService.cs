@@ -210,6 +210,13 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var rows = dto.Rows
                    ?? throw new InvalidOperationException("API returned no rows collection for GetUpcomingRemindersAsync.");
 
+        // The same goes for the day itself, and it matters more: a payload that omits "today" does not
+        // fail, it deserialises to the default date (0001-01-01), which files every row into neither
+        // panel and renders "No reminders coming up" while rows exist. A fallback further down cannot
+        // catch it, because by then the value is non-null.
+        if (dto.Today == default)
+            throw new InvalidOperationException("API returned no day for GetUpcomingRemindersAsync.");
+
         return new UpcomingRemindersViewModel(
             dto.Today,
             dto.NextRolloverUtc,

@@ -50,7 +50,7 @@ public class RemindersController : ControllerBase
         var familyZone = await _timeZoneService.GetDisplayZoneAsync(ct);
 
         var now = _timeProvider.GetUtcNow();
-        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, familyZone).DateTime);
+        var today = EventWallClock.Of(now, isAllDay: false, familyZone).Date;
 
         // The last date either panel can hold: the end of next month, inclusive.
         var windowEnd = new DateOnly(today.Year, today.Month, 1).AddMonths(2).AddDays(-1);

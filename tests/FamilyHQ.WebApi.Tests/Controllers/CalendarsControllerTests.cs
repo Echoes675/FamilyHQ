@@ -133,8 +133,7 @@ public class CalendarsControllerTests
     public async Task GetEventsForMonth_ATimedEventJustAfterLocalMidnight_LandsInItsOwnCellNotTheDayBefore()
     {
         // 23:30Z on 14 June is 00:30 on the 15th in Dublin during BST. The capsule used to render in
-        // the 14th's cell carrying the label "12:30 AM" — a row the family could read only by
-        // distrusting it.
+        // the 14th's cell, the day before the one the household's clock puts the event on.
         var (calendarRepository, systemUnderTest) = CreateSut(Dublin);
         var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
         var evt = GridEvent(

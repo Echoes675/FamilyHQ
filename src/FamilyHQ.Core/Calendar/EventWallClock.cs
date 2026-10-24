@@ -38,6 +38,14 @@ namespace FamilyHQ.Core.Calendar;
 /// yields the inclusive last day both for Google's exclusive next-day midnight and for the legacy
 /// inclusive end-of-day rows <see cref="GoogleAllDayDate.IsInclusiveEndOfDay"/> describes.
 /// </para>
+/// <para>
+/// <b>This rule is stated twice, in agreement.</b> The all-day half is also argued, at length and
+/// independently, in the remarks on the private <c>LocalMidnightOf</c> helper in
+/// <c>FamilyHQ.Core.Reminders.ReminderPingCalculator</c>: there the date is read straight off the
+/// stored instant's UTC component, never re-derived through a zone, because a negative offset would
+/// otherwise put every reminder on that event a day early. The two must not drift apart — an edit to
+/// the all-day branch here needs the same edit there, and the other way round.
+/// </para>
 /// </remarks>
 public readonly record struct EventWallClock(DateOnly Date, TimeOnly? Time) : IComparable<EventWallClock>
 {

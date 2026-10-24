@@ -120,15 +120,29 @@ public class CalendarApiServiceUpcomingTests
     public async Task GetUpcomingRemindersAsync_WithARowsCollectionOfNull_ThrowsSayingSoRatherThanDereferencingIt()
     {
         // A body that parses into an envelope whose Rows is null is a different failure from an empty
-        // body, and both have to name themselves: dereferencing it instead raises a
-        // NullReferenceException from inside a Select, which says nothing about which call failed or
-        // why, and sends whoever reads the log looking at the view rather than at the response.
+        // body, and both have to name themselves: dereferencing it instead makes Enumerable.Select
+        // throw an ArgumentNullException naming its "source" parameter, which says nothing about which
+        // call failed or why, and sends whoever reads the log looking at the view rather than at the
+        // response.
         var sut = CreateSut("""{"today":"2026-03-21","nextRolloverUtc":"2026-03-22T00:00:00+00:00","rows":null}""");
 
         var act = () => sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
         (await act.Should().ThrowAsync<InvalidOperationException>())
             .Which.Message.Should().Contain("GetUpcomingRemindersAsync");
+    }
+
+    [Fact]
+    public async Task GetUpcomingRemindersAsync_WithNoTodayInThePayload_ThrowsSayingSoRatherThanFilingEveryRowNowhere()
+    {
+        // An omitted "today" deserialises to 0001-01-01, which no panel holds: the view would say
+        // "No reminders coming up" while rows exist. It has to fail by name instead.
+        var sut = CreateSut("""{"nextRolloverUtc":"2026-03-22T00:00:00+00:00","rows":[]}""");
+
+        var act = () => sut.GetUpcomingRemindersAsync(CancellationToken.None);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain("GetUpcomingRemindersAsync").And.Contain("day");
     }
 
     // ── GetEventAsync ───────────────────────────────────────────────────────────

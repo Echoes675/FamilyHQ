@@ -481,7 +481,9 @@ first, and which view a load lands on, belong to `KioskHomeView.feature` instead
 with its event's own day and start time and nothing else; a row further out than tomorrow leading
 with the day and date; tomorrow's row reading "Tomorrow" whichever panel it is filed in; an idle
 kiosk re-reading that same row as "Today" once the day rolls over under it (tagged `@day-rollover`
-and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); a row reading the day and time the HOUSEHOLD's own zone puts it on when that zone is not the kiosk's, and the drill-down from that row still opening a day that contains the event; an
+and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); a row
+reading the day and time the HOUSEHOLD's own zone puts it on when that zone is not the
+kiosk's, and the drill-down from that row still opening a day that contains the event; an
 event following its calendar's usual reminders never appearing; an explicitly-removed reminder and an
 event inheriting from a calendar with no defaults both never appearing; an event whose last reminder
 has already fired keeping its row; an event with widely-spaced reminders (one soon, one over two

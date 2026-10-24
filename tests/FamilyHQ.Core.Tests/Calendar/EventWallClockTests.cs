@@ -116,11 +116,17 @@ public class EventWallClockTests
     {
         // The second, unrelated legacy shape GoogleAllDayDate.IsInclusiveEndOfDay describes
         // (23:59:59.9999999 UTC). It must land on the same last day as the exclusive form above, or
-        // existing rows change which cells they occupy — and nothing stored is being migrated.
+        // existing rows change which cells they occupy — and nothing stored is being migrated. Both
+        // shapes are resolved the way the month endpoint resolves a last day and compared with each
+        // other, so the test fails if either drifts, rather than passing whatever the branch does.
         var legacyInclusiveEnd = new DateTimeOffset(2026, 6, 17, 23, 59, 59, TimeSpan.Zero).AddTicks(9_999_999);
+        var googleExclusiveEnd = new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero);
 
-        EventWallClock.Of(legacyInclusiveEnd.AddTicks(-1), isAllDay: true, NewYork).Date
-            .Should().Be(new DateOnly(2026, 6, 17));
+        var legacyLastDay = EventWallClock.Of(legacyInclusiveEnd.AddTicks(-1), isAllDay: true, NewYork);
+        var googleLastDay = EventWallClock.Of(googleExclusiveEnd.AddTicks(-1), isAllDay: true, NewYork);
+
+        legacyLastDay.Should().Be(googleLastDay);
+        legacyLastDay.Date.Should().Be(new DateOnly(2026, 6, 17));
     }
 
     [Fact]

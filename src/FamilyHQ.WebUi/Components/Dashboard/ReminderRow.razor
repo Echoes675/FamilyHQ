@@ -7,9 +7,6 @@
    data-event-id lets the E2E suite address a row by what it IS rather than by its position in the
    list — rows reorder as events start and finish, so a positional selector would silently drift to
    the wrong row. It alone is enough to identify a row: there is exactly one row per event. *@
-@* OnOpenDay is typed DateTime because the Month, Day and Agenda views' drill-downs are, and the
-   dashboard's selected date is. A row only knows a date, so midnight is the only honest time to
-   pair with it — and the destination reads the date alone. *@
 <div class="reminder-row"
      data-testid="reminder-row"
      data-event-id="@Event.EventId"
@@ -50,5 +47,10 @@
     /// Raised with the event's own day when the row is tapped, so the dashboard drills into the Day
     /// view exactly as the Month and Agenda views' rows do. The whole row is the tap target.
     /// </summary>
+    /// <remarks>
+    /// Typed <see cref="DateTime"/> because the Month, Day and Agenda views' drill-downs are, and the
+    /// dashboard's selected date is. A row only knows a date, so midnight is the only honest time to
+    /// pair with it — and the destination reads the date alone.
+    /// </remarks>
     [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
 }
