@@ -1,4 +1,5 @@
-﻿using FamilyHQ.WebUi.ViewModels;
+﻿using FamilyHQ.Core.Calendar;
+using FamilyHQ.WebUi.ViewModels;
 
 namespace FamilyHQ.WebUi.Components.Dashboard;
 
@@ -18,23 +19,34 @@ public static class RemindersViewLogic
     public const int PreviewRows = 6;
 
     /// <summary>
-    /// The two panels the view lays out, with every row filed by its own EVENT's start.
+    /// The two panels the view lays out, with every row filed by the day the server put it on.
     /// </summary>
     /// <remarks>
-    /// The selector is the whole requirement: a row belongs in the panel containing when the event
-    /// HAPPENS, not in whichever panel a reminder's own trigger instant falls in. An event with a
-    /// reminder on each of the seven days before it must appear once, under its own day; filing by a
-    /// reminder instead scattered it across every section those triggers touched, which is the bug the
-    /// family asked to have stopped. The row no longer carries any reminder's instant for a selector to
-    /// reach for, so that regression now needs a field put back as well — but this still lives here
-    /// rather than in the component's <c>@code</c> block, because there is no bUnit in this repo and a
-    /// selector only a `.razor` file names is a selector nothing can assert on.
+    /// Ordering happens here and filing happens in <see cref="ReminderBucketing"/>, which is
+    /// order-preserving: the row type is known here, so the within-a-day rule can be applied and
+    /// tested, while the bucketing stays generic over anything carrying a date.
     /// </remarks>
     public static IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections(
         IEnumerable<UpcomingReminderEventViewModel> rows,
-        DateOnly today,
-        TimeZoneInfo zone) =>
-        ReminderBucketing.File(rows, r => r.EventStart, today, zone);
+        DateOnly today) =>
+        ReminderBucketing.File(InDayOrder(rows), r => r.EventDate, today);
+
+    /// <summary>
+    /// Rows in render order: by day, all-day events first within a day, then by title.
+    /// </summary>
+    /// <remarks>
+    /// The same key the server orders its response by — <c>EventWallClock</c>'s own comparison, which
+    /// is where all-day-first is stated and why. Restated here rather than trusted: the view must
+    /// render in a defined order whether or not a response happened to arrive sorted, and relying on
+    /// the server's order would make the view's appearance a property of an untested coincidence. It
+    /// is the same rule, from the same type, so the two cannot drift.
+    /// </remarks>
+    public static IReadOnlyList<UpcomingReminderEventViewModel> InDayOrder(
+        IEnumerable<UpcomingReminderEventViewModel> rows) =>
+        rows
+            .OrderBy(r => new EventWallClock(r.EventDate, r.EventTimeOfDay))
+            .ThenBy(r => r.EventTitle, StringComparer.Ordinal)
+            .ToList();
 
     /// <summary>
     /// Whether every section is empty — the view's single "No reminders coming up" state, distinct
@@ -46,7 +58,8 @@ public static class RemindersViewLogic
     /// <summary>
     /// The rows a section actually renders: all of them once <paramref name="expanded"/>, otherwise
     /// capped at <see cref="PreviewRows"/>. Never fetches and never reorders — <paramref name="section"/>'s
-    /// own rows are already in event-start order from <see cref="ReminderBucketing"/>.
+    /// own rows are already in <see cref="InDayOrder"/>'s order, which <see cref="ReminderBucketing"/>
+    /// preserves.
     /// </summary>
     public static IReadOnlyList<UpcomingReminderEventViewModel> Preview(
         ReminderSection<UpcomingReminderEventViewModel> section, bool expanded) =>
@@ -57,9 +70,9 @@ public static class RemindersViewLogic
     /// badge carries, and 0 when nothing falls today.
     /// </summary>
     /// <remarks>
-    /// Counts each row's own <see cref="UpcomingReminderEventViewModel.EventStart"/>, read through
-    /// <see cref="ReminderRowDisplay.LocalDate"/> — the same conversion the rows reading "Today" and
-    /// the panel they sit in are derived from, so the badge and the list beneath it cannot disagree.
+    /// A date comparison against the day the server filed each row on, so the badge and the rows
+    /// reading "Today" beneath it cannot disagree: they are the same comparison on the same two
+    /// values.
     /// <para>
     /// Deliberately NOT a count of reminder ping instants: a "1 day before" reminder fires on a
     /// different day from its event, so a badge counting pings would announce a number the family
@@ -84,11 +97,30 @@ public static class RemindersViewLogic
     /// assertion about the reminders list would notice it drifting.
     /// </para>
     /// </remarks>
-    public static int TodayCount(
-        IEnumerable<UpcomingReminderEventViewModel> rows,
-        DateOnly today,
-        TimeZoneInfo zone) =>
-        rows.Count(r => DateOnly.FromDateTime(ReminderRowDisplay.LocalDate(r.EventStart, zone)) == today);
+    public static int TodayCount(IEnumerable<UpcomingReminderEventViewModel> rows, DateOnly today) =>
+        rows.Count(r => r.EventDate == today);
+
+    /// <summary>
+    /// The date the view actually measures against: the anchor the server sent, shifted by the kiosk's
+    /// own whole-day offset, falling back to the kiosk's date before the first successful fetch.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The offset is how the dev clock bridge moves the kiosk's day in lower environments without a
+    /// dev-only input on a production endpoint: the kiosk still shifts its own day, it just shifts it
+    /// relative to the day the server named. It is provably zero in production —
+    /// <c>KioskTimeProvider.AdvanceDays</c> no-ops unless the override flag is on, and that flag is
+    /// off in the shipped configuration.
+    /// </para>
+    /// <para>
+    /// The fallback matters more than it looks: a default <see cref="DateOnly"/> is 0001-01-01, which
+    /// files every row into neither panel and renders "No reminders coming up" while rows exist. The
+    /// kiosk's clock is a fallback here, never an authority — and
+    /// <paramref name="kioskToday"/> already carries the offset, which is why it is not shifted again.
+    /// </para>
+    /// </remarks>
+    public static DateOnly EffectiveToday(DateOnly? serverToday, int dayOffset, DateOnly kioskToday) =>
+        serverToday is { } anchor ? anchor.AddDays(dayOffset) : kioskToday;
 
     /// <summary>
     /// The kebab-case identifier one <see cref="ReminderSectionKey"/> renders as, used for both the
