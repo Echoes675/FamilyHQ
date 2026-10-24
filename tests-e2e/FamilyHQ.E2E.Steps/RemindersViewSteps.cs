@@ -181,6 +181,27 @@ public class RemindersViewSteps
         await _dashboardPage.AssertReminderRowLeadsWithAsync(title, expected);
     }
 
+    [Then(@"the row for ""([^""]*)"" leads with the date (\d+) day after ""([^""]*)"" at ""([^""]*)""")]
+    public async Task ThenTheRowForLeadsWithTheDateDaysAfterAt(
+        string title, int daysAfter, string dateExpr, string time)
+    {
+        // The offset is the whole point of the step, and it is stated in the scenario rather than
+        // computed here: the event was seeded on one date and the row must name the NEXT one, because
+        // the household's zone puts it there. A step that resolved both sides from the same expression
+        // would pass on a row that named the seeded date.
+        //
+        // No panel is named. The seeded date resolves into next month and the household's day is one
+        // later, so which panel holds it depends on where the month boundary falls — and what this
+        // asserts is what the row SAYS, which is a fact about its own date.
+        var expected = DateTime.ParseExact(
+                DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture)
+            .AddDays(daysAfter);
+        var expectedLeadingColumn =
+            $"{expected.ToString("ddd d MMM", CultureInfo.InvariantCulture)} · {time}";
+
+        await _dashboardPage.AssertReminderRowLeadsWithAsync(title, expectedLeadingColumn);
+    }
+
     [Then(@"the ""([^""]*)"" section has a row for ""([^""]*)"" leading with the day and date of ""([^""]*)""")]
     public async Task ThenTheSectionHasARowForLeadingWithTheDayAndDateOf(
         string sectionName, string title, string dateExpr)
