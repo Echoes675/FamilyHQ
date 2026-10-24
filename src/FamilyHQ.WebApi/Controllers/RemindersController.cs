@@ -88,7 +88,17 @@ public class RemindersController : ControllerBase
             .ThenBy(r => r.EventTitle, StringComparer.Ordinal)
             .ToList();
 
-        return Ok(new UpcomingRemindersDto(today, LocalMidnight(today.AddDays(1), familyZone), rows));
+        // ToUniversalTime, not because the instant would otherwise be wrong — LocalMidnight already
+        // returns the right moment — but because this field is named for an instant and the client
+        // compares it against a clock. LocalMidnight hands back the household's own offset
+        // (00:00-04:00 in New York), and anything that reads the DATE half of that, or its .DateTime,
+        // gets a wall clock instead of an instant and refetches hours early. Normalising here means
+        // there is no second reading of this value to get wrong, which is the whole point of sending
+        // it. The two bounds above keep the zoned form deliberately: they are day boundaries measured
+        // in the household zone and nothing re-derives a date from them.
+        var nextRollover = LocalMidnight(today.AddDays(1), familyZone).ToUniversalTime();
+
+        return Ok(new UpcomingRemindersDto(today, nextRollover, rows));
     }
 
     /// <summary>

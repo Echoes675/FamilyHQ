@@ -28,7 +28,9 @@ namespace FamilyHQ.Core.DTOs;
 /// <param name="NextRolloverUtc">
 /// The next local midnight, as an instant — 23 or 25 hours away on a daylight-saving transition day
 /// rather than always 24. When the kiosk's clock passes it, <see cref="Today"/> is stale and the rows
-/// are refetched.
+/// are refetched. At a zero offset, as the name says: the household's own offset is deliberately not
+/// carried here, so that no reader can take a local date off this value and arrive at a different
+/// day from <see cref="Today"/>. It answers "when", and only "when".
 /// </param>
 /// <param name="Rows">The timeline's rows, in the order the view renders them.</param>
 public sealed record UpcomingRemindersDto(

@@ -127,7 +127,7 @@ public class RemindersControllerTests
     private static readonly TimeZoneInfo Santiago = TimeZoneInfo.FindSystemTimeZoneById("America/Santiago");
 
     [Fact]
-    public async Task UpcomingReminders_FilesEveryEventSortedByItsOwnStart()
+    public async Task UpcomingReminders_FilesEveryEventSortedByItsOwnDay()
     {
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
@@ -283,8 +283,8 @@ public class RemindersControllerTests
     [Fact]
     public async Task UpcomingReminders_WhenEveryReminderHasAlreadyFired_StillProducesARow()
     {
-        // The row is filed by the EVENT's start, so it has to outlive its own reminders: on the day of
-        // an event they have usually all gone off, and an 18:00 event with one reminder two hours
+        // The row is filed by the EVENT's own day, so it has to outlive its own reminders: on the day
+        // of an event they have usually all gone off, and an 18:00 event with one reminder two hours
         // before would otherwise drop off the kiosk at 16:00 — vanishing from Today exactly when the
         // family most needs it there. The row stays, and reads no differently for it: nothing on a
         // row describes a reminder, so firing has nothing about it left to change.
@@ -312,8 +312,9 @@ public class RemindersControllerTests
     {
         // The family's own motivating case: an event with reminders due at very different lead times
         // (here 30 minutes, 2 hours, and a week before) must still produce exactly ONE row — not one
-        // per reminder — carrying the EVENT's own start, whatever sections those three trigger
-        // instants are scattered across.
+        // per reminder — carrying the EVENT's own day, whatever sections those three trigger
+        // instants are scattered across. The row has no start on it at all any more, which is what
+        // makes one row per event the only shape it can take.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -426,7 +427,7 @@ public class RemindersControllerTests
         // Shaped exactly as Google sends it: the event's overrides are a copy of the calendar's own
         // defaults. If the filter ever grew a "do these match the calendar's list?" comparison
         // instead of reading UseDefault, this is the test that would catch it.
-        var (repository, _, clock, sut) = CreateSut();
+        var (repository, timeZoneService, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
 
         var owner = DefaultOwnerCalendar(defaultReminders: Explicit(("popup", 540)), ianaTimeZone: "Europe/Dublin");
@@ -445,6 +446,17 @@ public class RemindersControllerTests
             "Google materialises a calendar's defaults onto an all-day event, so it arrives with " +
             "overrides of its own and the inherited-event filter never applies to it");
         rows[0].EventTitle.Should().Be("Bin Day");
+
+        // An INTERACTION assertion, deliberately, and the only kind available here. The owning
+        // calendar's own zone is Google-supplied data and outranks the family's FamilyHQ setting as
+        // the anchor for an all-day ping — the golden rule's "a fallback for data Google did not
+        // supply, never a substitute for data it did". But the anchor reaches no field of the row:
+        // this endpoint reads only whether the ping list is empty, and its length is the same in
+        // every zone. So the owner lookup could be dropped, or the ?? inverted to prefer the
+        // household zone, and every outcome in this file would be unchanged. Verifying the call is
+        // what keeps `ianaTimeZone: "Europe/Dublin"` above a fixture argument that means something.
+        // Where the anchor actually lands is pinned in ReminderPingCalculatorTests, which can see it.
+        timeZoneService.Verify(s => s.TryResolveZone("Europe/Dublin"), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -576,6 +588,13 @@ public class RemindersControllerTests
         // Midnight on 16 June in New York is 04:00Z — one hour away from the fixture's instant, not
         // twenty-four.
         payload.NextRolloverUtc.Should().Be(new DateTimeOffset(2026, 6, 16, 4, 0, 0, TimeSpan.Zero));
+        // And it goes out AT a zero offset, not as 00:00-04:00. The assertion above cannot tell the
+        // two apart — DateTimeOffset.Equals compares instants — but the client does: the date half of
+        // 00:00-04:00 is the 16th in local terms while the instant is still the 15th in the
+        // household's, so a consumer reading a date off this field would refetch four hours early.
+        // One value with two readings that disagree at a boundary is the defect this whole change
+        // removes, and it must not come back at the seam the change creates.
+        payload.NextRolloverUtc.Offset.Should().Be(TimeSpan.Zero);
     }
 
     [Fact]
