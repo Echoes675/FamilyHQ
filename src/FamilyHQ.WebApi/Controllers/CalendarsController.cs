@@ -1,9 +1,11 @@
+using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using System.Globalization;
 
 namespace FamilyHQ.WebApi.Controllers;
 
@@ -18,6 +20,7 @@ public class CalendarsController : ControllerBase
     private readonly ICurrentUserService _currentUser;
     private readonly ICalendarSyncJobQueue _syncJobQueue;
     private readonly ISyncJobSignal _syncJobSignal;
+    private readonly ITimeZoneService _timeZoneService;
 
     public CalendarsController(
         ICalendarRepository calendarRepository,
@@ -25,7 +28,8 @@ public class CalendarsController : ControllerBase
         ITokenStore tokenStore,
         ICurrentUserService currentUser,
         ICalendarSyncJobQueue syncJobQueue,
-        ISyncJobSignal syncJobSignal)
+        ISyncJobSignal syncJobSignal,
+        ITimeZoneService timeZoneService)
     {
         _calendarRepository = calendarRepository;
         _logger = logger;
@@ -33,6 +37,7 @@ public class CalendarsController : ControllerBase
         _currentUser = currentUser;
         _syncJobQueue = syncJobQueue;
         _syncJobSignal = syncJobSignal;
+        _timeZoneService = timeZoneService;
     }
 
     [HttpGet("connection-status")]
@@ -77,8 +82,17 @@ public class CalendarsController : ControllerBase
         var nextMonth = firstDay.AddMonths(1);
         var endDay = nextMonth.AddDays(7 - (int)Math.Max(1, (int)nextMonth.DayOfWeek));
 
-        // +14 days: pre-fetches the first two weeks of the next month for scroll-ahead display.
-        var events = await _calendarRepository.GetEventsAsync(start: startDay, end: endDay.AddDays(14), ct: ct);
+        // The household zone, for the one question this endpoint answers about every event: which day
+        // cell it belongs in. Resolved once per request — the rule is applied per event below.
+        var familyZone = await _timeZoneService.GetDisplayZoneAsync(ct);
+
+        // A day either side of the rendered range. The query is in INSTANTS while the cells are keyed
+        // by local DAY, and those differ at the edges in both directions: a timed event at 23:30 UTC
+        // on the day before the range belongs to the range's first cell in any positive-offset zone,
+        // and one early on the day after belongs to its last in any negative one. +14 continues to
+        // pre-fetch the first two weeks of the next month for scroll-ahead display.
+        var events = await _calendarRepository.GetEventsAsync(
+            start: startDay.AddDays(-1), end: endDay.AddDays(15), ct: ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);
         // Compare by Id — Members are AsNoTracking instances, not the same object references.
         var visibleCalendarIds = allCalendars
@@ -140,12 +154,17 @@ public class CalendarsController : ControllerBase
                 owningCalendar?.Id,
                 owningCalendar?.DefaultReminders);
 
-            var current = evt.Start.Date;
-            var last    = evt.End.AddTicks(-1).Date;
+            // The one rule, the same one the reminders endpoint files its rows by — all-day events
+            // keep the UTC date Google sent, timed events take their household-zone date. The two must
+            // agree: a tap on a reminders row drills into the Day view, which renders out of these
+            // very buckets, so a row whose day differed from its cell would open a day that does not
+            // contain the event.
+            var current = EventWallClock.Of(evt.Start, evt.IsAllDay, familyZone).Date;
+            var last = EventWallClock.Of(evt.End.AddTicks(-1), evt.IsAllDay, familyZone).Date;
             int daysProcessed = 0;
             while (current <= last && daysProcessed < 366)
             {
-                var dateKey = current.ToString("yyyy-MM-dd");
+                var dateKey = current.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 if (!monthView.Days.ContainsKey(dateKey))
                     monthView.Days[dateKey] = [];
                 monthView.Days[dateKey].Add(dto);
