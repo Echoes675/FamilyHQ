@@ -381,7 +381,7 @@ public class TimeZoneServiceTests
     public async Task GetDisplayZone_WithAStoredIdThisHostCannotRead_IsUtcAndWarns()
     {
         // Stored data this host's tzdb cannot resolve is worth knowing about — but not worth failing
-        // a dashboard over, so it falls through to UTC and says so once.
+        // a dashboard over, so it falls through to UTC and says so (one warning per resolve).
         var (sut, display, _, _, logger) = CreateSut();
         display.Setup(d => d.GetAsync("u-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DisplaySetting { IanaTimeZone = "Mars/Olympus_Mons" });

@@ -129,8 +129,9 @@ public class TimeZoneService(
         catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
         {
             // Not a reason to fail the caller: every caller has a correct fallback. It IS a reason to
-            // say so once — a zone the family can see in settings that this host cannot read is
-            // stored data nobody would otherwise find out about.
+            // say so on EVERY fallback, with no de-duplication: a zone the family can see in settings
+            // that this host cannot read is stored data nobody would otherwise find out about, and a
+            // misconfiguration logged twice is better than one nobody is told about.
             logger.LogWarning(ex,
                 "Unrecognised IANA zone {IanaZoneId}; falling back to the caller's default.", ianaId);
             return null;
