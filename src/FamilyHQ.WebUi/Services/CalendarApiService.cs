@@ -195,22 +195,25 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             dto.OwningCalendarDefaultReminders);
     }
 
-    public async Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
+    public async Task<UpcomingRemindersViewModel> GetUpcomingRemindersAsync(CancellationToken ct = default)
     {
         var response = await httpClient.GetAsync("api/reminders/upcoming", ct);
         await EnsureSuccessAsync(response, ct);
 
-        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderEventDto>>(cancellationToken: ct)
-                   ?? new List<UpcomingReminderEventDto>();
+        var dto = await response.Content.ReadFromJsonAsync<UpcomingRemindersDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for GetUpcomingRemindersAsync.");
 
-        return dtos
-            .Select(d => new UpcomingReminderEventViewModel(
-                d.EventId,
-                d.EventTitle,
-                d.EventStart,
-                d.EventIsAllDay,
-                d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
-            .ToList();
+        return new UpcomingRemindersViewModel(
+            dto.Today,
+            dto.NextRolloverUtc,
+            dto.Rows
+                .Select(d => new UpcomingReminderEventViewModel(
+                    d.EventId,
+                    d.EventTitle,
+                    d.EventDate,
+                    d.EventTimeOfDay,
+                    d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
+                .ToList());
     }
 
     public async Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default)

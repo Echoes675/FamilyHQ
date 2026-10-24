@@ -13,10 +13,12 @@ namespace FamilyHQ.WebUi.Tests.Services;
 
 /// <summary>
 /// The client half of the reminders timeline. <see cref="CalendarApiService.GetUpcomingRemindersAsync"/>
-/// has to carry every field of every event row to the view model untouched — it is the only source
-/// the timeline has. <see cref="CalendarApiService.GetEventAsync"/> fetches one event by id and must
-/// answer a 404 with null rather than an exception: an event can be deleted on a phone between
-/// whatever named the id and the fetch for it, which is ordinary, not an error worth a dialog.
+/// has to carry every field of the envelope — the household's date, the instant that date expires,
+/// and every field of every row — to the view model untouched, because it is the only source the
+/// timeline has and the only place "which day is it" is answered for it.
+/// <see cref="CalendarApiService.GetEventAsync"/> fetches one event by id and must answer a 404 with
+/// null rather than an exception: an event can be deleted on a phone between whatever named the id
+/// and the fetch for it, which is ordinary, not an error worth a dialog.
 /// </summary>
 /// <remarks>
 /// These go through a real serialise/deserialise round trip, following
@@ -40,51 +42,78 @@ public class CalendarApiServiceUpcomingTests
     // ── GetUpcomingRemindersAsync ──────────────────────────────────────────────
 
     [Fact]
-    public async Task GetUpcomingRemindersAsync_MapsEveryFieldOfARow()
+    public async Task GetUpcomingRemindersAsync_MapsEveryFieldOfTheEnvelopeAndItsRows()
     {
-        // Every field the row has, which is now every field the row NEEDS: a reminders row reads
-        // "[when] · title · [who]" and carries nothing describing the reminders it exists because of.
-        var dto = new UpcomingReminderEventDto(
-            EventId, "Dentist", FixedStart, EventIsAllDay: false,
-            [new ReminderMemberDto("Alice", "#ff0000")]);
-        var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
+        var dto = new UpcomingRemindersDto(
+            new DateOnly(2026, 3, 21),
+            new DateTimeOffset(2026, 3, 22, 0, 0, 0, TimeSpan.Zero),
+            [new UpcomingReminderEventDto(
+                EventId, "Dentist", new DateOnly(2026, 3, 21), new TimeOnly(9, 0),
+                [new ReminderMemberDto("Alice", "#ff0000")])]);
+        var sut = CreateSut(Json(dto));
 
-        var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
+        var payload = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
-        var row = rows.Should().ContainSingle().Subject;
+        payload.Today.Should().Be(new DateOnly(2026, 3, 21));
+        payload.NextRolloverUtc.Should().Be(new DateTimeOffset(2026, 3, 22, 0, 0, 0, TimeSpan.Zero));
+        var row = payload.Rows.Should().ContainSingle().Subject;
         row.EventId.Should().Be(EventId);
         row.EventTitle.Should().Be("Dentist");
-        row.EventStart.Should().Be(FixedStart);
-        row.EventIsAllDay.Should().BeFalse();
+        row.EventDate.Should().Be(new DateOnly(2026, 3, 21));
+        row.EventTimeOfDay.Should().Be(new TimeOnly(9, 0));
         var member = row.Members.Should().ContainSingle().Subject;
         member.DisplayName.Should().Be("Alice");
         member.Color.Should().Be("#ff0000");
     }
 
     [Fact]
-    public async Task GetUpcomingRemindersAsync_CarriesAnAllDayRowsFlagThroughTheWireFormat()
+    public async Task GetUpcomingRemindersAsync_AnAllDayRowKeepsANullTimeThroughTheWireFormat()
     {
-        // EventIsAllDay is the one remaining field that CHANGES what a row renders rather than only
-        // what it says — "all day" in place of a time, in ReminderRowDisplay.EventTime — so a flag
-        // lost on the wire would show an all-day event starting at some midnight-adjacent hour.
-        var dto = new UpcomingReminderEventDto(
-            EventId, "Bin Day", FixedStart, EventIsAllDay: true, []);
-        var sut = CreateSut(Json(new List<UpcomingReminderEventDto> { dto }));
+        // A null EventTimeOfDay is the ONLY all-day signal the client gets, and the row renders "all
+        // day" off it. A null that deserialised to TimeOnly.MinValue instead would tell the family an
+        // all-day event starts at 00:00 — which is the stored boundary read as a time, the exact
+        // reading this design exists to stop.
+        var dto = new UpcomingRemindersDto(
+            new DateOnly(2026, 3, 21),
+            new DateTimeOffset(2026, 3, 22, 0, 0, 0, TimeSpan.Zero),
+            [new UpcomingReminderEventDto(
+                EventId, "Bank Holiday", new DateOnly(2026, 3, 21), null, [])]);
+        var sut = CreateSut(Json(dto));
 
-        var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
+        var payload = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
-        rows.Should().ContainSingle().Which.EventIsAllDay.Should().BeTrue();
+        payload.Rows.Should().ContainSingle().Which.EventTimeOfDay.Should().BeNull();
     }
 
     [Fact]
-    public async Task GetUpcomingRemindersAsync_WithNoRows_ReturnsEmptyNotNull()
+    public async Task GetUpcomingRemindersAsync_WithTheTimeOfDayPropertyAbsentEntirely_StillReadsAsAllDay()
     {
-        var sut = CreateSut(Json(new List<UpcomingReminderEventDto>()));
+        // Not the same test as the one above. That one serialises an explicit null; this one is the
+        // shape a server that OMITS the property produces, which is what a future serialiser setting
+        // (DefaultIgnoreCondition) would quietly turn every all-day row into.
+        var sut = CreateSut(
+            """
+            {"today":"2026-03-21","nextRolloverUtc":"2026-03-22T00:00:00+00:00",
+             "rows":[{"eventId":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","eventTitle":"Bank Holiday",
+                      "eventDate":"2026-03-21","members":[]}]}
+            """);
 
-        var rows = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
+        var payload = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
 
-        rows.Should().NotBeNull();
-        rows.Should().BeEmpty();
+        payload.Rows.Should().ContainSingle().Which.EventTimeOfDay.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetUpcomingRemindersAsync_WithNoRows_ReturnsAnEnvelopeWithAnEmptyListNotNull()
+    {
+        var dto = new UpcomingRemindersDto(
+            new DateOnly(2026, 3, 21), new DateTimeOffset(2026, 3, 22, 0, 0, 0, TimeSpan.Zero), []);
+        var sut = CreateSut(Json(dto));
+
+        var payload = await sut.GetUpcomingRemindersAsync(CancellationToken.None);
+
+        payload.Rows.Should().NotBeNull().And.BeEmpty();
+        payload.Today.Should().Be(new DateOnly(2026, 3, 21));
     }
 
     // ── GetEventAsync ───────────────────────────────────────────────────────────
