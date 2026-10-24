@@ -317,7 +317,8 @@ public class SeriesRenameAnchorPreservationTests
             currentUser.Object,
             Mock.Of<IDisplaySettingRepository>(),
             Mock.Of<ILocationSettingRepository>(),
-            Mock.Of<ITimeZoneLookup>());
+            Mock.Of<ITimeZoneLookup>(),
+            new RecordingLogger<TimeZoneService>());
 
         var client = new GoogleCalendarClient(
             httpClient,

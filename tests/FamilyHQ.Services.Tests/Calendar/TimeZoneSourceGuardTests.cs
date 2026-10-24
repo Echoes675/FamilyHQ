@@ -1,6 +1,7 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Services.Calendar;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace FamilyHQ.Services.Tests.Calendar;
@@ -43,6 +44,7 @@ public class TimeZoneSourceGuardTests
         typeof(IDisplaySettingRepository),    // the kiosk's reported zone, and any explicit choice
         typeof(ILocationSettingRepository),   // the location the family typed in themselves
         typeof(ITimeZoneLookup),              // coordinates -> zone, bundled GeoTimeZone data, no network
+        typeof(ILogger<TimeZoneService>),     // a sink, not a source: it reports an unreadable stored id and feeds nothing into the zone
     ];
 
     [Fact]
