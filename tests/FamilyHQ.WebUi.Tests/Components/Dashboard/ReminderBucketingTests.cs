@@ -172,6 +172,8 @@ public class ReminderBucketingTests
         var today = new DateOnly(2026, 10, 5);
         var sections = File(today, today.AddDays(3), today, today.AddDays(1));
 
-        sections[0].Rows.Should().ContainInOrder(today.AddDays(3), today, today.AddDays(1));
+        // Equal, not ContainInOrder: the claim is that the panel holds exactly these rows in exactly
+        // this order, and ContainInOrder would also accept a panel that had duplicated one of them.
+        sections[0].Rows.Should().Equal(today.AddDays(3), today, today.AddDays(1));
     }
 }

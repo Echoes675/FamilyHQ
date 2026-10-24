@@ -31,7 +31,6 @@
                                    there is exactly one row per event. *@
                                 <ReminderRow @key="row.EventId"
                                              Event="row"
-                                             Zone="Zone"
                                              Today="Today"
                                              OnOpenDay="OnOpenDay" />
                             }
@@ -79,15 +78,12 @@
     public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();
 
     /// <summary>
-    /// The kiosk's current local date. Both panels are measured from it, and each row's "Today" /
-    /// "Tomorrow" label is measured against it too.
+    /// The household's current date as the server reported it, shifted by the kiosk's own dev
+    /// day-offset. Both panels are measured from it, and each row's label is measured against it.
     /// </summary>
     [Parameter] public DateOnly Today { get; set; }
 
-    /// <summary>The zone a row's local day (its event's start) is read in.</summary>
-    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
-
-    /// <summary>Raised with an event's own local day when its row is tapped.</summary>
+    /// <summary>Raised with an event's own day when its row is tapped.</summary>
     [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
 
     // Which sections the family has asked to see in full. Local, UI-only state — expanding never
@@ -95,7 +91,7 @@
     private readonly HashSet<ReminderSectionKey> _expanded = [];
 
     private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
-        RemindersViewLogic.Sections(Rows, Today, Zone);
+        RemindersViewLogic.Sections(Rows, Today);
 
     private void Expand(ReminderSectionKey key) => _expanded.Add(key);
 }

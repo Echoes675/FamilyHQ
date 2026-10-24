@@ -116,6 +116,21 @@ public class CalendarApiServiceUpcomingTests
         payload.Today.Should().Be(new DateOnly(2026, 3, 21));
     }
 
+    [Fact]
+    public async Task GetUpcomingRemindersAsync_WithARowsCollectionOfNull_ThrowsSayingSoRatherThanDereferencingIt()
+    {
+        // A body that parses into an envelope whose Rows is null is a different failure from an empty
+        // body, and both have to name themselves: dereferencing it instead raises a
+        // NullReferenceException from inside a Select, which says nothing about which call failed or
+        // why, and sends whoever reads the log looking at the view rather than at the response.
+        var sut = CreateSut("""{"today":"2026-03-21","nextRolloverUtc":"2026-03-22T00:00:00+00:00","rows":null}""");
+
+        var act = () => sut.GetUpcomingRemindersAsync(CancellationToken.None);
+
+        (await act.Should().ThrowAsync<InvalidOperationException>())
+            .Which.Message.Should().Contain("GetUpcomingRemindersAsync");
+    }
+
     // ── GetEventAsync ───────────────────────────────────────────────────────────
 
     [Fact]

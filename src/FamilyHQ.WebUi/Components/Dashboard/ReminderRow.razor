@@ -7,11 +7,14 @@
    data-event-id lets the E2E suite address a row by what it IS rather than by its position in the
    list — rows reorder as events start and finish, so a positional selector would silently drift to
    the wrong row. It alone is enough to identify a row: there is exactly one row per event. *@
+@* OnOpenDay is typed DateTime because the Month, Day and Agenda views' drill-downs are, and the
+   dashboard's selected date is. A row only knows a date, so midnight is the only honest time to
+   pair with it — and the destination reads the date alone. *@
 <div class="reminder-row"
      data-testid="reminder-row"
      data-event-id="@Event.EventId"
-     @onclick="() => OnOpenDay.InvokeAsync(ReminderRowDisplay.LocalDate(Event.EventStart, Zone))">
-    <span class="reminder-row__time">@ReminderRowDisplay.EventTime(Event.EventStart, Event.EventIsAllDay, Zone, Today)</span>
+     @onclick="() => OnOpenDay.InvokeAsync(Event.EventDate.ToDateTime(TimeOnly.MinValue))">
+    <span class="reminder-row__time">@ReminderRowDisplay.EventTime(Event.EventDate, Event.EventTimeOfDay, Today)</span>
     <span class="reminder-row__title">@Event.EventTitle</span>
     @* The server substitutes the owning calendar's name as a member when it can resolve one, so an
        empty Members list means it could not — there is no calendar name anywhere to fall back to,
@@ -34,25 +37,18 @@
     [Parameter, EditorRequired] public UpcomingReminderEventViewModel Event { get; set; } = default!;
 
     /// <summary>
-    /// The household's zone, for converting <see cref="Event"/>'s UTC-stamped instants before display.
-    /// Threaded straight down from <see cref="RemindersView.Zone"/> — required, because there is no
-    /// safe default: formatting the raw UTC value, as this row used to, is the bug this parameter
-    /// exists to close.
-    /// </summary>
-    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = default!;
-
-    /// <summary>
-    /// The kiosk's current local date, which is all the row needs to lead with "Today", "Tomorrow"
-    /// or its own day and date (<see cref="ReminderRowDisplay.EventTime"/>). The row is never told
-    /// which panel it was rendered into, and does not need to be: the label is a fact about the
-    /// event's own date measured against this one, so a row filed under "Next month" on the last day
-    /// of a month still reads "Tomorrow" — which is exactly when the family must not lose it.
+    /// The date the row's label is measured against, which is all the row needs to lead with
+    /// "Today", "Tomorrow" or its own day and date (<see cref="ReminderRowDisplay.EventTime"/>). The
+    /// row is never told which panel it was rendered into, and does not need to be: the label is a
+    /// fact about the event's own date measured against this one, so a row filed under "Next month"
+    /// on the last day of a month still reads "Tomorrow" — which is exactly when the family must not
+    /// lose it.
     /// </summary>
     [Parameter] public DateOnly Today { get; set; }
 
     /// <summary>
-    /// Raised with the event's own local day when the row is tapped, so the dashboard drills into the
-    /// Day view exactly as the Month and Agenda views' rows do. The whole row is the tap target.
+    /// Raised with the event's own day when the row is tapped, so the dashboard drills into the Day
+    /// view exactly as the Month and Agenda views' rows do. The whole row is the tap target.
     /// </summary>
     [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
 }

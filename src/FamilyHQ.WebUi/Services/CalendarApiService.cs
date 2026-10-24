@@ -203,10 +203,17 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
         var dto = await response.Content.ReadFromJsonAsync<UpcomingRemindersDto>(cancellationToken: ct)
                   ?? throw new InvalidOperationException("API returned empty response for GetUpcomingRemindersAsync.");
 
+        // An envelope that parsed but carries no rows collection is its own failure, and it names
+        // itself rather than becoming an ArgumentNullException raised inside the Select below — which
+        // reports a null "source" argument and so reads as a bug at this call site rather than as a
+        // malformed response. An empty list is a normal answer; a missing one is not.
+        var rows = dto.Rows
+                   ?? throw new InvalidOperationException("API returned no rows collection for GetUpcomingRemindersAsync.");
+
         return new UpcomingRemindersViewModel(
             dto.Today,
             dto.NextRolloverUtc,
-            dto.Rows
+            rows
                 .Select(d => new UpcomingReminderEventViewModel(
                     d.EventId,
                     d.EventTitle,

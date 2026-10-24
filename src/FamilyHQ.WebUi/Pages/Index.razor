@@ -49,7 +49,7 @@
         }
         <WeatherStrip />
 
-        <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" TodayReminderCount="RemindersViewLogic.TodayCount(_upcomingReminders, _remindersToday, _remindersZone)" />
+        <DashboardTabs CurrentView="_currentView" OnViewChanged="OnTabViewChanged" TodayReminderCount="RemindersViewLogic.TodayCount(_upcomingReminders, EffectiveRemindersToday)" />
 
     }
 
@@ -114,8 +114,7 @@
     else if (_currentView == DashboardView.Reminders)
     {
         <RemindersView Rows="_upcomingReminders"
-                       Today="_remindersToday"
-                       Zone="_remindersZone"
+                       Today="EffectiveRemindersToday"
                        OnOpenDay="OnRemindersDrillDown" />
     }
     }
@@ -175,22 +174,35 @@
     // Reminders state, page-level rather than tab-level. Starts empty before the first fetch —
     // RemindersView renders its "No reminders coming up" state for that, rather than a blank region —
     // and is then kept live by RefreshUpcomingRemindersAsync (on load, on entering the tab, on
-    // EventsUpdated, on an event being saved or deleted, and on the per-minute tick below when the
-    // month changes).
+    // EventsUpdated, on an event being saved or deleted, and on the tick below when the household day
+    // rolls over).
     //
-    // These rows feed two things now, not one: the timeline itself and the Reminders tab's count of
-    // what falls today, which has to be right while the family is looking at another tab entirely.
-    // That is why the fetch is no longer scoped to the tab that renders the rows.
+    // These rows feed two things, not one: the timeline itself and the Reminders tab's count of what
+    // falls today, which has to be right while the family is looking at another tab entirely. That is
+    // why the fetch is not scoped to the tab that renders the rows.
+    //
+    // The ANCHOR arrives with the rows. "Which day is it" is a question about the household's zone,
+    // which the server knows and the kiosk does not: the kiosk reports its own OS zone, and a zone
+    // the family chose explicitly in settings outranks it. Nothing here is captured once per page any
+    // more either, so a zone changed in settings takes effect on the next fetch rather than on a
+    // reload.
     private IReadOnlyList<UpcomingReminderEventViewModel> _upcomingReminders = Array.Empty<UpcomingReminderEventViewModel>();
-    private DateOnly _remindersToday;
-    private TimeZoneInfo _remindersZone = TimeZoneInfo.Utc;
+    private DateOnly? _remindersServerToday;
+    private DateTimeOffset _remindersNextRolloverUtc = DateTimeOffset.MaxValue;
+    private DateOnly _remindersRenderedToday;
 
-    // The tick that keeps the Reminders timeline honest between fetches. Every minute it re-reads
-    // "today" off the clock, which is what keeps a row's PANEL and its "Today"/"Tomorrow" label
-    // correct across midnight (both recompute from _remindersToday on every render) with no timer
-    // aimed at midnight itself. It refetches from the server only on a month change — see
-    // RefileRemindersForTick. Started once per authenticated load and stopped only on disposal,
-    // because the count on the Reminders tab has to roll over at midnight whichever tab is showing.
+    // The date every panel, every row label and the tab's count are measured against. One expression,
+    // read by all three, so they cannot drift apart.
+    private DateOnly EffectiveRemindersToday => RemindersViewLogic.EffectiveToday(
+        _remindersServerToday, Clock.DayOffset, DateOnly.FromDateTime(Clock.GetLocalNow().Date));
+
+    // The tick that keeps the Reminders timeline honest between fetches. Every minute it compares the
+    // kiosk's clock against the rollover instant the server gave, refetches while that instant has
+    // passed, and renders when the effective date has moved — see RefileRemindersForTick.
+    // MaxValue as the initial rollover is deliberate: before the first fetch there is no instant to
+    // act on, and `now >= MaxValue` is never true, so the tick cannot refetch on top of the load's own
+    // fetch. Started once per authenticated load and stopped only on disposal, because the count on
+    // the Reminders tab has to roll over at midnight whichever tab is showing.
     //
     // Owned through ReminderTickLoop rather than a bare CancellationTokenSource/Task pair: that
     // guards against a stop racing a start and orphaning a loop. Starting once at load is the
@@ -213,8 +225,6 @@
         var today = Clock.GetLocalNow().Date;
         _selectedDate = today;
         CurrentMonth = new DateTime(today.Year, today.Month, 1);
-        _remindersToday = DateOnly.FromDateTime(today);
-        _remindersZone = Clock.LocalTimeZone;
 
         // Check authentication state
         _isAuthenticated = await AuthService.IsAuthenticatedAsync();
@@ -254,6 +264,7 @@
         // remarks and its CalledAgainWhileRunning test — so a future second caller would not orphan
         // a loop either.)
         await RefreshUpcomingRemindersAsync();
+        _remindersRenderedToday = EffectiveRemindersToday;
         await StartReminderTickLoopAsync();
     }
 
@@ -553,7 +564,10 @@
 
     private async Task RefreshUpcomingRemindersAsync()
     {
-        _upcomingReminders = await CalendarApi.GetUpcomingRemindersAsync();
+        var payload = await CalendarApi.GetUpcomingRemindersAsync();
+        _upcomingReminders = payload.Rows;
+        _remindersServerToday = payload.Today;
+        _remindersNextRolloverUtc = payload.NextRolloverUtc;
     }
 
     // The same fetch, guarded, for the two callers that run AFTER a write the family has already
@@ -607,32 +621,20 @@
         StateHasChanged();
     }
 
-    // The one place that enters the Reminders tab, called from SwitchToView — so the re-anchor and
-    // refetch an entry needs exist once rather than at every caller that can reach the tab.
+    // The one place that enters the Reminders tab, called from SwitchToView — so the refetch an entry
+    // needs exists once rather than at every caller that can reach the tab.
     private async Task EnterRemindersViewAsync()
     {
-        // Re-anchor "today" on every entry, not just once at page load: re-opening the tab after a
-        // day has rolled over elsewhere must not file freshly-fetched rows against a stale date —
-        // that would misplace rows under the wrong heading for up to a minute (until the next tick
-        // corrects it) and could trigger a spurious month-change refetch inside that tick besides.
-        _remindersToday = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
-
-        // Refetched on entry for what the re-anchor above cannot fix: rows that are WRONG rather
-        // than merely filed against a stale date. Refiling is already handled — the re-anchor plus
-        // the render SwitchToView triggers recompute every panel and label from the new date, and
-        // the tick has been re-anchoring once a minute since page load, so after a long idle the
-        // anchor is at most a minute old anyway.
+        // No re-anchor here any more, and nothing to re-anchor from: the payload this fetch returns
+        // carries the date to file against, so reading the kiosk's clock first would be the client
+        // guessing ahead of the answer it is about to be given.
         //
-        // What is genuinely missing from memory is server-side change since the last fetch: an event
-        // created or deleted on a phone reaches these rows only through a fetch, and the SignalR
-        // broadcast that normally triggers one is not a guarantee — a sync that completed while the
-        // circuit was down leaves memory behind with nothing to say so. Entering the tab is the
-        // cheapest moment to make it current, because it is the moment the rows start being read.
-        //
-        // The other case is an idle that crossed a month boundary: the month now in range was not in
-        // the window when these rows were fetched. The tick refetches for a month change too, but on
-        // its own schedule — fetching here is what makes the rows right for the month at the moment
-        // the view appears rather than within the following minute.
+        // The refetch itself stays, for the reason it always gave — rows that are WRONG rather than
+        // merely filed against a stale date. An event created or deleted on a phone reaches these rows
+        // only through a fetch, and the SignalR broadcast that normally triggers one is not a
+        // guarantee: a sync that completed while the circuit was down leaves memory behind with
+        // nothing to say so. Entering the tab is the cheapest moment to make it current, because it is
+        // the moment the rows start being read.
         await RefreshUpcomingRemindersAsync();
     }
 
@@ -641,45 +643,40 @@
 
     private Task StopReminderTickLoopAsync() => _reminderTickLoop.StopAsync();
 
-    // The tick callback itself. Re-reads "today" from the clock (kiosk-adjusted, so never
-    // DateTime.Today) so sections recompute correctly across midnight, and refetches from the server
-    // in the one case memory alone cannot resolve: crossing a MONTH. RemindersController's window is
-    // [local midnight today, end of next month] — the near edge is midnight, not the instant of the
-    // request, which is what lets a row still read "Today" for an event earlier the same day. Going
-    // from 31 March to 1 April moves the FAR edge from end-of-April to end-of-May, and the
-    // newly-in-window events for May are not in memory — nothing local can conjure them.
-    //
-    // Crossing MIDNIGHT inside the same month needs no refetch: the window's far edge is unchanged,
-    // and all that has changed is which PANEL a row's EventStart falls into and whether its row
-    // reads "Today", "Tomorrow" or a date — all of which recompute from _remindersToday on every
-    // render regardless.
-    //
-    // A reminder firing is not a trigger either, and no longer could be: nothing on a row describes
-    // a reminder, so there is nothing for a fired one to make stale. The row is filed by its EVENT's
-    // start and reads the same before and after every one of its reminders has gone off.
+    // The tick callback. It asks RemindersTickDecision what to do rather than deciding here, so every
+    // case — a refetch that did not advance the anchor, a refetch that failed, a dev-bridged clock
+    // jump — has a unit test; there is no bUnit in this repo, so a decision made in this file is one
+    // nothing can assert on.
     private async Task RefileRemindersForTick()
     {
-        var today = DateOnly.FromDateTime(Clock.GetLocalNow().Date);
-        var dayChanged = today != _remindersToday;
-        var monthChanged = today.Month != _remindersToday.Month || today.Year != _remindersToday.Year;
+        var decision = RemindersTickDecision.Evaluate(
+            Clock.GetUtcNow(),
+            _remindersNextRolloverUtc,
+            EffectiveRemindersToday,
+            _remindersRenderedToday);
 
-        _remindersToday = today;
-
-        if (monthChanged)
+        if (decision.Refetch)
         {
+            // Nothing is recorded about having asked, deliberately: the refetch stops when the
+            // ANSWER moves the anchor past the kiosk's clock, not when a fetch has been attempted —
+            // see RemindersTickDecision's remarks for what recording it stranded. A failure needs no
+            // handling here either; the exception propagates to PeriodicUiRefreshLoop, which logs a
+            // failed tick and keeps looping, and the next tick retries because the condition is
+            // still true.
             await RefreshUpcomingRemindersAsync();
         }
 
+        // Re-read AFTER a refetch: the payload carries a new anchor, so the date on screen can have
+        // moved for a reason the decision above could not see yet.
+        var today = EffectiveRemindersToday;
+        var render = decision.Render || today != _remindersRenderedToday;
+        _remindersRenderedToday = today;
+
         // Rendered only when something on screen would actually differ. Unconditional was right while
         // this loop ran for the one tab it redrew; page-level it would diff the whole month grid every
-        // minute on a Pi 3B+ for no visible change.
-        //
-        // The day is the WHOLE condition, deliberately, and it is worth saying why rather than
-        // guarding more broadly: a month cannot change without the day changing too, so the refetch
-        // above never happens on its own, and nothing else in a tick touches the rows — every other
-        // path that refreshes them (the SignalR handler, a modal save or delete, entering the tab)
-        // renders for itself. Re-check that if a tick is ever given a second reason to refetch.
-        if (dayChanged)
+        // minute on a Pi 3B+ for no visible change. The date is the whole condition: every other path
+        // that refreshes the rows renders for itself.
+        if (render)
         {
             StateHasChanged();
         }
@@ -720,8 +717,7 @@
             modalOpen, idleMs, IdleSnapThreshold.TotalMilliseconds, _currentView, HomeView);
 
         // The date first, so the home view is entered against the snapped date rather than the one
-        // being replaced: EnterRemindersViewAsync re-reads the clock itself, but SnapToTodayAsync
-        // may reload the month the Reminders timeline drills into.
+        // being replaced: SnapToTodayAsync may reload the month the Reminders timeline drills into.
         //
         // Guarded separately rather than in one try: the two are independent behaviours, and a month
         // reload that fails is no reason to leave the kiosk parked on a view nobody is looking at.
@@ -751,9 +747,9 @@
     }
 
     // Returns through SwitchToView — the same path a tab tap takes — rather than assigning
-    // _currentView and re-rendering. That is what re-anchors _remindersToday from the clock and
-    // refetches the rows, so an idle return needs no refresh of its own. (The per-minute tick needs
-    // no start here: it has been running since the page loaded.)
+    // _currentView and re-rendering. That is what refetches the rows, so an idle return needs no
+    // refresh of its own; the anchor they are filed against comes back with them. (The per-minute
+    // tick needs no start here: it has been running since the page loaded.)
     //
     // It also resets the timeline's sections to their preview state for free: RemindersView keeps
     // the sections expanded by "Show all" in an instance field, and it is rendered only inside the
