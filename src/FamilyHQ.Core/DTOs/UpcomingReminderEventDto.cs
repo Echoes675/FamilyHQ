@@ -10,7 +10,7 @@ namespace FamilyHQ.Core.DTOs;
 /// own example is one every day for the week before it — used to produce one row per ping, scattered
 /// across whichever section each trigger instant happened to land in. A single event then appeared
 /// repeatedly, under headings that did not agree with each other about when it actually was. This
-/// shape carries the event once instead, so the row exists exactly where <see cref="EventStart"/>
+/// shape carries the event once instead, so the row exists exactly where <see cref="EventDate"/>
 /// files it.
 /// </para>
 /// <para>
@@ -37,24 +37,36 @@ namespace FamilyHQ.Core.DTOs;
 /// — it is evidence that the event has reminders. By the time an event starts its reminders have all
 /// usually fired, so excluding a row once nothing is pending would empty the timeline of today's
 /// events exactly when the family most needs them, and would drop an 18:00 event with one two-hour
-/// reminder off the kiosk at 16:00. The row therefore stays until <see cref="EventStart"/> leaves
+/// reminder off the kiosk at 16:00. The row therefore stays until <see cref="EventDate"/> leaves
 /// the window.
+/// </para>
+/// <para>
+/// <b>There is no instant on this row, deliberately.</b> It used to carry the event's own
+/// <c>DateTimeOffset</c> start and an is-all-day flag, and the client derived a day from them —
+/// which is how an all-day event stored at midnight UTC came to read a day early in any
+/// negative-offset zone, and how the client's idea of "today" came to disagree with the window the
+/// server had bounded. The day is now decided once, server-side, and sent. Keeping the instant
+/// beside it would invite exactly the second derivation this shape removes, and nothing would read
+/// it: a field with no reader is the one most likely to be trusted wrongly later.
 /// </para>
 /// </remarks>
 /// <param name="EventId">The event this row describes.</param>
 /// <param name="EventTitle">The event's title, for the row's label.</param>
-/// <param name="EventStart">
-/// The event's own start. What the reminders timeline files this row by (never a reminder's trigger
-/// instant), what the row's leading "when" is read from, and the day a tap on the row opens.
+/// <param name="EventDate">
+/// The day the event is on, already decided by the one rule that decides it
+/// (<c>FamilyHQ.Core.Calendar.EventWallClock</c>): the stored UTC date for an all-day event, the
+/// household-zone date for a timed one. What the timeline files this row by, what its leading "when"
+/// reads, what the Reminders tab counts, and the day a tap on the row opens.
 /// </param>
-/// <param name="EventIsAllDay">
-/// Whether the event is all-day, which decides how <see cref="EventStart"/> is displayed ("all day"
-/// rather than a time).
+/// <param name="EventTimeOfDay">
+/// The event's start as the family reads it, in the household zone — or <b>null</b> for an all-day
+/// event, which is the only all-day signal the client gets and all it needs: a null renders "all day"
+/// in place of a time.
 /// </param>
 /// <param name="Members">The people the event is shared with, for the row's chips.</param>
 public sealed record UpcomingReminderEventDto(
     Guid EventId,
     string EventTitle,
-    DateTimeOffset EventStart,
-    bool EventIsAllDay,
+    DateOnly EventDate,
+    TimeOnly? EventTimeOfDay,
     IReadOnlyList<ReminderMemberDto> Members);

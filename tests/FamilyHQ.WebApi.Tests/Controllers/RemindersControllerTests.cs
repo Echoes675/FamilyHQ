@@ -12,14 +12,20 @@ namespace FamilyHQ.WebApi.Tests.Controllers;
 
 /// <summary>
 /// <c>GET /api/reminders/upcoming</c> — the server side of the reminders timeline. A row is one EVENT
-/// whose reminders were set ON THE EVENT, filed by <c>EventStart</c>, never one row per reminder, and
+/// whose reminders were set ON THE EVENT, filed by <c>EventDate</c>, never one row per reminder, and
 /// carrying nothing that describes those reminders. What is worth testing deliberately here is
-/// therefore all about WHICH events produce a row and WHERE its start puts it: an event that merely
-/// inherits its calendar's usual reminders yields none at all, while one carrying overrides of its
-/// own on that same calendar still does; an event with several reminders still produces exactly one;
-/// a row survives its own reminders, because by the time an event starts they have usually all gone
-/// off and the family still needs the row; and the query window has no reminder-lead tail any more,
-/// filing by event start having removed the reason for one.
+/// therefore all about WHICH events produce a row and WHICH DAY the server files it under: an event
+/// that merely inherits its calendar's usual reminders yields none at all, while one carrying
+/// overrides of its own on that same calendar still does; an event with several reminders still
+/// produces exactly one; a row survives its own reminders, because by the time an event starts they
+/// have usually all gone off and the family still needs the row; and the query window has no
+/// reminder-lead tail any more, filing by the event's own day having removed the reason for one.
+/// <para>
+/// The day is the server's answer now, not the client's, so the cases below are mostly about zones:
+/// the household's own "today" and the instant it stops being today travel with the rows, and both
+/// they and every row's day are measured in the zone FamilyHQ has stored rather than in UTC or in
+/// whatever zone the kiosk happens to be set to.
+/// </para>
 /// </summary>
 public class RemindersControllerTests
 {
@@ -63,14 +69,15 @@ public class RemindersControllerTests
         EventReminders? reminders,
         bool isAllDay = false,
         string title = "Event",
-        Guid? ownerCalendarId = null) =>
+        Guid? ownerCalendarId = null,
+        DateTimeOffset? end = null) =>
         new()
         {
             Id = Guid.Empty,
             GoogleEventId = "google-event-id",
             Title = title,
             Start = start,
-            End = start.AddHours(1),
+            End = end ?? start.AddHours(1),
             IsAllDay = isAllDay,
             Reminders = reminders,
             OwnerCalendarInfoId = ownerCalendarId ?? OwnerCalendarId,
@@ -81,17 +88,20 @@ public class RemindersControllerTests
         Mock<ICalendarRepository> Repository,
         Mock<ITimeZoneService> TimeZoneService,
         FakeTimeProvider Clock,
-        RemindersController SystemUnderTest) CreateSut()
+        RemindersController SystemUnderTest) CreateSut(TimeZoneInfo? displayZone = null)
     {
         var repository = new Mock<ICalendarRepository>();
         var timeZoneService = new Mock<ITimeZoneService>();
         var clock = new FakeTimeProvider();
         var logger = new Mock<ILogger<RemindersController>>();
 
-        // Sane defaults every test can rely on unless it overrides them: one plain owner calendar,
-        // no events. GetSendZoneAsync is left unconfigured deliberately — Moq's default for an
-        // unconfigured Task<string?> method is a completed task with a null result, which is exactly
-        // the "no zone persisted" case this endpoint must fall back to UTC from.
+        // Sane defaults every test can rely on unless it overrides them: one plain owner calendar, no
+        // events, and UTC as the household zone. The zone is configured rather than left to Moq's
+        // default, which for a Task-returning method is a null Task — "no zone persisted" is now
+        // TimeZoneService's own case (GetDisplayZone_WithNoZonePersisted_IsUtcAndSaysNothing) and not
+        // reachable through this mock at all.
+        timeZoneService.Setup(s => s.GetDisplayZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(displayZone ?? TimeZoneInfo.Utc);
         repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<CalendarInfo> { DefaultOwnerCalendar() });
         repository.Setup(r => r.GetEventsAsync(
@@ -102,12 +112,19 @@ public class RemindersControllerTests
         return (repository, timeZoneService, clock, sut);
     }
 
-    private static async Task<IReadOnlyList<UpcomingReminderEventDto>> GetRows(RemindersController sut)
+    private static async Task<UpcomingRemindersDto> GetPayload(RemindersController sut)
     {
         var result = await sut.GetUpcoming(CancellationToken.None);
         var ok = result.Should().BeOfType<OkObjectResult>().Subject;
-        return ok.Value.Should().BeAssignableTo<IReadOnlyList<UpcomingReminderEventDto>>().Subject;
+        return ok.Value.Should().BeOfType<UpcomingRemindersDto>().Subject;
     }
+
+    private static async Task<IReadOnlyList<UpcomingReminderEventDto>> GetRows(RemindersController sut) =>
+        (await GetPayload(sut)).Rows;
+
+    private static readonly TimeZoneInfo NewYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+    private static readonly TimeZoneInfo Dublin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+    private static readonly TimeZoneInfo Santiago = TimeZoneInfo.FindSystemTimeZoneById("America/Santiago");
 
     [Fact]
     public async Task UpcomingReminders_FilesEveryEventSortedByItsOwnStart()
@@ -126,17 +143,19 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().HaveCount(2);
-        rows.Select(r => r.EventStart).Should().BeInAscendingOrder();
+        rows.Select(r => r.EventDate).Should().BeInAscendingOrder();
         rows[0].EventTitle.Should().Be("Earlier Event");
         rows[1].EventTitle.Should().Be("Later Event");
+        // Both are timed, so each carries the time the family reads it at as well as the day.
+        rows.Should().AllSatisfy(r => r.EventTimeOfDay.Should().Be(new TimeOnly(9, 0)));
     }
 
     [Fact]
-    public async Task UpcomingReminders_BreaksATieOnEventStartByEventTitle()
+    public async Task UpcomingReminders_BreaksATieOnTheSameDayAndTimeByEventTitle()
     {
-        // Two different events that start at the EXACT same instant — nothing but EventTitle can
-        // order them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than just
-        // happening to pass because EventStart alone already decided the order.
+        // Two different events on the same day at the same time — nothing but EventTitle can order
+        // them, so this is what actually exercises .ThenBy(EventTitle, Ordinal) rather than just
+        // happening to pass because the day and time alone already decided the order.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
 
@@ -152,7 +171,8 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().HaveCount(2);
-        rows.Select(r => r.EventStart).Distinct().Should().ContainSingle("both events start at the same instant");
+        rows.Select(r => (r.EventDate, r.EventTimeOfDay)).Distinct()
+            .Should().ContainSingle("both events are on the same day at the same time");
         rows[0].EventTitle.Should().Be("Apple Event");
         rows[1].EventTitle.Should().Be("Zebra Event");
     }
@@ -160,18 +180,27 @@ public class RemindersControllerTests
     [Fact]
     public async Task UpcomingReminders_QueriesOnlyTheDisplayWindow_WithNoReminderLeadTail()
     {
-        // Filing by EVENT START (rather than by each ping's own trigger instant) removes the reason a
-        // 28-day reminder-lead tail used to exist on this query: a ping could previously precede its
-        // event into the display window, but a ROW's place in the timeline no longer depends on any
-        // ping's trigger instant at all, only on evt.Start — which this query already bounds. now = 10
-        // March 00:00Z is the queried start; 1 May 00:00Z is the exclusive "end of next month" bound.
+        // Filing by the event's OWN DAY (rather than by each ping's own trigger instant) removes the
+        // reason a 28-day reminder-lead tail used to exist on this query: a ping could previously
+        // precede its event into the display window, but a ROW's place in the timeline no longer
+        // depends on any ping's trigger instant at all, only on the day the event is on.
+        //
+        // What the query IS widened by is exactly one day at each end, and no more. The repository
+        // answers in INSTANTS while this endpoint files in local DAYS, and the two disagree by up to
+        // a day in either direction — an all-day event on the window's first local day is stored at
+        // midnight UTC, earlier than local midnight in a negative-offset zone, and a timed event late
+        // on the window's last local day is already the next UTC day in a positive one. The bounds
+        // are asserted as the window's own edges plus exactly one day so that widening it "a bit
+        // more" to make some other case pass fails here.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
         await GetRows(sut);
 
-        var expectedStart = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero);
-        var expectedEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero);
+        // The zone is UTC here, so the window's own edges are 10 March 00:00Z (the household's today)
+        // and 1 May 00:00Z (the exclusive end of next month).
+        var expectedStart = new DateTimeOffset(2026, 3, 10, 0, 0, 0, TimeSpan.Zero).AddDays(-1);
+        var expectedEnd = new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero).AddDays(1);
         repository.Verify(r => r.GetEventsAsync(
             It.Is<DateTimeOffset>(d => d == expectedStart),
             It.Is<DateTimeOffset>(d => d == expectedEnd),
@@ -185,17 +214,26 @@ public class RemindersControllerTests
         // multi-day event that began before the window can come back from the repository with a Start
         // earlier than it. The controller has to re-assert the lower bound itself rather than trust
         // the repository's own query semantics.
+        //
+        // Two days back, not one: the query is now deliberately widened by a day at each end, so the
+        // day before the window is a legitimate candidate rather than an overlap artefact, and it has
+        // a case of its own (UpcomingReminders_AnAllDayEventTheDayBeforeTheWindowOpens_IsNotReturned).
+        // Two days back can only reach the repository's answer by overlapping the window, which is
+        // the case this one is about — so the fixture is a genuinely multi-day event that is still
+        // running, not a one-hour event the stub hands over for no reason the query would allow.
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
-        var startedYesterday = EventWith(new DateTimeOffset(2026, 3, 9, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
+        var startedTwoDaysAgo = EventWith(
+            new DateTimeOffset(2026, 3, 8, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)),
+            end: new DateTimeOffset(2026, 3, 20, 9, 0, 0, TimeSpan.Zero));
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { startedYesterday });
+            .ReturnsAsync(new List<CalendarEvent> { startedTwoDaysAgo });
 
         var rows = await GetRows(sut);
 
-        rows.Should().BeEmpty("the event's own start is before the window this view reports on");
+        rows.Should().BeEmpty("the event's own day is before the window this view reports on");
     }
 
     [Fact]
@@ -219,25 +257,27 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         var row = rows.Should().ContainSingle().Subject;
-        row.EventStart.Should().Be(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero),
-            "the client files by the event's own start, which is what holds the row under Today all day");
+        row.EventDate.Should().Be(new DateOnly(2026, 3, 10),
+            "the client files by the event's own day, which is what holds the row under Today all day");
+        row.EventTimeOfDay.Should().Be(new TimeOnly(9, 0));
     }
 
     [Fact]
-    public async Task UpcomingReminders_ExcludesAnEventStartingOnOrAfterTheEndOfNextMonth()
+    public async Task UpcomingReminders_ExcludesAnEventOnTheFirstDayOfTheMonthAfterNext()
     {
         var (repository, _, clock, sut) = CreateSut();
         clock.SetUtcNow(new DateTimeOffset(2026, 3, 10, 9, 0, 0, TimeSpan.Zero));
 
-        // Exactly on the exclusive "end of next month" boundary — 1 May 00:00Z.
-        var onTheBoundary = EventWith(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
+        // The first day the window cannot hold: a household today of 10 March makes 30 April the last
+        // date either panel has room for, so 1 May is out by one day.
+        var dayAfterTheWindow = EventWith(new DateTimeOffset(2026, 5, 1, 9, 0, 0, TimeSpan.Zero), Explicit(("popup", 0)));
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { onTheBoundary });
+            .ReturnsAsync(new List<CalendarEvent> { dayAfterTheWindow });
 
         var rows = await GetRows(sut);
 
-        rows.Should().BeEmpty("the event starts exactly on the exclusive end-of-next-month boundary");
+        rows.Should().BeEmpty("the event is on the first day of the month after next, one day past the window");
     }
 
     [Fact]
@@ -262,7 +302,9 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().ContainSingle("the event has a reminder and has not started yet, which is what puts it on the timeline");
-        rows[0].EventStart.Should().Be(start, "the row is filed and described by the EVENT's start");
+        rows[0].EventDate.Should().Be(new DateOnly(2026, 3, 10),
+            "the row is filed and described by the EVENT's own day");
+        rows[0].EventTimeOfDay.Should().Be(new TimeOnly(9, 10));
     }
 
     [Fact]
@@ -284,7 +326,8 @@ public class RemindersControllerTests
         var rows = await GetRows(sut);
 
         rows.Should().ContainSingle("three reminders on one event must still file as one row, not three");
-        rows[0].EventStart.Should().Be(start, "the row is filed and described by the EVENT's start, not any reminder's trigger");
+        rows[0].EventDate.Should().Be(new DateOnly(2026, 3, 10),
+            "the row is filed and described by the EVENT's own day, not any reminder's trigger");
     }
 
     [Fact]
@@ -493,33 +536,192 @@ public class RemindersControllerTests
         repository.VerifyNoOtherCalls();
     }
 
+    // "No zone persisted, so the endpoint still answers" used to be a case here. It moved, with the
+    // fallback itself, to TimeZoneServiceTests.GetDisplayZone_WithNoZonePersisted_IsUtcAndSaysNothing:
+    // this controller no longer resolves a stored id or falls back to UTC — it asks
+    // GetDisplayZoneAsync for a TimeZoneInfo and is handed one. There is no "nothing stored" state
+    // reachable through the mocked interface any more, so a case here could only have re-tested the
+    // mock. It is named rather than quietly dropped, because deleting coverage silently is how a case
+    // stops existing.
+
+    // ── The envelope: the anchor and the rollover instant ────────────────────
+    //
+    // The client no longer derives "today" at all. It is told, because the server is what knows the
+    // household zone — and it is told when that answer stops being true, so a kiosk left running
+    // overnight refetches at the right instant instead of polling for a date change it reads off its
+    // own clock.
+
     [Fact]
-    public async Task UpcomingReminders_WhenNoZoneIsPersisted_StillProducesItsRows()
+    public async Task UpcomingReminders_CarriesTheHouseholdsOwnTodayAsTheAnchor()
     {
-        // Neither the owning calendar nor the family has a zone on record, so both the window's own
-        // day/month boundaries and the all-day anchor handed to ReminderPingCalculator fall all the
-        // way through to UTC. The endpoint must answer rather than throw on the way.
-        //
-        // It cannot assert WHICH zone was used any more: all this endpoint reads of Compute's answer
-        // is whether it is empty, and the ping count is the same in every zone. Where the anchor
-        // lands is pinned where it is still observable, in ReminderPingCalculatorTests.
-        var (repository, timeZoneService, clock, sut) = CreateSut();
-        clock.SetUtcNow(new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
-        timeZoneService.Setup(t => t.GetSendZoneAsync(It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+        var (_, _, clock, sut) = CreateSut(NewYork);
+        // 03:00Z on 16 June is 23:00 on the 15th in New York. The anchor is the HOUSEHOLD's date, so
+        // a UTC reading of this instant (the 16th) is the wrong answer and the one the kiosk used to
+        // give.
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 16, 3, 0, 0, TimeSpan.Zero));
 
-        var owner = DefaultOwnerCalendar(ianaTimeZone: null);
-        repository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarInfo> { owner });
+        var payload = await GetPayload(sut);
 
-        var allDayStart = new DateTimeOffset(2026, 7, 15, 0, 0, 0, TimeSpan.Zero);
-        var evt = EventWith(allDayStart, Explicit(("popup", 60)), isAllDay: true);
+        payload.Today.Should().Be(new DateOnly(2026, 6, 15));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_OnAnOrdinaryDay_RollsOverAtTheNextLocalMidnight()
+    {
+        var (_, _, clock, sut) = CreateSut(NewYork);
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 16, 3, 0, 0, TimeSpan.Zero));
+
+        var payload = await GetPayload(sut);
+
+        // Midnight on 16 June in New York is 04:00Z — one hour away from the fixture's instant, not
+        // twenty-four.
+        payload.NextRolloverUtc.Should().Be(new DateTimeOffset(2026, 6, 16, 4, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_OnADaylightSavingTransitionDay_IsNotTwentyFourHoursAway()
+    {
+        // 29 March 2026 is 23 hours long in Dublin. A rollover computed as "now plus a day" or as
+        // "midnight plus 24 hours" lands an hour late, and the kiosk spends that hour showing
+        // yesterday's rows as today's.
+        var (_, _, clock, sut) = CreateSut(Dublin);
+        clock.SetUtcNow(new DateTimeOffset(2026, 3, 29, 12, 0, 0, TimeSpan.Zero));
+
+        var payload = await GetPayload(sut);
+
+        payload.Today.Should().Be(new DateOnly(2026, 3, 29));
+        // Midnight on the 30th in Dublin is 23:00Z on the 29th: the clocks went forward at 01:00Z.
+        payload.NextRolloverUtc.Should().Be(new DateTimeOffset(2026, 3, 29, 23, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_InAZoneWhoseLocalMidnightIsSkipped_StillRollsIntoTheNextDay()
+    {
+        // Santiago's spring-forward happens AT midnight: 2026-09-06 00:00 does not exist there, the
+        // clocks go straight from 23:59 on the 5th to 01:00 on the 6th. Asking for the offset at a
+        // local time that never occurs is a question with no good answer, so what this pins is the
+        // two properties that actually matter — the instant is still in the future, and at it the
+        // household's date really is the next one.
+        var (_, _, clock, sut) = CreateSut(Santiago);
+        var now = new DateTimeOffset(2026, 9, 5, 18, 0, 0, TimeSpan.Zero);
+        clock.SetUtcNow(now);
+
+        var payload = await GetPayload(sut);
+
+        payload.NextRolloverUtc.Should().BeAfter(now);
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(payload.NextRolloverUtc, Santiago).DateTime)
+            .Should().Be(payload.Today.AddDays(1));
+    }
+
+    // ── An all-day event at the window's edges, in a negative-offset zone ────
+    //
+    // The defect this ticket exists for, at the one place it was not merely a wrong label but a
+    // missing row.
+
+    [Fact]
+    public async Task UpcomingReminders_AnAllDayEventOnTheWindowsFirstDayInANegativeZone_IsStillReturned()
+    {
+        var (repository, _, clock, sut) = CreateSut(NewYork);
+        // 03:00Z on 16 June is 23:00 on the 15th in New York, so the household's today is the 15th and
+        // its local midnight was 04:00Z on the 15th. An all-day event on the 15th is stored at
+        // 00:00Z on the 15th — four hours EARLIER than that. The instant comparison this replaced
+        // dropped the row on the very day the event happened.
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 16, 3, 0, 0, TimeSpan.Zero));
+        var allDayToday = EventWith(
+            new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 540)),
+            isAllDay: true, title: "School Photos",
+            end: new DateTimeOffset(2026, 6, 16, 0, 0, 0, TimeSpan.Zero));
         repository.Setup(r => r.GetEventsAsync(
                 It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<CalendarEvent> { evt });
+            .ReturnsAsync(new List<CalendarEvent> { allDayToday });
+
+        var payload = await GetPayload(sut);
+
+        var row = payload.Rows.Should().ContainSingle().Subject;
+        row.EventDate.Should().Be(payload.Today);
+        row.EventTimeOfDay.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_AnAllDayEventOnTheWindowsLastDayInANegativeZone_IsStillReturned()
+    {
+        var (repository, _, clock, sut) = CreateSut(NewYork);
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 16, 3, 0, 0, TimeSpan.Zero));
+        // 31 July 2026 is the last day of next month from a household today of 15 June.
+        var lastDay = EventWith(
+            new DateTimeOffset(2026, 7, 31, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 540)),
+            isAllDay: true, title: "Camp Ends",
+            end: new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { lastDay });
+
+        var payload = await GetPayload(sut);
+
+        payload.Rows.Should().ContainSingle().Which.EventDate.Should().Be(new DateOnly(2026, 7, 31));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_AnAllDayEventTheDayBeforeTheWindowOpens_IsNotReturned()
+    {
+        // The other side of the widened query: a day of extra candidates comes back from the
+        // repository and must be filtered out here rather than reaching the client, which would show
+        // a past row among upcoming ones.
+        var (repository, _, clock, sut) = CreateSut(NewYork);
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 16, 3, 0, 0, TimeSpan.Zero));
+        var yesterday = EventWith(
+            new DateTimeOffset(2026, 6, 14, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 540)),
+            isAllDay: true, title: "Yesterday",
+            end: new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { yesterday });
+
+        (await GetPayload(sut)).Rows.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_WithinOneDay_PutsTheAllDayEventFirst()
+    {
+        // A deliberate change from the order a midnight-UTC instant produced: in a zone at UTC+1 that
+        // sorted an all-day event between 00:30 and 02:00. All-day first is what Google's day views
+        // do, and it is now a property of the ordering key rather than of what an instant happens to
+        // be.
+        var (repository, _, clock, sut) = CreateSut(Dublin);
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 15, 6, 0, 0, TimeSpan.Zero));
+        var timedEarly = EventWith(
+            new DateTimeOffset(2026, 6, 16, 23, 30, 0, TimeSpan.Zero), Explicit(("popup", 10)),
+            title: "Half Past Midnight");
+        var allDay = EventWith(
+            new DateTimeOffset(2026, 6, 17, 0, 0, 0, TimeSpan.Zero), Explicit(("popup", 540)),
+            isAllDay: true, title: "Bin Day",
+            end: new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero));
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { timedEarly, allDay });
 
         var rows = await GetRows(sut);
 
-        rows.Should().ContainSingle();
-        rows[0].EventStart.Should().Be(allDayStart);
+        // 23:30Z on the 16th is 00:30 on the 17th in Dublin during BST, so both are on the 17th.
+        rows.Select(r => r.EventTitle).Should().ContainInOrder("Bin Day", "Half Past Midnight");
+        rows.Should().AllSatisfy(r => r.EventDate.Should().Be(new DateOnly(2026, 6, 17)));
+    }
+
+    [Fact]
+    public async Task UpcomingReminders_ATimedEventJustAfterLocalMidnight_IsFiledOnItsOwnLocalDay()
+    {
+        var (repository, _, clock, sut) = CreateSut(Dublin);
+        clock.SetUtcNow(new DateTimeOffset(2026, 6, 15, 6, 0, 0, TimeSpan.Zero));
+        var justAfterMidnight = EventWith(
+            new DateTimeOffset(2026, 6, 16, 23, 30, 0, TimeSpan.Zero), Explicit(("popup", 10)),
+            title: "Night Flight");
+        repository.Setup(r => r.GetEventsAsync(
+                It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { justAfterMidnight });
+
+        var row = (await GetRows(sut)).Should().ContainSingle().Subject;
+
+        row.EventDate.Should().Be(new DateOnly(2026, 6, 17));
+        row.EventTimeOfDay.Should().Be(new TimeOnly(0, 30));
     }
 }

@@ -1,3 +1,4 @@
+using FamilyHQ.Core.Calendar;
 using FamilyHQ.Core.DTOs;
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
@@ -32,43 +33,40 @@ public class RemindersController : ControllerBase
 
     /// <summary>
     /// Every event, across every calendar, whose reminders were deliberately set on the event itself
-    /// and which starts between now and the end of next month — filed by when the EVENT happens,
-    /// never by when any one of its reminders fires. An event with several reminders due at very
-    /// different lead times (the family's own example: one every day for the week before it) still
-    /// produces exactly one row, in the section containing its own start, and keeps that row after
-    /// its last reminder has gone off.
+    /// and whose own day falls between the household's today and the end of next month — filed by
+    /// when the EVENT happens, never by when any one of its reminders fires. The response carries the
+    /// household's own today, and the instant that answer stops being true, alongside the rows. An
+    /// event with several reminders due at very different lead times (the family's own example: one
+    /// every day for the week before it) still produces exactly one row, in the panel holding its own
+    /// day, and keeps that row after its last reminder has gone off.
     /// </summary>
     [HttpGet("upcoming")]
     public async Task<IActionResult> GetUpcoming(CancellationToken ct)
     {
-        // A pure DB read — never ResolveAutoZoneAsync, which calls ip-api and has no business on a
-        // read path. This is the family's FamilyHQ-configured zone, used for two things below: the
-        // window's own day/month boundaries, and — only as a fallback — the all-day anchor for an
-        // event whose own calendar reported no zone of its own.
-        var sendZoneId = await _timeZoneService.GetSendZoneAsync(ct);
-        var familyZone = TryFindZone(sendZoneId) ?? TimeZoneInfo.Utc;
+        // The family's FamilyHQ-configured zone, resolved once. A pure DB read behind the service —
+        // never ResolveAutoZoneAsync, which calls ip-api and has no business on a read path. Three
+        // things below are measured in it: the window's day boundaries, the rollover instant the
+        // client refetches at, and every row's own day.
+        var familyZone = await _timeZoneService.GetDisplayZoneAsync(ct);
 
         var now = _timeProvider.GetUtcNow();
-        var localToday = TimeZoneInfo.ConvertTime(now, familyZone).Date;
-        var start = LocalMidnight(localToday, familyZone);
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, familyZone).DateTime);
 
-        // "End of next month" expressed as the exclusive start of the month after that — the far edge
-        // of both the query window and the two month panels the client files rows into.
-        var startOfMonthAfterNext = new DateTime(localToday.Year, localToday.Month, 1).AddMonths(2);
-        var displayEnd = LocalMidnight(startOfMonthAfterNext, familyZone);
+        // The last date either panel can hold: the end of next month, inclusive.
+        var windowEnd = new DateOnly(today.Year, today.Month, 1).AddMonths(2).AddDays(-1);
 
-        // No 28-day reminder-lead tail on this query any more. It used to exist because a PING could
-        // precede its event into the display window — an event starting just after displayEnd could
-        // still carry a reminder whose trigger landed before it, and that ping had to be reachable.
-        // Filing by EVENT START removes that reason outright: a row's place in the timeline is decided
-        // by evt.Start alone, which the query below already guarantees is inside [start, displayEnd).
-        //
-        // GetEventsAsync matches on OVERLAP (e.Start < end && e.End > start), not on Start falling
-        // inside the window — an event that began before `start` and is still running (e.g. a
-        // multi-day event) would otherwise come back with evt.Start before the window's near edge. Both
-        // bounds on evt.Start are therefore re-asserted explicitly below rather than trusted to the
-        // repository's own query semantics, which this endpoint does not own.
-        var events = await _calendarRepository.GetEventsAsync(start, displayEnd, ct);
+        // The query is in INSTANTS and matches on OVERLAP (e.Start < end && e.End > start), while
+        // this endpoint files rows by their own local DAY. Those are different questions at the
+        // edges, in both directions: an all-day event on `today` is stored at midnight UTC, which is
+        // BEFORE local midnight in any negative-offset zone, and a timed event late on `windowEnd`
+        // locally is already the next UTC day in any positive one. A day either side is enough slack
+        // for both, and costs one day of extra candidates — the row filter below re-asserts the real
+        // bounds, as it always has rather than trusting the repository's semantics, which this
+        // endpoint does not own.
+        var queryStart = LocalMidnight(today.AddDays(-1), familyZone);
+        var queryEnd = LocalMidnight(windowEnd.AddDays(2), familyZone);
+
+        var events = await _calendarRepository.GetEventsAsync(queryStart, queryEnd, ct);
         var allCalendars = await _calendarRepository.GetCalendarsAsync(ct);
         var calendarsById = allCalendars.ToDictionary(c => c.Id);
 
@@ -77,16 +75,20 @@ public class RemindersController : ControllerBase
         // pings the family's phones. Filtering it out here would make the timeline silently
         // incomplete, which is the one failure this endpoint exists to prevent.
         var rows = events
-            .Where(evt => evt.Start >= start && evt.Start < displayEnd)
             .Select(evt => RowFor(evt, calendarsById, familyZone))
             .Where(r => r is not null)
             .Select(r => r!)
-            .OrderBy(r => r.EventStart)
-            // Stable order when two events start at the exact same instant.
+            // A DAY comparison, not an instant one. The instant form was the other half of the
+            // all-day defect: `evt.Start >= start` dropped an all-day event on the very day it
+            // happened, because its stored midnight UTC is earlier than local midnight wherever the
+            // offset is negative — so the row vanished from the only panel that could hold it.
+            .Where(r => r.EventDate >= today && r.EventDate <= windowEnd)
+            .OrderBy(r => new EventWallClock(r.EventDate, r.EventTimeOfDay))
+            // Stable order for two events on the same day at the same time.
             .ThenBy(r => r.EventTitle, StringComparer.Ordinal)
             .ToList();
 
-        return Ok(rows);
+        return Ok(new UpcomingRemindersDto(today, LocalMidnight(today.AddDays(1), familyZone), rows));
     }
 
     /// <summary>
@@ -97,7 +99,7 @@ public class RemindersController : ControllerBase
     /// event that was never synced or whose reminders were explicitly removed.
     /// </summary>
     /// <remarks>
-    /// Having already fired is NOT an exclusion. A row is filed by the event's start, so it has to
+    /// Having already fired is NOT an exclusion. A row is filed by the event's own day, so it has to
     /// survive its own reminders: by the time an event begins, its reminders have usually all gone
     /// off, and dropping the row then would strip today's events off the timeline exactly when the
     /// family most needs them — the rows naming today are the ones a wall display is glanced at for.
@@ -123,7 +125,7 @@ public class RemindersController : ControllerBase
         // whether it is empty, and that count is the same whatever zone is passed. It is resolved
         // correctly anyway because Compute's contract takes a zone and a wrong one would make its
         // trigger instants wrong — not because anything below shows them.
-        var anchorZone = TryFindZone(owner?.IanaTimeZone) ?? familyZone;
+        var anchorZone = _timeZoneService.TryResolveZone(owner?.IanaTimeZone) ?? familyZone;
 
         // The subject of this view is reminders somebody DELIBERATELY set on an event. An event that
         // merely follows its calendar's usual reminders is therefore out of scope — knowingly, and
@@ -168,8 +170,9 @@ public class RemindersController : ControllerBase
         var pings = ReminderPingCalculator.Compute(evt.Start, evt.IsAllDay, evt.Reminders, owner?.DefaultReminders, anchorZone);
         if (pings.Count == 0) return null;
 
+        var wallClock = EventWallClock.Of(evt.Start, evt.IsAllDay, familyZone);
         return new UpcomingReminderEventDto(
-            evt.Id, evt.Title, evt.Start, evt.IsAllDay, BuildMembers(evt, owner));
+            evt.Id, evt.Title, wallClock.Date, wallClock.Time, BuildMembers(evt, owner));
     }
 
     /// <summary>
@@ -203,32 +206,24 @@ public class RemindersController : ControllerBase
         return owner is null ? [] : [new ReminderMemberDto(owner.DisplayName, owner.Color)];
     }
 
-    private static DateTimeOffset LocalMidnight(DateTime localDate, TimeZoneInfo zone)
-    {
-        var unspecified = DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified);
-        return new DateTimeOffset(unspecified, zone.GetUtcOffset(unspecified));
-    }
-
     /// <summary>
-    /// <see cref="TimeZoneInfo.FindSystemTimeZoneById"/>, guarded against an id this host's tzdb does
-    /// not recognise. Null/blank is the ordinary "nothing stored yet" case and is not logged; a
-    /// non-blank id that still fails to resolve is stored data this host cannot read, which is worth
-    /// knowing about — but still not a reason to fail the whole endpoint, so it falls through.
+    /// Midnight on <paramref name="localDate"/> in <paramref name="zone"/>, as an instant.
     /// </summary>
-    private TimeZoneInfo? TryFindZone(string? ianaId)
+    /// <remarks>
+    /// The offset is taken AT that local time rather than at the time of the request, which is what
+    /// makes a local day 23 or 25 hours long across a daylight-saving transition instead of always 24.
+    /// <para>
+    /// Some zones transition AT midnight, so the local time asked about here does not always exist
+    /// (Santiago's clocks go from 23:59 straight to 01:00). <see cref="TimeZoneInfo.GetUtcOffset(DateTime)"/>
+    /// answers with the offset in force before the transition, which makes this the transition instant
+    /// itself — the moment the local date really does become <paramref name="localDate"/>. That is the
+    /// answer this is used for, so the skipped-midnight case needs no special handling, only a test
+    /// saying so.
+    /// </para>
+    /// </remarks>
+    private static DateTimeOffset LocalMidnight(DateOnly localDate, TimeZoneInfo zone)
     {
-        if (string.IsNullOrWhiteSpace(ianaId)) return null;
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(ianaId);
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            _logger.LogWarning(ex,
-                "Unrecognised IANA zone {IanaZoneId} while building the reminders timeline; falling back.",
-                ianaId);
-            return null;
-        }
+        var unspecified = DateTime.SpecifyKind(localDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+        return new DateTimeOffset(unspecified, zone.GetUtcOffset(unspecified));
     }
 }
