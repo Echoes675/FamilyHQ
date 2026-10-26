@@ -75,6 +75,22 @@ public class DashboardPage : BasePage
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
 
+    /// <summary>
+    /// The month grid's cell for <paramref name="date"/>, addressed by the id the grid gives it.
+    /// Existing or not, it is the only honest answer to "is this date on screen": the grid renders a
+    /// variable window of whole weeks, so a date it does not span has no cell at all rather than an
+    /// empty one.
+    /// </summary>
+    public ILocator MonthDayCell(DateTime date) => Page.Locator(
+        $"#day-cell-{date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}");
+
+    /// <summary>
+    /// Event capsules in <paramref name="date"/>'s own grid cell. Narrower than
+    /// <see cref="EventCapsules"/> on purpose: an assertion about an event's DAY that reads every
+    /// capsule on screen also passes when the capsule is rendered on the wrong one.
+    /// </summary>
+    public ILocator EventCapsulesOn(DateTime date) => MonthDayCell(date).Locator(".event-capsule");
+
     // FHQ-18.11: recurrence affordances. The indicator glyph renders on every recurring tile
     // across Day / Month / Agenda; the subtitle renders inside the open event modal.
     public ILocator RecurrenceIndicators => Page.GetByTestId("recurrence-indicator");
@@ -521,14 +537,14 @@ public class DashboardPage : BasePage
         return await DayPickerBtn.InnerTextAsync();
     }
 
-    public async Task ClickMoreEventsLinkAsync(string dayDateString)
+    /// <summary>
+    /// Taps the "+n more" overflow indicator in <paramref name="date"/>'s own cell, which drills the
+    /// dashboard into that day. Addressed through the cell rather than by the indicator's text, so it
+    /// cannot pick up another day's overflow on a grid that happens to have two.
+    /// </summary>
+    public async Task ClickMoreEventsLinkAsync(DateTime date)
     {
-        // Click the +n more text on the month view
-        var link = Page.GetByText(new Regex(@"^\+\d+ more$"));
-        // Need to narrow down to the specific day's more link if provided, but since most tests only run on specific days we can just pick the first visible or use nth(0) assuming our tests are isolated.
-        // Actually best is to find the cell by date. The cell has an id like `day-cell-2026-03-24`
-        var cell = Page.Locator($"#day-cell-{dayDateString}");
-        await cell.GetByTestId("overflow-indicator").ClickAsync();
+        await MonthDayCell(date).GetByTestId("overflow-indicator").ClickAsync();
         await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
@@ -786,21 +802,91 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Navigates to the next month only if <paramref name="date"/> falls outside the
-    /// currently-visible month grid. The grid spans from the Sunday on or before the
-    /// first of the current month to the Saturday on or after the last day of the month.
+    /// Drives the month grid's own Prev/Next until <paramref name="date"/> has a cell on screen, and
+    /// returns only once that cell is in the DOM.
     /// </summary>
-    public async Task NavigateToShowDateIfNeededAsync(DateTime date)
+    /// <remarks>
+    /// <para>
+    /// The grid is a variable window of whole Sunday-to-Saturday weeks — the Sunday on or before the
+    /// 1st, through the first Saturday on or after the month's last day — so it runs four to six weeks
+    /// and carries only as many of the adjacent months' days as those weeks need. A month ending on a
+    /// Saturday carries none of the next month's days; a month starting on a Sunday carries none of the
+    /// previous month's. On that pair of neighbours the two grids abut with NO overlap, so no single
+    /// view shows both sides of the boundary and one navigation cannot serve two dates either side
+    /// of it. An assertion keyed on a date therefore has to bring the view to that date itself.
+    /// </para>
+    /// <para>
+    /// It asks the rendered DOM rather than recomputing the window, because the span is the view's to
+    /// decide and a date the view does not span has no cell at all rather than an empty one. It then
+    /// navigates to the month CONTAINING the date instead of reasoning about edge days: a grid always
+    /// spans its own month in full, whatever the window's shape, where "is this an edge day of the
+    /// month on screen" has to be re-derived at every boundary and is only ever true by luck.
+    /// </para>
+    /// <para>
+    /// Bounded, and it throws, for the reason <see cref="ShowAgendaMonthContainingAsync"/> does: two
+    /// years of steps either way is past any seed a scenario means, so a date beyond it is a broken
+    /// scenario rather than a view needing more clicks — and naming the date and the month on screen
+    /// here is worth more than the unrelated capsule assertion that would otherwise time out later.
+    /// </para>
+    /// </remarks>
+    public async Task ShowMonthContainingAsync(DateTime date)
     {
-        var today = BrowserClock.Today;
-        var lastDayOfMonth = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
-        var daysUntilSaturday = ((int)DayOfWeek.Saturday - (int)lastDayOfMonth.DayOfWeek + 7) % 7;
-        var gridEnd = lastDayOfMonth.AddDays(daysUntilSaturday);
+        var target = new DateTime(date.Year, date.Month, 1);
+        var cell = MonthDayCell(date);
 
-        if (date > gridEnd)
+        for (var step = 0; step < 24; step++)
         {
-            await NavigateToNextMonthAsync();
+            // A count, not a wait: a missing cell is the NORMAL state on every step that goes on to
+            // navigate, and auto-waiting on it would spend a timeout per click to learn what the
+            // month header already says.
+            if (await cell.CountAsync() > 0) return;
+
+            var current = await GetMonthGridCurrentMonthAsync();
+            if (current.Year == target.Year && current.Month == target.Month)
+            {
+                // On the date's own month the cell is arriving rather than absent, since the grid
+                // always spans its own month — so this is the one place worth waiting at.
+                await cell.WaitForAsync(
+                    new() { State = WaitForSelectorState.Attached, Timeout = 30000 });
+                return;
+            }
+
+            await StepMonthGridAsync(current < target ? 1 : -1);
         }
+
+        throw new InvalidOperationException(
+            $"The month grid never showed a cell for " +
+            $"{date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"within 24 month steps; it is showing '{await GetMonthHeaderTextAsync()}'.");
+    }
+
+    private async Task<DateTime> GetMonthGridCurrentMonthAsync()
+    {
+        var text = await GetMonthHeaderTextAsync();
+        return DateTime.ParseExact(
+            text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// One click of the grid's month navigation, confirmed against the header it should have moved.
+    /// </summary>
+    /// <remarks>
+    /// The expectation is read from the LIVE header rather than from today's month, and that is what
+    /// makes this safe to call in a loop: <see cref="NavigateToNextMonthAsync"/> waits for "today plus
+    /// one month", so it can only ever be right for a first hop from the month the page opened on.
+    /// No settle-sleep after it — everything that reads the grid afterwards is a web-first wait on a
+    /// cell or a capsule, which outlasts the re-render on its own.
+    /// </remarks>
+    private async Task StepMonthGridAsync(int months)
+    {
+        var expectedText = (await GetMonthGridCurrentMonthAsync()).AddMonths(months)
+            .ToString("MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+
+        await (months > 0 ? NextMonthBtn : PrevMonthBtn).ClickAsync();
+
+        await Assertions.Expect(MonthHeaderButton)
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task OpenEventForEditingAsync(string eventName)

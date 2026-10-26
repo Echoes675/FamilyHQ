@@ -34,6 +34,7 @@ Feature: Day Calendar View
     And the user has a timed event "Event 4" tomorrow at "13:00" for 60 minutes
     And I login as the user "NMoreUser"
     When I view the dashboard
+    And I navigate the month view to show "tomorrow"
     And I click the "+n more" link for tomorrow
     Then I see the Day View Container
     And I see the timed event "Event 4" displayed in the Day View grid

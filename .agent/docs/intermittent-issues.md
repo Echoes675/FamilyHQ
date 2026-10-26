@@ -14,6 +14,98 @@ A living record of intermittent / flaky failures observed in CI or local runs, w
 
 ## Active issues
 
+### 18. Two month-view scenarios fail for five days when a month ends on a Saturday — one navigation step for several seeded dates (2026-10-26)
+
+**Status:** root cause **confirmed from the failing run's own log**; the fix is on a branch. **Not
+resolved** — the bar in this file is a green gate, and the gate that would prove it has not run yet.
+The failing condition is live as this is written, so the next Deploy-Dev run is a direct red→green
+reading rather than an argument. Move this to *Resolved* when that run is green, not before.
+
+**Component:** `tests-e2e/FamilyHQ.E2E.Features/WebUi/DashboardCalendarViewer/MonthCalendarView.feature`
+→ `View events from all 6 calendars on the month view` and `View all-day events`. The helper they went
+through, `DashboardPage.NavigateToShowDateIfNeededAsync`, is retired by the fix.
+
+**First seen:** Deploy-Staging #306 (2026-10-26), on unmodified `dev` @ `499fcf6`.
+
+**Occurrences:** #306. Not rare — deterministic for every run date in the window below. Deploy-Dev
+#880, #881 and #882 (2026-10-24) passed both scenarios on the same application code two days earlier,
+when six and seven days ahead were still inside October, as did Deploy-Staging #305 (2026-10-20).
+
+**Symptom:** each scenario waits out its full 30 seconds for the capsule of the event seeded
+**tomorrow** — not for the date it navigated to, which is the detail that names the cause:
+
+```
+And I navigate the month view to show a date in 6 days -> done (0.2s)
+Then I see the event "Work Event" displayed on the calendar
+-> error: waiting for Locator(".event-capsule").Filter(new() { HasText = "Work Event" }) (30.0s)
+```
+
+**Root cause — one navigation cannot serve several dates.** Both scenarios seed events across a week
+(`tomorrow` … `in 6 days`, and `tomorrow` plus `in 7 days`), navigate **once**, and then assert them
+all on the one view that leaves them. That works only while every seeded date shares a grid, and on
+2026-10-26 they did not: the hop was genuinely needed for the far date and it took the near ones off
+screen.
+
+The grid is a window of whole Sunday-to-Saturday weeks, from the Sunday on or before the 1st through
+the first Saturday on or after the month's last day. 31 October 2026 **is** a Saturday, so October's
+grid is 27 Sep – 31 Oct and stops dead; 1 November is a Sunday, so November's grid starts exactly
+there. The two abut with **no overlap at all**, and no view in existence shows both 27 October and
+1 November. That pairing — a month ending on a Saturday — is the trigger, and it comes round about one
+month in seven, in clumps rather than evenly.
+
+**What this is not.** It is not a navigation that fired when it should not have: the retired helper
+computed the grid's last cell as "the first Saturday on or after the month's last day", which is
+exactly what the view renders, so its decision to hop was correct. Nor is the window the one the
+server's `GetEventsForMonth` describes — `endDay` there always reaches one to six days into the next
+month because it is the **event-fetch** window, with its own comment saying it pre-fetches for
+scroll-ahead. Read as the grid's span it suggests October was showing 1 November, and the first
+diagnosis of this failure said so. Cells come from `BuildCalendarGrid` in the WebUi, and nothing else.
+
+**The window, and the second wave that does not self-clear.**
+
+| Dates | What happens |
+|---|---|
+| 2026-10-25 | `View all-day events` (+7 days) armed. No gate ran that day, so it is unobserved rather than passing. |
+| 2026-10-26 – 10-30 | Both scenarios red. #306 is the 26th. |
+| 2026-10-31 (Sat) | These two go green — both their dates land in November — and **~25 other scenarios go red instead.** |
+
+The 31st is the same mechanism with a wider blast radius: `tomorrow` is 1 November, which October's
+grid does not carry, so every month-grid assertion *or click* keyed on a `tomorrow` seed fails. That is
+**22 scenarios** across five features — 14 in `MonthCalendarView` (most of them through its
+`Background` seed), 4 in `GoogleCalendarSync`, 2 in `CalendarDefaultReminders`, 1 in `Authentication`
+and the `+n more` drill-down in `DayCalendarView` — and **two more that pass vacuously**, both
+`I do not see …` assertions satisfied by the missing cell rather than by the deletion they are about.
+That quieter half is the failure mode issue 16 named and is why an absence is now asserted on a view
+that provably spans the date. Nothing about the first wave clearing helps any of them.
+
+**Fix.** [Issue 16](#16-nine-agenda-scenarios-fail-on-the-last-day-of-every-month--a-relative-seed-date-outside-the-rendered-month-2026-09-30)'s
+resolution, applied to the grid, because this is that issue one view over.
+`DashboardPage.ShowMonthContainingAsync(DateTime)` drives the grid's own Prev/Next until the date has a
+**cell in the DOM**, re-reading the live month header each step, and throws naming the date and the
+month on screen if it cannot get there. Assertions on a seeded date move the view themselves —
+`I see the event "…" displayed on the calendar for "<date expression>"`, scoped to that day's cell so
+it also stops reading a capsule rendered on the wrong day — and the few scenarios that *click* a
+seeded event carry `I navigate the month view to show "<date expression>"`, which replaces the old
+`…to show a date in N days`: a count of days cannot say which month it lands in. The undated step
+stays for events created through the kiosk, whose day the scenario's own flow fixes.
+
+**What has a test and what does not.** A `@day-rollover` scenario uses the kiosk clock bridge to roll
+the displayed date forward a month, which leaves a seeded event a month behind the view — the same
+situation a boundary produces, on any run date, and it fails without the fix. It does **not** reproduce
+the boundary arithmetic itself. Nothing does: proving that still means waiting for a month that ends on
+a Saturday, which is why the date below is worth keeping.
+
+**If the symptom returns:**
+1. **Check the run date before reading the diff.** The last day of a month that falls on a Saturday, or
+   the five days before it, means this entry. After 31 October 2026 the next are 31 July 2027,
+   30 September 2028, then 31 March and 30 June 2029 — far enough apart that nobody will remember this
+   by the time it comes round, which is the whole reason for the entry.
+2. A failure naming the event seeded *nearest* — while the scenario navigated for the farthest — is
+   this shape rather than a sync or render problem. Read which event the log names, not which date the
+   scenario asked for.
+3. For the mechanism, trust `BuildCalendarGrid` in `src/FamilyHQ.WebUi/Pages/Index.razor` over any
+   expression in the API or the test suite. It is the only thing that decides which cells exist.
+
 ### 17. "Disabling weather hides the weather strip" — the Saved-badge net fires because the location save returns silently on an unflushed bind (2026-10-01)
 
 **Open.** Root cause identified; the fix is its own ticket, because it is a product defect rather than a
@@ -103,9 +195,17 @@ reading any one of them is what named the date as the variable.
 either side. Nine scenarios seeded `"tomorrow"` and asserted against
 `agenda-cell-<tomorrow>-<calendarId>`. On the last day of a month "tomorrow" is the **next** month, so
 that cell is not merely empty, it does not exist, and the assertion waits out its full timeout for an
-element that cannot appear. The month **grid** renders six weeks including the adjacent months' edge
-days, which is why the equivalent month-view scenarios never showed this, and why the mechanism is
-easy to disbelieve.
+element that cannot appear.
+
+The month **grid** is not immune, and the claim that it was — that it "renders six weeks including the
+adjacent months' edge days" — was wrong and cost a red gate four weeks later ([issue
+18](#18-two-month-view-scenarios-fail-for-five-days-when-a-month-ends-on-a-saturday--one-navigation-step-for-several-seeded-dates-2026-10-26)).
+It renders **four to six** whole Sunday-to-Saturday weeks — the Sunday on or before the 1st, through
+the first Saturday on or after the month's last day — so it carries only as many of the adjacent
+months' days as those weeks need, and sometimes none: a month ending on a Saturday shows no day of the
+next month, and one starting on a Sunday shows no day of the previous one. What spared the month-view
+scenarios on 2026-09-30 was the particular date — September ended on a Wednesday, so its grid ran on
+to 3 October — plus a navigation step several of them already carried. Not the width of the grid.
 
 Note the second, quieter failure mode: a **negative** assertion (`I do not see … in the … column
 for …`) passes *vacuously* against a missing cell. Two such steps sit in this feature; both happen to
