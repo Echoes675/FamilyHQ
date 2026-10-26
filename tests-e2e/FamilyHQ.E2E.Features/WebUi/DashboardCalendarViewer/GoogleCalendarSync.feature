@@ -11,7 +11,7 @@ Feature: Google Calendar Webhook Sync
     When a new event "Dentist Appointment" is added to Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I see the event "Dentist Appointment" displayed on the calendar
+    Then I see the event "Dentist Appointment" displayed on the calendar for "tomorrow"
 
   Scenario: Event updated in Google Calendar shows new title after sync
     Given I have a user like "TestFamilyMember"
@@ -22,7 +22,7 @@ Feature: Google Calendar Webhook Sync
     When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I see the event "School Holiday (Cancelled)" displayed on the calendar
+    Then I see the event "School Holiday (Cancelled)" displayed on the calendar for "tomorrow"
 
   Scenario: Event deleted in Google Calendar disappears after sync
     Given I have a user like "TestFamilyMember"
@@ -33,13 +33,18 @@ Feature: Google Calendar Webhook Sync
     When the event "School Holiday" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I do not see the event "School Holiday" displayed on the calendar
+    Then I do not see the event "School Holiday" displayed on the calendar for "tomorrow"
 
+  # The live-update assertions read whatever view is on screen, so the grid is moved onto the day the
+  # event lands on BEFORE the webhook fires: the dashboard then stays open across the notification,
+  # which is the whole point, while the capsule has a cell to appear in. A grid left on a month that
+  # does not span that day cannot show the event however well the live update works.
   Scenario: New event added in Google Calendar appears live on open dashboard
     Given I have a user like "TestFamilyMember"
     And the "Family Events" calendar is the active calendar
     And I login as the user "TestFamilyMember"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When a new event "Dentist Appointment" is added to Google Calendar
     And Google Calendar sends a webhook notification
     Then the dashboard live-updates to show "Dentist Appointment"
@@ -50,6 +55,7 @@ Feature: Google Calendar Webhook Sync
     And the user has an all-day event "School Holiday" tomorrow
     And I login as the user "TestFamilyMember"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When the event "School Holiday" is updated to "School Holiday (Cancelled)" in Google Calendar
     And Google Calendar sends a webhook notification
     Then the dashboard live-updates to show "School Holiday (Cancelled)"
@@ -60,6 +66,7 @@ Feature: Google Calendar Webhook Sync
     And the user has an all-day event "School Holiday" tomorrow
     And I login as the user "TestFamilyMember"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When the event "School Holiday" is deleted from Google Calendar
     And Google Calendar sends a webhook notification
     Then the dashboard live-updates to remove "School Holiday"

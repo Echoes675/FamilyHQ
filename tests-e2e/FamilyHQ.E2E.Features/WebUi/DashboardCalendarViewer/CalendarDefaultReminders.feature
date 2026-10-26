@@ -28,7 +28,7 @@ Feature: Calendar default reminders
     And a new event "Defaults Added Event" is added to Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I see the event "Defaults Added Event" displayed on the calendar
+    Then I see the event "Defaults Added Event" displayed on the calendar for "tomorrow"
 
   Scenario: A calendar changing its default reminders does not break the sync that carries it
     Given I login as the user "TestFamilyMember"
@@ -37,14 +37,14 @@ Feature: Calendar default reminders
     And a new event "First Defaults Event" is added to Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I see the event "First Defaults Event" displayed on the calendar
+    Then I see the event "First Defaults Event" displayed on the calendar for "tomorrow"
     # value -> different value: the steady-state transition, and the one a calendar hits every
     # time someone changes their Google notification settings.
     When the active calendar's default reminders change to 15 minutes in Google
     And a new event "Changed Defaults Event" is added to Google Calendar
     And Google Calendar sends a webhook notification
     And I view the dashboard
-    Then I see the event "Changed Defaults Event" displayed on the calendar
+    Then I see the event "Changed Defaults Event" displayed on the calendar for "tomorrow"
 
   Scenario: A calendar with no usual reminders says so, rather than that they can't be read
     # An empty defaultReminders array: Google's answer for a calendar that really has none.
