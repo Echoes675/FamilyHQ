@@ -24,9 +24,10 @@ public interface ICalendarApiService
 
     /// <summary>
     /// Every event, across every calendar, that has at least one reminder still due to fire between
-    /// now and the end of next month — one row per event, never one per reminder.
+    /// now and the end of next month — one row per event, never one per reminder — together with the
+    /// household's own date those rows were filed against and the instant that date expires.
     /// </summary>
-    Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default);
+    Task<UpcomingRemindersViewModel> GetUpcomingRemindersAsync(CancellationToken ct = default);
 
     /// <summary>
     /// One event by id, for a caller holding an id but no event — an event in a month the dashboard

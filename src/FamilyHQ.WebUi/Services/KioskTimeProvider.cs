@@ -23,6 +23,18 @@ public sealed class KioskTimeProvider : TimeProvider
     /// <summary>True when the day offset may be changed (lower environments only).</summary>
     public bool OverrideEnabled => _overrideEnabled;
 
+    /// <summary>
+    /// Whole days the displayed date is shifted by. Zero in production: <see cref="AdvanceDays"/>
+    /// no-ops unless the override is enabled, and that flag is off in the shipped configuration.
+    /// </summary>
+    /// <remarks>
+    /// Read by the reminders view, which anchors its "today" to the date the SERVER named and then
+    /// applies this. That is what lets the E2E suite roll the kiosk's day over without a dev-only
+    /// input on a production endpoint: the kiosk still shifts its own day, it just shifts it relative
+    /// to the server's answer rather than deriving a day of its own from the browser's zone.
+    /// </remarks>
+    public int DayOffset => _dayOffset;
+
     public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow().AddDays(_dayOffset);
 
     // Local-now and timezone derive from the wrapped provider; only the date is shifted.

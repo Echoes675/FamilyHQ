@@ -105,6 +105,136 @@ public class CalendarsControllerTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    // ── Which day cell an event lands in ─────────────────────────────────────
+    //
+    // The grid used to key every cell by the UTC date of the stored instant. For an all-day event
+    // that is the right answer — it is the date Google sent — and for a timed one it is wrong in any
+    // household zone that is not UTC. Both halves are pinned here, and they have to agree with the
+    // reminders row's own day: a tap on a row opens the Day view, which reads these same buckets.
+
+    private static readonly TimeZoneInfo Dublin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Dublin");
+    private static readonly TimeZoneInfo Athens = TimeZoneInfo.FindSystemTimeZoneById("Europe/Athens");
+    private static readonly TimeZoneInfo NewYork = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+
+    private static CalendarEvent GridEvent(
+        DateTimeOffset start, DateTimeOffset end, bool isAllDay, CalendarInfo calendar, string title = "Event") =>
+        new()
+        {
+            Id = EventId,
+            GoogleEventId = "google-id",
+            Title = title,
+            Start = start,
+            End = end,
+            IsAllDay = isAllDay,
+            Members = new List<CalendarInfo> { calendar }
+        };
+
+    [Fact]
+    public async Task GetEventsForMonth_ATimedEventJustAfterLocalMidnight_LandsInItsOwnCellNotTheDayBefore()
+    {
+        // 23:30Z on 14 June is 00:30 on the 15th in Dublin during BST. The capsule used to render in
+        // the 14th's cell, the day before the one the household's clock puts the event on.
+        var (calendarRepository, systemUnderTest) = CreateSut(Dublin);
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var evt = GridEvent(
+            new DateTimeOffset(2026, 6, 14, 23, 30, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 6, 15, 0, 30, 0, TimeSpan.Zero),
+            isAllDay: false, calA, "Night Flight");
+        calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA });
+
+        var result = await systemUnderTest.GetEventsForMonth(2026, 6, CancellationToken.None);
+
+        var monthView = result.Should().BeOfType<OkObjectResult>().Subject.Value
+            .Should().BeOfType<MonthViewDto>().Subject;
+        monthView.Days.Should().ContainKey("2026-06-15");
+        monthView.Days.Should().NotContainKey("2026-06-14");
+    }
+
+    [Fact]
+    public async Task GetEventsForMonth_AnAllDayEventInANegativeZone_KeepsTheCellGoogleNamed()
+    {
+        // The half that must NOT change. An all-day event on the 15th is stored at midnight UTC on the
+        // 15th because that round-trips byte-for-byte; converting it through New York would read the
+        // 14th, which is the defect the reminders view had and the grid never did.
+        var (calendarRepository, systemUnderTest) = CreateSut(NewYork);
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var evt = GridEvent(
+            new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 6, 16, 0, 0, 0, TimeSpan.Zero),
+            isAllDay: true, calA, "School Photos");
+        calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA });
+
+        var result = await systemUnderTest.GetEventsForMonth(2026, 6, CancellationToken.None);
+
+        var monthView = result.Should().BeOfType<OkObjectResult>().Subject.Value
+            .Should().BeOfType<MonthViewDto>().Subject;
+        monthView.Days.Keys.Should().BeEquivalentTo(["2026-06-15"]);
+    }
+
+    [Fact]
+    public async Task GetEventsForMonth_AMultiDayAllDaySpan_OccupiesEveryDayFromItsFirstToItsInclusiveLast()
+    {
+        // Google's all-day end is the EXCLUSIVE next-day midnight, so a three-day event ending on the
+        // 18th covers the 15th, 16th and 17th — and not the 18th.
+        var (calendarRepository, systemUnderTest) = CreateSut(NewYork);
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var evt = GridEvent(
+            new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 6, 18, 0, 0, 0, TimeSpan.Zero),
+            isAllDay: true, calA, "Half Term");
+        calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { evt });
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA });
+
+        var result = await systemUnderTest.GetEventsForMonth(2026, 6, CancellationToken.None);
+
+        var monthView = result.Should().BeOfType<OkObjectResult>().Subject.Value
+            .Should().BeOfType<MonthViewDto>().Subject;
+        monthView.Days.Keys.Should().BeEquivalentTo(["2026-06-15", "2026-06-16", "2026-06-17"]);
+    }
+
+    [Fact]
+    public async Task GetEventsForMonth_AnEventWhoseLocalDayIsInsideTheRangeButWhoseUtcDayIsNot_StillReachesItsCell()
+    {
+        // The reason the query window is widened a day either side. June 2026's grid starts on Sunday
+        // 31 May, so the old query began at 2026-05-31T00:00Z. 22:00Z on 30 May is 01:00 on 31 May in
+        // Athens (+03:00), so this event belongs to the grid's first cell although its stored instant
+        // is before the old query began — and the repository is asked in INSTANTS. The fake honours
+        // the bounds it is given, so an event outside them is genuinely never returned.
+        var (calendarRepository, systemUnderTest) = CreateSut(Athens);
+        var calA = new CalendarInfo { Id = CalAId, DisplayName = "Cal A", Color = "#ff0000", IsVisible = true };
+        var evt = GridEvent(
+            new DateTimeOffset(2026, 5, 30, 22, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 5, 30, 23, 0, 0, TimeSpan.Zero),
+            isAllDay: false, calA, "Night Shift");
+        DateTimeOffset askedFrom = default;
+        calendarRepository.Setup(r => r.GetEventsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Callback<DateTimeOffset, DateTimeOffset, CancellationToken>((from, _, _) => askedFrom = from)
+            .Returns<DateTimeOffset, DateTimeOffset, CancellationToken>((from, to, _) =>
+                Task.FromResult<IReadOnlyList<CalendarEvent>>(
+                    new[] { evt }.Where(e => e.End > from && e.Start < to).ToList()));
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calA });
+
+        var result = await systemUnderTest.GetEventsForMonth(2026, 6, CancellationToken.None);
+
+        var monthView = result.Should().BeOfType<OkObjectResult>().Subject.Value
+            .Should().BeOfType<MonthViewDto>().Subject;
+        monthView.Days.Keys.Should().BeEquivalentTo(["2026-05-31"],
+            "the event is reached by the widened query and filed once, under its household day.");
+
+        // Pinning the widening itself, deliberately: a future edit that narrows the bounds should fail
+        // here loudly rather than only surface as a capsule missing from the grid's edge cell.
+        askedFrom.Should().BeOnOrBefore(new DateTimeOffset(2026, 5, 31, 0, 0, 0, TimeSpan.Zero).AddDays(-1));
+    }
+
     // ── GetCalendars ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -256,9 +386,9 @@ public class CalendarsControllerTests
         syncJobSignal.Verify(s => s.Release(), Times.Never);
     }
 
-    private static (Mock<ICalendarRepository>, CalendarsController) CreateSut()
+    private static (Mock<ICalendarRepository>, CalendarsController) CreateSut(TimeZoneInfo? displayZone = null)
     {
-        var (calRepo, _, _, _, _, sut) = CreateFullSut();
+        var (calRepo, _, _, _, _, sut) = CreateFullSut(displayZone);
         return (calRepo, sut);
     }
 
@@ -278,7 +408,7 @@ public class CalendarsControllerTests
         Mock<ICurrentUserService> CurrentUser,
         Mock<ICalendarSyncJobQueue> SyncJobQueue,
         Mock<ISyncJobSignal> SyncJobSignal,
-        CalendarsController SystemUnderTest) CreateFullSut()
+        CalendarsController SystemUnderTest) CreateFullSut(TimeZoneInfo? displayZone = null)
     {
         var calendarRepositoryMock = new Mock<ICalendarRepository>();
         var loggerMock = new Mock<ILogger<CalendarsController>>();
@@ -286,6 +416,14 @@ public class CalendarsControllerTests
         var currentUserMock = new Mock<ICurrentUserService>();
         var syncJobQueueMock = new Mock<ICalendarSyncJobQueue>();
         var syncJobSignalMock = new Mock<ISyncJobSignal>();
+        var timeZoneServiceMock = new Mock<ITimeZoneService>();
+
+        // Configured rather than left to Moq: an unconfigured Task-returning method answers with a
+        // null Task, which an await turns into a NullReferenceException rather than a legible failure.
+        // UTC keeps every pre-existing test's expectations exactly as they were — the grid used to key
+        // cells by the UTC date for every event, so UTC is the zone in which nothing changes.
+        timeZoneServiceMock.Setup(s => s.GetDisplayZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(displayZone ?? TimeZoneInfo.Utc);
 
         var systemUnderTest = new CalendarsController(
             calendarRepositoryMock.Object,
@@ -293,7 +431,8 @@ public class CalendarsControllerTests
             tokenStoreMock.Object,
             currentUserMock.Object,
             syncJobQueueMock.Object,
-            syncJobSignalMock.Object);
+            syncJobSignalMock.Object,
+            timeZoneServiceMock.Object);
 
         return (calendarRepositoryMock, tokenStoreMock, currentUserMock, syncJobQueueMock, syncJobSignalMock, systemUnderTest);
     }

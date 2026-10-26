@@ -1,5 +1,6 @@
 using FamilyHQ.Core.Interfaces;
 using FamilyHQ.Core.Models;
+using Microsoft.Extensions.Logging;
 using NodaTime;
 using NodaTime.Text;
 
@@ -9,7 +10,8 @@ public class TimeZoneService(
     ICurrentUserService currentUser,
     IDisplaySettingRepository displayRepo,
     ILocationSettingRepository locationRepo,
-    ITimeZoneLookup timeZoneLookup) : ITimeZoneService
+    ITimeZoneLookup timeZoneLookup,
+    ILogger<TimeZoneService> logger) : ITimeZoneService
 {
     private static readonly LocalDateTimePattern Pattern =
         LocalDateTimePattern.CreateWithInvariantCulture("uuuu-MM-dd'T'HH:mm:ss");
@@ -111,6 +113,29 @@ public class TimeZoneService(
         // (which shifted sync timing and re-exposed the membership flap). Unset -> null (caller -> UTC).
         var display = await displayRepo.GetAsync(userId, ct);
         return string.IsNullOrWhiteSpace(display?.IanaTimeZone) ? null : display.IanaTimeZone;
+    }
+
+    public async Task<TimeZoneInfo> GetDisplayZoneAsync(CancellationToken ct = default) =>
+        TryResolveZone(await GetSendZoneAsync(ct)) ?? TimeZoneInfo.Utc;
+
+    public TimeZoneInfo? TryResolveZone(string? ianaId)
+    {
+        if (string.IsNullOrWhiteSpace(ianaId)) return null;
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(ianaId);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            // Not a reason to fail the caller: every caller has a correct fallback. It IS a reason to
+            // say so on EVERY fallback, with no de-duplication: a zone the family can see in settings
+            // that this host cannot read is stored data nobody would otherwise find out about, and a
+            // misconfiguration logged twice is better than one nobody is told about.
+            logger.LogWarning(ex,
+                "Unrecognised IANA zone {IanaZoneId}; falling back to the caller's default.", ianaId);
+            return null;
+        }
     }
 
     public async Task SetExplicitZoneAsync(string ianaZone, CancellationToken ct = default)

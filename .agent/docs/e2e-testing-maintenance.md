@@ -464,7 +464,7 @@ clearest case. That half is asserted against real Google in the preprod smoke su
   it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
   needs.
 
-### Reminders view — `RemindersView.feature` (19 scenarios)
+### Reminders view — `RemindersView.feature` (20 scenarios)
 
 The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
 one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
@@ -481,7 +481,9 @@ first, and which view a load lands on, belong to `KioskHomeView.feature` instead
 with its event's own day and start time and nothing else; a row further out than tomorrow leading
 with the day and date; tomorrow's row reading "Tomorrow" whichever panel it is filed in; an idle
 kiosk re-reading that same row as "Today" once the day rolls over under it (tagged `@day-rollover`
-and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); an
+and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); a row
+reading the day and time the HOUSEHOLD's own zone puts it on when that zone is not the
+kiosk's, and the drill-down from that row still opening a day that contains the event; an
 event following its calendar's usual reminders never appearing; an explicitly-removed reminder and an
 event inheriting from a calendar with no defaults both never appearing; an event whose last reminder
 has already fired keeping its row; an event with widely-spaced reminders (one soon, one over two
@@ -516,6 +518,24 @@ consequences for scenarios here:
   month. The dated-form assertion resolves its expected date through `DateExpressionResolver`, the
   same single source of truth the seeding step used, so the two cannot disagree about what "next
   month" means.
+
+**One scenario runs with the household zone and the browser's deliberately disagreeing.** Every other
+scenario here leaves the zone auto-detected, which makes the stored zone the kiosk's own reported one
+— they agree, and nothing exercises what happens when they do not. "A row reads the day and time the
+household's own zone puts it on" saves `Europe/Athens` explicitly while the browser stays pinned to
+`Europe/London` (`BrowserClock.TimeZoneId`), because an explicit zone outranks the kiosk's report.
+
+Two things make it deterministic rather than hour-dependent, and both are worth keeping if it is ever
+edited. The zones switch daylight saving at the same instant, so Athens is **always** exactly two
+hours ahead of London — 23:30 London is 01:30 the next day in Athens in January and in July alike.
+And the event is seeded at a fixed time on a date resolved through `DateExpressionResolver`, so the
+expected text is arithmetic on the seed rather than a reading of the clock. A relative "tomorrow"
+here would make the assertion depend on the hour CI starts at, since the two zones' dates differ for
+two hours of every day.
+
+It also sets its reminder **before** saving the zone. Doing it afterwards would send a kiosk write
+while the two zones disagree, which is a separate question from the one this scenario asks, and the
+day rule it exercises is read-side throughout.
 
 **The tap scenario has to navigate BACK to the current month, and that step is the scenario.** Its
 careful case is an event *outside* the month the dashboard has loaded, because that is what exercises

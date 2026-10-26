@@ -463,3 +463,39 @@ Feature: Reminders view
     Then the row for "Bin Collection" leads with "Tomorrow · 08:00"
     When I switch to the Month View tab
     Then the Reminders tab shows no bell at all
+
+  # The household's zone and the kiosk's are not always the same zone, and this is the scenario where
+  # they are not. The browser under test is pinned to Europe/London; saving Europe/Athens explicitly
+  # makes the household two hours ahead of it, and an explicit zone outranks the zone the kiosk
+  # reports, which is what a settings screen is for.
+  #
+  # 23:30 in London is 01:30 the NEXT DAY in Athens, and that holds whenever the suite runs: the two
+  # zones change their clocks at the same instant, so the gap is always exactly two hours. No part of
+  # this scenario depends on the hour CI starts at.
+  #
+  # Both halves of the fix are asserted, and they are different assertions:
+  #
+  #   - The row's leading column is the REGRESSION test. Before the fix it read the 15th at 23:30 —
+  #     the kiosk's own zone, derived client-side — and nothing in the suite noticed, because every
+  #     other scenario runs with the household zone and the browser's agreeing.
+  #   - The drill-down is the COUPLING guard, and it passes both before and after on purpose. Tapping
+  #     a row opens the Day view, which renders out of the month grid's buckets, so the row's day and
+  #     the cell's key have to be the same answer. Fixing one half and not the other moves the
+  #     disagreement instead of removing it, and this is the assertion that fails if that happens.
+  #
+  # The reminder is set BEFORE the zone is saved, deliberately. Setting it afterwards would send a
+  # kiosk WRITE while the household zone and the browser's disagree, which is a different question
+  # from this one (and an untested one), and this change is read-side throughout.
+  Scenario: A row reads the day and time the household's own zone puts it on
+    Given I have a user like "RemindersViewUser"
+    And the user has a timed event "Late Rehearsal" at "23:30" on "next month" in "Appointments"
+    And I login as the user "RemindersViewUser"
+    And I view the dashboard
+    And the event "Late Rehearsal" on "next month" has been given a reminder 15 minutes before
+    And I open the Location settings tab
+    And I have selected and saved the timezone "Europe/Athens"
+    And I view the dashboard
+    When I show the reminders view
+    Then the row for "Late Rehearsal" leads with the date 1 day after "next month" at "01:30"
+    When I tap the reminders row for "Late Rehearsal"
+    Then the day view is showing "Late Rehearsal"

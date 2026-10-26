@@ -2,7 +2,7 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 
 /// <summary>
 /// Files a flat list of rows into the two panels the reminders timeline lays out side by side, by one
-/// instant read off each row.
+/// date read off each row.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,9 +16,9 @@ namespace FamilyHQ.WebUi.Components.Dashboard;
 /// them — which is what makes a single panel per month enough.
 /// </para>
 /// <para>
-/// <b>Which instant a row is filed by is the caller's decision, not this class's.</b> The timeline
-/// files by the EVENT's own start (see <see cref="RemindersViewLogic.Sections"/>); this class is
-/// generic over the row type and takes the instant as a selector so that choice lives in exactly one
+/// <b>Which day a row is filed by is the caller's decision, not this class's.</b> The timeline files
+/// by the day the server put the event on (see <see cref="RemindersViewLogic.Sections"/>); this class
+/// is generic over the row type and takes the date as a selector so that choice lives in exactly one
 /// place rather than being baked in here.
 /// </para>
 /// </remarks>
@@ -39,39 +39,36 @@ public static class ReminderBucketing
     /// month" from the day after to the end of the following month. Including today is the point: a
     /// panel whose near edge was tomorrow is a panel that cannot hold the rows a family reads first.
     /// <para>
-    /// A row whose local day satisfies neither panel is dropped rather than forced into the nearer
-    /// one, where it would quietly misrepresent the month it names. That catches a row beyond the
-    /// window the server returned, and also a row BEFORE <paramref name="today"/>, which is not the
-    /// impossibility it looks like. The server opens its window at local midnight in the zone
-    /// FamilyHQ has STORED for the family (UTC if it has none it can resolve); this method is handed
-    /// a <paramref name="today"/> and a <paramref name="zone"/> read off the KIOSK's own clock. The
-    /// two agree whenever the stored zone was auto-detected, because the kiosk's reported zone is
-    /// what gets stored — but a zone chosen explicitly in settings, or derived from a saved location,
-    /// outranks whatever the kiosk reports, and then they are simply two different zones. A kiosk
-    /// behind the stored zone is a kiosk whose window opened before its own midnight: the last hours
-    /// of the kiosk's yesterday are inside it, so a past row really can arrive.
+    /// A row whose day satisfies neither panel is dropped rather than forced into the nearer one,
+    /// where it would quietly misrepresent the month it names. Two things reach that branch. One is a
+    /// row beyond the window the server returned. The other is a row BEFORE
+    /// <paramref name="today"/> — which is no longer a disagreement about zones, because there is no
+    /// longer a second zone to disagree in: the server sends the date it filed each row against and
+    /// the date it considers today, and both are measured in the household's zone. What can still
+    /// produce one is the kiosk's own day being shifted forward in a lower environment, where the
+    /// dev clock bridge advances whole days without the server's clock moving, so rows for the
+    /// server's today fall behind the kiosk's.
     /// </para>
     /// <para>
-    /// Dropping it is still right, and would be right even if it could not happen: a past row shown
-    /// among upcoming ones is worse than a missing one, because the family would act on it.
+    /// Dropping it is still right, and would be right even if nothing could reach it: a past row
+    /// shown among upcoming ones is worse than a missing one, because the family would act on it.
     /// </para>
     /// </remarks>
-    /// <param name="rows">The rows to file. Never mutated or reordered in place.</param>
-    /// <param name="instant">
-    /// Reads the instant a row is filed and sorted by. A <c>Func</c> rather than a view-model
-    /// dependency, so this class needs nothing about the row beyond the one value it files by.
+    /// <param name="rows">The rows to file. Never mutated or reordered.</param>
+    /// <param name="day">
+    /// Reads the DAY a row is filed by. A <c>Func</c> rather than a view-model dependency, so this
+    /// class needs nothing about the row beyond the one value it files by — and a <c>DateOnly</c>
+    /// rather than an instant, because which day an event is on is decided once, server-side, and
+    /// sent.
     /// </param>
-    /// <param name="today">The kiosk's current local date.</param>
-    /// <param name="zone">
-    /// The zone a row's local day is read in. A row's day is its day <i>in this zone</i>, not its
-    /// UTC day — the two disagree for several hours around every midnight, and for an extra hour
-    /// either side of a daylight-saving transition.
+    /// <param name="today">
+    /// The date the panels are measured from: the household's own, as the server reported it. Never
+    /// re-derived here.
     /// </param>
     public static IReadOnlyList<ReminderSection<T>> File<T>(
         IEnumerable<T> rows,
-        Func<T, DateTimeOffset> instant,
-        DateOnly today,
-        TimeZoneInfo zone)
+        Func<T, DateOnly> day,
+        DateOnly today)
     {
         var thisMonthEnd = EndOfMonth(today);
         var nextMonthEnd = EndOfMonth(today.AddMonths(1));
@@ -79,17 +76,15 @@ public static class ReminderBucketing
         var thisMonthRows = new List<T>();
         var nextMonthRows = new List<T>();
 
-        // Sorting up front means each panel is filled in order already, so no panel needs a sort of
-        // its own afterwards.
-        foreach (var row in rows.OrderBy(instant))
+        foreach (var row in rows)
         {
-            var localDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant(row), zone).DateTime);
+            var date = day(row);
 
-            if (localDate >= today && localDate <= thisMonthEnd)
+            if (date >= today && date <= thisMonthEnd)
             {
                 thisMonthRows.Add(row);
             }
-            else if (localDate > thisMonthEnd && localDate <= nextMonthEnd)
+            else if (date > thisMonthEnd && date <= nextMonthEnd)
             {
                 nextMonthRows.Add(row);
             }
