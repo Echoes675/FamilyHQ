@@ -34,7 +34,7 @@ Feature: Authentication
     And I am signed in as the user "TestFamilyMember"
     When I view the dashboard
     Then I see the calendar displayed
-    And I see the event "School Holiday" displayed on the calendar
+    And I see the event "School Holiday" displayed on the calendar for "tomorrow"
 
   Scenario: Settings page requires authentication
     Given I am not authenticated

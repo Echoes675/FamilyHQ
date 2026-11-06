@@ -11,7 +11,7 @@ Feature: Month Calendar View
 
   Scenario: View upcoming events on the dashboard month view
     When I view the dashboard
-    Then I see the event "School Holiday" displayed on the calendar
+    Then I see the event "School Holiday" displayed on the calendar for "tomorrow"
 
   Scenario: Create a new event
     Given I view the dashboard
@@ -20,13 +20,15 @@ Feature: Month Calendar View
 
   Scenario: Update an existing event
     Given I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I rename the event "School Holiday" to "Doctor Appointment"
-    Then I see the event "Doctor Appointment" displayed on the calendar
+    Then I see the event "Doctor Appointment" displayed on the calendar for "tomorrow"
 
   Scenario: Delete an existing event
     Given I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I delete the event "School Holiday"
-    Then I do not see the event "School Holiday" displayed on the calendar
+    Then I do not see the event "School Holiday" displayed on the calendar for "tomorrow"
 
   Scenario: View events from all 6 calendars on the month view
     Given I have a user like "SixCalUser"
@@ -38,13 +40,12 @@ Feature: Month Calendar View
     And the user has an all-day event "Hobbies Event" in 6 days in "Hobbies Calendar"
     And I login as the user "SixCalUser"
     When I view the dashboard
-    And I navigate the month view to show a date in 6 days
-    Then I see the event "Work Event" displayed on the calendar
-    And I see the event "Personal Event" displayed on the calendar
-    And I see the event "School Event" displayed on the calendar
-    And I see the event "Sports Event" displayed on the calendar
-    And I see the event "Health Event" displayed on the calendar
-    And I see the event "Hobbies Event" displayed on the calendar
+    Then I see the event "Work Event" displayed on the calendar for "tomorrow"
+    And I see the event "Personal Event" displayed on the calendar for "in 2 days"
+    And I see the event "School Event" displayed on the calendar for "in 3 days"
+    And I see the event "Sports Event" displayed on the calendar for "in 4 days"
+    And I see the event "Health Event" displayed on the calendar for "in 5 days"
+    And I see the event "Hobbies Event" displayed on the calendar for "in 6 days"
 
   Scenario: View events from multiple calendars
     Given I have a user like "MultiCalendarUser"
@@ -53,9 +54,9 @@ Feature: Month Calendar View
     And the user has an all-day event "Parent Teacher Meeting" tomorrow in "School Calendar"
     And I login as the user "MultiCalendarUser"
     When I view the dashboard
-    Then I see the event "Team Meeting" displayed on the calendar
-    And I see the event "Family Dinner" displayed on the calendar
-    And I see the event "Parent Teacher Meeting" displayed on the calendar
+    Then I see the event "Team Meeting" displayed on the calendar for "tomorrow"
+    And I see the event "Family Dinner" displayed on the calendar for "tomorrow"
+    And I see the event "Parent Teacher Meeting" displayed on the calendar for "tomorrow"
 
   Scenario: View all-day events
     Given I have a user like "AllDayEventsUser"
@@ -64,9 +65,8 @@ Feature: Month Calendar View
     And the user has an all-day event "New Year's Day" in 7 days
     And I login as the user "AllDayEventsUser"
     When I view the dashboard
-    And I navigate the month view to show a date in 7 days
-    Then I see the event "Christmas Day" displayed on the calendar
-    And I see the event "New Year's Day" displayed on the calendar
+    Then I see the event "Christmas Day" displayed on the calendar for "tomorrow"
+    And I see the event "New Year's Day" displayed on the calendar for "in 7 days"
 
   Scenario: View timed events
     Given I have a user like "TimedEventsUser"
@@ -75,8 +75,8 @@ Feature: Month Calendar View
     And the user has a timed event "Team Standup" tomorrow at "09:00" for 30 minutes
     And I login as the user "TimedEventsUser"
     When I view the dashboard
-    Then I see the event "Dentist Checkup" displayed on the calendar
-    And I see the event "Team Standup" displayed on the calendar
+    Then I see the event "Dentist Checkup" displayed on the calendar for "tomorrow"
+    And I see the event "Team Standup" displayed on the calendar for "tomorrow"
 
   Scenario: View event details
     Given I have a user like "TestFamilyMember"
@@ -84,6 +84,7 @@ Feature: Month Calendar View
     And the user has an all-day event "School Holiday" tomorrow
     And I login as the user "TestFamilyMember"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I click on the event "School Holiday"
     Then I see the event details for "School Holiday"
 
@@ -92,18 +93,20 @@ Feature: Month Calendar View
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalendarUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     And I change the event "Team Meeting" to calendar "Personal Calendar"
     When I rename the event "Team Meeting" to "Updated Team Meeting"
-    Then I see the event "Updated Team Meeting" displayed on the calendar
+    Then I see the event "Updated Team Meeting" displayed on the calendar for "tomorrow"
 
   Scenario: Delete event after changing its calendar
     Given I have a user like "MultiCalendarUser"
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalendarUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     And I change the event "Team Meeting" to calendar "Personal Calendar"
     When I delete the event "Team Meeting"
-    Then I do not see the event "Team Meeting" displayed on the calendar
+    Then I do not see the event "Team Meeting" displayed on the calendar for "tomorrow"
 
   Scenario: Navigate to next month
     Given I have a user like "TestFamilyMember"
@@ -112,7 +115,7 @@ Feature: Month Calendar View
     And I login as the user "TestFamilyMember"
     And I view the dashboard
     When I navigate to the next month
-    Then I see the event "Next Month Event" displayed on the calendar
+    Then I see the event "Next Month Event" displayed on the calendar for "next month"
 
   Scenario: Create event in two calendars appears twice on grid
     Given I have a user like "MultiCalUser"
@@ -127,6 +130,7 @@ Feature: Month Calendar View
     And the user has an all-day event "Team Meeting" tomorrow in "Work Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I open the event "Team Meeting" for editing
     And I add the calendar "Personal Calendar" chip to the event
     Then I see the event "Team Meeting" displayed on the calendar in "Work Calendar" colour
@@ -138,6 +142,7 @@ Feature: Month Calendar View
     And the user has the event "Team Meeting" also in "Personal Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I open the event "Team Meeting" for editing
     And I remove the calendar "Personal Calendar" chip from the event
     Then I see the event "Team Meeting" displayed on the calendar in "Work Calendar" colour
@@ -148,6 +153,7 @@ Feature: Month Calendar View
     And the user has an all-day event "Solo Event" tomorrow in "Work Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I open the event "Solo Event" for editing
     Then the last active calendar chip has no remove button
 
@@ -157,8 +163,9 @@ Feature: Month Calendar View
     And the user has the event "Team Meeting" also in "Personal Calendar"
     And I login as the user "MultiCalUser"
     And I view the dashboard
+    And I navigate the month view to show "tomorrow"
     When I delete the event "Team Meeting"
-    Then I do not see the event "Team Meeting" displayed on the calendar
+    Then I do not see the event "Team Meeting" displayed on the calendar for "tomorrow"
 
   Scenario: Month View displays multi-day All-Day events
     Given I have a user like "AllDayEventsUser"
@@ -166,7 +173,7 @@ Feature: Month Calendar View
     And the user has an all-day event "Vacation" spanning 3 days starting tomorrow
     And I login as the user "AllDayEventsUser"
     When I view the dashboard
-    Then I see the event "Vacation" displayed on the calendar
+    Then I see the event "Vacation" displayed on the calendar for "tomorrow"
 
   Scenario: Month View displays multi-day Timed events
     Given I have a user like "TimedEventsUser"
@@ -174,7 +181,7 @@ Feature: Month Calendar View
     And the user has a timed event "Conference" starting tomorrow at "09:00" spanning 2 days
     And I login as the user "TimedEventsUser"
     When I view the dashboard
-    Then I see the event "Conference" displayed on the calendar
+    Then I see the event "Conference" displayed on the calendar for "tomorrow"
 
   # FHQ-32: the create modal must not pre-select any calendar (it used to default to the
   # first calendar in the list — the shared calendar when first — silently routing new
@@ -192,3 +199,29 @@ Feature: Month Calendar View
     When I create an event "Team Lunch" in calendar "Work Calendar"
     Then I see the event "Team Lunch" displayed on the calendar in "Work Calendar" colour
     And I do not see a "Family Calendar" capsule for "Team Lunch" on the calendar
+
+  # Every dated assertion above is only as good as its claim that the grid gets moved to the date
+  # first, and on most days that claim is untested: the seeded date is already on screen, so the
+  # navigation is a no-op and an assertion that could not survive without it still passes. The day it
+  # IS needed arrives on the calendar's terms — the grid is a window of whole weeks, so it stops
+  # dead on a month that ends on a Saturday and the next month's grid starts with no room for the
+  # one before it. That pairing comes round about one month in seven, and in clumps — far too rare to
+  # be the only thing standing between this feature and a day of red.
+  #
+  # So the view is displaced deliberately instead of waited for. The kiosk's own clock bridge rolls
+  # the displayed date forward a month and the idle check snaps the grid to it, which leaves the
+  # seeded event a month behind the view — the same situation a boundary produces, reachable on any
+  # run date. What it does NOT reproduce is the boundary arithmetic itself: it proves the assertion
+  # brings the view to its date, not that any particular adjacency of grids is handled. The
+  # arithmetic has no test that does not wait for the date.
+  #
+  # Needs the clock override, so it is tagged like the other scenarios that drive that bridge and,
+  # like them, it cannot run where the flag is off.
+  @day-rollover
+  Scenario: An event is still asserted on its own day after the kiosk's date has moved on
+    When I view the dashboard
+    And the kiosk's idle timer reads 16 minutes
+    And the date rolls over by 1 month
+    And the idle check runs
+    And I switch to the Month View tab
+    Then I see the event "School Holiday" displayed on the calendar for "tomorrow"

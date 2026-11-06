@@ -98,8 +98,8 @@ public class RemindersViewSteps
     /// the weeks its own month needs and stops as soon as a row completes past the month's end, so
     /// on a month that ends on a Saturday "tomorrow" is not on screen at all and the click would
     /// find nothing — once every seven months or so, which is worse than never.
-    /// <see cref="DashboardPage.NavigateToShowDateIfNeededAsync"/> is a no-op for a date already
-    /// showing, so passing "today" costs nothing.
+    /// <see cref="DashboardPage.ShowMonthContainingAsync"/> returns without clicking anything when
+    /// the date is already on screen, so passing "today" costs nothing.
     /// </para>
     /// <para>
     /// Inheritance goes off first: the Add form is not offered while an event still follows its
@@ -113,7 +113,7 @@ public class RemindersViewSteps
         var date = DateTime.ParseExact(
             DateExpressionResolver.Resolve(dateExpr), "yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        await _dashboardPage.NavigateToShowDateIfNeededAsync(date);
+        await _dashboardPage.ShowMonthContainingAsync(date);
         await _dashboardPage.OpenEventForEditingAsync(title);
         await _dashboardPage.SetReminderInheritanceAsync(follow: false);
         await _dashboardPage.AddTimedReminderAsync(amount, unit);
