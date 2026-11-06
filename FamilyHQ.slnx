@@ -29,6 +29,7 @@
     <Project Path="tests/FamilyHQ.WebApi.Tests/FamilyHQ.WebApi.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
+    <Project Path="tools/FamilyHQ.LocalWebHost/FamilyHQ.LocalWebHost.csproj" />
     <Project Path="tools/FamilyHQ.Simulator/FamilyHQ.Simulator.csproj" />
   </Folder>
 </Solution>
