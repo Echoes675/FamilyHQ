@@ -103,9 +103,17 @@ reading any one of them is what named the date as the variable.
 either side. Nine scenarios seeded `"tomorrow"` and asserted against
 `agenda-cell-<tomorrow>-<calendarId>`. On the last day of a month "tomorrow" is the **next** month, so
 that cell is not merely empty, it does not exist, and the assertion waits out its full timeout for an
-element that cannot appear. The month **grid** renders six weeks including the adjacent months' edge
-days, which is why the equivalent month-view scenarios never showed this, and why the mechanism is
-easy to disbelieve.
+element that cannot appear.
+
+The month **grid** is not immune, and the claim that it was — that it "renders six weeks including the
+adjacent months' edge days" — was wrong and cost a red gate four weeks later ([issue
+18](#18-two-month-view-scenarios-fail-for-five-days-when-a-month-ends-on-a-saturday--one-navigation-step-for-several-seeded-dates-2026-10-26)).
+It renders **four to six** whole Sunday-to-Saturday weeks — the Sunday on or before the 1st, through
+the first Saturday on or after the month's last day — so it carries only as many of the adjacent
+months' days as those weeks need, and sometimes none: a month ending on a Saturday shows no day of the
+next month, and one starting on a Sunday shows no day of the previous one. What spared the month-view
+scenarios on 2026-09-30 was the particular date — September ended on a Wednesday, so its grid ran on
+to 3 October — plus a navigation step several of them already carried. Not the width of the grid.
 
 Note the second, quieter failure mode: a **negative** assertion (`I do not see … in the … column
 for …`) passes *vacuously* against a missing cell. Two such steps sit in this feature; both happen to
@@ -365,7 +373,7 @@ Both of that method's inputs are true wall-clock-anchored instants — the maste
 Splitting at occurrence 4 gives `before = 4` instead of 3, so the forward series is created with `COUNT=1` and **occurrence 5 is silently deleted from the family's calendar** — no error, no log. Splitting at the final occurrence of a `COUNT=4` series drives `remaining` to 0 and throws `InvalidSeriesSplitException`, rejecting a legitimate edit with a false explanation. Spring-forward is benign for this path (the twin lands an hour *late* and is correctly excluded), which is why late October is the real deadline. All four frequencies were affected, not just weekly: Daily/Weekly stepped exact 24-hour spans, Monthly/Yearly built UTC midnight plus a UTC time-of-day.
 
 **Fix:** the engine now steps in **wall-clock terms inside the series' zone** and maps each reading to an instant, so a 19:00 event stays 19:00 and its UTC instant moves.
-- The zone is **injected**, not resolved in Core. `FamilyHQ.WebUi` (Blazor WASM) project-references `FamilyHQ.Core`, so a tz-database package there would ship the whole TZDB in the payload the Pi kiosk downloads. `FamilyHQ.Core.csproj` is unchanged; `IRecurrenceTimeZone` / `IRecurrenceTimeZoneFactory` carry no dependency, and `NodaTimeRecurrenceTimeZoneFactory` (Services, and the Simulator's own copy) wraps the static tzdb lookup behind an injectable singleton. `TimeZoneInfo` was not an option — the CI/test runtime is globalization-invariant.
+- The zone is **injected**, not resolved in Core. `FamilyHQ.WebUi` (Blazor WASM) project-references `FamilyHQ.Core`, so a tz-database package there would ship the whole TZDB in the payload the Pi kiosk downloads. `FamilyHQ.Core.csproj` is unchanged; `IRecurrenceTimeZone` / `IRecurrenceTimeZoneFactory` carry no dependency, and `NodaTimeRecurrenceTimeZoneFactory` wraps the static tzdb lookup behind an injectable singleton. `TimeZoneInfo` was not an option — the CI/test runtime is globalization-invariant. The adapter started life as a copy in Services and a second copy in the Simulator; it now lives once in `src/FamilyHQ.Time`, a single-purpose library that Services and the Simulator both reference — Core still takes no NodaTime dependency, and the two sides can no longer drift.
 - `SeriesMaster` now carries Google's `start.timeZone`, read off the `events.get` payload by `GoogleCalendarClient`, and `ReshapeRuleAsync` counts in that zone.
 - The Simulator expands using the master's stored `StartTimeZone`, which is now plumbed through both seeding paths (config template and backdoor). The E2E recurring seeds set it to `BrowserClock.TimeZoneId`, so the Simulator, the browser and the server agree on the zone by construction rather than by coincidence — the same discipline issue 11 applied to dates. **No `.feature` file changed.**
 - **The zone argument is REQUIRED, and its fixed-UTC fallback is named.** `Expand`/`CountOccurrencesBefore` take no default, so a new caller cannot silently inherit the buggy behaviour — opting into it means writing `FixedUtcRecurrenceTimeZone.Instance` (public, in Core, no tz-database dependency). The fallback itself is deliberate and pinned: it is *exact* for date-anchored all-day masters (which carry no `start.timeZone` and cannot be moved by DST — the dominant real null case), and a missing or unrecognised zone must not fail a legitimate user edit.
@@ -445,7 +453,7 @@ Recovery used (as documented, worked cleanly): `Stop-Process` the launcher, then
 - `WaitUntilAsync` (poll + 10 ms real `Task.Delay`, 5 s deadline) is **deleted**. Waits now go through `AwaitableCounter`, signalled from inside the coordinator's own continuation, so there is no settle window and no `Stopwatch`/`Task.Delay` left in the file.
 - Assertions that read state written *after* the awaited condition — the failed attempt's `Warning` log, `ConnectionRestored` — now wait on that later observable (the re-armed timer, or the event) instead of relying on a trailing yield to have let it happen.
 - Regression test `RestartLoop_WhenTheNextAdvanceIsIssuedMidAttempt_TheAdvanceIsNotLost` parks the restart callback to force the interleaving deterministically. Verified by mutation: swap the held advance for a plain `Advance` and it fails in 5 s.
-- A purity guard (`tests/FamilyHQ.Core.Tests/UnitTestPurityGuardTests.cs`) now fails the build if `Task.Delay`/`Thread.Sleep`/`Stopwatch`/`UseInMemoryDatabase` reappear in `tests/` — **with five allow-listed exceptions**, all `UseInMemoryDatabase` in `FamilyHQ.Simulator.Tests/Controllers/` (`Calendars`, `Events`, `OAuth`, `SimulatorConfig`, `Webhook`), deferred to [[FHQ-162]] because every alternative needs a production change in `tools/FamilyHQ.Simulator` or a new package. A second test asserts each allow-list entry still applies, so the list cannot rot into a blanket permit. This is not belt-and-braces: `Task.Delay` settles had **already** crept back into `TransientHttpRetryHandlerTests` (FHQ-114, batch 5) one batch after the FHQ-125 fix landed, with the same lost-advance shape. Read a green guard as "these four constructs are absent", **not** as "this defect class is impossible": it is a lexical scan (comments and string literals are masked, but `using static`/alias evasion is not caught), and `Task.Yield`, `Task.WaitAsync(timeout)` and `SemaphoreSlim.WaitAsync(timeout)` are deliberately unbanned because they are the retained mechanisms above. A fixed yield budget settling a *positive* assertion is still this bug and only review will catch it.
+- A purity guard (`tests/FamilyHQ.Core.Tests/UnitTestPurityGuardTests.cs`) now fails the build if `Task.Delay`/`Thread.Sleep`/`Stopwatch`/`UseInMemoryDatabase` reappear in `tests/` — **with six allow-listed exceptions**, all `UseInMemoryDatabase` in `FamilyHQ.Simulator.Tests/Controllers/` (`Calendars`, `Events`, `EventsControllerReminders`, `OAuth`, `SimulatorConfig`, `BackdoorCalendars`). Those controllers take the concrete `SimContext` rather than a data-access interface, so there is no seam to substitute; and for the ones asserting net effects over write-then-read sequences, a mock port would split assertions that are only meaningful as a pair, weakening the regression net rather than tidying it. That is a decision, not a deferral. Each entry declares **how many** occurrences it permits and the guard asserts the actual count equals the declared one, so a new banned construct cannot hide inside an already-permitted file — which is what the list being keyed per file, with no count, used to allow. A further test still catches an entry naming a file that no longer exists. This is not belt-and-braces: `Task.Delay` settles had **already** crept back into `TransientHttpRetryHandlerTests` (FHQ-114, batch 5) one batch after the FHQ-125 fix landed, with the same lost-advance shape. Read a green guard as "these four constructs are absent", **not** as "this defect class is impossible": it is a lexical scan (comments and string literals are masked, but `using static`/alias evasion is not caught), and `Task.Yield`, `Task.WaitAsync(timeout)` and `SemaphoreSlim.WaitAsync(timeout)` are deliberately unbanned because they are the retained mechanisms above. A fixed yield budget settling a *positive* assertion is still this bug and only review will catch it.
 - **The same defect was still live in `VersionServiceTests` when the branch was reviewed** — three tests (`...DiffersInPatch_RaisesUpdateAvailableExactlyOnce`, `...AfterUpdateAvailableFires_FurtherCallsDoNotRefire`, `...InvokesLocationReload_AfterFiveSeconds`) started `CheckAsync()` un-awaited and plain-`Advance`d the fake clock. `VersionService.CheckAsync` awaits the health fetch **before** arming its reload delay, so the advance could land on a clock with no timer. Worse than the original: `await checkTask` had no deadline, so a lost advance **hung forever** instead of failing in 5s — reproduced by injecting a 150 ms async gap before the delay, which ran the suite to a 150 s kill with no failure reported. Now converted to `AdvanceOnNextTimerAsync` (with the 4990/20 split's second half left as a plain advance) and every bare `await checkTask` given a 5s `WaitAsync` tripwire. The same injected gap now passes in ~0.6 s. **Lesson: the guard did not and could not catch this** — the file contained no `Task.Delay`; the defect is the *shape* of the advance, which no regex sees.
 
 **Local verification:** 20/20 consecutive green runs of the class, ~215 ms per run (previously the waits alone could spend seconds). Re-verified after the review fixes **under deliberate CPU contention** (the recipe below, plus six spin loops on an 8-core host): `SignalRConnectionCoordinatorTests` 12/12 green (23 tests, 1–5 s per run) and `VersionServiceTests` 15/15 green (8 tests, 0.3–0.9 s per run). The load-dependence bar above still applies — a local streak, contended or not, is not the evidence this entry asks for.
@@ -477,6 +485,112 @@ should have reached the expected state, but found False.
 ---
 
 ## Resolved issues
+
+### 18. Two month-view scenarios fail for five days when a month ends on a Saturday — one navigation step for several seeded dates (2026-10-26)
+
+**Resolved:** commits `3ba98cc` + `1565b80`, merged to `dev` as `0459e3c` (PR #274, 2026-11-06).
+Verified by **three consecutive Deploy-Dev passes, #883-#885** (2026-10-26) on `1565b80`, with a
+fourth, **#886**, on 2026-11-06 and **Deploy-Staging #307** on the merge commit.
+
+**The proof is #883-#885 specifically, and the date is why.** All three ran on 26 October, inside the
+five-day window below, on the same morning Deploy-Staging **#306** went red on unmodified `dev` — so
+they are a red-to-green reading against a live failing condition. #886 and #307 ran on 6 November,
+when every date these scenarios seed falls inside November's `1 Nov - 5 Dec` grid; the unfixed code
+would have passed those too. Do not cite them as evidence the fix works.
+
+**Wave 2 was never observed and is not proved by execution.** No pipeline ran on 31 October 2026, so
+the ~22 scenarios that would have gone red that day did so unwatched. They are covered by the fix and
+by a `@day-rollover` scenario that displaces the *view* by a month, which fails without the
+navigation — but that scenario does not exercise the boundary arithmetic, and nothing does. Proving
+it still means waiting for a month that ends on a Saturday. By the project owner's ruling
+(2026-11-06) that gap is accepted and will not be tracked as its own ticket, on the grounds that a
+ticket for it would be unlikely to be actioned.
+
+**Component:** `tests-e2e/FamilyHQ.E2E.Features/WebUi/DashboardCalendarViewer/MonthCalendarView.feature`
+→ `View events from all 6 calendars on the month view` and `View all-day events`. The helper they went
+through, `DashboardPage.NavigateToShowDateIfNeededAsync`, is retired by the fix.
+
+**First seen:** Deploy-Staging #306 (2026-10-26), on unmodified `dev` @ `499fcf6`.
+
+**Occurrences:** #306. Not rare — deterministic for every run date in the window below. Deploy-Dev
+#880, #881 and #882 (2026-10-24) passed both scenarios on the same application code two days earlier,
+when six and seven days ahead were still inside October, as did Deploy-Staging #305 (2026-10-20).
+
+**Symptom:** each scenario waits out its full 30 seconds for the capsule of the event seeded
+**tomorrow** — not for the date it navigated to, which is the detail that names the cause:
+
+```
+And I navigate the month view to show a date in 6 days -> done (0.2s)
+Then I see the event "Work Event" displayed on the calendar
+-> error: waiting for Locator(".event-capsule").Filter(new() { HasText = "Work Event" }) (30.0s)
+```
+
+**Root cause — one navigation cannot serve several dates.** Both scenarios seed events across a week
+(`tomorrow` … `in 6 days`, and `tomorrow` plus `in 7 days`), navigate **once**, and then assert them
+all on the one view that leaves them. That works only while every seeded date shares a grid, and on
+2026-10-26 they did not: the hop was genuinely needed for the far date and it took the near ones off
+screen.
+
+The grid is a window of whole Sunday-to-Saturday weeks, from the Sunday on or before the 1st through
+the first Saturday on or after the month's last day. 31 October 2026 **is** a Saturday, so October's
+grid is 27 Sep – 31 Oct and stops dead; 1 November is a Sunday, so November's grid starts exactly
+there. The two abut with **no overlap at all**, and no view in existence shows both 27 October and
+1 November. That pairing — a month ending on a Saturday — is the trigger, and it comes round about one
+month in seven, in clumps rather than evenly.
+
+**What this is not.** It is not a navigation that fired when it should not have: the retired helper
+computed the grid's last cell as "the first Saturday on or after the month's last day", which is
+exactly what the view renders, so its decision to hop was correct. Nor is the window the one the
+server's `GetEventsForMonth` describes — `endDay` there always reaches one to six days into the next
+month because it is the **event-fetch** window, with its own comment saying it pre-fetches for
+scroll-ahead. Read as the grid's span it suggests October was showing 1 November, and the first
+diagnosis of this failure said so. Cells come from `BuildCalendarGrid` in the WebUi, and nothing else.
+
+**The window, and the second wave that does not self-clear.**
+
+| Dates | What happens |
+|---|---|
+| 2026-10-25 | `View all-day events` (+7 days) armed. No gate ran that day, so it is unobserved rather than passing. |
+| 2026-10-26 – 10-30 | Both scenarios red. #306 is the 26th. |
+| 2026-10-31 (Sat) | These two go green — both their dates land in November — and **~25 other scenarios go red instead.** |
+
+The 31st is the same mechanism with a wider blast radius: `tomorrow` is 1 November, which October's
+grid does not carry, so every month-grid assertion *or click* keyed on a `tomorrow` seed fails. That is
+**22 scenarios** across five features — 14 in `MonthCalendarView` (most of them through its
+`Background` seed), 4 in `GoogleCalendarSync`, 2 in `CalendarDefaultReminders`, 1 in `Authentication`
+and the `+n more` drill-down in `DayCalendarView` — and **two more that pass vacuously**, both
+`I do not see …` assertions satisfied by the missing cell rather than by the deletion they are about.
+That quieter half is the failure mode issue 16 named and is why an absence is now asserted on a view
+that provably spans the date. Nothing about the first wave clearing helps any of them.
+
+**Fix.** [Issue 16](#16-nine-agenda-scenarios-fail-on-the-last-day-of-every-month--a-relative-seed-date-outside-the-rendered-month-2026-09-30)'s
+resolution, applied to the grid, because this is that issue one view over.
+`DashboardPage.ShowMonthContainingAsync(DateTime)` drives the grid's own Prev/Next until the date has a
+**cell in the DOM**, re-reading the live month header each step, and throws naming the date and the
+month on screen if it cannot get there. Assertions on a seeded date move the view themselves —
+`I see the event "…" displayed on the calendar for "<date expression>"`, scoped to that day's cell so
+it also stops reading a capsule rendered on the wrong day — and the few scenarios that *click* a
+seeded event carry `I navigate the month view to show "<date expression>"`, which replaces the old
+`…to show a date in N days`: a count of days cannot say which month it lands in. The undated step
+stays for events created through the kiosk, whose day the scenario's own flow fixes.
+
+**What has a test and what does not.** A `@day-rollover` scenario uses the kiosk clock bridge to roll
+the displayed date forward a month, which leaves a seeded event a month behind the view — the same
+situation a boundary produces, on any run date, and it fails without the fix. It does **not** reproduce
+the boundary arithmetic itself. Nothing does: proving that still means waiting for a month that ends on
+a Saturday, which is why the date below is worth keeping.
+
+**If the symptom returns:**
+1. **Check the run date before reading the diff.** The last day of a month that falls on a Saturday, or
+   the five days before it, means this entry. After 31 October 2026 the next are 31 July 2027,
+   30 September 2028, then 31 March and 30 June 2029 — far enough apart that nobody will remember this
+   by the time it comes round, which is the whole reason for the entry.
+2. A failure naming the event seeded *nearest* — while the scenario navigated for the farthest — is
+   this shape rather than a sync or render problem. Read which event the log names, not which date the
+   scenario asked for.
+3. For the mechanism, trust `BuildCalendarGrid` in `src/FamilyHQ.WebUi/Pages/Index.razor` over any
+   expression in the API or the test suite. It is the only thing that decides which cells exist.
+
 
 ### 7. Multi-calendar event membership flaps during the first-login auto-designation window (FHQ-46)
 

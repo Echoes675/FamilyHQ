@@ -47,6 +47,12 @@ public class DashboardSteps
         await _dashboardPage.ShowCalendarGridAsync();
     }
 
+    /// <summary>
+    /// For an event whose day the scenario's own flow fixes — one created through the kiosk, where
+    /// the modal opens on today. An event that a SEED step placed on a date takes the dated step
+    /// below instead: this one reads every capsule on screen, which says nothing about WHICH day the
+    /// capsule is on, and passes or fails on whether the view happens to span the seeded date.
+    /// </summary>
     [Then(@"I see the event ""([^""]*)"" displayed on the calendar")]
     public async Task ThenISeeTheEventDisplayedOnTheCalendar(string eventName)
     {
@@ -60,9 +66,52 @@ public class DashboardSteps
     public async Task ThenIDoNotSeeTheEventDisplayedOnTheCalendar(string eventName)
     {
         var visibleEvents = await _dashboardPage.GetVisibleEventsAsync();
-        
-        visibleEvents.Should().NotContain(e => e.Contains(eventName), 
+
+        visibleEvents.Should().NotContain(e => e.Contains(eventName),
             $"The event '{eventName}' should NOT be visible on the dashboard month view.");
+    }
+
+    /// <summary>
+    /// Asserts an event's capsule in the cell for the day it was seeded on, bringing the grid to
+    /// that day first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both halves matter. The navigation is what makes the assertion possible at all: a date the
+    /// grid does not span has no cell, so the capsule can never render and the undated step waits
+    /// out its whole timeout for an element that cannot appear — which is how a run on a month that
+    /// ends on a Saturday loses every assertion keyed on "tomorrow".
+    /// </para>
+    /// <para>
+    /// Scoping to the cell is what makes it say what it reads: the title alone, matched anywhere in
+    /// the grid, cannot tell an event rendered on its own day from one rendered on the wrong day,
+    /// and a seed step chose that day deliberately.
+    /// </para>
+    /// </remarks>
+    [Then(@"I see the event ""([^""]*)"" displayed on the calendar for ""([^""]*)""")]
+    public async Task ThenISeeTheEventDisplayedOnTheCalendarFor(string eventName, string dateExpr)
+    {
+        var date = ResolveDate(dateExpr);
+        await _dashboardPage.ShowMonthContainingAsync(date);
+
+        var capsule = _dashboardPage.EventCapsulesOn(date).Filter(new() { HasText = eventName });
+        await Assertions.Expect(capsule.First).ToBeVisibleAsync(new() { Timeout = 30000 });
+    }
+
+    /// <summary>
+    /// The negative twin, and it needs the navigation more than the positive does rather than less:
+    /// an absence read off a view that does not span the date is satisfied by the missing CELL, so
+    /// it passes whatever became of the event. Web-first on the count, so a delete still in flight
+    /// is waited out instead of being read as proof.
+    /// </summary>
+    [Then(@"I do not see the event ""([^""]*)"" displayed on the calendar for ""([^""]*)""")]
+    public async Task ThenIDoNotSeeTheEventDisplayedOnTheCalendarFor(string eventName, string dateExpr)
+    {
+        var date = ResolveDate(dateExpr);
+        await _dashboardPage.ShowMonthContainingAsync(date);
+
+        var capsule = _dashboardPage.EventCapsulesOn(date).Filter(new() { HasText = eventName });
+        await Assertions.Expect(capsule).ToHaveCountAsync(0, new() { Timeout = 30000 });
     }
 
     [When(@"I create an event ""([^""]*)""")]
@@ -121,11 +170,28 @@ public class DashboardSteps
         await _dashboardPage.NavigateToCurrentMonthAsync();
     }
 
-    [When(@"I navigate the month view to show a date in (\d+) days")]
-    public async Task WhenINavigateTheMonthViewToShowDateInDays(int days)
+    /// <summary>
+    /// Brings the month grid onto the date given, for a scenario that then ACTS on an event seeded
+    /// there — a click can only land on a cell that exists. Assertions do not need it: the dated
+    /// assertion steps move the view themselves.
+    /// </summary>
+    /// <remarks>
+    /// Takes a date expression, the vocabulary every other date-bearing step takes, and replaces a
+    /// step that took a number of days. A count of days cannot say which month it lands in, and the
+    /// month is the only thing the grid cares about; it also invited one navigation to stand for a
+    /// whole scenario's dates, which is what it cannot do — the grid shows one month's weeks, and
+    /// two dates either side of a boundary have no view in common.
+    /// </remarks>
+    [StepDefinition(@"I navigate the month view to show ""([^""]*)""")]
+    public async Task WhenINavigateTheMonthViewToShow(string dateExpr)
     {
-        await _dashboardPage.NavigateToShowDateIfNeededAsync(BrowserClock.Today.AddDays(days));
+        await _dashboardPage.ShowMonthContainingAsync(ResolveDate(dateExpr));
     }
+
+    private static DateTime ResolveDate(string dateExpr) => DateTime.ParseExact(
+        DateExpressionResolver.Resolve(dateExpr),
+        "yyyy-MM-dd",
+        System.Globalization.CultureInfo.InvariantCulture);
 
     [Given(@"I change the event ""([^""]*)"" to calendar ""([^""]*)""")]
     public async Task GivenIChangeTheEventToCalendar(string eventName, string calendarName)
@@ -274,8 +340,7 @@ public class DashboardSteps
     [When(@"^I click the ""\+n more"" link for tomorrow$")]
     public async Task WhenIClickTheMoreEventsLinkForTomorrow()
     {
-        var dateYyyyMmDd = BrowserClock.Today.AddDays(1).ToString("yyyy-MM-dd");
-        await _dashboardPage.ClickMoreEventsLinkAsync(dateYyyyMmDd);
+        await _dashboardPage.ClickMoreEventsLinkAsync(BrowserClock.Today.AddDays(1));
     }
 
     [When(@"I click an empty grid slot for calendar ""([^""]*)"" at ""([^""]*)""")]

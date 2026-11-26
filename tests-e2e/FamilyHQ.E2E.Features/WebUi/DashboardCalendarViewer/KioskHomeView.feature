@@ -11,9 +11,10 @@ Feature: The kiosk's home view
   today, because it is one judgement about whether anybody is in the room.
 
   Landing has to do the work entering the tab does. A load that only picked the view would render the
-  timeline with no rows in it, which is why the first scenario seeds a reminder and then asserts the
-  ROW rather than the panel: an empty timeline is also what a view that never fetched looks like, so
-  the panel alone could not tell the two apart.
+  timeline with no rows in it, which is why the seeded scenario asserts the ROW rather than the
+  panel: an empty timeline is also what a view that never fetched looks like, and both panels are
+  rendered whether or not anything was ever fetched into them, so the panel alone could not tell the
+  two apart.
 
   No Background. The seeded scenario needs its event in place before the login that triggers the
   first sync, and folding the login into a Background would fix that order the wrong way round — the
@@ -32,7 +33,7 @@ Feature: The kiosk's home view
     And the event "Dentist Visit" on "today" has been given a reminder 2 hours before
     When the kiosk loads the dashboard
     Then the reminders view is showing
-    And the "Today" section has a row for "Dentist Visit"
+    And the "This month" section has a row for "Dentist Visit"
 
   Scenario: A kiosk left on another view returns to the reminders timeline once nobody is at it
     Given I have a user like "RemindersViewUser"

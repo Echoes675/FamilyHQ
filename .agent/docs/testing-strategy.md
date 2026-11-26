@@ -49,9 +49,12 @@ models the behaviour at all:
 - **Full-replace write semantics** — the Simulator does not model Google's `PUT` clearing unmapped
   fields, so "editing preserves the fields we do not model" cannot be proven there: a field the
   Simulator never stored cannot be observed to survive.
-- **Recurrence expansion** — `NodaTimeRecurrenceTimeZone` is duplicated verbatim in Services and the
-  Simulator (FHQ-165), so for expansion the Simulator is **not an independent oracle**. A twin is a
-  useful regression net; it is not evidence that we agree with Google.
+- **Recurrence expansion** — Services and the Simulator share one zone adapter,
+  `FamilyHQ.Time.NodaTimeRecurrenceTimeZone`, so for expansion the Simulator is **not an independent
+  oracle**: both sides ask the same NodaTime tzdb the same question. (Before that project existed
+  there were two copies with identical bodies and differing XML docs, and the Simulator's claimed to
+  be an independent re-implementation of Google's behaviour — it never was.) A twin is a useful
+  regression net; it is not evidence that we agree with Google.
 
 **A twin that asserts something the Simulator models incorrectly is worse than no twin**, because it
 passes while production is wrong — and it will be believed. If you cannot write an honest twin, say

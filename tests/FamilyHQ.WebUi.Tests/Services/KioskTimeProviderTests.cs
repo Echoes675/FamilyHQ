@@ -46,6 +46,28 @@ public class KioskTimeProviderTests
     }
 
     [Fact]
+    public void DayOffset_WithTheOverrideDisabled_StaysZeroHoweverManyDaysAreRequested()
+    {
+        var clock = new KioskTimeProvider(FakeAt(DateTimeOffset.UnixEpoch), overrideEnabled: false);
+
+        clock.AdvanceDays(3);
+
+        clock.DayOffset.Should().Be(0, "this is the production configuration, and it must not shift.");
+    }
+
+    [Fact]
+    public void DayOffset_WithTheOverrideEnabled_CountsTheDaysAdvancedAndResets()
+    {
+        var clock = new KioskTimeProvider(FakeAt(DateTimeOffset.UnixEpoch), overrideEnabled: true);
+
+        clock.AdvanceDays(2);
+        clock.DayOffset.Should().Be(2);
+
+        clock.Reset();
+        clock.DayOffset.Should().Be(0);
+    }
+
+    [Fact]
     public void LocalTimeZone_DelegatesToWrappedProvider()
     {
         var fake = FakeAt(DateTimeOffset.UnixEpoch);

@@ -627,6 +627,93 @@ public class CalendarSyncServiceTests
         calendarRepository.Verify(r => r.DeleteEventAsync(obsoleteEventId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── The tombstone diff must say WHICH rows it removed, not just how many ──
+
+    [Fact]
+    public async Task SyncAsync_FullSync_RemovesObsoleteEvents_LogsTheRemovedGoogleEventId()
+    {
+        // Arrange
+        var (client, calendarRepository, _, logger, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-tombstone-log");
+        var calendarId       = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        var googleCalendarId = "cal-log@google.com";
+        var start             = DateTimeOffset.UtcNow.AddDays(-1);
+        var end               = DateTimeOffset.UtcNow.AddDays(1);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "CalLog" };
+        var obsoleteEvent = new CalendarEvent
+        {
+            Id            = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            GoogleEventId = "evt-gone-logged",
+            Title         = "Gone Event"
+        };
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null); // Full sync
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarEvent> { obsoleteEvent });
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert — the removed row's GoogleEventId reaches the log, not just a count. A later
+        // investigation of a wrongly-pruned event has only this line to work from.
+        var informationMessages = InformationLogMessages(logger);
+        informationMessages.Should().Contain(m =>
+            m.Contains("evt-gone-logged") && m.Contains(calendarId.ToString()));
+    }
+
+    [Fact]
+    public async Task SyncAsync_FullSync_PruneBeyondTheCap_StillReportsTheTrueTotal()
+    {
+        // Arrange — a bulk prune (a calendar genuinely cleared out in Google) well past any sane
+        // per-line cap, so the log must still say how many rows actually went even though it cannot
+        // list every id.
+        var (client, calendarRepository, _, logger, _, _, _, systemUnderTest) =
+            CreateSutWithAllDeps(userId: "u-tombstone-cap");
+        var calendarId       = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        var googleCalendarId = "cal-cap@google.com";
+        var start             = DateTimeOffset.UtcNow.AddDays(-1);
+        var end               = DateTimeOffset.UtcNow.AddDays(1);
+
+        var calendar = new CalendarInfo { Id = calendarId, GoogleCalendarId = googleCalendarId, DisplayName = "CalCap" };
+
+        const int obsoleteCount = 55; // Comfortably past the 50-id cap on the log line.
+        var obsoleteEvents = Enumerable.Range(0, obsoleteCount)
+            .Select(i => new CalendarEvent { Id = Guid.NewGuid(), GoogleEventId = $"evt-cap-{i}", Title = "Gone" })
+            .ToList();
+
+        calendarRepository.Setup(r => r.GetCalendarByIdAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(calendar);
+        calendarRepository.Setup(r => r.GetSyncStateAsync(calendarId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((SyncState?)null); // Full sync
+        calendarRepository.Setup(r => r.GetCalendarsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<CalendarInfo> { calendar });
+        client.Setup(c => c.GetEventsAsync(googleCalendarId, start, end, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleEventFetch(new List<CalendarEvent>(), "sync-token", IsComplete: true));
+        calendarRepository.Setup(r => r.GetEventsByOwnerCalendarAsync(calendarId, start, end, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(obsoleteEvents);
+
+        // Act
+        await systemUnderTest.SyncAsync(calendarId, start, end);
+
+        // Assert — the TRUE total survives the cap, so a large prune still reads as large rather
+        // than as the cap, while the id list itself is bounded so Seq is not flooded.
+        var informationMessages = InformationLogMessages(logger);
+        var message = informationMessages.Should().ContainSingle(m =>
+                m.Contains($"tombstoned {obsoleteCount} local event row(s)"))
+            .Subject;
+
+        var shownIds = message.Split("shown): ")[1].Split(", ");
+        shownIds.Should().HaveCount(50, "the cap bounds the ids in one line without hiding the true total");
+    }
+
     [Fact]
     public async Task SyncAllAsync_WhenGetCalendarsThrowsReauthRequired_MarksTokenAndRethrows()
     {
@@ -1331,6 +1418,18 @@ public class CalendarSyncServiceTests
         // than how completely.
         stored.LastSyncedAt.Should().NotBeNull();
     }
+
+    /// <summary>
+    /// The fully-formatted text of every record the logger mock received at Information level.
+    /// <see cref="ILogger.Log{TState}"/>'s state object (Moq invocation argument index 2) is MEL's
+    /// own <c>FormattedLogValues</c>, whose <c>ToString()</c> renders the template with its arguments
+    /// substituted — the same text that reaches Seq.
+    /// </summary>
+    private static List<string> InformationLogMessages(Mock<ILogger<CalendarSyncService>> logger) =>
+        logger.Invocations
+            .Where(i => i.Method.Name == nameof(ILogger.Log) && (LogLevel)i.Arguments[0]! == LogLevel.Information)
+            .Select(i => i.Arguments[2]!.ToString()!)
+            .ToList();
 
     private (Mock<IGoogleCalendarClient> google, Mock<ICalendarRepository> repo,
         Mock<IMemberTagParser> tagParser, CalendarSyncService sut) CreateSut()

@@ -11,6 +11,7 @@ COPY src/FamilyHQ.Core/FamilyHQ.Core.csproj src/FamilyHQ.Core/
 COPY src/FamilyHQ.Data/FamilyHQ.Data.csproj src/FamilyHQ.Data/
 COPY src/FamilyHQ.Data.PostgreSQL/FamilyHQ.Data.PostgreSQL.csproj src/FamilyHQ.Data.PostgreSQL/
 COPY src/FamilyHQ.Services/FamilyHQ.Services.csproj src/FamilyHQ.Services/
+COPY src/FamilyHQ.Time/FamilyHQ.Time.csproj src/FamilyHQ.Time/
 COPY src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj src/FamilyHQ.WebApi/
 
 RUN dotnet restore src/FamilyHQ.WebApi/FamilyHQ.WebApi.csproj

@@ -24,10 +24,6 @@
                     else
                     {
                         var expanded = _expanded.Contains(bucket.Key);
-                        @* Answered once per section rather than per row: every row in a section
-                           shows the date or none of them does, and the row itself is not told which
-                           section it is in. *@
-                        var showsDate = RemindersViewLogic.ShowsDate(bucket.Key);
                         <div class="reminders-section__rows">
                             @foreach (var row in RemindersViewLogic.Preview(bucket, expanded))
                             {
@@ -35,8 +31,7 @@
                                    there is exactly one row per event. *@
                                 <ReminderRow @key="row.EventId"
                                              Event="row"
-                                             Zone="Zone"
-                                             ShowsDate="showsDate"
+                                             Today="Today"
                                              OnOpenDay="OnOpenDay" />
                             }
                         </div>
@@ -82,16 +77,13 @@
     [Parameter, EditorRequired]
     public IReadOnlyList<UpcomingReminderEventViewModel> Rows { get; set; } = Array.Empty<UpcomingReminderEventViewModel>();
 
-    /// <summary>The kiosk's current local date — what "Today" and "Tomorrow" are measured against.</summary>
+    /// <summary>
+    /// The household's current date as the server reported it, shifted by the kiosk's own dev
+    /// day-offset. Both panels are measured from it, and each row's label is measured against it.
+    /// </summary>
     [Parameter] public DateOnly Today { get; set; }
 
-    /// <summary>The household's week-start day, passed straight through to <see cref="ReminderBucketing"/>.</summary>
-    [Parameter] public DayOfWeek WeekStart { get; set; }
-
-    /// <summary>The zone a row's local day (its event's start) is read in.</summary>
-    [Parameter, EditorRequired] public TimeZoneInfo Zone { get; set; } = TimeZoneInfo.Utc;
-
-    /// <summary>Raised with an event's own local day when its row is tapped.</summary>
+    /// <summary>Raised with an event's own day when its row is tapped.</summary>
     [Parameter] public EventCallback<DateTime> OnOpenDay { get; set; }
 
     // Which sections the family has asked to see in full. Local, UI-only state — expanding never
@@ -99,7 +91,7 @@
     private readonly HashSet<ReminderSectionKey> _expanded = [];
 
     private IReadOnlyList<ReminderSection<UpcomingReminderEventViewModel>> Sections =>
-        RemindersViewLogic.Sections(Rows, Today, WeekStart, Zone);
+        RemindersViewLogic.Sections(Rows, Today);
 
     private void Expand(ReminderSectionKey key) => _expanded.Add(key);
 }

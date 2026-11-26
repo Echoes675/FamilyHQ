@@ -464,25 +464,36 @@ clearest case. That half is asserted against real Google in the preprod smoke su
   it (`Tab`) and assert the value took before pressing Add — the same dance the recurrence interval
   needs.
 
-### Reminders view — `RemindersView.feature` (16 scenarios)
+### Reminders view — `RemindersView.feature` (20 scenarios)
 
 The fourth dashboard tab's standalone timeline of events whose reminders were set **on the event** —
 one row per EVENT, filed by when the event itself starts — as distinct from the event modal's own
-Reminders tab above (which edits one event's reminders). Covers: the month grid still being reachable
-from the timeline and vice versa (which tab comes first, and which view a load lands on, belong to
-`KioskHomeView.feature` instead); a row under Today leading with
-its event's start time and nothing else;
-a row in a section covering several days leading with the day and date as well; an event following
-its calendar's usual reminders never appearing; an explicitly-removed reminder and an event
-inheriting from a calendar with no defaults both never appearing; an event whose last reminder has
-already fired keeping its row; an event with widely-spaced reminders (one soon, one over two weeks
-out) appearing exactly once, under its own start and in no other section; a shared event's row naming
-the people it is shared with rather than the shared calendar; tomorrow's event staying under Tomorrow
-rather than This week; an empty section collapsing to one line; the fully-empty view stating it
-plainly; both permanent footnotes (all-day, and the one admitting the inherited exclusion); tapping a
-row opening the **Day view** on that event's own day; and leaving the tab for another view, which
-exercises the enter/leave path a closed tick-loop race guards but which no other scenario (and no
-bUnit, which this repo does not have) touches.
+Reminders tab above (which edits one event's reminders).
+
+**The view is two panels, not five sections.** "This month" runs from today (today **included**) to
+the end of this month and "Next month" spans the whole month after it. Today, Tomorrow and This week
+are gone as panels: each could be left with no day at all to claim depending on where today sat in
+its own period, and an empty panel on a wall kiosk's landing view reads as a fault. What they said
+for the near rows is now said **on the rows** — every row leads with its own day.
+
+Covers: the month grid still being reachable from the timeline and vice versa (which tab comes
+first, and which view a load lands on, belong to `KioskHomeView.feature` instead); a row leading
+with its event's own day and start time and nothing else; a row further out than tomorrow leading
+with the day and date; tomorrow's row reading "Tomorrow" whichever panel it is filed in; an idle
+kiosk re-reading that same row as "Today" once the day rolls over under it (tagged `@day-rollover`
+and the rollover's strongest remaining assertion — `DayRollover.feature` points here for it); a row
+reading the day and time the HOUSEHOLD's own zone puts it on when that zone is not the
+kiosk's, and the drill-down from that row still opening a day that contains the event; an
+event following its calendar's usual reminders never appearing; an explicitly-removed reminder and an
+event inheriting from a calendar with no defaults both never appearing; an event whose last reminder
+has already fired keeping its row; an event with widely-spaced reminders (one soon, one over two
+weeks out) appearing exactly once, under its own start and in neither other place; a shared event's
+row naming the people it is shared with rather than the shared calendar; an empty panel collapsing
+to one line; the fully-empty view stating it plainly; both permanent footnotes (all-day, and the one
+admitting the inherited exclusion); tapping a row opening the **Day view** on that event's own day;
+leaving the tab for another view, which exercises the enter/leave path no other scenario (and no
+bUnit, which this repo does not have) lands on; and the Reminders **tab's** bell and count, both
+present and absent, read from the Month view.
 
 **A row describes the event, not its reminders.** It reads `[when] · title · [who]`; the bell glyph
 and the `1 reminder · next 45 min before` line were removed at the family's request, and the DTO
@@ -492,13 +503,39 @@ firing to change — which is why the already-fired scenario now asserts only th
 Its subject survived the change; only its wording assertion did not. What makes this a reminders view
 is the filter, so the scenarios that matter most here are the absence ones.
 
-**`[when]` is two different things, and both halves need a scenario.** Today and Tomorrow show the
-time alone — their headings already say which day they are — and This week, This month and Next month
-lead with `ddd d MMM · HH:mm`. The Today assertion is an **equality** on the leading column rather
-than a `Contain`, because the failure it guards is a date appearing where one is not wanted, and only
-equality catches that. The further-out assertion resolves its expected date through
-`DateExpressionResolver`, the same single source of truth the seeding step used, so the two cannot
-disagree about what "next month" means.
+**`[when]` names the row's own day, and never the panel's.** A row leads with `Today · 09:00`,
+`Tomorrow · 21:30`, `Wed 7 Oct · 08:00` or `Today · all day`, and the day is read off the row's own
+local date against today. On the last day of a month tomorrow is filed under "Next month" and still
+reads "Tomorrow" there — which is the day the family can least afford to read as a bare date. Two
+consequences for scenarios here:
+
+- A scenario about what a row **says** names no panel. `Then the row for "X" leads with "..."` is an
+  **equality** on the leading column, because the failure it guards is a row that dropped its day
+  and reverted to the bare time, and `"09:00"` is contained in `"Today · 09:00"`. Naming a panel
+  would make the expectation a function of the run date.
+- A scenario about **which panel** holds a row names one only for a date whose panel is the same on
+  every run date: `"today"` (always the near edge of "This month"), or an event resolved into next
+  month. The dated-form assertion resolves its expected date through `DateExpressionResolver`, the
+  same single source of truth the seeding step used, so the two cannot disagree about what "next
+  month" means.
+
+**One scenario runs with the household zone and the browser's deliberately disagreeing.** Every other
+scenario here leaves the zone auto-detected, which makes the stored zone the kiosk's own reported one
+— they agree, and nothing exercises what happens when they do not. "A row reads the day and time the
+household's own zone puts it on" saves `Europe/Athens` explicitly while the browser stays pinned to
+`Europe/London` (`BrowserClock.TimeZoneId`), because an explicit zone outranks the kiosk's report.
+
+Two things make it deterministic rather than hour-dependent, and both are worth keeping if it is ever
+edited. The zones switch daylight saving at the same instant, so Athens is **always** exactly two
+hours ahead of London — 23:30 London is 01:30 the next day in Athens in January and in July alike.
+And the event is seeded at a fixed time on a date resolved through `DateExpressionResolver`, so the
+expected text is arithmetic on the seed rather than a reading of the clock. A relative "tomorrow"
+here would make the assertion depend on the hour CI starts at, since the two zones' dates differ for
+two hours of every day.
+
+It also sets its reminder **before** saving the zone. Doing it afterwards would send a kiosk write
+while the two zones disagree, which is a separate question from the one this scenario asks, and the
+day rule it exercises is read-side throughout.
 
 **The tap scenario has to navigate BACK to the current month, and that step is the scenario.** Its
 careful case is an event *outside* the month the dashboard has loaded, because that is what exercises
@@ -537,13 +574,23 @@ fixes how FamilyHQ treats an event arriving in that shape, while RM5 is the only
 that Google still produces that shape at all. Neither the unit test nor any E2E twin can tell you
 that, which is why a change here should keep the RM5 pointer with it.
 
+**The E2E suite keeps its own copy of `ReminderSectionKey`, and no gate compiles the drift.**
+`FamilyHQ.E2E.Common/Pages/DashboardPage.cs` declares a local mirror of the view's panel keys,
+because the E2E projects never reference `FamilyHQ.WebUi`. A change to the view's panels therefore
+leaves this suite **compiling perfectly** against panels the app no longer renders, and surfaces as a
+runtime "selector not found" in a Deploy-Dev run instead of as a build error. Bring the mirror,
+`ReminderSectionSlug` and `RemindersViewSteps.ParseSection` in line by hand whenever the panels
+change — a green build proves nothing here.
+
 **Address a row by its `data-event-id`, never by position.** The view sorts by event start, which
 depends on seeding order rather than on anything Google guarantees, so a row's position is not a
 stable identifier — the same rule, and the same reason, as the modal's Reminders tab rows. One row
-per event means the id alone identifies it. `DashboardPage.ReadReminderRowsAsync` reads a section's
-rows as `ReminderRowSnapshot`s carrying that id and the row's text for assertions to key off; the
-row's own start time is read separately, off the leading column, so that an assertion about it cannot
-be satisfied by some other time rendered elsewhere in the row.
+per event means the id alone identifies it. `DashboardPage.ReadReminderRowsAsync` reads a panel's
+rows as `ReminderRowSnapshot`s, and each snapshot carries three things: the id, the row's full text,
+and `When` — the leading column read **on its own**, so that an assertion about a row's day and
+start cannot be satisfied by some other time rendered elsewhere in the row. Reading the column as
+part of the same snapshot that places the row is what keeps "which panel holds it" and "what it
+says" two statements about one element rather than two lookups that could resolve different rows.
 
 **A "today" scenario cannot run close to local midnight.** A row is filed by its event's start, so an
 event seeded N minutes from now files under Tomorrow once "now" is within N minutes of midnight,
@@ -551,12 +598,19 @@ while the scenario still asserts Today. `GivenTheUserHasATimedEventStartingInMin
 refuses that outright rather than letting the run fail as a missing row, so a failure there is a
 statement about the clock, not about the view.
 
-**The default view must stay Month.** `RemindersView.feature` never asserts this itself — the
-~180 scenarios elsewhere that assume Month loads on login are the ones that would catch a regression
-— but every scenario here still switches to the Reminders tab explicitly rather than relying on it
-ever being the landing view, and one scenario asserts Month is what is showing before the tab is
-touched at all. If adding this tab ever changes what an existing scenario sees, that is a sign the
-tab was wired up wrongly, not a reason to amend the older scenario.
+**No scenario here may depend on the landing view, because the landing view is Reminders.** The app
+opens on the timeline and puts its tab first (see `KioskHomeView.feature`). What keeps the ~180
+scenarios elsewhere independent of that is not the landing view staying put — it moved — but the
+fact that they ask for the grid explicitly: `I view the dashboard` loads the page and then calls
+`DashboardPage.ShowCalendarGridAsync()`, so a scenario about the month grid begins on the month grid
+as deliberate setup rather than as a side effect of a page load. Every scenario in this file likewise
+switches to the Reminders tab explicitly instead of assuming it is already showing.
+
+A scenario **about** the landing view must not come through that step, which would hide the very
+thing it asserts. It uses the navigate-only step (`the kiosk loads the dashboard` →
+`DashboardPage.LoadKioskHomeViewAsync()`), which leaves the dashboard on whatever view the app chose.
+If a change to the landing view ever changes what an existing scenario sees, that scenario was
+inheriting its starting view instead of asking for it — fix the step, not the assertion.
 
 **Seeding order matters, and this feature file has no `Background` because of it.** A backdoor-seeded
 event (`the user has a timed event "…" at "…" on "…" in "…"`) has to exist *before* the login that
@@ -568,19 +622,49 @@ whole user template and the Simulator rebuilds the calendar rows from it — see
 scenario; several of these need backdoor seeds and several do not, so each scenario spells out its
 own setup instead.
 
-**The last-day-of-week boundary is proven at the unit level, not here.** "Tomorrow's event stays
-under Tomorrow on the last day of a week" cannot force the server's real clock onto that boundary day — unlike
-the client-only kiosk day-rollover hook, nothing in this stack can move the WebApi's `TimeProvider`.
-The scenario instead proves the general rule (Tomorrow is matched before This week, on every day),
-which also covers the boundary on the roughly one run in seven that happens to land on it. The
-deterministic edge itself is pinned with a controlled `DateOnly` in
-`ReminderBucketingTests.File_OnTheLastDayOfAWeek_TomorrowIsStillTomorrowAndNotNextMonth`.
+**The month-end boundary is proven at the unit level, not here.** "Tomorrow's row reads Tomorrow
+whichever panel it is filed in" cannot force the server's real clock onto a month's last day —
+unlike the client-only kiosk day-rollover hook, nothing in this stack can move the WebApi's
+`TimeProvider`. The scenario instead proves the rule that makes the month-end case work (the label
+comes from the row's own date, never from the panel), and takes the edge itself for free on the one
+run in thirty that lands on it. The deterministic edge is pinned with controlled `DateOnly` values at
+the unit level, in **two halves that are not interchangeable**:
+
+- the **label** by
+  `ReminderRowDisplayTests.EventTime_OnTheLastDayOfAMonth_StillReadsTomorrowForTheFirstOfTheNext`
+  and its 31 December twin — a correct panel holding a row that reads `Wed 1 Apr` is the same
+  failure to the family as a missing row;
+- the **panel** by
+  `ReminderBucketingTests.File_OnTheLastDayOfAMonth_TomorrowLandsInNextMonthAndIsStillKept`, which
+  asserts only where the row lands and never calls `EventTime` at all.
+
+Cite the right one when touching either. The week boundary that used to be here is gone with the
+This week panel: no bucket is week-aligned any more.
+
+**The Reminders tab's badge is asserted from another tab, and its absence as a missing element.**
+The count has to be right while the family is in front of a different view, so the badge scenario
+reads the tab with the Month view on screen and nothing of the timeline rendered — no other scenario
+could catch it, because every other one reads the rows the badge exists to stand in for. It seeds
+**two** events today rather than one: a badge hardcoded to "1", or rendering a yes/no flag, passes a
+count of one, and the second event is also the only thing that puts the plural wording under
+assertion. The absence half asserts the `reminders-tab-badge` element is **not attached** rather than
+that it reads "0" — silence is the signal — and it reads a row off the timeline first, because an
+assertion that something is missing passes just as well against a page whose fetch never came back.
+The badge's own text is the bell glyph, whitespace and then the number, so an equality against the
+number alone fails on a correct badge; `DashboardPage.AssertRemindersTabBadgeAsync` asserts the
+`aria-label` for equality and the number by containment.
+
+**A tab-order assertion reads `.view-tab__label`, not the button.** `ReadViewTabLabelsAsync` is
+scoped to each tab's own label element precisely because the Reminders button also contains the
+badge: reading the whole button made `KioskHomeView.feature`'s tab-order assertion depend on what
+was on the family's calendar that day, and it passed only because that scenario seeds no
+reminder.
 
 ### Kiosk home view — `KioskHomeView.feature` (4 scenarios)
 
 The view a page load lands on, the tab order, and the return an idle kiosk makes on its own. Covers:
 the tabs reading **Reminders · Month View · Agenda · Day View** left to right; a load opening on the
-timeline with a seeded row already filed under Today; a kiosk left on the Month view coming back to
+timeline with a seeded row already filed into This month; a kiosk left on the Month view coming back to
 the timeline after 16 forced minutes of idle; and an open create-event modal keeping it where it is.
 
 **The row, not the panel, is the landing assertion.** An empty timeline is also what a view that
@@ -676,7 +760,8 @@ Update E2E tests in these scenarios:
 - **Keep scenarios focused** - One scenario per behavior being tested
 - **Update templates carefully** - User templates affect multiple scenarios
 - **Never use hardcoded dates** - Use relative expressions (`"tomorrow"`, `"in N days"`, `"today"`) instead of absolute dates like `"2026-03-15"`. Hardcoded dates break when the calendar rolls past the target month. The `DateExpressionResolver` class in `FamilyHQ.E2E.Steps` converts these expressions to `yyyy-MM-dd` at runtime. All step definitions that accept date parameters already support both formats.
-- **A relative seed date must be inside the view the assertion reads** - a date expression says *when*, never *where*, so resolving one does not put it on screen. The **agenda renders exactly one calendar month** and nothing either side, so a cell keyed on a date outside it (`agenda-cell-<date>-<calendarId>`) does not exist: the assertion waits out its full 30s for an element that can never appear, and a *negative* assertion (`I do not see …`) passes vacuously against the missing cell. Which month a relative date lands in is a property of the **run date**, not of the expression — `"tomorrow"` is next month on the last day of every month — so precede an agenda assertion keyed on a date with `And I navigate the agenda to show "<date expression>"`. `"today"` is the one expression that needs no step, because the agenda opens on today's month; every other one does, including `"tomorrow"`. The step resolves the expression and drives the agenda's own prev/next until the live month-year label spans it (`DashboardPage.ShowAgendaMonthContainingAsync`), and throws rather than asserting against the wrong month if it cannot get there. Contrast the **month grid**, which renders six weeks including the adjacent months' edge days and so tolerates a date a day or two outside the current month — that tolerance is why this only ever bites the agenda. Nine agenda scenarios failed on a 30 September run for exactly this reason; the ones that already carried a navigation step passed alongside them.
+- **A relative seed date must be inside the view the assertion reads** - a date expression says *when*, never *where*, so resolving one does not put it on screen. The **agenda renders exactly one calendar month** and nothing either side, so a cell keyed on a date outside it (`agenda-cell-<date>-<calendarId>`) does not exist: the assertion waits out its full 30s for an element that can never appear, and a *negative* assertion (`I do not see …`) passes vacuously against the missing cell. Which month a relative date lands in is a property of the **run date**, not of the expression — `"tomorrow"` is next month on the last day of every month — so precede an agenda assertion keyed on a date with `And I navigate the agenda to show "<date expression>"`. `"today"` is the one expression that needs no step, because the agenda opens on today's month; every other one does, including `"tomorrow"`. The step resolves the expression and drives the agenda's own prev/next until the live month-year label spans it (`DashboardPage.ShowAgendaMonthContainingAsync`), and throws rather than asserting against the wrong month if it cannot get there. Nine agenda scenarios failed on a 30 September run for exactly this reason; the ones that already carried a navigation step passed alongside them.
+- **The month grid needs the same discipline — it is not the wide, forgiving thing this file used to claim** - it does *not* render six weeks with the adjacent months' edge days either side. It renders **four to six whole Sunday-to-Saturday weeks**: the Sunday on or before the 1st, through the first Saturday on or after the month's last day (`BuildCalendarGrid` in `src/FamilyHQ.WebUi/Pages/Index.razor` — the only thing that decides which cells exist; the API's own month window is wider on purpose and is not the grid). So the edge days are whatever those weeks happen to need, and sometimes there are none: a month ending on a **Saturday** carries no day of the next month, and one starting on a **Sunday** carries none of the previous one. On that pairing the two grids abut with no overlap, and no view shows both sides of the boundary. Believing otherwise cost a red staging gate on 2026-10-26 (intermittent-issues #18). Therefore: an assertion on an event a **seed step** placed on a date takes `Then I see the event "…" displayed on the calendar for "<date expression>"` (or the `I do not see …` twin), which brings the grid to that date via `DashboardPage.ShowMonthContainingAsync` and then reads **that day's own cell**, `#day-cell-<yyyy-MM-dd>`; a scenario that *clicks* a seeded event takes `And I navigate the month view to show "<date expression>"` first, because a click needs a cell that exists. The plain undated step stays for events created through the kiosk, whose day the scenario's own flow fixes. One navigation cannot cover a scenario's second date: seeds a week apart can straddle a boundary, so each assertion owns its own.
 - **Never call `DateTime.Today` / `DateTime.Now` in E2E code** - use `BrowserClock` (`FamilyHQ.E2E.Common/Helpers/BrowserClock.cs`). It owns the single timezone the whole suite agrees on (`Europe/London`, pinned onto the Playwright context by `PlaywrightDriver`) and is what `DateExpressionResolver` resolves against. A bare `DateTime.Today` is the **test host's** date, which is not the browser's during the 23:00–00:00 UTC window in BST — seeding or asserting through it puts the test on a different calendar day from the app for one hour a night (intermittent-issues #11). `DateTime.UtcNow` for a polling deadline is fine; it is not a date.
 - **Seed timed events as instants, dates as dates** - a timed seed must go on the wire through `BrowserClock.ToUtcInstant(...)` so it means the same wall-clock time regardless of the server's zone (a naive `DateTime` is silently stamped with the Simulator container's zone). All-day seeds stay naive midnight — the Simulator serialises them as `date`-only, and converting them would shift the date.
 - **Create modal has no default calendar (FHQ-32)** - The "Add new event" modal no longer pre-selects a calendar; the user must pick one and Save is blocked until they do. `DashboardPage.FillAndSaveEventAsync` therefore selects the first available calendar chip when none is active, and `CreateEventInCalendarAsync` selects a named chip. Day/agenda slot taps that pass an explicit `calendarId` keep their chip pre-selected, so those flows are unaffected.

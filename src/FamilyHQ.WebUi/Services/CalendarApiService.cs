@@ -195,22 +195,39 @@ public class CalendarApiService(HttpClient httpClient) : ICalendarApiService
             dto.OwningCalendarDefaultReminders);
     }
 
-    public async Task<IReadOnlyList<UpcomingReminderEventViewModel>> GetUpcomingRemindersAsync(CancellationToken ct = default)
+    public async Task<UpcomingRemindersViewModel> GetUpcomingRemindersAsync(CancellationToken ct = default)
     {
         var response = await httpClient.GetAsync("api/reminders/upcoming", ct);
         await EnsureSuccessAsync(response, ct);
 
-        var dtos = await response.Content.ReadFromJsonAsync<List<UpcomingReminderEventDto>>(cancellationToken: ct)
-                   ?? new List<UpcomingReminderEventDto>();
+        var dto = await response.Content.ReadFromJsonAsync<UpcomingRemindersDto>(cancellationToken: ct)
+                  ?? throw new InvalidOperationException("API returned empty response for GetUpcomingRemindersAsync.");
 
-        return dtos
-            .Select(d => new UpcomingReminderEventViewModel(
-                d.EventId,
-                d.EventTitle,
-                d.EventStart,
-                d.EventIsAllDay,
-                d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
-            .ToList();
+        // An envelope that parsed but carries no rows collection is its own failure, and it names
+        // itself rather than becoming an ArgumentNullException raised inside the Select below — which
+        // reports a null "source" argument and so reads as a bug at this call site rather than as a
+        // malformed response. An empty list is a normal answer; a missing one is not.
+        var rows = dto.Rows
+                   ?? throw new InvalidOperationException("API returned no rows collection for GetUpcomingRemindersAsync.");
+
+        // The same goes for the day itself, and it matters more: a payload that omits "today" does not
+        // fail, it deserialises to the default date (0001-01-01), which files every row into neither
+        // panel and renders "No reminders coming up" while rows exist. A fallback further down cannot
+        // catch it, because by then the value is non-null.
+        if (dto.Today == default)
+            throw new InvalidOperationException("API returned no day for GetUpcomingRemindersAsync.");
+
+        return new UpcomingRemindersViewModel(
+            dto.Today,
+            dto.NextRolloverUtc,
+            rows
+                .Select(d => new UpcomingReminderEventViewModel(
+                    d.EventId,
+                    d.EventTitle,
+                    d.EventDate,
+                    d.EventTimeOfDay,
+                    d.Members.Select(m => new ReminderMemberViewModel(m.DisplayName, m.Color)).ToList()))
+                .ToList());
     }
 
     public async Task<CalendarEventViewModel?> GetEventAsync(Guid eventId, CancellationToken ct = default)

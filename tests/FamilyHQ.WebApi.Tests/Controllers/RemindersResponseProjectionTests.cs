@@ -194,13 +194,19 @@ public class RemindersResponseProjectionTests
     private static (Mock<ICalendarRepository> Repository, CalendarsController SystemUnderTest) CreateCalendarsSut()
     {
         var repository = new Mock<ICalendarRepository>();
+        var timeZoneService = new Mock<ITimeZoneService>();
+        // UTC: these tests are about the reminder fields on the projection, not about day keys, and
+        // UTC is the zone in which the keying is unchanged from before.
+        timeZoneService.Setup(s => s.GetDisplayZoneAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TimeZoneInfo.Utc);
         var systemUnderTest = new CalendarsController(
             repository.Object,
             new Mock<ILogger<CalendarsController>>().Object,
             new Mock<ITokenStore>().Object,
             new Mock<ICurrentUserService>().Object,
             new Mock<ICalendarSyncJobQueue>().Object,
-            new Mock<ISyncJobSignal>().Object);
+            new Mock<ISyncJobSignal>().Object,
+            timeZoneService.Object);
         return (repository, systemUnderTest);
     }
 

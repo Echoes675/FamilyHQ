@@ -5,7 +5,7 @@ using FluentAssertions;
 namespace FamilyHQ.Core.Tests;
 
 /// <summary>
-/// FHQ-158. Guards the standing purity rule for <c>tests/</c>: unit tests must not depend on real
+/// Guards the standing purity rule for <c>tests/</c>: unit tests must not depend on real
 /// wall-clock time, on thread scheduling, or on an in-memory database provider.
 /// <para>
 /// Every one of these has been removed at least once and crept back. The 20-yield settle in
@@ -25,7 +25,7 @@ namespace FamilyHQ.Core.Tests;
 /// </para>
 /// <para>
 /// <b>What this guard does NOT cover.</b> Read a green run as "these four constructs are absent",
-/// not as "the FHQ-158 defect class is impossible":
+/// not as "this defect class is impossible":
 /// </para>
 /// <list type="bullet">
 ///   <item><description>
@@ -51,8 +51,12 @@ namespace FamilyHQ.Core.Tests;
 ///   </description></item>
 /// </list>
 /// <para>
-/// Deliberate exceptions go in <see cref="AllowedExceptions"/> with the reason next to them. Adding
-/// an entry is a decision to be argued in review, which is the point: the default is "no".
+/// Deliberate exceptions go in <see cref="AllowedExceptions"/> with the permitted count and the
+/// reason next to them. Adding an entry is a decision to be argued in review, which is the point: the
+/// default is "no". The count is checked for equality, not merely presence, so the entry cannot
+/// silently widen into a blanket permit for the whole file: one more occurrence than declared is a
+/// new violation hiding behind an existing entry, and one fewer is a stale entry that no longer earns
+/// its place.
 /// </para>
 /// </summary>
 public class UnitTestPurityGuardTests
@@ -79,37 +83,48 @@ public class UnitTestPurityGuardTests
     ];
 
     /// <summary>
-    /// (file, construct) pairs that are allowed, each with the reason it is allowed. Keyed on the
-    /// path relative to <c>tests/</c>, using forward slashes.
+    /// (file, construct) pairs that are allowed, each with how many occurrences are permitted and the
+    /// reason. Keyed on the path relative to <c>tests/</c>, using forward slashes.
     /// </summary>
-    private static readonly Dictionary<(string File, string Construct), string> AllowedExceptions = new()
+    private static readonly Dictionary<(string File, string Construct), (int Count, string Reason)> AllowedExceptions = new()
     {
-        // The Simulator's controllers take the concrete SimContext, so there is no repository or
-        // data-access interface to substitute. Introducing one means changing production code in
-        // tools/FamilyHQ.Simulator, which is out of scope for a test-infra change — deferred to
-        // FHQ-162. An independent review looked for a fourth route (SQLite in-memory, hand-rolled
-        // async DbSet fakes) and found none that avoids a production change or a new package.
-        // These tests are deterministic today; the debt is correctness-of-approach.
+        // The controller takes the concrete SimContext, not a repository or data-access interface, so
+        // there is no seam to substitute without changing production code in tools/FamilyHQ.Simulator.
+        // A review looked for a route around that (SQLite in-memory, hand-rolled async DbSet fakes)
+        // and found none that avoids either a production change or a new package. These tests only
+        // seed the database and read it back through a GET — no write path runs inside them — so the
+        // debt is purity of approach, not weakness of the test.
         [("FamilyHQ.Simulator.Tests/Controllers/CalendarsControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
+            (1, "The controller takes the concrete SimContext, so there is no data-access seam to substitute without a production change."),
+        // Same constraint as its neighbours, and additionally: these 41 tests write through the
+        // controller (create/update/patch/delete/move) and then read the result back, often through a
+        // second call that expands recurrence, reminders or all-day boundaries. Splitting a test like
+        // that into a verified write plus a separately-seeded read would let each half pass while the
+        // pair is wrong, and this file is exactly the shape of this project's worst bug class
+        // (recurrence, DST, reminder inheritance). The database-shaped double is the point.
         [("FamilyHQ.Simulator.Tests/Controllers/EventsControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
+            (1, "The controller takes the concrete SimContext (no seam), and these tests assert net effects over write-then-read sequences that a mock split would weaken."),
+        // These tests only seed users and call a read-only endpoint (the auth prompt, consent redirect,
+        // token issuance) — no write path runs inside them, so the seam gap is the only reason here.
         [("FamilyHQ.Simulator.Tests/Controllers/OAuthControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
+            (1, "The controller takes the concrete SimContext, so there is no data-access seam to substitute without a production change."),
+        // Configure replaces a user's calendars and events outright; these tests write through it and
+        // then query the database directly to prove the old rows are actually gone and the new ones
+        // actually landed — a net effect a mocked write cannot show.
         [("FamilyHQ.Simulator.Tests/Controllers/SimulatorConfigControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
-        [("FamilyHQ.Simulator.Tests/Controllers/WebhookControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
-        // FHQ-207: same constraint as its five neighbours above. The real proof of that ticket is
-        // the E2E scenario that makes RefreshCalendarDefaultsAsync write; these three tests only
-        // pin the backdoor's own contract, so a bespoke harness would cost more than it is worth.
+            (1, "The controller takes the concrete SimContext (no seam), and these tests assert net effects over write-then-read sequences that a mock split would weaken."),
+        // The backdoor exists so an E2E scenario can change a calendar's Google-side default reminders
+        // mid-run; these tests write through it and read the stored JSON back to pin the backdoor's
+        // own contract. The real proof that the write matters is the E2E scenario it unblocks, so a
+        // bespoke harness beyond the concrete SimContext would cost more than it is worth here.
         [("FamilyHQ.Simulator.Tests/Controllers/BackdoorCalendarsControllerTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change (FHQ-162).",
-        // Same constraint as its neighbours above: these tests drive the event endpoints, which take
-        // the concrete SimContext. The reminder rules themselves are covered without any database by
-        // ReminderSemanticsTests; only the endpoint wiring needs this harness.
+            (1, "The controller takes the concrete SimContext (no seam); these tests write through it and read the stored result back, and the backdoor's real proof is the E2E scenario it unblocks, not a bespoke harness."),
+        // Same constraint as its neighbours, and additionally: these tests write through the event
+        // endpoints and read the result back. The reminder inheritance rules themselves are covered
+        // without any database by ReminderSemanticsTests; only the endpoint wiring — does the
+        // controller store and report what the rules say it should — needs this harness.
         [("FamilyHQ.Simulator.Tests/Controllers/EventsControllerRemindersTests.cs", "UseInMemoryDatabase")] =
-            "No data seam on SimulatorControllers; substituting one is a production change."
+            (1, "The controller takes the concrete SimContext (no seam), and these tests assert net effects over write-then-read sequences; the reminder rules themselves are covered elsewhere by ReminderSemanticsTests.")
     };
 
     [Fact]
@@ -126,12 +141,25 @@ public class UnitTestPurityGuardTests
 
             foreach (var (name, pattern) in BannedConstructs)
             {
-                if (AllowedExceptions.ContainsKey((relativePath, name)))
+                var matches = Regex.Matches(code, pattern);
+
+                if (AllowedExceptions.TryGetValue((relativePath, name), out var allowed))
                 {
+                    // Equality, deliberately, in both directions: more than declared is a new
+                    // violation hiding behind an existing permit, and fewer is a stale permit that no
+                    // longer applies.
+                    if (matches.Count != allowed.Count)
+                    {
+                        violations.Add(
+                            $"{relativePath} allows {allowed.Count} use(s) of {name} but found {matches.Count} — " +
+                            "fix the code if that count is wrong, or update the declared count in " +
+                            $"{nameof(AllowedExceptions)} if it is now correct.");
+                    }
+
                     continue;
                 }
 
-                foreach (Match match in Regex.Matches(code, pattern))
+                foreach (Match match in matches)
                 {
                     var line = SourceScan.LineNumberAt(code, match.Index);
                     violations.Add($"{relativePath}:{line} uses {name} — {SourceScan.LineTextAt(source, line)}");
@@ -143,37 +171,27 @@ public class UnitTestPurityGuardTests
             "unit tests must not depend on real time, thread scheduling or the EF InMemory provider. " +
             "Wait on the event itself (TimerArmedTimeProvider / AwaitableCounter) or substitute the " +
             "data seam. If an exception is genuinely unavoidable, add it to " +
-            $"{nameof(UnitTestPurityGuardTests)}.{nameof(AllowedExceptions)} with its justification");
+            $"{nameof(UnitTestPurityGuardTests)}.{nameof(AllowedExceptions)} with its count and justification");
     }
 
     [Fact]
     public void AllowedExceptions_AreAllStillReachable()
     {
-        // A stale allow-list entry silently re-permits the construct in a file that no longer needs
-        // it, so the entries are checked against reality rather than trusted.
+        // The counted check above already fails an entry whose actual count stops matching its
+        // declared count, which subsumes "the file still exists but no longer uses the construct" —
+        // that would show up there as an actual count of zero. What it cannot see is a declared file
+        // that has been deleted outright: the loop above is driven by files that exist on disk, so a
+        // dictionary entry naming a file that is gone is never visited and never fails there. This
+        // test is kept for that one remaining gap.
         var testsRoot = Path.Combine(SourceScan.FindRepositoryRoot(), TestsFolderName);
 
         var stale = AllowedExceptions.Keys
-            .Where(key => !StillUsesConstruct(Path.Combine(testsRoot, key.File), key.Construct))
-            .Select(key => $"{key.File} no longer uses {key.Construct}")
+            .Where(key => !File.Exists(Path.Combine(testsRoot, key.File)))
+            .Select(key => $"{key.File} no longer exists")
             .ToList();
 
-        stale.Should().BeEmpty("an allow-list entry that no longer applies must be deleted, not left to cover future uses");
+        stale.Should().BeEmpty("an allow-list entry for a file that no longer exists must be deleted, not left to cover a file that might reappear");
     }
-
-    private static bool StillUsesConstruct(string path, string construct)
-    {
-        if (!File.Exists(path))
-        {
-            return false;
-        }
-
-        // Masked exactly as the scan above masks it, so an occurrence that survives only in a
-        // comment does not keep a dead entry alive.
-        var code = SourceScan.MaskCommentsAndLiterals(File.ReadAllText(path));
-        return Regex.IsMatch(code, BannedConstructs.Single(b => b.Name == construct).Pattern);
-    }
-
 
     private static IEnumerable<string> EnumerateTestSources(string testsRoot) =>
         SourceScan.EnumerateSources(testsRoot, ".cs")

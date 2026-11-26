@@ -8,6 +8,7 @@ using FamilyHQ.Services.Auth;
 using FamilyHQ.Services.Calendar;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Tests.Helpers;
+using FamilyHQ.Time;
 using FluentAssertions;
 using Moq;
 using Moq.Protected;
@@ -316,7 +317,8 @@ public class SeriesRenameAnchorPreservationTests
             currentUser.Object,
             Mock.Of<IDisplaySettingRepository>(),
             Mock.Of<ILocationSettingRepository>(),
-            Mock.Of<ITimeZoneLookup>());
+            Mock.Of<ITimeZoneLookup>(),
+            new RecordingLogger<TimeZoneService>());
 
         var client = new GoogleCalendarClient(
             httpClient,

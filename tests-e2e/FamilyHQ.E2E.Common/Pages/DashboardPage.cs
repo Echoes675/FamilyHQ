@@ -7,21 +7,42 @@ using Microsoft.Playwright;
 namespace FamilyHQ.E2E.Common.Pages;
 
 /// <summary>
-/// The five buckets the Reminders view files its rows into, by each row's EVENT start. A local
+/// The two panels the Reminders view files its rows into, by each row's EVENT start. A local
 /// mirror of the app's own <c>ReminderSectionKey</c> — the E2E projects never reference
 /// <c>FamilyHQ.WebUi</c>, so this exists purely to give
 /// <see cref="DashboardPage.ReadReminderRowsAsync"/> a type-safe parameter instead of a bare slug
 /// string.
+/// <para>
+/// Being a mirror rather than a reference is also why it has to be brought in line BY HAND whenever
+/// the view's panels change: nothing in this suite fails to compile against a panel the app stopped
+/// rendering, so the drift surfaces as a runtime "selector not found" in a gate run instead. A row's
+/// own "Today"/"Tomorrow" label is NOT one of these — it is read off the row, because the label is a
+/// fact about the row's own date rather than about the panel holding it.
+/// </para>
 /// </summary>
-public enum ReminderSectionKey { Today, Tomorrow, ThisWeek, ThisMonth, NextMonth }
+public enum ReminderSectionKey { ThisMonth, NextMonth }
 
 /// <summary>
 /// One <c>reminder-row</c> read off the DOM by its event id, never by position — see the remarks on
-/// the Reminders VIEW region below for why. <paramref name="Text"/> is the row's full rendered text
-/// (start, reminder summary, title, member chips), for scenarios that need to read more than the id
-/// carries.
+/// the Reminders VIEW region below for why.
+/// <para>
+/// <c>When</c> is the row's leading column read on its own — "Today · 09:00", "Wed 7 Oct · 08:00",
+/// "Today · all day". It is a field of its own rather than something to pick back out of
+/// <c>Text</c>, and deliberately: the column renders the EVENT's own day and start, so only reading
+/// it in isolation can tell a correct row from one that led with a reminder's trigger time instead,
+/// or from one that dropped the day and reverted to the bare time. An assertion against the whole
+/// row's text could only ever be a containment, which any time rendered anywhere in the row would
+/// satisfy. Carrying it on the same snapshot as the id also keeps "which panel holds this row" and
+/// "what the row says" two statements about ONE element rather than two lookups that could resolve
+/// different rows.
+/// </para>
+/// <para>
+/// <c>Text</c> is the row's full rendered text — the leading column, the title and the member chips,
+/// and nothing about the reminders the row exists because of — for assertions that need to read more
+/// than the id and the column carry.
+/// </para>
 /// </summary>
-public sealed record ReminderRowSnapshot(Guid EventId, string Text);
+public sealed record ReminderRowSnapshot(Guid EventId, string When, string Text);
 
 public class DashboardPage : BasePage
 {
@@ -53,6 +74,22 @@ public class DashboardPage : BasePage
         ".month-table, .day-view-container, .agenda-view-container, [data-testid='reminders-view']");
     public ILocator EventCapsules => Page.Locator(".event-capsule");
     public ILocator CurrentTimeLine => Page.Locator(".current-time-line");
+
+    /// <summary>
+    /// The month grid's cell for <paramref name="date"/>, addressed by the id the grid gives it.
+    /// Existing or not, it is the only honest answer to "is this date on screen": the grid renders a
+    /// variable window of whole weeks, so a date it does not span has no cell at all rather than an
+    /// empty one.
+    /// </summary>
+    public ILocator MonthDayCell(DateTime date) => Page.Locator(
+        $"#day-cell-{date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}");
+
+    /// <summary>
+    /// Event capsules in <paramref name="date"/>'s own grid cell. Narrower than
+    /// <see cref="EventCapsules"/> on purpose: an assertion about an event's DAY that reads every
+    /// capsule on screen also passes when the capsule is rendered on the wrong one.
+    /// </summary>
+    public ILocator EventCapsulesOn(DateTime date) => MonthDayCell(date).Locator(".event-capsule");
 
     // FHQ-18.11: recurrence affordances. The indicator glyph renders on every recurring tile
     // across Day / Month / Agenda; the subtitle renders inside the open event modal.
@@ -161,9 +198,14 @@ public class DashboardPage : BasePage
     /// the same <c>.view-tabs</c>/<c>.view-tab</c> classes for its look, and it is rendered outside
     /// that container, so an unscoped selector would read the modal's tabs too whenever one is open.
     /// </para>
+    /// <para>
+    /// Each tab's own <c>.view-tab__label</c>, not the button's <c>innerText</c>: the Reminders
+    /// button also carries a bell and a count whenever something falls today, so reading the whole
+    /// button would make a tab-ORDER assertion depend on what is on the family's calendar that day.
+    /// </para>
     /// </summary>
     public Task<string[]> ReadViewTabLabelsAsync() =>
-        Page.Locator("#dashboard-container .view-tabs .view-tab")
+        Page.Locator("#dashboard-container .view-tabs .view-tab .view-tab__label")
             .EvaluateAllAsync<string[]>("els => els.map(e => e.innerText.trim())");
 
     private async Task WaitForCalendarVisibleAsync()
@@ -495,14 +537,14 @@ public class DashboardPage : BasePage
         return await DayPickerBtn.InnerTextAsync();
     }
 
-    public async Task ClickMoreEventsLinkAsync(string dayDateString)
+    /// <summary>
+    /// Taps the "+n more" overflow indicator in <paramref name="date"/>'s own cell, which drills the
+    /// dashboard into that day. Addressed through the cell rather than by the indicator's text, so it
+    /// cannot pick up another day's overflow on a grid that happens to have two.
+    /// </summary>
+    public async Task ClickMoreEventsLinkAsync(DateTime date)
     {
-        // Click the +n more text on the month view
-        var link = Page.GetByText(new Regex(@"^\+\d+ more$"));
-        // Need to narrow down to the specific day's more link if provided, but since most tests only run on specific days we can just pick the first visible or use nth(0) assuming our tests are isolated.
-        // Actually best is to find the cell by date. The cell has an id like `day-cell-2026-03-24`
-        var cell = Page.Locator($"#day-cell-{dayDateString}");
-        await cell.GetByTestId("overflow-indicator").ClickAsync();
+        await MonthDayCell(date).GetByTestId("overflow-indicator").ClickAsync();
         await DayViewContainer.WaitForAsync(new() { State = WaitForSelectorState.Visible });
     }
 
@@ -760,21 +802,91 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Navigates to the next month only if <paramref name="date"/> falls outside the
-    /// currently-visible month grid. The grid spans from the Sunday on or before the
-    /// first of the current month to the Saturday on or after the last day of the month.
+    /// Drives the month grid's own Prev/Next until <paramref name="date"/> has a cell on screen, and
+    /// returns only once that cell is in the DOM.
     /// </summary>
-    public async Task NavigateToShowDateIfNeededAsync(DateTime date)
+    /// <remarks>
+    /// <para>
+    /// The grid is a variable window of whole Sunday-to-Saturday weeks — the Sunday on or before the
+    /// 1st, through the first Saturday on or after the month's last day — so it runs four to six weeks
+    /// and carries only as many of the adjacent months' days as those weeks need. A month ending on a
+    /// Saturday carries none of the next month's days; a month starting on a Sunday carries none of the
+    /// previous month's. On that pair of neighbours the two grids abut with NO overlap, so no single
+    /// view shows both sides of the boundary and one navigation cannot serve two dates either side
+    /// of it. An assertion keyed on a date therefore has to bring the view to that date itself.
+    /// </para>
+    /// <para>
+    /// It asks the rendered DOM rather than recomputing the window, because the span is the view's to
+    /// decide and a date the view does not span has no cell at all rather than an empty one. It then
+    /// navigates to the month CONTAINING the date instead of reasoning about edge days: a grid always
+    /// spans its own month in full, whatever the window's shape, where "is this an edge day of the
+    /// month on screen" has to be re-derived at every boundary and is only ever true by luck.
+    /// </para>
+    /// <para>
+    /// Bounded, and it throws, for the reason <see cref="ShowAgendaMonthContainingAsync"/> does: two
+    /// years of steps either way is past any seed a scenario means, so a date beyond it is a broken
+    /// scenario rather than a view needing more clicks — and naming the date and the month on screen
+    /// here is worth more than the unrelated capsule assertion that would otherwise time out later.
+    /// </para>
+    /// </remarks>
+    public async Task ShowMonthContainingAsync(DateTime date)
     {
-        var today = BrowserClock.Today;
-        var lastDayOfMonth = new DateTime(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
-        var daysUntilSaturday = ((int)DayOfWeek.Saturday - (int)lastDayOfMonth.DayOfWeek + 7) % 7;
-        var gridEnd = lastDayOfMonth.AddDays(daysUntilSaturday);
+        var target = new DateTime(date.Year, date.Month, 1);
+        var cell = MonthDayCell(date);
 
-        if (date > gridEnd)
+        for (var step = 0; step < 24; step++)
         {
-            await NavigateToNextMonthAsync();
+            // A count, not a wait: a missing cell is the NORMAL state on every step that goes on to
+            // navigate, and auto-waiting on it would spend a timeout per click to learn what the
+            // month header already says.
+            if (await cell.CountAsync() > 0) return;
+
+            var current = await GetMonthGridCurrentMonthAsync();
+            if (current.Year == target.Year && current.Month == target.Month)
+            {
+                // On the date's own month the cell is arriving rather than absent, since the grid
+                // always spans its own month — so this is the one place worth waiting at.
+                await cell.WaitForAsync(
+                    new() { State = WaitForSelectorState.Attached, Timeout = 30000 });
+                return;
+            }
+
+            await StepMonthGridAsync(current < target ? 1 : -1);
         }
+
+        throw new InvalidOperationException(
+            $"The month grid never showed a cell for " +
+            $"{date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"within 24 month steps; it is showing '{await GetMonthHeaderTextAsync()}'.");
+    }
+
+    private async Task<DateTime> GetMonthGridCurrentMonthAsync()
+    {
+        var text = await GetMonthHeaderTextAsync();
+        return DateTime.ParseExact(
+            text, "MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// One click of the grid's month navigation, confirmed against the header it should have moved.
+    /// </summary>
+    /// <remarks>
+    /// The expectation is read from the LIVE header rather than from today's month, and that is what
+    /// makes this safe to call in a loop: <see cref="NavigateToNextMonthAsync"/> waits for "today plus
+    /// one month", so it can only ever be right for a first hop from the month the page opened on.
+    /// No settle-sleep after it — everything that reads the grid afterwards is a web-first wait on a
+    /// cell or a capsule, which outlasts the re-render on its own.
+    /// </remarks>
+    private async Task StepMonthGridAsync(int months)
+    {
+        var expectedText = (await GetMonthGridCurrentMonthAsync()).AddMonths(months)
+            .ToString("MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+
+        await (months > 0 ? NextMonthBtn : PrevMonthBtn).ClickAsync();
+
+        await Assertions.Expect(MonthHeaderButton)
+            .ToHaveTextAsync(expectedText, new() { Timeout = 30000 });
+        await WaitForCalendarVisibleAsync();
     }
 
     public async Task OpenEventForEditingAsync(string eventName)
@@ -2396,6 +2508,12 @@ public class DashboardPage : BasePage
     // the event modal. This is the standalone timeline of every event whose reminders were set on the
     // event itself — one row per EVENT, never one per reminder, filed by when the event starts.
     //
+    // The timeline lays out two panels side by side, "This month" (today to the end of this month)
+    // and "Next month", and every row names its own day in its leading column. Which day a row names
+    // is therefore read off the ROW and not off the panel: on the last day of a month tomorrow is
+    // filed under "Next month" and still reads "Tomorrow", so an assertion about a row's day must
+    // never be expressed as an assertion about which panel holds it.
+    //
     // Every row carries data-event-id so it can be addressed BY VALUE, never by position. That one
     // attribute is the whole identity of a row: there is exactly one row per event, and the view lists
     // only events whose reminders were set on the event itself, so there is no second kind of row to
@@ -2406,14 +2524,15 @@ public class DashboardPage : BasePage
     private ILocator RemindersInheritedFootnote => Page.GetByTestId("reminders-inherited-footnote");
     private ILocator AllReminderRows => Page.GetByTestId("reminder-row");
 
+    // Mirrors the app's own RemindersViewLogic.SectionSlug, and throws on an unknown key for the
+    // same reason it does: the slug places a panel as well as naming it, so falling through to a
+    // default would turn a wrong mapping into a baffling "selector not found" rather than a failure
+    // that names the key nobody mapped.
     private static string ReminderSectionSlug(ReminderSectionKey key) => key switch
     {
-        ReminderSectionKey.Today => "today",
-        ReminderSectionKey.Tomorrow => "tomorrow",
-        ReminderSectionKey.ThisWeek => "this-week",
         ReminderSectionKey.ThisMonth => "this-month",
         ReminderSectionKey.NextMonth => "next-month",
-        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Not a reminders-section key.")
+        _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Not a reminders-panel key.")
     };
 
     private ILocator ReminderSection(ReminderSectionKey key) =>
@@ -2443,9 +2562,15 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// Reads every row <paramref name="key"/>'s section is currently showing, addressed by its event
+    /// Reads every row <paramref name="key"/>'s panel is currently showing, addressed by its event
     /// id rather than by position.
     /// </summary>
+    /// <remarks>
+    /// Only the RENDERED rows: a collapsed panel shows at most the view's preview count, so a row
+    /// sitting behind "Show all" reads as absent here. Fine for a presence assertion on a panel
+    /// holding a handful of rows; an absence assertion that has to hold across the whole timeline
+    /// should count with <see cref="CountReminderRowsForTitleAsync"/> instead.
+    /// </remarks>
     public async Task<IReadOnlyList<ReminderRowSnapshot>> ReadReminderRowsAsync(ReminderSectionKey key)
     {
         var rows = ReminderSection(key).GetByTestId("reminder-row");
@@ -2463,11 +2588,12 @@ public class DashboardPage : BasePage
         var eventId = await row.GetAttributeAsync("data-event-id")
             ?? throw new InvalidOperationException("A reminder-row rendered with no data-event-id.");
         var text = (await row.InnerTextAsync()).Trim();
+        var when = (await row.Locator(".reminder-row__time").InnerTextAsync()).Trim();
 
-        return new ReminderRowSnapshot(Guid.Parse(eventId), text);
+        return new ReminderRowSnapshot(Guid.Parse(eventId), when, text);
     }
 
-    /// <summary>True when <paramref name="key"/>'s section is rendering its collapsed "Nothing" line.</summary>
+    /// <summary>True when <paramref name="key"/>'s panel is rendering its collapsed "Nothing" line.</summary>
     public async Task<bool> ReminderSectionIsEmptyAsync(ReminderSectionKey key) =>
         await ReminderSection(key).GetByTestId("reminder-section-empty").CountAsync() > 0;
 
@@ -2498,18 +2624,24 @@ public class DashboardPage : BasePage
     }
 
     /// <summary>
-    /// The leading time column of the row naming <paramref name="eventTitle"/>, read on its own
-    /// rather than out of the row's whole text. That is the point of it: the column renders the
-    /// EVENT's start, and only reading it in isolation can tell a correct row from one that led with
-    /// a reminder's trigger time instead.
+    /// Asserts the row naming <paramref name="eventTitle"/> leads with exactly
+    /// <paramref name="expected"/> — "Today · 09:00", "Tomorrow · 08:00", "Wed 7 Oct · 08:00".
     /// </summary>
-    public async Task<string> ReadReminderRowStartTimeAsync(string eventTitle)
-    {
-        var row = AllReminderRows.Filter(new() { HasText = eventTitle });
-        await Assertions.Expect(row.First).ToBeVisibleAsync(new() { Timeout = 10000 });
-
-        return (await row.First.Locator(".reminder-row__time").InnerTextAsync()).Trim();
-    }
+    /// <remarks>
+    /// The leading column is addressed on its own, so no other time rendered inside the row can
+    /// satisfy the assertion: the column renders the EVENT's own day and start, and reading it in
+    /// isolation is the only way to tell a correct row from one that led with a reminder's trigger
+    /// time instead. The match is an exact one for the other half of the same requirement — a row
+    /// that dropped its day and reverted to the bare time would pass any containment check.
+    /// <para>
+    /// A web-first assertion rather than a read-then-compare, because the label is re-derived when
+    /// the kiosk re-anchors its "today" (an idle return rolls a row's label from "Tomorrow" to
+    /// "Today"), and a single read taken the instant the view reappears can beat that by a frame.
+    /// </para>
+    /// </remarks>
+    public Task AssertReminderRowLeadsWithAsync(string eventTitle, string expected) =>
+        Assertions.Expect(AllReminderRows.Filter(new() { HasText = eventTitle }).First.Locator(".reminder-row__time"))
+            .ToHaveTextAsync(expected, new() { Timeout = 15000 });
 
     /// <summary>Every row anywhere in the view whose rendered text names <paramref name="eventTitle"/>.</summary>
     public Task<int> CountReminderRowsForTitleAsync(string eventTitle) =>
@@ -2549,4 +2681,54 @@ public class DashboardPage : BasePage
         var tile = Page.Locator($".calendar-col .day-event-block:has-text('{eventName}')").First;
         await tile.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30000 });
     }
+
+    // ── The Reminders TAB's count of what falls today ───────────────────────────────────────────
+    // The same feature as the timeline above, but rendered on the tab STRIP rather than in the view,
+    // and that is the whole point of it: the timeline has no "Today" panel to glance at any more, so
+    // this is what tells the family something falls today while they are standing in front of
+    // another view entirely — where no part of the reminders list is on screen to be read instead.
+
+    // Scoped to the Reminders tab's own button: "the Reminders tab carries a count" is the
+    // requirement, not "a count is somewhere on the strip".
+    private ILocator RemindersTabBadge => RemindersTab.GetByTestId("reminders-tab-badge");
+
+    /// <summary>
+    /// Asserts the Reminders tab is carrying its badge, that the badge announces
+    /// <paramref name="accessibleLabel"/> in words, and that <paramref name="count"/> is on it.
+    /// </summary>
+    /// <remarks>
+    /// The words are asserted by equality and the number by CONTAINMENT, because the badge's own
+    /// text is the bell glyph, whitespace and then the number — an equality against the number alone
+    /// would fail on a correct badge. The <c>aria-label</c> is the one place the whole message exists
+    /// as a single string, and a wall display is not the only way this page is read, so it is worth
+    /// pinning in its own right rather than treating as decoration.
+    /// <para>
+    /// Web-first assertions rather than read-then-compare: the badge appears when the reminders
+    /// refetch that follows a save lands, which is after the save response a caller waited on.
+    /// </para>
+    /// </remarks>
+    public async Task AssertRemindersTabBadgeAsync(string accessibleLabel, string count)
+    {
+        await Assertions.Expect(RemindersTabBadge).ToHaveAttributeAsync(
+            "aria-label", accessibleLabel, new() { Timeout = 15000 });
+        await Assertions.Expect(RemindersTabBadge).ToContainTextAsync(count, new() { Timeout = 15000 });
+    }
+
+    /// <summary>
+    /// Asserts the Reminders tab carries no badge AT ALL — the element is not attached, rather than
+    /// attached and reading zero.
+    /// </summary>
+    /// <remarks>
+    /// Absence is the signal, so the assertion has to be about the element existing: a pill left on
+    /// screen saying "0" is a standing claim that something is being tracked, and it would satisfy
+    /// any assertion phrased as "the count is not above zero".
+    /// <para>
+    /// A count-of-zero assertion passes the instant nothing is there, so it says nothing on its own
+    /// about a badge that is one refetch away from appearing. A caller has to establish that the
+    /// reminders fetch has already landed — by reading a row off the timeline, say — rather than
+    /// leaning on this wait to prove it.
+    /// </para>
+    /// </remarks>
+    public Task AssertRemindersTabHasNoBadgeAsync() =>
+        Assertions.Expect(RemindersTabBadge).ToHaveCountAsync(0);
 }

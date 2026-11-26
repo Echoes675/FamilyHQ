@@ -1,12 +1,12 @@
-using FamilyHQ.Services.Calendar;
 using FluentAssertions;
 using Xunit;
 
-namespace FamilyHQ.Services.Tests.Calendar;
+namespace FamilyHQ.Time.Tests;
 
 /// <summary>
-/// FHQ-161 — the injectable seam that resolves an IANA id into the zone the recurrence engine
-/// enumerates in, and the transition semantics that seam guarantees.
+/// The injectable seam that resolves an IANA id into the zone the recurrence engine enumerates in,
+/// and the transition semantics that seam guarantees. Both <c>FamilyHQ.Services</c> and the
+/// Simulator resolve zones through this one factory, so these are the semantics each of them gets.
 /// </summary>
 public class NodaTimeRecurrenceTimeZoneFactoryTests
 {

@@ -19,6 +19,36 @@ public interface ITimeZoneService
     Task<string?> GetSendZoneAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// The zone every DISPLAY path reads a day or a time of day in: <see cref="GetSendZoneAsync"/>
+    /// resolved to a <see cref="TimeZoneInfo"/>, falling back to UTC when nothing is stored or when
+    /// the stored id is one this host's tzdb cannot read.
+    /// </summary>
+    /// <remarks>
+    /// One resolver rather than a guard per caller. The reminders endpoint and the month endpoint both
+    /// need this exact answer, and a private helper copied into the second of them is how a rule
+    /// starts having two implementations that agree until they do not.
+    /// <para>
+    /// Never throws, because no display surface is worth failing over an unreadable stored id: UTC is
+    /// a zone we are NOT asserting is theirs, which is also what a null from
+    /// <see cref="GetSendZoneAsync"/> has always meant.
+    /// </para>
+    /// </remarks>
+    Task<TimeZoneInfo> GetDisplayZoneAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// <see cref="TimeZoneInfo.FindSystemTimeZoneById"/>, guarded: null for a null or blank id, and
+    /// null plus one warning for a non-blank id this host cannot resolve.
+    /// </summary>
+    /// <remarks>
+    /// Public because a second id needs the same treatment and is not the household's: an event's
+    /// OWNING CALENDAR carries a zone of its own, Google-supplied, which the reminders endpoint
+    /// resolves to anchor a ping calculation. Distinct from <see cref="IsValidZone"/>, which asks
+    /// NodaTime's tzdb whether an id is a known IANA name — a different question from whether this
+    /// host can build a <see cref="TimeZoneInfo"/> for it.
+    /// </remarks>
+    TimeZoneInfo? TryResolveZone(string? ianaId);
+
+    /// <summary>
     /// Change point: persist an already-resolved auto-detected zone (e.g. from ip-api auto-discovery)
     /// ONCE, only if the user has no zone yet. No-op if a zone (auto or explicit) is already set, if
     /// the zone is null/blank, or if it is not a valid IANA id. Does not call ip-api.

@@ -254,8 +254,20 @@ html, body {
    Section 9 — View tabs (clean underline)
    ============================================= */
 .view-tabs { display: flex; border-bottom: 2px solid var(--theme-glass-divider); list-style: none; transition: border-color var(--theme-transition-duration, 15s) ease-in-out; }
-.view-tab { padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--theme-text-muted); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; min-height: 48px; transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out; }
+/* A tab lays its own content out in a row, so a tab that carries a badge keeps it beside the
+   label, vertically centred, with an even gap. Positioning a badge over the tab instead would
+   clip at either end of the strip and split one tap target into two. min-height is what holds
+   the 48px touch target: a badge box is shorter than the label's own line, so it can neither
+   grow nor shrink the tab. */
+.view-tab { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--theme-text-muted); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; cursor: pointer; min-height: 48px; transition: color 0.2s ease-in-out, border-color 0.2s ease-in-out; }
 .view-tab.active { font-weight: 600; color: var(--theme-text); border-bottom-color: var(--theme-accent); }
+/* The Reminders tab's count of what falls today. It is rendered only while that count is above
+   zero, so there is no empty or zero state to style — absence of the badge is the signal, which
+   is why no placement here reserves space for it. Accent fill with on-accent text is the
+   established filled-pill pair (as .reminder-member-chip uses); .tab-badge further down is the
+   event modal's quieter tinted variant, not reused here because this one has to carry across a
+   room. */
+.view-tab__badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.2; color: var(--theme-on-accent); background-color: var(--theme-accent); white-space: nowrap; transition: background-color var(--theme-transition-duration, 15s) ease-in-out, color var(--theme-transition-duration, 15s) ease-in-out; }
 
 /* =============================================
    Section 10 — Modals
@@ -1357,11 +1369,8 @@ body:not([data-theme]) .brand-logo__img--morning {
 
 /* Explicit placement, not DOM order, is what lets the single-column collapse below just clear it
    instead of fighting a second rule for ordering. */
-.reminders-section--today      { grid-column: 1; grid-row: 1; }
-.reminders-section--tomorrow   { grid-column: 1; grid-row: 2; }
-.reminders-section--this-week  { grid-column: 1; grid-row: 3; }
-.reminders-section--this-month { grid-column: 2; grid-row: 1; }
-.reminders-section--next-month { grid-column: 2; grid-row: 2; }
+.reminders-section--this-month { grid-column: 1; grid-row: 1; }
+.reminders-section--next-month { grid-column: 2; grid-row: 1; }
 
 .reminders-section {
     display: flex;
@@ -1434,9 +1443,10 @@ body:not([data-theme]) .brand-logo__img--morning {
 .reminder-row__time {
     flex: 0 0 auto;
     min-width: 44px;
-    /* Never wrapped: on the three sections that lead with the date this column carries a day, a date
-       and a time ("Mon 15 Jun · 10:05"), and a title long enough to squeeze the row would otherwise
-       break it across two lines. The title is the part that gives way, by ellipsis, below. */
+    /* Never wrapped: every row names its own day, so this column always carries a day and a time
+       ("Today · 10:05", "Mon 15 Jun · 10:05"), and a title long enough to squeeze the row would
+       otherwise break it across two lines. The title is the part that gives way, by ellipsis,
+       below. */
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
@@ -1475,16 +1485,13 @@ body:not([data-theme]) .brand-logo__img--morning {
 }
 
 /* Below this, two columns would be too narrow to read comfortably — collapse to one, in the same
-   top-to-bottom order the sections already render in (Today, Tomorrow, This week, This month, Next
-   month), so nothing needs reordering, only re-placing. */
+   top-to-bottom order the panels already render in (This month, then Next month), so nothing needs
+   reordering, only re-placing. */
 @media (max-width: 699px) {
     .reminders-view__columns {
         grid-template-columns: 1fr;
     }
 
-    .reminders-section--today,
-    .reminders-section--tomorrow,
-    .reminders-section--this-week,
     .reminders-section--this-month,
     .reminders-section--next-month {
         grid-column: 1;

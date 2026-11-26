@@ -26,10 +26,11 @@ builder.Services.AddDbContext<SimContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<SyncFailureModeStore>();
 builder.Services.AddSingleton<OutboundWriteCountStore>();
-// FHQ-161: stateless tzdb lookup behind an interface so series expansion is anchored to the
-// master's start.timeZone (Google's semantics) rather than to fixed UTC instants.
+// Stateless tzdb lookup behind an interface so series expansion is anchored to the master's
+// start.timeZone (Google's semantics) rather than to fixed UTC instants. The same adapter
+// FamilyHQ.Services registers, so the Simulator and production cannot disagree about a zone.
 builder.Services.AddSingleton<FamilyHQ.Core.Interfaces.IRecurrenceTimeZoneFactory,
-    FamilyHQ.Simulator.Services.NodaTimeRecurrenceTimeZoneFactory>();
+    FamilyHQ.Time.NodaTimeRecurrenceTimeZoneFactory>();
 
 var app = builder.Build();
 

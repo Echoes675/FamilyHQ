@@ -5,6 +5,7 @@ using FamilyHQ.Services.Http;
 using FamilyHQ.Services.Options;
 using FamilyHQ.Services.Theme;
 using FamilyHQ.Services.Weather;
+using FamilyHQ.Time;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -127,9 +128,10 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<IAccessTokenCache, AccessTokenCache>();
         services.TryAddSingleton<ITimeZoneLookup, GeoTimeZoneLookup>();
-        // FHQ-161: stateless tzdb lookup behind an interface so recurrence enumeration can be
-        // zone-anchored in production and substituted in unit tests.
-        services.TryAddSingleton<IRecurrenceTimeZoneFactory, Calendar.NodaTimeRecurrenceTimeZoneFactory>();
+        // Stateless tzdb lookup behind an interface so recurrence enumeration can be zone-anchored
+        // in production and substituted in unit tests. Lives in FamilyHQ.Time, which the Simulator
+        // registers too, so the test double cannot disagree with production.
+        services.TryAddSingleton<IRecurrenceTimeZoneFactory, NodaTimeRecurrenceTimeZoneFactory>();
         services.AddSingleton<IOutboundWriteHashCache, OutboundWriteHashCache>();
         services.AddSingleton<ISyncJobSignal, SyncJobSignal>();
 
